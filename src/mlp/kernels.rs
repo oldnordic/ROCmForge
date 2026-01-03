@@ -2,6 +2,59 @@
 //!
 //! This module provides Rust FFI wrappers for HIP kernels implementing MLP operations.
 //! SwiGLU activation and RMSNorm normalization.
+//!
+//! # FFI Wrapper Invariant (CRITICAL)
+//!
+//! ALL kernel arguments (including pointers) MUST be copied to intermediate mutable
+//! variables before passing to HIP kernels. This is required by Rust's FFI ABI and
+//! HIP's calling convention on AMDGPU.
+//!
+//! ## CORRECT Pattern
+//! ```rust,ignore
+//! // ALL args copied to mut locals first
+//! let mut gate_arg = gate as *mut f32;
+//! let mut up_arg = up as *mut f32;
+//! let mut output_arg = output;
+//! let mut seq_len_arg = seq_len;
+//!
+//! let args: &[*mut c_void] = &[
+//!     &mut gate_arg as *mut _ as *mut c_void,
+//!     &mut up_arg as *mut _ as *mut c_void,
+//!     &mut output_arg as *mut _ as *mut c_void,
+//!     &mut seq_len_arg as *mut _ as *mut c_void,
+//! ];
+//! ```
+//!
+//! ## WRONG Pattern (causes GPU memory faults)
+//! ```rust,ignore
+//! // Direct cast - FAILS with "Memory access fault by GPU node-1"
+//! let args: &[*mut c_void] = &[
+//!     gate as *mut c_void,      // WRONG
+//!     up as *mut c_void,        // WRONG
+//!     output as *mut c_void,    // WRONG
+//! ];
+//! ```
+//!
+//! # Reduction Invariant (CRITICAL)
+//!
+//! For parallel reduction using shared memory, the starting stride MUST be
+//! `BLOCK_SIZE / 2` to ensure all elements participate in the reduction.
+//!
+//! ## CORRECT Pattern
+//! ```cpp,ignore
+//! for (int stride = BLOCK_SIZE / 2; stride > 0; stride >>= 1) {
+//!     if (tid < stride) {
+//!         s_data[tid] += s_data[tid + stride];
+//!     }
+//!     __syncthreads();
+//! }
+//! ```
+//!
+//! ## WRONG Pattern (causes numerical errors)
+//! ```cpp,ignore
+//! // Only processes 31 elements for BLOCK_SIZE=256
+//! for (int stride = 16; stride > 0; stride >>= 1) { ... }
+//! ```
 
 #![allow(dead_code)]
 

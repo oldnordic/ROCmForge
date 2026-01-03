@@ -16,3 +16,8 @@ mod swiglu_tests;
 #[cfg(test)]
 #[cfg(feature = "rocm")]
 mod rms_norm_tests;
+
+// Phase 4.3: GPU path regression tests (no host round-trip)
+#[cfg(test)]
+#[cfg(feature = "rocm")]
+mod gpu_path_regression_tests;
