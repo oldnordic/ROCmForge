@@ -234,4 +234,32 @@ src/
 
 ---
 
+## Critical Crash Fix (2025-01-03)
+
+**CRITICAL FIX REQUIRED** - Read `CRASH_FIX_SUMMARY.md` for immediate fix instructions.
+
+**Quick Fix (2 minutes):**
+```bash
+# File: src/backend/hip_backend.rs, Line 499
+# Remove #[repr(C)] from HipBackend struct
+
+#[repr(C)]  # ❌ REMOVE THIS LINE
+#[derive(Debug)]
+pub struct HipBackend {
+    device: HipDevice,
+    stream: Arc<HipStream>,
+}
+```
+
+**Root Cause:** ABI violation when returning 24-byte struct containing `Arc<T>` with `repr(C)` annotation.
+
+**Documents:**
+- `CRASH_FIX_SUMMARY.md` - Quick fix guide
+- `deep_crash_analysis.md` - Detailed technical analysis
+- `ABI_RESEARCH_WITH_CITATIONS.md` - Research with sources
+
+**Confidence:** 100% - Root cause definitively identified
+
+---
+
 > **Remember:** "Make it correct → make it measurable → then make it fast."

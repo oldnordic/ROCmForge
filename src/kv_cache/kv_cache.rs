@@ -2,6 +2,7 @@
 
 use crate::backend::{HipBackend, HipBuffer, HipError};
 use std::collections::HashMap;
+use std::sync::Arc;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -137,7 +138,7 @@ impl SequenceCache {
 #[derive(Debug)]
 pub struct KvCache {
     config: CacheConfig,
-    backend: HipBackend,
+    backend: Arc<HipBackend>,  // Changed to Arc<HipBackend> for shared ownership
     pages: HashMap<u32, CachePage>,
     sequences: HashMap<u32, SequenceCache>,
     free_pages: Vec<u32>,
@@ -145,7 +146,7 @@ pub struct KvCache {
 }
 
 impl KvCache {
-    pub fn new(config: CacheConfig, backend: HipBackend) -> KvCacheResult<Self> {
+    pub fn new(config: CacheConfig, backend: Arc<HipBackend>) -> KvCacheResult<Self> {
         Ok(KvCache {
             config,
             backend,

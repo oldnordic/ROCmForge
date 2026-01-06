@@ -6,6 +6,7 @@ use crate::loader::{GgufModel, OnnxLoader};
 use crate::sampler::{Sampler, SamplingConfig};
 use crate::scheduler::{GenerationRequest, RequestState, Scheduler, SchedulerConfig};
 use std::collections::HashMap;
+use std::io::Write;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
@@ -65,7 +66,7 @@ unsafe impl Sync for InferenceEngine {}
 #[derive(Debug)]
 pub struct InferenceEngine {
     config: EngineConfig,
-    backend: HipBackend,
+    backend: Arc<HipBackend>,  // Changed to Arc<HipBackend> for shared ownership
     kv_cache: Arc<RwLock<KvCache>>,
     scheduler: Arc<RwLock<Scheduler>>,
     sampler: Arc<RwLock<Sampler>>,
@@ -86,8 +87,11 @@ struct RequestRuntimeState {
 impl InferenceEngine {
     pub fn new(config: EngineConfig) -> EngineResult<Self> {
         info!("Initializing ROCmForge inference engine");
+        eprintln!("DEBUG: InferenceEngine::new: Starting engine initialization...");
+        let _ = std::io::stderr().flush();
 
         // Initialize HIP backend
+        eprintln!("DEBUG: InferenceEngine::new: Creating cache config...");
         let cache_config = CacheConfig::new(
             config.cache_page_size,
             config.max_cache_pages,
@@ -96,12 +100,22 @@ impl InferenceEngine {
             config.num_layers,
         )
         .map_err(|e| EngineError::CacheFailed(e.to_string()))?;
+        eprintln!("DEBUG: InferenceEngine::new: Cache config created");
+        let _ = std::io::stderr().flush();
 
-        let backend = HipBackend::new().map_err(|e| EngineError::BackendFailed(e.to_string()))?;
+        eprintln!("DEBUG: InferenceEngine::new: Creating HIP backend...");
+        // HipBackend::new() returns HipResult<Arc<HipBackend>>
+        let backend_arc = HipBackend::new()
+            .map_err(|e| EngineError::BackendFailed(e.to_string()))?;
+        eprintln!("DEBUG: InferenceEngine::new: HIP backend Arc created successfully!");
+        let _ = std::io::stderr().flush();
+
         let kv_cache = Arc::new(RwLock::new(
-            KvCache::new(cache_config, backend.clone())
+            KvCache::new(cache_config, backend_arc.clone())
                 .map_err(|e| EngineError::CacheFailed(e.to_string()))?,
         ));
+        eprintln!("DEBUG: InferenceEngine::new: KV cache created");
+        let _ = std::io::stderr().flush();
 
         let scheduler = Arc::new(RwLock::new(Scheduler::new(SchedulerConfig {
             max_batch_size: config.max_batch_size,
@@ -117,7 +131,7 @@ impl InferenceEngine {
 
         Ok(InferenceEngine {
             config,
-            backend,
+            backend: backend_arc,
             kv_cache,
             scheduler,
             sampler,
@@ -137,22 +151,21 @@ impl InferenceEngine {
         let path_ref = path.as_ref();
         info!("Loading GGUF model from: {:?}", path_ref);
 
-        let model =
-            GgufModel::load(path_ref).map_err(|e| EngineError::ModelLoadFailed(e.to_string()))?;
-
-        info!("Loaded GGUF model with {} tensors", model.tensors.len());
-
-        self.model = Some(Arc::new(model));
-
-        let runtime =
-            ModelRuntime::new().map_err(|e| EngineError::InferenceFailed(e.to_string()))?;
         let path_string = path_ref
             .to_str()
             .ok_or_else(|| EngineError::ModelLoadFailed("Invalid model path".to_string()))?
             .to_string();
+
+        // ModelRuntime::load_model() uses the fixed GGUF loader (src/loader/gguf.rs)
+        // which correctly handles tensor types per ggml/gguf.h spec
+        let runtime =
+            ModelRuntime::new().map_err(|e| EngineError::ModelLoadFailed(e.to_string()))?;
         let runtime = runtime
             .load_model(&path_string)
             .map_err(|e| EngineError::ModelLoadFailed(e.to_string()))?;
+
+        info!("Loaded GGUF model successfully");
+        self.model = None; // Old loader is deprecated, using ModelRuntime only
         self.model_runtime = Some(Arc::new(RwLock::new(runtime)));
         self.request_states.write().await.clear();
 

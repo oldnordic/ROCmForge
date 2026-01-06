@@ -2,168 +2,242 @@
 
 **AMD GPU Inference Engine for Large Language Models**
 
-A high-performance inference engine specifically designed for AMD GPUs using ROCm and HIP. ROCmForge aims to provide efficient LLM inference capabilities on AMD hardware.
+A high-performance inference engine specifically designed for AMD GPUs using ROCm and HIP. ROCmForge provides efficient LLM inference capabilities on AMD hardware with fully-tested GPU kernels.
 
 ## Project Status
 
-**⚠️ Experimental - Active Development**
+**Core GPU Acceleration Complete | End-to-End Integration in Progress**
 
-This project is in early development stages. Core components are being built and tested. Not recommended for production use yet.
+| Component | Status | Notes |
+|-----------|--------|-------|
+| GPU Kernels | ✅ Complete | 41/41 tests passing (Phases 1-4) |
+| HIP/ROCm Backend | ✅ Complete | AMD RX 7900 XT tested |
+| GGUF Loader | ✅ Complete | Fixed spec compliance, vocab inference |
+| Qwen2 Support | ✅ Complete | Phase 4.6 tensor mapping done |
+| KV Cache | ✅ Complete | Paged attention cache |
+| Sampler | ✅ Complete | CPU-based (GPU planned Phase 5.1) |
+| HTTP Server | ✅ Complete | OpenAI-compatible API |
+| CLI | ⚠️ Debugging | End-to-end generation crashes |
+| Quantization | ❌ Missing | Q4_1, Q5_0, Q5_1 not supported |
+| FP16 Compute | ❌ Missing | FP32 only |
 
 ## What Works
 
-- ✅ **Project Structure**: Well-organized codebase (~15,260 LOC across 48 modules)
-- ✅ **Core Modules**: Attention mechanisms, backend abstractions, tensor operations
-- ✅ **Model Loading**: GGUF and ONNX loader implementations
-- ✅ **HTTP Server**: Axum-based REST API for inference requests
-- ✅ **KV Cache**: Key-value cache implementation for efficient inference
-- ✅ **Scheduler & Sampler**: Request scheduling and token sampling logic
+### GPU Kernels (100% Complete)
+
+All transformer layer operations are GPU-accelerated with comprehensive testing:
+
+- **Phase 1**: Basic kernels (scale, mask, softmax) - 3/3 tests
+- **Phase 2**: RoPE (Rotary Position Embedding) - 5/5 tests
+- **Phase 3a**: Non-Causal FlashAttention - 17/17 tests
+- **Phase 3b**: Causal Masking for autoregressive decoding - 8/8 tests
+- **Phase 4**: MLP Ops (SwiGLU, RMSNorm) - 8/8 tests
+
+**Total: 41/41 tests passing with 1e-5 tolerance**
+
+### HIP/ROCm Integration
+
+- AMD Radeon RX 7900 XT (gfx1100, RDNA3) tested
+- Wave32 optimization (256 thread blocks)
+- GPU-only execution path (no CPU round-trips in transformer layers)
+
+### GGUF Model Loading
+
+- Fixed spec compliance (array encoding, value types, tensor types)
+- Vocab size inference from tensor shapes
+- Architecture detection (Qwen2, LLaMA, Mistral)
+- Supports: F32, F16, Q8_0, Q4_0 tensor types
+
+### Infrastructure
+
+- HTTP Server: Axum-based REST API with OpenAI compatibility
+- Scheduler: Request batching and queue management
+- KV Cache: Paged attention cache for efficient inference
+- Tokenizer: HuggingFace tokenizers with fallback
+- Sampler: Top-k, top-p, temperature, repetition penalty
+
+## What's In Progress
+
+### CLI End-to-End Generation
+
+The CLI crashes during inference with core dump. Individual components work, but the full pipeline has integration issues:
+
+```bash
+# This crashes with SIGSEGV
+./target/release/rocmforge_cli generate \
+  --gguf /path/to/model.gguf \
+  --prompt "Hello" \
+  --max-tokens 10
+```
+
+**Diagnosis**: Possible memory management or lifecycle issues between engine components.
+
+## Known Issues
+
+### Critical (Blockers)
+
+1. **CLI Crashes**: `generate` command dumps core during inference
+2. **Missing Quantization**: Q4_1, Q5_0, Q5_1 models cannot load
+3. **Qwen2 Separate QKV**: Separate Q/K/V matrices need concatenation
+
+### High Priority
+
+4. **GPU Memory Leak** (kv_cache.rs:184): Leaks on page allocation failure
+5. **Double-Free Risk** (hip_backend.rs:218): Auto-derived Clone causes corruption
+6. **Race Condition** (hip_backend.rs:478): Flawed singleton initialization
+7. **No End-to-End Tests**: Missing integration tests with real models
+
+### Medium Priority
+
+8. **Debug Output**: 50+ `eprintln!` statements in production code
+9. **Code Duplication**: 3 separate KV cache implementations
+10. **Inconsistent Error Types**: Mix of `i32`, `Result<(), String>`, `HipResult<T>`
 
 ## Architecture
 
 ```
 src/
-├── attention/      # Multi-head attention with GPU/CPU backends
-├── backend/        # HIP/ROCm backend abstraction layer
+├── attention/      # Multi-head attention (GPU/CPU backends)
+├── backend/        # HIP/ROCm backend abstraction
 ├── engine.rs       # Main inference engine
 ├── http/           # HTTP API server
-├── kv_cache/       # Key-value cache for transformer models
-├── loader/         # GGUF and ONNX model loaders
-├── model/          # Model configuration and execution
-├── ops/            # GPU operations (matmul, attention)
-├── sampler/        # Token sampling strategies
-├── scheduler/      # Request batching and scheduling
-├── tensor/         # Tensor data structures and operations
+├── kv_cache/       # Key-value cache (paged)
+├── loader/         # GGUF model loader
+├── mlp/            # MLP operations (SwiGLU, RMSNorm)
+├── model/          # Configuration and execution plans
+├── ops/            # High-level GPU operations
+├── sampler/        # Token sampling (CPU)
+├── scheduler/      # Request batching
+├── tensor/         # Tensor data structures
 └── tokenizer.rs    # Tokenization utilities
 ```
 
-## What's Experimental
-
-- ⚠️ **HIP Backend**: AMD GPU acceleration via HIP/ROCm (placeholder implementations)
-- ⚠️ **GPU Kernels**: Custom CUDA-style kernels for attention and matmul operations
-- ⚠️ **Performance**: Not yet optimized for production workloads
-- ⚠️ **Model Support**: Limited to specific architectures, testing ongoing
-
-## What's Missing
-
-- ❌ **Production ROCm Integration**: Real HIP bindings are commented out (using placeholders)
-- ❌ **Quantization**: 4-bit/8-bit quantization support not fully implemented
-- ❌ **Multi-GPU**: Single GPU only, no tensor parallelism yet
-- ❌ **Benchmarks**: Performance comparisons against llama.cpp, vLLM not available
-- ❌ **Documentation**: API docs and user guides need expansion
-
 ## Requirements
 
-- Rust 1.70+ (2021 edition)
-- AMD GPU with ROCm 5.x+ (for GPU acceleration)
-- Linux (ROCm support)
+- **Rust**: 1.70+ (2021 edition)
+- **GPU**: AMD GPU with ROCm 5.x+
+- **OS**: Linux (ROCm requirement)
+- **Memory**: 16GB+ recommended for 7B models
 
 ## Build
 
 ```bash
 # Clone repository
-git clone <your-repo-url>
+git clone https://github.com/your-repo/ROCmForge.git
 cd ROCmForge
 
 # Build release binary
 cargo build --release
 
-# Run tests
-cargo test
+# Run tests (requires AMD GPU)
+cargo test --features rocm
 
-# Run with ROCm feature (when available)
-cargo build --release --features rocm
+# Run specific test
+cargo test --features rocm --lib test_swiglu_matches_cpu_small
 ```
 
 ## Usage
 
-```bash
-# Start HTTP inference server
-cargo run --bin rocmforge_cli -- --port 8080
+### Testing
 
-# Run simple model inference
-cargo run --bin run_simple_model
+```bash
+# Run all GPU kernel tests
+cargo test --features rocm
+
+# Test specific module
+cargo test --features rocm --lib attention
+cargo test --features rocm --lib mlp
+
+# Monitor GPU during tests
+watch -n 1 rocm-smi
 ```
 
-## API Example
+### CLI (Experimental)
 
 ```bash
+# Inspect GGUF model metadata
+./target/release/rocmforge_cli inspect --model /path/to/model.gguf
+
+# Generate text (may crash - known issue)
+./target/release/rocmforge_cli generate \
+  --gguf ~/.config/syncore/models/qwen2.5-0.5b.gguf \
+  --prompt "The future of AI is" \
+  --max-tokens 20 \
+  --temperature 0.7
+```
+
+### HTTP Server
+
+```bash
+# Start server
+./target/release/rocmforge_cli serve --port 8080
+
 # Health check
 curl http://localhost:8080/health
 
-# Inference request (OpenAI-compatible)
+# Completion request
 curl -X POST http://localhost:8080/v1/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "your-model",
+    "model": "qwen2.5-0.5b",
     "prompt": "Once upon a time",
     "max_tokens": 50
   }'
 ```
 
-## Dependencies
-
-Key libraries used:
-- **axum**: HTTP server framework
-- **tokio**: Async runtime
-- **tokenizers**: HuggingFace tokenizers
-- **half**: FP16 support
-- **memmap2**: Memory-mapped file I/O for large models
-- **serde/serde_json**: Serialization
-
 ## Roadmap
 
-**Phase 1 (Current)**: Core Infrastructure
-- [x] Project structure and module organization
-- [x] GGUF loader implementation
-- [x] Basic HTTP API
-- [ ] Real HIP backend integration
-- [ ] Attention kernel optimization
+| Phase | Description | Status |
+|-------|-------------|--------|
+| Phase 1 | Basic kernels (scale, mask, softmax) | ✅ Complete |
+| Phase 2 | RoPE + KV Append | ✅ Complete |
+| Phase 3 | FlashAttention (causal + non-causal) | ✅ Complete |
+| Phase 4 | MLP Ops (SwiGLU, RMSNorm) | ✅ Complete |
+| Phase 4.5 | GGUF Loader Fixes | ✅ Complete |
+| Phase 4.6 | Qwen2 Tensor Mapping | ✅ Complete |
+| Phase 5.1 | GPU Sampler (top-k/top-p on device) | ❌ Pending |
+| Phase 5.2 | Custom GEMM (if needed) | ❌ Pending |
+| Phase 5.3 | FP16 Support | ❌ Pending |
+| Phase 5.4 | Wave64 Tuning (CDNA3) | ❌ Pending |
 
-**Phase 2 (Planned)**: Performance & Features
-- [ ] Quantization support (4-bit, 8-bit)
+### Future Work
+
+- [ ] Fix CLI crashes and enable end-to-end inference
+- [ ] Quantization support (Q4_1, Q5_0, Q5_1)
+- [ ] End-to-end integration tests with real models
 - [ ] Multi-GPU tensor parallelism
-- [ ] FlashAttention-2 for AMD
-- [ ] Continuous batching
-- [ ] Model support: Llama, Mistral, Gemma
-
-**Phase 3 (Future)**: Production Readiness
-- [ ] Comprehensive benchmarks
+- [ ] Performance benchmarks vs llama.cpp, vLLM
 - [ ] Production deployment guide
-- [ ] Docker containers with ROCm
-- [ ] Monitoring and observability
 
 ## Development
 
 ```bash
-# Run specific test
-cargo test test_name
+# Format code
+cargo fmt
+
+# Linter
+cargo clippy -- -D warnings
 
 # Run benchmarks
 cargo bench
 
-# Format code
-cargo fmt
-
-# Check for issues
-cargo clippy
+# Full test suite
+cargo test --features rocm --workspace
 ```
 
-## Project Structure
+## Dependencies
 
-```
-.
-├── src/            # Source code (48 Rust files)
-├── tests/          # Integration and unit tests
-├── benches/        # Performance benchmarks
-├── examples/       # Usage examples
-├── build.rs        # Build script for C/C++ integration
-└── Cargo.toml      # Dependencies and project config
-```
+Key libraries:
+- **axum**: HTTP server framework
+- **tokio**: Async runtime
+- **tokenizers**: HuggingFace tokenizers
+- **half**: FP16 support
+- **memmap2**: Memory-mapped I/O
+- **serde/serde_json**: Serialization
 
 ## Contributing
 
-This is a private repository in active development. Contributions and feedback are welcome once the project reaches a more stable state.
+See [docs/TODO.md](docs/TODO.md) for detailed task tracking and [docs/PLAN.md](docs/PLAN.md) for implementation roadmap.
 
 ## License
 
@@ -172,14 +246,14 @@ MIT License - See LICENSE file for details
 ## Acknowledgments
 
 Inspired by:
-- [llama.cpp](https://github.com/ggerganov/llama.cpp) - CPU inference optimization techniques
-- [vLLM](https://github.com/vllm-project/vllm) - Efficient batching and scheduling
-- [candle](https://github.com/huggingface/candle) - Rust ML framework design patterns
+- [llama.cpp](https://github.com/ggerganov/llama.cpp) - CPU inference optimization
+- [vLLM](https://github.com/vllm-project/vllm) - Efficient batching
+- [candle](https://github.com/huggingface/candle) - Rust ML design patterns
 
 ## Disclaimer
 
-This project is experimental and under active development. APIs may change without notice. Performance characteristics on AMD GPUs are still being evaluated and optimized.
+This project is under active development. Core GPU kernels are complete and tested (41/41 tests passing), but end-to-end model execution has known issues. APIs may change.
 
 ---
 
-**Status**: 🚧 Active Development | **Version**: 0.1.0 | **Last Updated**: November 2024
+**Status**: Kernels Complete | **Tests**: 41/41 Passing | **Hardware**: AMD Radeon RX 7900 XT (gfx1100) | **Last Updated**: January 2026

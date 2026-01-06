@@ -53,6 +53,53 @@
 > These are performance optimizations, not required for correctness.
 > Profile first, then optimize what actually matters.
 
+---
+
+## Phase 4.5: GGUF Loader Vocab Size Inference ✅ COMPLETE
+
+**Priority:** High - Required for model compatibility
+**Status:** Complete
+**Completed:** 2026-01-04
+
+### Problem
+
+Some GGUF models do not include `{architecture}.vocab_size` metadata, causing:
+- `vocab_size = 0` in GgufMetadata
+- Potential crashes or incorrect model initialization
+- Models fail to load even though tensor data is valid
+
+### Solution Implemented
+
+Infer vocab_size from tensor shapes when metadata is missing:
+1. Check for `token_embd.weight`, `output.weight`, `lm_head.weight`, or `embed_tokens.weight` tensors
+2. Use tensor shape `[vocab_size, hidden_size]` or `[hidden_size, vocab_size]`
+3. Compare against known `hidden_size` to determine which dimension is vocab_size
+4. Fallback to architecture-specific defaults if inference fails
+
+### Files Modified
+- `src/loader/gguf.rs` - Added inference logic (lines 671-712, modified 229-278)
+
+### Summary
+- Helper method `infer_vocab_size_from_tensors()` implemented ✅
+- `to_model_config()` uses inferred vocab_size as fallback ✅
+- Code compiles successfully ✅
+- Documentation updated ✅
+
+### Technical Details
+
+**Method Added:**
+- `infer_vocab_size_from_tensors()` - Infers vocab_size from tensor shapes
+- Searches 4 common tensor names
+- Compares against known hidden_size
+- Uses heuristic when hidden_size unknown
+- Debug logging for transparency
+
+**Integration:**
+- `to_model_config()` now has 3-tier fallback:
+  1. Metadata vocab_size (if > 0)
+  2. Inferred from tensor shapes
+  3. Architecture-specific defaults (qwen2: 151936, llama: 32000, glm: 151552)
+
 ### 5.1: GPU Sampler (top-k/top-p)
 
 **Goal**: Move token sampling to GPU to overlap with next token computation.

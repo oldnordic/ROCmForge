@@ -1,7 +1,130 @@
 # ROCmForge Changelog
 
 > GPU: AMD Radeon RX 7900 XT (gfx1100, RDNA3, wave32)
-> All changes follow TDD: tests first, prove they fail, then implement.
+> All kernel development follows TDD: tests first, prove they fail, then implement.
+
+---
+
+## [Unreleased] - 2026-01-06
+
+### Codebase Audit & Documentation Update
+
+**Summary**: Comprehensive codebase analysis by subagent review. Updated documentation to reflect actual implementation status. Identified critical bugs and technical debt.
+
+#### Issues Discovered
+
+**Critical (3)** - Must fix immediately:
+1. GPU memory leak in KV cache on page allocation failure (kv_cache.rs:184)
+2. Double-free risk from auto-derived `Clone` on `HipBuffer` (hip_backend.rs:218)
+3. Race condition in backend singleton initialization (hip_backend.rs:478)
+
+**High Priority (8)**:
+4. Buffer overflow risk in `to_host_vec()` - missing size validation
+5. Stub `launch_kernel()` always succeeds without doing anything
+6. Integer overflow in block dimension calculation
+7. Uninitialized GPU memory in `HipBuffer::new()`
+8. File handle not explicitly closed on errors
+9. Incomplete unsafe function documentation
+10. Missing validation in vocab_size inference
+
+**Medium Priority (3)**:
+11. Debug print statements (50+ `eprintln!`) in production code
+12. Inefficient CPU fallback for MLP (no SIMD)
+13. Unnecessary cloning in engine spawn
+
+**Low Priority (2)**:
+14. Inconsistent error types across modules
+15. Missing rustdoc comments
+
+#### Documentation Updates
+
+- Updated README.md with accurate project status
+- Marked Phase 4.6 (Qwen2 Tensor Mapping) as complete
+- Fixed contradictions between docs and implementation
+- Added known issues section with prioritized bug list
+
+#### Code Drift Fixed
+
+- Removed stale TODO comments (causal mask kernel already exists)
+- Updated Phase 4.6 status from "In Progress" to "Complete"
+- Documented actual tensor layout: `[batch, heads, seq, dim]`
+
+#### Grade: B+ (would be A- with critical issues fixed)
+
+---
+
+## [Unreleased] - 2026-01-03
+
+### Phase 4 Post-Closure: Invariants + Regression Tests
+
+**Summary**: Documented critical FFI and reduction invariants, added regression tests to prevent CPU fallback re-introduction.
+
+#### Files Created
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `src/mlp/gpu_path_regression_tests.rs` | 146 | Regression tests for GPU-only path |
+
+#### Files Modified
+
+| File | Lines Changed | Purpose |
+|------|---------------|---------|
+| `src/mlp/kernels.rs` | +52 | Added invariant documentation |
+| `src/mlp/mod.rs` | +3 | Added regression test module |
+
+#### Invariants Documented
+
+**FFI Wrapper Invariant**:
+> ALL kernel arguments (including pointers) MUST be copied to intermediate mutable variables before passing to HIP kernels.
+
+```rust
+// CORRECT
+let mut gate_arg = gate as *mut f32;
+let args: &[*mut c_void] = &[&mut gate_arg as *mut _ as *mut c_void, ...];
+
+// WRONG - causes "Memory access fault by GPU node-1"
+let args: &[*mut c_void] = &[gate as *mut c_void, ...];
+```
+
+**Reduction Invariant**:
+> For parallel reduction using shared memory, starting stride MUST be `BLOCK_SIZE / 2` to ensure all elements participate.
+
+```cpp
+// CORRECT - processes all 256 elements
+for (int stride = BLOCK_SIZE / 2; stride > 0; stride >>= 1) { ... }
+
+// WRONG - only processes 31 elements for BLOCK_SIZE=256
+for (int stride = 16; stride > 0; stride >>= 1) { ... }
+```
+
+#### Regression Tests Added (3/3 passing)
+
+- `test_mlp_swiglu_gpu_only_path` - Verifies GPU pointers are valid
+- `test_gpu_to_gpu_copy` - Verifies `hipMemcpyDeviceToDevice` is used
+- `test_no_host_roundtrip_in_mlp_layer` - Documents expected code path
+
+#### Technical Debt Noted
+
+Several kernels use hardcoded `stride=16` which only processes 31 elements for `BLOCK_SIZE=256`:
+- `kernels/softmax.hip` (lines 61, 81)
+- `kernels/flash_attention.hip` (lines 135, 179, 201, 239)
+- `kernels/qkt_matmul.hip` (line 116)
+- `kernels/weighted_matmul.hip` (line 99)
+- `kernels/flash_attention_nocausal.hip` (line 141)
+- `kernels/flash_attention_causal.hip` (line 157)
+
+**Action**: Fix during Phase 5 profiling. Use `BLOCK_SIZE / 2` or `blockDim.x / 2` consistently.
+
+#### Test Results
+
+```bash
+$ cargo test --package rocmforge --lib mlp --features rocm
+
+running 11 tests
+test result: ok. 11 passed; 0 failed; 0 ignored
+```
+
+**Total**: 44/44 tests passing (11 MLP + 33 other)
 
 ---
 
@@ -87,29 +210,6 @@ let final_buffer = matmul_f32(...)?;  // Stays on GPU
 output.buffer().copy_from_buffer(&final_buffer)?;  // GPU-to-GPU
 ```
 
-#### Key Technical Discoveries
-
-1. **Kernel Argument Pattern**: ALL arguments (including pointers) must be copied to intermediate mutable variables:
-   ```rust
-   // WRONG
-   let args = &[gate as *mut c_void, ...];
-
-   // CORRECT
-   let mut gate_arg = gate as *mut f32;
-   let args = &[&mut gate_arg as *mut _ as *mut c_void, ...];
-   ```
-
-2. **Parallel Reduction**: Starting stride must be `BLOCK_SIZE / 2`:
-   ```cpp
-   // WRONG - Only processes 31 elements
-   for (int stride = 16; stride > 0; stride >>= 1)
-
-   // CORRECT - Processes all 256 elements
-   for (int stride = BLOCK_SIZE / 2; stride > 0; stride >>= 1)
-   ```
-
-3. **GPU-to-GPU Copy**: `HipBuffer::copy_from_buffer` uses `hipMemcpyDeviceToDevice` (line 345)
-
 #### Test Results
 
 ```bash
@@ -125,83 +225,66 @@ test mlp::rms_norm_tests::rms_norm_tests::test_rms_norm_matches_cpu_32x128 ... o
 test mlp::swiglu_tests::swiglu_tests::test_swiglu_matches_cpu_small ... ok
 test mlp::swiglu_tests::swiglu_tests::test_swiglu_matches_cpu_32x32 ... ok
 
-test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured
+test result: ok. 8 passed; 0 failed; 0 ignored
 ```
 
 ---
 
 ## [Unreleased] - 2026-01-03
 
-### Phase 4 Post-Closure: Invariants + Regression Tests
+### Phase 4.5: GGUF Loader Fixes ✅ COMPLETE
 
-**Summary**: Documented critical FFI and reduction invariants, added regression tests to prevent CPU fallback re-introduction.
-
-#### Files Created
-
-| File | Lines | Purpose |
-|------|-------|---------|
-| `src/mlp/gpu_path_regression_tests.rs` | 146 | Regression tests for GPU-only path |
+**Summary**: Fixed GGUF spec compliance issues. Added vocab size inference from tensor shapes.
 
 #### Files Modified
 
 | File | Lines Changed | Purpose |
 |------|---------------|---------|
-| `src/mlp/kernels.rs` | +52 | Added invariant documentation |
-| `src/mlp/mod.rs` | +3 | Added regression test module |
+| `src/loader/gguf.rs` | ~200 | Fixed spec violations, added vocab inference |
 
-#### Invariants Documented
+#### Fixes
 
-**FFI Wrapper Invariant**:
-> ALL kernel arguments (including pointers) MUST be copied to intermediate mutable variables before passing to HIP kernels.
+- Corrected array encoding (was using wrong type)
+- Fixed value type mapping
+- Fixed tensor type handling
+- Added vocab size inference from tensor shapes (metadata not always present)
 
-```rust
-// CORRECT
-let mut gate_arg = gate as *mut f32;
-let args: &[*mut c_void] = &[&mut gate_arg as *mut _ as *mut c_void, ...];
+---
 
-// WRONG - causes "Memory access fault by GPU node-1"
-let args: &[*mut c_void] = &[gate as *mut c_void, ...];
-```
+## [Unreleased] - 2026-01-03
 
-**Reduction Invariant**:
-> For parallel reduction using shared memory, starting stride MUST be `BLOCK_SIZE / 2` to ensure all elements participate.
+### Phase 4.6: Qwen2 Tensor Mapping ✅ COMPLETE
 
-```cpp
-// CORRECT - processes all 256 elements
-for (int stride = BLOCK_SIZE / 2; stride > 0; stride >>= 1) { ... }
+**Summary**: Implemented tensor name mapping for Qwen2 architecture. Separate Q/K/V matrices handled via concatenation.
 
-// WRONG - only processes 31 elements for BLOCK_SIZE=256
-for (int stride = 16; stride > 0; stride >>= 1) { ... }
-```
+#### Files Modified
 
-#### Regression Tests Added (3/3 passing)
+| File | Lines Changed | Purpose |
+|------|---------------|---------|
+| `src/model/execution_plan.rs` | +150 | Qwen2 tensor mapping functions |
+| `src/loader/gguf.rs` | +50 | Architecture detection |
 
-- `test_mlp_swiglu_gpu_only_path` - Verifies GPU pointers are valid
-- `test_gpu_to_gpu_copy` - Verifies `hipMemcpyDeviceToDevice` is used
-- `test_no_host_roundtrip_in_mlp_layer` - Documents expected code path
+#### Tensor Name Mapping
 
-#### Technical Debt Noted
+| Component | LLaMA Pattern | Qwen2 Pattern |
+|-----------|---------------|---------------|
+| Layer prefix | `transformer.layers.N.` | `blk.N.` |
+| Q projection | `self_attn.q_proj.weight` | `attn_q.weight` |
+| K projection | `self_attn.k_proj.weight` | `attn_k.weight` |
+| V projection | `self_attn.v_proj.weight` | `attn_v.weight` |
+| Output projection | `self_attn.o_proj.weight` | `attn_output.weight` |
+| FFN gate | `mlp.gate_proj.weight` | `ffn_gate.weight` |
+| FFN up | `mlp.up_proj.weight` | `ffn_up.weight` |
+| FFN down | `mlp.down_proj.weight` | `ffn_down.weight` |
+| Attn norm | `post_attention_layernorm` | `attn_norm.weight` |
+| FFN norm | `post_ffn_layernorm` | `ffn_norm.weight` |
 
-Several kernels use hardcoded `stride=16` which only processes 31 elements for `BLOCK_SIZE=256`:
-- `kernels/softmax.hip` (lines 61, 81)
-- `kernels/flash_attention.hip` (lines 135, 179, 201, 239)
-- `kernels/qkt_matmul.hip` (line 116)
-- `kernels/weighted_matmul.hip` (line 99)
-- `kernels/flash_attention_nocausal.hip` (line 141)
-- `kernels/flash_attention_causal.hip` (line 157)
+#### Functions Added
 
-**Action**: Fix during Phase 5 profiling. Use `BLOCK_SIZE / 2` or `blockDim.x / 2` consistently.
-
-#### Test Results
-
-```bash
-$ cargo test --package rocmforge --lib mlp --features rocm
-
-running 11 tests
-test result: ok. 11 passed; 0 failed; 0 ignored
-```
-
-**Total**: 44/44 tests passing (11 MLP + 33 other)
+- `detect_architecture()` - Detects model from tensor names
+- `try_map_qwen2_attention_weights()` - Maps Qwen2 attention tensors
+- `try_map_qwen2_mlp_weights()` - Maps Qwen2 MLP tensors
+- `try_map_qwen2_layer_norm_weights()` - Maps Qwen2 layer norms
 
 ---
 
@@ -244,7 +327,7 @@ test result: ok. 11 passed; 0 failed; 0 ignored
 
 #### Tensor Layout
 
-**Explicit**: `[batch, seq, heads, dim]` - all dimensions visible in index math
+**Explicit**: `[batch, heads, seq, dim]` - all dimensions visible in index math
 
 ---
 
@@ -299,9 +382,14 @@ All kernels pass CPU vs GPU tests within 1e-5 tolerance.
 | Phase 3a | Non-Causal FlashAttention | ✅ Complete | 17/17 |
 | Phase 3b | Causal Masking | ✅ Complete | 8/8 |
 | Phase 4 | MLP Ops (SwiGLU, RMSNorm) | ✅ Complete | 8/8 |
-| Phase 5 | Optional Optimizations | Pending | - |
+| Phase 4.5 | GGUF Loader Fixes | ✅ Complete | - |
+| Phase 4.6 | Qwen2 Tensor Mapping | ✅ Complete | - |
+| Phase 5.1 | GPU Sampler | ❌ Pending | - |
+| Phase 5.2 | Custom GEMM | ❌ Pending | - |
+| Phase 5.3 | FP16 Support | ❌ Pending | - |
+| Phase 5.4 | Wave64 Tuning | ❌ Pending | - |
 
-**Total**: 41/41 tests passing
+**Total**: 41/41 kernel tests passing
 
 ---
 

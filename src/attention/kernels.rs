@@ -5,7 +5,7 @@
 
 use std::ffi::c_void;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::backend::hip_backend::{HipBackend, HipError, HipKernel, HipModule};
 
@@ -16,7 +16,7 @@ const WARP_SIZE: u32 = 32;     // RDNA3 wavefront size
 /// Cached kernel modules and functions
 #[derive(Debug)]
 struct KernelCache {
-    backend: HipBackend,
+    backend: Arc<HipBackend>,
     scale_module: Option<HipModule>,
     scale_kernel: Option<HipKernel>,
     mask_module: Option<HipModule>,
@@ -60,7 +60,7 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
         return Ok(&GLOBAL_CACHE);
     }
 
-    // Create backend
+    // Create backend (HipBackend::new() returns Arc<HipBackend>)
     let backend = HipBackend::new()
         .map_err(|e| HipError::InitializationFailed(format!("Failed to create HipBackend: {}", e)))?;
 

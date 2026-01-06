@@ -266,8 +266,7 @@ impl GpuModelExecutor {
 
         // Convert device name to architecture
         // This is a simplified mapping - in practice you'd want a more comprehensive mapping
-        let device_name_vec: Vec<u8> = device_props.name.iter().map(|&c| c as u8).collect();
-        let device_name_str = String::from_utf8_lossy(&device_name_vec);
+        let device_name_str = device_props.name();
 
         if device_name_str.contains("gfx1100") {
             Ok("gfx1100".to_string())

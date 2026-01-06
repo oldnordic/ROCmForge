@@ -8,6 +8,38 @@ use crate::loader::gguf::GgufLoader;
 use crate::loader::TensorShape;
 use crate::model::{config::ModelConfig, kv_cache::KVCache};
 use crate::ops::attention_gpu::HipAttentionKernels;
+use std::collections::HashSet;
+
+/// Detected model architecture based on tensor naming patterns
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Architecture {
+    /// Qwen2-style: tensors start with `blk.N.`
+    Qwen2,
+    /// LLaMA-style: tensors start with `transformer.layers.N.`
+    LLaMA,
+    /// Mistral-style: tensors start with `model.layers.N.`
+    Mistral,
+}
+
+impl Architecture {
+    /// Get the layer prefix pattern for this architecture
+    pub fn layer_prefix(&self, layer_idx: usize) -> String {
+        match self {
+            Architecture::Qwen2 => format!("blk.{}", layer_idx),
+            Architecture::LLaMA => format!("transformer.layers.{}", layer_idx),
+            Architecture::Mistral => format!("model.layers.{}", layer_idx),
+        }
+    }
+
+    /// Get the architecture name for logging
+    pub fn name(&self) -> &'static str {
+        match self {
+            Architecture::Qwen2 => "Qwen2",
+            Architecture::LLaMA => "LLaMA",
+            Architecture::Mistral => "Mistral",
+        }
+    }
+}
 
 /// Static execution plan for a transformer model
 ///
@@ -123,6 +155,63 @@ impl ExecutionPlan {
         self.matmul(backend, hidden_states, &self.lm_head, None)
     }
 
+    /// Detect model architecture from available tensor names
+    ///
+    /// Scans tensor names to identify the architecture pattern:
+    /// - Qwen2: tensors start with `blk.N.`
+    /// - LLaMA: tensors start with `transformer.layers.N.`
+    /// - Mistral: tensors start with `model.layers.N.`
+    fn detect_architecture(
+        tensor_names: &HashSet<String>,
+    ) -> HipResult<Architecture> {
+        // Check for Qwen2 pattern: blk.0.*
+        let qwen2_pattern = "blk.0.";
+        let has_qwen2 = tensor_names
+            .iter()
+            .any(|name| name.starts_with(qwen2_pattern));
+
+        if has_qwen2 {
+            println!("Detected architecture: Qwen2 (pattern: {})", qwen2_pattern);
+            return Ok(Architecture::Qwen2);
+        }
+
+        // Check for LLaMA pattern: transformer.layers.0.*
+        let llama_pattern = "transformer.layers.0.";
+        let has_llama = tensor_names
+            .iter()
+            .any(|name| name.starts_with(llama_pattern));
+
+        if has_llama {
+            println!("Detected architecture: LLaMA (pattern: {})", llama_pattern);
+            return Ok(Architecture::LLaMA);
+        }
+
+        // Check for Mistral pattern: model.layers.0.*
+        let mistral_pattern = "model.layers.0.";
+        let has_mistral = tensor_names
+            .iter()
+            .any(|name| name.starts_with(mistral_pattern));
+
+        if has_mistral {
+            println!("Detected architecture: Mistral (pattern: {})", mistral_pattern);
+            return Ok(Architecture::Mistral);
+        }
+
+        // Unknown architecture - try to provide helpful error
+        let sample_tensors: Vec<_> = tensor_names
+            .iter()
+            .filter(|name| name.contains('.'))
+            .take(10)
+            .collect();
+
+        Err(HipError::GenericError(format!(
+            "Unable to detect model architecture from tensor names. \
+             Expected patterns like 'blk.0.*', 'transformer.layers.0.*', or 'model.layers.0.*'. \
+             Sample tensors found: {:?}",
+            sample_tensors
+        )))
+    }
+
     /// Create execution plan from GGUF loader using helper functions
     pub fn from_gguf(backend: &HipBackend, loader: &GgufLoader) -> HipResult<Self> {
         let config = loader
@@ -134,22 +223,27 @@ impl ExecutionPlan {
             .load_to_gpu(backend)
             .map_err(|e| HipError::GenericError(format!("Failed to load tensors to GPU: {}", e)))?;
 
+        // Detect architecture from actual tensor names
+        let tensor_names: HashSet<_> = gpu_tensors.keys().cloned().collect();
+        let architecture = Self::detect_architecture(&tensor_names)?;
+        println!("Using {} architecture mapping", architecture.name());
+
         // Map embedding and LM head using helper functions and store them
         let embedding_weights = Self::map_embedding(backend, &config, &gpu_tensors)?;
         let lm_head = Self::map_lm_head(backend, &config, &gpu_tensors)?;
 
-        // Create layers using helper functions
+        // Create layers using detected architecture
         let mut layers = Vec::with_capacity(config.num_hidden_layers);
         for layer_idx in 0..config.num_hidden_layers {
-            // Use helper functions to map weights for each layer
+            // Map weights using detected architecture
             let (qkv_weight, o_proj) =
-                Self::map_attention_weights(backend, &config, &gpu_tensors, layer_idx)?;
+                Self::map_attention_weights(backend, &config, &gpu_tensors, layer_idx, &architecture)?;
 
             let (mlp_gate, mlp_up, mlp_down) =
-                Self::map_mlp_weights(backend, &config, &gpu_tensors, layer_idx)?;
+                Self::map_mlp_weights(backend, &config, &gpu_tensors, layer_idx, &architecture)?;
 
             let (ln1_weight, ln1_bias, ln2_weight, ln2_bias) =
-                Self::map_layer_norm_weights(backend, &config, &gpu_tensors, layer_idx)?;
+                Self::map_layer_norm_weights(backend, &config, &gpu_tensors, layer_idx, &architecture)?;
 
             // Create layer plan with mapped weights
             // Note: Helper functions don't provide QKV/O biases, so set them to None
@@ -863,8 +957,204 @@ impl ExecutionPlan {
     /// Map attention weights from GGUF tensors for a specific layer
     ///
     /// Extracts QKV projection and output projection weights for transformer attention.
-    /// Supports multiple naming conventions for different model architectures.
+    /// Adapts to the detected model architecture.
+    ///
+    /// **Architecture-Agnostic QKV Handling:**
+    /// - If the model has separate Q, K, V tensors, concatenates them into a fused QKV matrix
+    /// - If the model has a fused QKV tensor, uses it directly
+    ///
+    /// **Supported Architectures:**
+    /// - **Qwen2**: Uses `blk.N.attn_q.weight`, `blk.N.attn_k.weight`, `blk.N.attn_v.weight`
+    /// - **LLaMA**: Uses `transformer.layers.N.attention.wq.weight` (fused or separate)
+    /// - **Mistral**: Uses `model.layers.N.self_attn.q_proj.weight` (fused or separate)
     fn map_attention_weights(
+        backend: &HipBackend,
+        config: &ModelConfig,
+        gpu_tensors: &std::collections::HashMap<String, DeviceTensor>,
+        layer_idx: usize,
+        architecture: &Architecture,
+    ) -> HipResult<(DeviceTensor, DeviceTensor)> {
+        let prefix = architecture.layer_prefix(layer_idx);
+
+        // Try to find separate Q, K, V tensors first
+        let q_name = format!("{}.attn_q.weight", prefix);
+        let k_name = format!("{}.attn_k.weight", prefix);
+        let v_name = format!("{}.attn_v.weight", prefix);
+
+        let q_weight = gpu_tensors.get(&q_name);
+        let k_weight = gpu_tensors.get(&k_name);
+        let v_weight = gpu_tensors.get(&v_name);
+
+        // If separate Q, K, V tensors exist, concatenate them
+        if let (Some(q), Some(k), Some(v)) = (q_weight, k_weight, v_weight) {
+            println!("Layer {}: Found separate Q, K, V tensors - concatenating", layer_idx);
+            let qkv_weight = Self::concatenate_qkv_tensors(backend, q, k, v, config)?;
+
+            // Get output projection
+            let o_name = format!("{}.attn_output.weight", prefix);
+            let o_name_alt = format!("{}.attn.o_proj.weight", prefix);
+            let o_weight = gpu_tensors.get(&o_name)
+                .or_else(|| gpu_tensors.get(&o_name_alt))
+                .ok_or_else(|| HipError::GenericError(format!(
+                    "Output projection not found (tried: {}, {})",
+                    o_name, o_name_alt
+                )))?;
+
+            return Ok((qkv_weight, o_weight.clone()));
+        }
+
+        // Try fused QKV tensor
+        let qkv_variants = vec![
+            format!("{}.attention.wq.weight", prefix),  // LLaMA-style
+            format!("{}.attention.query_key_value.weight", prefix),  // Falcon-style
+            format!("{}.self_attn.q_proj.weight", prefix),  // Mistral-style
+            format!("{}.attn.qkv.weight", prefix),  // Generic
+        ];
+
+        let qkv_weight = qkv_variants
+            .iter()
+            .find_map(|name| gpu_tensors.get(name))
+            .ok_or_else(|| {
+                HipError::GenericError(format!(
+                    "No QKV projection found for layer {} (tried separate Q/K/V and: {})",
+                    layer_idx,
+                    qkv_variants.join(", ")
+                ))
+            })?;
+
+        // Validate QKV weight shape: [hidden_size, 3 * hidden_size] or [3 * hidden_size, hidden_size]
+        let qkv_shape = qkv_weight.shape().dims();
+        if qkv_shape.len() != 2 {
+            return Err(HipError::GenericError(format!(
+                "QKV projection weights should be 2D, got {}D",
+                qkv_shape.len()
+            )));
+        }
+
+        let expected_qkv_size = config.hidden_size * 3;
+        if !((qkv_shape[0] == config.hidden_size && qkv_shape[1] == expected_qkv_size)
+            || (qkv_shape[0] == expected_qkv_size && qkv_shape[1] == config.hidden_size))
+        {
+            return Err(HipError::GenericError(format!(
+                "QKV projection weights shape [{}, {}] doesn't match expected [{}, {}] or [{}, {}]",
+                qkv_shape[0],
+                qkv_shape[1],
+                config.hidden_size,
+                expected_qkv_size,
+                expected_qkv_size,
+                config.hidden_size
+            )));
+        }
+
+        // Get output projection
+        let o_variants = vec![
+            format!("{}.attention.wo.weight", prefix),  // LLaMA-style
+            format!("{}.self_attn.o_proj.weight", prefix),  // Mistral-style
+            format!("{}.attn.o_proj.weight", prefix),  // Generic
+            format!("{}.attn_output.weight", prefix),  // Qwen2-style
+        ];
+
+        let o_weight = o_variants
+            .iter()
+            .find_map(|name| gpu_tensors.get(name))
+            .ok_or_else(|| {
+                HipError::GenericError(format!(
+                    "No output projection found for layer {} (tried: {})",
+                    layer_idx,
+                    o_variants.join(", ")
+                ))
+            })?;
+
+        // Validate output projection weight shape: [hidden_size, hidden_size]
+        let o_shape = o_weight.shape().dims();
+        if o_shape.len() != 2 {
+            return Err(HipError::GenericError(format!(
+                "Output projection weights should be 2D, got {}D",
+                o_shape.len()
+            )));
+        }
+
+        if o_shape[0] != config.hidden_size || o_shape[1] != config.hidden_size {
+            return Err(HipError::GenericError(format!(
+                "Output projection weights shape [{}, {}] doesn't match expected [{}, {}]",
+                o_shape[0], o_shape[1], config.hidden_size, config.hidden_size
+            )));
+        }
+
+        println!("Layer {}: Found fused QKV tensor - using directly", layer_idx);
+        Ok((qkv_weight.clone(), o_weight.clone()))
+    }
+
+    /// Try to map Qwen2-style attention weights (separate Q, K, V with blk.N. prefix)
+    ///
+    /// Qwen2 tensor names:
+    /// - `blk.N.attn_q.weight` [hidden_size, hidden_size]
+    /// - `blk.N.attn_k.weight` [hidden_size, head_dim] or [hidden_size, hidden_size]
+    /// - `blk.N.attn_v.weight` [hidden_size, head_dim] or [hidden_size, hidden_size]
+    /// - `blk.N.attn_output.weight` [hidden_size, hidden_size]
+    ///
+    /// Returns `Err` if Qwen2-style tensors are not found.
+    fn try_map_qwen2_attention_weights(
+        backend: &HipBackend,
+        config: &ModelConfig,
+        gpu_tensors: &std::collections::HashMap<String, DeviceTensor>,
+        layer_idx: usize,
+    ) -> HipResult<(DeviceTensor, DeviceTensor)> {
+        let blk_prefix = format!("blk.{}", layer_idx);
+
+        // Qwen2 tensor names
+        let q_name = format!("{}.attn_q.weight", blk_prefix);
+        let k_name = format!("{}.attn_k.weight", blk_prefix);
+        let v_name = format!("{}.attn_v.weight", blk_prefix);
+        let o_name = format!("{}.attn_output.weight", blk_prefix);
+
+        // Try to find all Q, K, V tensors
+        let q_weight = gpu_tensors.get(&q_name);
+        let k_weight = gpu_tensors.get(&k_name);
+        let v_weight = gpu_tensors.get(&v_name);
+        let o_weight = gpu_tensors.get(&o_name);
+
+        // If any tensor is missing, this is not a Qwen2 model
+        let q_weight = match q_weight {
+            Some(t) => t,
+            None => return Err(HipError::GenericError("Qwen2 Q tensor not found".to_string())),
+        };
+        let k_weight = match k_weight {
+            Some(t) => t,
+            None => return Err(HipError::GenericError("Qwen2 K tensor not found".to_string())),
+        };
+        let v_weight = match v_weight {
+            Some(t) => t,
+            None => return Err(HipError::GenericError("Qwen2 V tensor not found".to_string())),
+        };
+        let o_weight = match o_weight {
+            Some(t) => t,
+            None => return Err(HipError::GenericError("Qwen2 O tensor not found".to_string())),
+        };
+
+        // Validate output projection shape: [hidden_size, hidden_size]
+        let o_shape = o_weight.shape().dims();
+        if o_shape.len() != 2 {
+            return Err(HipError::GenericError(format!(
+                "Qwen2 output projection should be 2D, got {}D",
+                o_shape.len()
+            )));
+        }
+        if o_shape[0] != config.hidden_size || o_shape[1] != config.hidden_size {
+            return Err(HipError::GenericError(format!(
+                "Qwen2 output projection shape [{}, {}] doesn't match expected [{}, {}]",
+                o_shape[0], o_shape[1], config.hidden_size, config.hidden_size
+            )));
+        }
+
+        // Concatenate Q, K, V into fused QKV matrix
+        let qkv_weight = Self::concatenate_qkv_tensors(backend, q_weight, k_weight, v_weight, config)?;
+
+        Ok((qkv_weight, o_weight.clone()))
+    }
+
+    /// Map LLaMA-style attention weights (fused QKV with transformer.layers.N. prefix)
+    fn map_llama_attention_weights(
         backend: &HipBackend,
         config: &ModelConfig,
         gpu_tensors: &std::collections::HashMap<String, DeviceTensor>,
@@ -954,11 +1244,315 @@ impl ExecutionPlan {
         Ok((qkv_weight.clone(), o_weight.clone()))
     }
 
+    /// Concatenate separate Q, K, V tensors into a fused QKV matrix
+    ///
+    /// **Input shapes:**
+    /// - Q: [hidden_size, hidden_size]
+    /// - K: [hidden_size, head_dim] or [hidden_size, hidden_size]
+    /// - V: [hidden_size, head_dim] or [hidden_size, hidden_size]
+    ///
+    /// **Output shape:**
+    /// - QKV: [hidden_size, 3 * hidden_size]
+    ///
+    /// **Concatenation strategy:**
+    /// If K and V have shape [hidden_size, head_dim], we pad them to [hidden_size, hidden_size]
+    /// before concatenation. This ensures the output always has the expected shape.
+    fn concatenate_qkv_tensors(
+        backend: &HipBackend,
+        q_weight: &DeviceTensor,
+        k_weight: &DeviceTensor,
+        v_weight: &DeviceTensor,
+        config: &ModelConfig,
+    ) -> HipResult<DeviceTensor> {
+        let q_shape = q_weight.shape().dims();
+        let k_shape = k_weight.shape().dims();
+        let v_shape = v_weight.shape().dims();
+
+        // Validate Q shape
+        if q_shape.len() != 2 || q_shape[0] != config.hidden_size {
+            return Err(HipError::GenericError(format!(
+                "Q weight shape {:?} invalid, expected [hidden_size, hidden_size]",
+                q_shape
+            )));
+        }
+
+        // For Qwen2, K and V may be [hidden_size, head_dim] or [hidden_size, hidden_size]
+        let head_dim = config.head_dim;
+
+        // Check if K and V need padding
+        let k_needs_padding = k_shape[1] != config.hidden_size;
+        let v_needs_padding = v_shape[1] != config.hidden_size;
+
+        // Helper function to pad tensor if needed
+        let pad_tensor = |tensor: &DeviceTensor, target_cols: usize| -> HipResult<DeviceTensor> {
+            let current_shape = tensor.shape().dims();
+            if current_shape[1] == target_cols {
+                return Ok(tensor.clone());
+            }
+
+            // Create padded tensor: [hidden_size, target_cols]
+            let padded_shape = TensorShape::from_dims(&[current_shape[0], target_cols]);
+            let mut padded = DeviceTensor::empty(backend, padded_shape.clone())?;
+
+            // Copy original data (column-major layout: copy column by column)
+            // For now, copy row by row from source
+            let host_data = tensor.to_host_vec()?;
+            let mut padded_data = vec![0.0f32; current_shape[0] * target_cols];
+
+            for row in 0..current_shape[0] {
+                for col in 0..current_shape[1] {
+                    let src_idx = row * current_shape[1] + col;
+                    let dst_idx = row * target_cols + col;
+                    padded_data[dst_idx] = host_data[src_idx];
+                }
+            }
+
+            DeviceTensor::from_host_vec(backend, padded_data, padded_shape)
+        };
+
+        // Pad K and V if necessary
+        let k_padded = pad_tensor(k_weight, config.hidden_size)?;
+        let v_padded = pad_tensor(v_weight, config.hidden_size)?;
+
+        // Concatenate Q, K, V along dimension 1 (columns)
+        // Output shape: [hidden_size, 3 * hidden_size]
+        let qkv_shape = TensorShape::from_dims(&[config.hidden_size, 3 * config.hidden_size]);
+        let mut qkv_weight = DeviceTensor::empty(backend, qkv_shape.clone())?;
+
+        // Copy Q, K, V data into QKV tensor
+        let q_host = q_weight.to_host_vec()?;
+        let k_host = k_padded.to_host_vec()?;
+        let v_host = v_padded.to_host_vec()?;
+
+        let mut qkv_host = vec![0.0f32; config.hidden_size * 3 * config.hidden_size];
+
+        // Copy Q to first third
+        for i in 0..q_host.len() {
+            qkv_host[i] = q_host[i];
+        }
+
+        // Copy K to middle third
+        let k_offset = config.hidden_size * config.hidden_size;
+        for i in 0..k_host.len() {
+            qkv_host[k_offset + i] = k_host[i];
+        }
+
+        // Copy V to last third
+        let v_offset = 2 * config.hidden_size * config.hidden_size;
+        for i in 0..v_host.len() {
+            qkv_host[v_offset + i] = v_host[i];
+        }
+
+        DeviceTensor::from_host_vec(backend, qkv_host, qkv_shape.clone())
+    }
+
+    /// Validate and optionally transpose MLP weight tensor
+    ///
+    /// Validates that the tensor has shape [dim1, dim2] or [dim2, dim1].
+    /// If transposed, returns a transposed copy. Otherwise returns the original.
+    fn validate_and_transpose_mlp_weight(
+        backend: &HipBackend,
+        weight: &DeviceTensor,
+        name: &str,
+        expected_dim1: usize,
+        expected_dim2: usize,
+    ) -> HipResult<DeviceTensor> {
+        let shape = weight.shape().dims();
+
+        if shape.len() != 2 {
+            return Err(HipError::GenericError(format!(
+                "{} weight should be 2D, got {}D",
+                name,
+                shape.len()
+            )));
+        }
+
+        // Check if shape matches [expected_dim1, expected_dim2]
+        if shape[0] == expected_dim1 && shape[1] == expected_dim2 {
+            return Ok(weight.clone());
+        }
+
+        // Check if shape matches [expected_dim2, expected_dim1] (transposed)
+        if shape[0] == expected_dim2 && shape[1] == expected_dim1 {
+            // Transpose the tensor
+            return Self::transpose_2d_tensor(backend, weight);
+        }
+
+        // Shape doesn't match either orientation
+        Err(HipError::GenericError(format!(
+            "{} weight shape [{}, {}] doesn't match expected [{}, {}] or [{}, {}]",
+            name, shape[0], shape[1], expected_dim1, expected_dim2, expected_dim2, expected_dim1
+        )))
+    }
+
     /// Map MLP weights from GGUF tensors for a specific layer
     ///
     /// Extracts feed-forward network weights for transformer MLP layers.
-    /// Supports multiple naming conventions for different model architectures.
+    /// Adapts to the detected model architecture.
+    ///
+    /// **Supported Architectures:**
+    /// - **Qwen2**: Uses `blk.N.ffn_gate.weight`, `blk.N.ffn_up.weight`, `blk.N.ffn_down.weight`
+    /// - **LLaMA**: Uses `transformer.layers.N.mlp.gate_proj.weight`, etc.
+    /// - **Mistral**: Uses `model.layers.N.mlp.gate_proj.weight`, etc.
     fn map_mlp_weights(
+        backend: &HipBackend,
+        config: &ModelConfig,
+        gpu_tensors: &std::collections::HashMap<String, DeviceTensor>,
+        layer_idx: usize,
+        architecture: &Architecture,
+    ) -> HipResult<(DeviceTensor, DeviceTensor, DeviceTensor)> {
+        let prefix = architecture.layer_prefix(layer_idx);
+
+        // Try multiple naming variants for each component
+        let gate_variants = vec![
+            format!("{}.ffn_gate.weight", prefix),  // Qwen2-style
+            format!("{}.mlp.gate_proj.weight", prefix),  // LLaMA/Mistral-style
+            format!("{}.feed_forward.w1.weight", prefix),  // Alternative
+            format!("{}.mlp.c_fc.weight", prefix),  // GPT-style
+        ];
+
+        let up_variants = vec![
+            format!("{}.ffn_up.weight", prefix),  // Qwen2-style
+            format!("{}.mlp.up_proj.weight", prefix),  // LLaMA/Mistral-style
+            format!("{}.feed_forward.w3.weight", prefix),  // Alternative
+            format!("{}.mlp.c_proj.weight", prefix),  // GPT-style
+        ];
+
+        let down_variants = vec![
+            format!("{}.ffn_down.weight", prefix),  // Qwen2-style
+            format!("{}.mlp.down_proj.weight", prefix),  // LLaMA/Mistral-style
+            format!("{}.feed_forward.w2.weight", prefix),  // Alternative
+        ];
+
+        let gate_weight = gate_variants
+            .iter()
+            .find_map(|name| gpu_tensors.get(name))
+            .ok_or_else(|| {
+                HipError::GenericError(format!(
+                    "No gate projection weights found for layer {} (tried: {})",
+                    layer_idx,
+                    gate_variants.join(", ")
+                ))
+            })?;
+
+        let up_weight = up_variants
+            .iter()
+            .find_map(|name| gpu_tensors.get(name))
+            .ok_or_else(|| {
+                HipError::GenericError(format!(
+                    "No up projection weights found for layer {} (tried: {})",
+                    layer_idx,
+                    up_variants.join(", ")
+                ))
+            })?;
+
+        let down_weight = down_variants
+            .iter()
+            .find_map(|name| gpu_tensors.get(name))
+            .ok_or_else(|| {
+                HipError::GenericError(format!(
+                    "No down projection weights found for layer {} (tried: {})",
+                    layer_idx,
+                    down_variants.join(", ")
+                ))
+            })?;
+
+        // Validate and potentially transpose tensors to match expected shapes
+        let validated_gate = Self::validate_and_transpose_mlp_weight(
+            backend,
+            gate_weight,
+            "gate",
+            config.hidden_size,
+            config.intermediate_size,
+        )?;
+
+        let validated_up = Self::validate_and_transpose_mlp_weight(
+            backend,
+            up_weight,
+            "up",
+            config.hidden_size,
+            config.intermediate_size,
+        )?;
+
+        let validated_down = Self::validate_and_transpose_mlp_weight(
+            backend,
+            down_weight,
+            "down",
+            config.intermediate_size,
+            config.hidden_size,
+        )?;
+
+        Ok((validated_gate, validated_up, validated_down))
+    }
+
+    /// Try to map Qwen2-style MLP weights (blk.N.ffn_* prefix)
+    ///
+    /// Qwen2 tensor names:
+    /// - `blk.N.ffn_gate.weight` [intermediate_size, hidden_size] or [hidden_size, intermediate_size]
+    /// - `blk.N.ffn_up.weight` [intermediate_size, hidden_size] or [hidden_size, intermediate_size]
+    /// - `blk.N.ffn_down.weight` [hidden_size, intermediate_size] or [intermediate_size, hidden_size]
+    ///
+    /// Returns `Err` if Qwen2-style tensors are not found.
+    fn try_map_qwen2_mlp_weights(
+        backend: &HipBackend,
+        config: &ModelConfig,
+        gpu_tensors: &std::collections::HashMap<String, DeviceTensor>,
+        layer_idx: usize,
+    ) -> HipResult<(DeviceTensor, DeviceTensor, DeviceTensor)> {
+        let blk_prefix = format!("blk.{}", layer_idx);
+
+        // Qwen2 tensor names
+        let gate_name = format!("{}.ffn_gate.weight", blk_prefix);
+        let up_name = format!("{}.ffn_up.weight", blk_prefix);
+        let down_name = format!("{}.ffn_down.weight", blk_prefix);
+
+        // Try to find all MLP tensors
+        let gate_weight = gpu_tensors.get(&gate_name);
+        let up_weight = gpu_tensors.get(&up_name);
+        let down_weight = gpu_tensors.get(&down_name);
+
+        // If any tensor is missing, this is not a Qwen2 model
+        let gate_weight = match gate_weight {
+            Some(t) => t,
+            None => return Err(HipError::GenericError("Qwen2 FFN gate tensor not found".to_string())),
+        };
+        let up_weight = match up_weight {
+            Some(t) => t,
+            None => return Err(HipError::GenericError("Qwen2 FFN up tensor not found".to_string())),
+        };
+        let down_weight = match down_weight {
+            Some(t) => t,
+            None => return Err(HipError::GenericError("Qwen2 FFN down tensor not found".to_string())),
+        };
+
+        // Validate and potentially transpose tensors to match expected shapes
+        let validated_gate = Self::validate_and_transpose_mlp_weight(
+            backend,
+            gate_weight,
+            "ffn_gate",
+            config.hidden_size,
+            config.intermediate_size,
+        )?;
+        let validated_up = Self::validate_and_transpose_mlp_weight(
+            backend,
+            up_weight,
+            "ffn_up",
+            config.hidden_size,
+            config.intermediate_size,
+        )?;
+        let validated_down = Self::validate_and_transpose_mlp_weight(
+            backend,
+            down_weight,
+            "ffn_down",
+            config.intermediate_size,
+            config.hidden_size,
+        )?;
+
+        Ok((validated_gate, validated_up, validated_down))
+    }
+
+    /// Map LLaMA-style MLP weights (transformer.layers.N.* prefix)
+    fn map_llama_mlp_weights(
         backend: &HipBackend,
         config: &ModelConfig,
         gpu_tensors: &std::collections::HashMap<String, DeviceTensor>,
@@ -1091,8 +1685,214 @@ impl ExecutionPlan {
     /// Map layer normalization weights from GGUF tensors for a specific layer
     ///
     /// Extracts attention and post-attention layer normalization weights.
-    /// Supports multiple naming conventions for different model architectures.
+    /// Adapts to the detected model architecture.
+    ///
+    /// **Supported Architectures:**
+    /// - **Qwen2**: Uses `blk.N.attn_norm.weight` and `blk.N.ffn_norm.weight`
+    /// - **LLaMA**: Uses `transformer.layers.N.attention_norm.weight` and `transformer.layers.N.ffn_norm.weight`
+    /// - **Mistral**: Uses `model.layers.N.input_layernorm.weight` and `model.layers.N.post_attention_layernorm.weight`
     fn map_layer_norm_weights(
+        backend: &HipBackend,
+        config: &ModelConfig,
+        gpu_tensors: &std::collections::HashMap<String, DeviceTensor>,
+        layer_idx: usize,
+        architecture: &Architecture,
+    ) -> HipResult<(DeviceTensor, DeviceTensor, DeviceTensor, DeviceTensor)> {
+        let prefix = architecture.layer_prefix(layer_idx);
+
+        // Try multiple naming variants for attention norm (input/first layer norm)
+        let attn_norm_variants = vec![
+            format!("{}.attn_norm.weight", prefix),  // Qwen2-style
+            format!("{}.attention_norm.weight", prefix),  // LLaMA-style
+            format!("{}.input_layernorm.weight", prefix),  // Mistral-style
+            format!("{}.ln_1.weight", prefix),  // GPT-style
+            format!("{}.pre_attention_layernorm.weight", prefix),  // Alternative
+        ];
+
+        // Try multiple naming variants for FFN norm (output/second layer norm)
+        let ffn_norm_variants = vec![
+            format!("{}.ffn_norm.weight", prefix),  // Qwen2-style
+            format!("{}.post_attention_layernorm.weight", prefix),  // Mistral-style
+            format!("{}.ln_2.weight", prefix),  // GPT-style
+        ];
+
+        let attn_norm_weight = attn_norm_variants
+            .iter()
+            .find_map(|name| gpu_tensors.get(name))
+            .ok_or_else(|| {
+                HipError::GenericError(format!(
+                    "No attention layer norm weights found for layer {} (tried: {})",
+                    layer_idx,
+                    attn_norm_variants.join(", ")
+                ))
+            })?;
+
+        let ffn_norm_weight = ffn_norm_variants
+            .iter()
+            .find_map(|name| gpu_tensors.get(name))
+            .ok_or_else(|| {
+                HipError::GenericError(format!(
+                    "No FFN layer norm weights found for layer {} (tried: {})",
+                    layer_idx,
+                    ffn_norm_variants.join(", ")
+                ))
+            })?;
+
+        // Validate attention norm weight shape: [hidden_size]
+        let attn_norm_shape = attn_norm_weight.shape().dims();
+        if attn_norm_shape.len() != 1 || attn_norm_shape[0] != config.hidden_size {
+            return Err(HipError::GenericError(format!(
+                "Attention layer norm weight shape {:?} doesn't match expected [{}]",
+                attn_norm_shape, config.hidden_size
+            )));
+        }
+
+        // Validate FFN norm weight shape: [hidden_size]
+        let ffn_norm_shape = ffn_norm_weight.shape().dims();
+        if ffn_norm_shape.len() != 1 || ffn_norm_shape[0] != config.hidden_size {
+            return Err(HipError::GenericError(format!(
+                "FFN layer norm weight shape {:?} doesn't match expected [{}]",
+                ffn_norm_shape, config.hidden_size
+            )));
+        }
+
+        // Try to find bias tensors (optional - create zero bias if not found)
+        let create_zero_bias = || -> HipResult<DeviceTensor> {
+            let bias_shape = TensorShape::from_dims(&[config.hidden_size]);
+            let zeros = vec![0.0f32; config.hidden_size];
+            DeviceTensor::from_host_vec(backend, zeros, bias_shape)
+        };
+
+        let attn_norm_bias_variants = vec![
+            format!("{}.attn_norm.bias", prefix),
+            format!("{}.attention_norm.bias", prefix),
+            format!("{}.input_layernorm.bias", prefix),
+        ];
+
+        let ffn_norm_bias_variants = vec![
+            format!("{}.ffn_norm.bias", prefix),
+            format!("{}.post_attention_layernorm.bias", prefix),
+        ];
+
+        let attn_norm_bias = attn_norm_bias_variants
+            .iter()
+            .find_map(|name| gpu_tensors.get(name))
+            .cloned()
+            .unwrap_or_else(|| create_zero_bias().unwrap());
+
+        let ffn_norm_bias = ffn_norm_bias_variants
+            .iter()
+            .find_map(|name| gpu_tensors.get(name))
+            .cloned()
+            .unwrap_or_else(|| create_zero_bias().unwrap());
+
+        Ok((
+            attn_norm_weight.clone(),
+            attn_norm_bias,
+            ffn_norm_weight.clone(),
+            ffn_norm_bias,
+        ))
+    }
+
+    /// Try to map Qwen2-style layer norm weights (blk.N.attn_norm and blk.N.ffn_norm)
+    ///
+    /// Qwen2 tensor names:
+    /// - `blk.N.attn_norm.weight` [hidden_size]
+    /// - `blk.N.attn_norm.bias` [hidden_size] (optional)
+    /// - `blk.N.ffn_norm.weight` [hidden_size]
+    /// - `blk.N.ffn_norm.bias` [hidden_size] (optional)
+    ///
+    /// Returns `Err` if Qwen2-style tensors are not found.
+    fn try_map_qwen2_layer_norm_weights(
+        backend: &HipBackend,
+        config: &ModelConfig,
+        gpu_tensors: &std::collections::HashMap<String, DeviceTensor>,
+        layer_idx: usize,
+    ) -> HipResult<(DeviceTensor, DeviceTensor, DeviceTensor, DeviceTensor)> {
+        let blk_prefix = format!("blk.{}", layer_idx);
+
+        // Qwen2 tensor names
+        let attn_norm_weight_name = format!("{}.attn_norm.weight", blk_prefix);
+        let attn_norm_bias_name = format!("{}.attn_norm.bias", blk_prefix);
+        let ffn_norm_weight_name = format!("{}.ffn_norm.weight", blk_prefix);
+        let ffn_norm_bias_name = format!("{}.ffn_norm.bias", blk_prefix);
+
+        // Try to find layer norm tensors (bias is optional)
+        let attn_norm_weight = match gpu_tensors.get(&attn_norm_weight_name) {
+            Some(t) => t,
+            None => return Err(HipError::GenericError("Qwen2 attn_norm.weight not found".to_string())),
+        };
+        let attn_norm_bias = gpu_tensors.get(&attn_norm_bias_name);
+        let ffn_norm_weight = match gpu_tensors.get(&ffn_norm_weight_name) {
+            Some(t) => t,
+            None => return Err(HipError::GenericError("Qwen2 ffn_norm.weight not found".to_string())),
+        };
+        let ffn_norm_bias = gpu_tensors.get(&ffn_norm_bias_name);
+
+        // Validate shapes
+        let attn_norm_shape = attn_norm_weight.shape().dims();
+        if attn_norm_shape.len() != 1 || attn_norm_shape[0] != config.hidden_size {
+            return Err(HipError::GenericError(format!(
+                "Qwen2 attn_norm.weight shape {:?} doesn't match expected [{}]",
+                attn_norm_shape, config.hidden_size
+            )));
+        }
+
+        let ffn_norm_shape = ffn_norm_weight.shape().dims();
+        if ffn_norm_shape.len() != 1 || ffn_norm_shape[0] != config.hidden_size {
+            return Err(HipError::GenericError(format!(
+                "Qwen2 ffn_norm.weight shape {:?} doesn't match expected [{}]",
+                ffn_norm_shape, config.hidden_size
+            )));
+        }
+
+        // Create zero bias if not present
+        let create_zero_bias = || -> HipResult<DeviceTensor> {
+            let bias_shape = TensorShape::from_dims(&[config.hidden_size]);
+            let _bias_tensor = DeviceTensor::empty(backend, bias_shape.clone())?;
+            // Fill with zeros by uploading a zero-filled host buffer
+            let zeros = vec![0.0f32; config.hidden_size];
+            DeviceTensor::from_host_vec(backend, zeros, bias_shape)
+        };
+
+        let attn_norm_bias = match attn_norm_bias {
+            Some(bias) => {
+                let bias_shape = bias.shape().dims();
+                if bias_shape.len() != 1 || bias_shape[0] != config.hidden_size {
+                    return Err(HipError::GenericError(format!(
+                        "Qwen2 attn_norm.bias shape {:?} doesn't match expected [{}]",
+                        bias_shape, config.hidden_size
+                    )));
+                }
+                bias.clone()
+            }
+            None => create_zero_bias()?,
+        };
+
+        let ffn_norm_bias = match ffn_norm_bias {
+            Some(bias) => {
+                let bias_shape = bias.shape().dims();
+                if bias_shape.len() != 1 || bias_shape[0] != config.hidden_size {
+                    return Err(HipError::GenericError(format!(
+                        "Qwen2 ffn_norm.bias shape {:?} doesn't match expected [{}]",
+                        bias_shape, config.hidden_size
+                    )));
+                }
+                bias.clone()
+            }
+            None => create_zero_bias()?,
+        };
+
+        Ok((
+            attn_norm_weight.clone(),
+            attn_norm_bias,
+            ffn_norm_weight.clone(),
+            ffn_norm_bias,
+        ))
+    }
+
+    /// Map LLaMA-style layer norm weights (transformer.layers.N.*)
+    fn map_llama_layer_norm_weights(
         backend: &HipBackend,
         config: &ModelConfig,
         gpu_tensors: &std::collections::HashMap<String, DeviceTensor>,

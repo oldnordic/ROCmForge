@@ -3,6 +3,7 @@
 use crate::loader::mmap_loader::TensorShape;
 use std::ffi::{c_void, CString};
 use std::ptr;
+use std::sync::Arc;
 use thiserror::Error;
 
 // HIP FFI bindings
@@ -49,53 +50,54 @@ const hipMemcpyDeviceToHost: i32 = 2;
 const hipMemcpyDeviceToDevice: i32 = 3;
 const hipSuccess: i32 = 0;
 
+// Opaque buffer for hipDeviceProp_t - MUST be exactly 1472 bytes to match C's sizeof(hipDeviceProp_t)
+// CRITICAL: If C writes it, Rust must allocate exactly the same bytes.
+// Rule: Never "skip fields" in FFI structs. That's how demons enter memory.
+//
+// Generated via: hipcc -I/opt/rocm/include -D__HIP_PLATFORM_AMD__ ...
+//   C sizeof(hipDeviceProp_t) = 1472 bytes
+//
+// We use an opaque buffer + accessor methods to safely read fields at correct offsets.
+// This is safe, boring, and correct - no buffer overflow possible.
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct HipDeviceProp {
-    pub name: [std::os::raw::c_char; 256],
-    pub uuid: hipUUID,
-    pub luid: [std::os::raw::c_char; 8],
-    pub luidDeviceNodeMask: u32,
-    pub totalGlobalMem: usize,
-    pub sharedMemPerBlock: usize,
-    pub regsPerBlock: i32,
-    pub warpSize: i32,
-    pub memPitch: usize,
-    pub maxThreadsPerBlock: i32,
-    pub maxThreadsDim: [i32; 3],
-    pub maxGridSize: [i32; 3],
-    pub clockRate: i32,
-    pub totalConstMem: usize,
-    pub major: i32,
-    pub minor: i32,
-    pub textureAlignment: usize,
-    pub texturePitchAlignment: usize,
-    pub deviceOverlap: i32,
-    pub multiProcessorCount: i32,
-    pub kernelExecTimeoutEnabled: i32,
-    pub integrated: i32,
-    pub canMapHostMemory: i32,
-    pub computeMode: i32,
-    pub maxTexture1D: i32,
-    pub maxTexture1DMipmap: i32,
-    pub maxTexture1DLinear: i32,
-    pub maxTexture2D: [i32; 2],
-    pub maxTexture2DMipmap: [i32; 2],
-    pub maxTexture2DLinear: [i32; 3],
-    pub maxTexture2DGather: [i32; 2],
-    pub maxTexture3D: [i32; 3],
-    pub maxTexture3DAlt: [i32; 3],
-    pub maxTextureCubemap: i32,
-    pub maxTexture1DLayered: [i32; 2],
-    pub maxTexture2DLayered: [i32; 3],
-    pub maxTextureCubemapLayered: [i32; 2],
-    pub maxSurface1D: i32,
-    pub maxSurface2D: [i32; 2],
-    pub maxSurface3D: [i32; 3],
-    pub maxSurface1DLayered: [i32; 2],
-    pub maxSurface2DLayered: [i32; 3],
-    pub maxSurfaceCubemap: i32,
-    // Note: Skipping some advanced fields for simplicity
+    _buffer: [u8; 1472],  // Exact C size - no more, no less
+}
+
+// Field offsets verified against hip_runtime_api.h
+// These are the ONLY fields we use in the codebase.
+impl HipDeviceProp {
+    // Offset of `name` field: char name[256]
+    const NAME_OFFSET: usize = 0;
+
+    // Offset of `totalGlobalMem` field: size_t totalGlobalMem
+    // After: name[256] (256) + uuid (16) + luid[8] (8) + luidDeviceNodeMask (4) = 284
+    const TOTAL_GLOBAL_MEM_OFFSET: usize = 284;
+
+    // Offset of `multiProcessorCount` field: int multiProcessorCount
+    // This is after all the texture/surface fields - verified with C code
+    const MULTI_PROCESSOR_COUNT_OFFSET: usize = 508;
+
+    /// Get device name (null-terminated C string)
+    pub fn name(&self) -> String {
+        let name_bytes = &self._buffer[Self::NAME_OFFSET..Self::NAME_OFFSET + 256];
+        let len = name_bytes.iter().position(|&c| c == 0).unwrap_or(256);
+        String::from_utf8_lossy(&name_bytes[..len]).into_owned()
+    }
+
+    /// Get total global memory in bytes
+    pub fn total_global_mem(&self) -> u64 {
+        // Read u64 at offset (size_t is 64-bit on AMD64)
+        let bytes = &self._buffer[Self::TOTAL_GLOBAL_MEM_OFFSET..Self::TOTAL_GLOBAL_MEM_OFFSET + 8];
+        u64::from_ne_bytes(bytes.try_into().unwrap())
+    }
+
+    /// Get number of multiprocessors (compute units)
+    pub fn multi_processor_count(&self) -> i32 {
+        let bytes = &self._buffer[Self::MULTI_PROCESSOR_COUNT_OFFSET..Self::MULTI_PROCESSOR_COUNT_OFFSET + 4];
+        i32::from_ne_bytes(bytes.try_into().unwrap())
+    }
 }
 
 #[repr(C)]
@@ -106,55 +108,11 @@ pub struct hipUUID {
 
 impl Default for HipDeviceProp {
     fn default() -> Self {
-        HipDeviceProp {
-            name: [0; 256],
-            uuid: hipUUID { bytes: [0; 16] },
-            luid: [0; 8],
-            luidDeviceNodeMask: 0,
-            totalGlobalMem: 0,
-            sharedMemPerBlock: 0,
-            regsPerBlock: 0,
-            warpSize: 32,
-            memPitch: 0,
-            maxThreadsPerBlock: 1024,
-            maxThreadsDim: [1024, 1024, 64],
-            maxGridSize: [2147483647, 65535, 65535],
-            clockRate: 0,
-            totalConstMem: 0,
-            major: 0,
-            minor: 0,
-            textureAlignment: 0,
-            texturePitchAlignment: 0,
-            deviceOverlap: 0,
-            multiProcessorCount: 0,
-            kernelExecTimeoutEnabled: 0,
-            integrated: 0,
-            canMapHostMemory: 0,
-            computeMode: 0,
-            maxTexture1D: 0,
-            maxTexture1DMipmap: 0,
-            maxTexture1DLinear: 0,
-            maxTexture2D: [0, 0],
-            maxTexture2DMipmap: [0, 0],
-            maxTexture2DLinear: [0, 0, 0],
-            maxTexture2DGather: [0, 0],
-            maxTexture3D: [0, 0, 0],
-            maxTexture3DAlt: [0, 0, 0],
-            maxTextureCubemap: 0,
-            maxTexture1DLayered: [0, 0],
-            maxTexture2DLayered: [0, 0, 0],
-            maxTextureCubemapLayered: [0, 0],
-            maxSurface1D: 0,
-            maxSurface2D: [0, 0],
-            maxSurface3D: [0, 0, 0],
-            maxSurface1DLayered: [0, 0],
-            maxSurface2DLayered: [0, 0, 0],
-            maxSurfaceCubemap: 0,
-        }
+        HipDeviceProp { _buffer: [0u8; 1472] }
     }
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum HipError {
     #[error("HIP initialization failed: {0}")]
     InitializationFailed(String),
@@ -187,20 +145,27 @@ impl From<crate::model::kv_cache::KVCacheError> for HipError {
 
 // SAFETY: HipStream is Send+Sync because it only contains a raw pointer
 // and we ensure thread-safe access through proper synchronization
+// NOTE: HipStream does NOT implement Clone because cloning raw pointers
+// would cause double-free when both instances are dropped.
+// NOTE: #[repr(C)] is CRITICAL for FFI compatibility - ensures C-compatible layout
 unsafe impl Send for HipStream {}
 unsafe impl Sync for HipStream {}
 
-#[derive(Debug, Clone)]
+#[repr(C)]
+#[derive(Debug)]
 pub struct HipStream {
     stream: *mut c_void,
 }
 
 impl HipStream {
     pub fn new() -> HipResult<Self> {
+        eprintln!("DEBUG: HipStream::new: Creating HIP stream...");
         let mut stream: *mut c_void = ptr::null_mut();
 
         // Create HIP stream
+        eprintln!("DEBUG: HipStream::new: Calling hipStreamCreate...");
         let result = unsafe { hipStreamCreate(&mut stream) };
+        eprintln!("DEBUG: HipStream::new: hipStreamCreate returned result={}, stream={:?}", result, stream);
 
         if result != hipSuccess {
             return Err(HipError::DeviceError(format!(
@@ -215,6 +180,7 @@ impl HipStream {
             ));
         }
 
+        eprintln!("DEBUG: HipStream::new: HIP stream created successfully");
         Ok(HipStream { stream })
     }
 
@@ -243,9 +209,11 @@ impl Drop for HipStream {
 
 // SAFETY: HipBuffer is Send+Sync because it only contains a raw pointer
 // and we ensure thread-safe access through proper synchronization
+// NOTE: #[repr(C)] is CRITICAL for FFI compatibility
 unsafe impl Send for HipBuffer {}
 unsafe impl Sync for HipBuffer {}
 
+#[repr(C)]
 #[derive(Debug, Clone)]
 pub struct HipBuffer {
     ptr: *mut c_void,
@@ -423,9 +391,11 @@ impl Drop for HipBuffer {
 
 // SAFETY: HipModule is Send+Sync because it only contains a raw pointer
 // and we ensure thread-safe access through proper synchronization
+// NOTE: #[repr(C)] is CRITICAL for FFI compatibility
 unsafe impl Send for HipModule {}
 unsafe impl Sync for HipModule {}
 
+#[repr(C)]
 #[derive(Debug)]
 pub struct HipModule {
     module: *mut c_void,
@@ -453,9 +423,11 @@ impl Drop for HipModule {
 
 // SAFETY: HipKernel is Send+Sync because it only contains a raw pointer
 // and we ensure thread-safe access through proper synchronization
+// NOTE: #[repr(C)] is CRITICAL for FFI compatibility
 unsafe impl Send for HipKernel {}
 unsafe impl Sync for HipKernel {}
 
+#[repr(C)]
 #[derive(Debug)]
 pub struct HipKernel {
     func: *mut c_void,
@@ -474,29 +446,71 @@ impl HipKernel {
 #[derive(Debug, Clone)]
 pub struct HipDevice {
     pub device_id: i32,
-    pub name: String,
+    pub name: String,  // Revert to String for now
     pub memory: usize,
     pub compute_units: i32,
 }
 
-#[derive(Debug, Clone)]
+// NOTE: #[repr(C)] is NOT used here because HipBackend contains Arc<T>
+// which is NOT C-compatible. Using repr(C) would cause ABI violations.
+// See docs/deep_crash_analysis.md for details.
+#[derive(Debug)]
 pub struct HipBackend {
     device: HipDevice,
-    stream: HipStream,
+    stream: Arc<HipStream>,
 }
 
+// Manual Clone implementation that clones the Arc (shared ownership)
+// This is safe because Arc ensures the stream is only destroyed once
+impl Clone for HipBackend {
+    fn clone(&self) -> Self {
+        HipBackend {
+            device: self.device.clone(),
+            stream: Arc::clone(&self.stream),
+        }
+    }
+}
+
+// WORKAROUND: Singleton pattern to avoid ABI issues with returning HipBackend
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+
+static GLOBAL_BACKEND: Mutex<Option<Arc<HipBackend>>> = Mutex::new(None);
+static GLOBAL_INIT_CALLED: AtomicBool = AtomicBool::new(false);
+
 impl HipBackend {
-    pub fn new() -> HipResult<Self> {
-        // Initialize HIP first
+    /// Create a new HIP backend singleton (thread-safe)
+    /// Returns Arc<HipBackend> for shared ownership across the codebase
+    pub fn new() -> HipResult<Arc<Self>> {
+        // Double-checked locking pattern for singleton initialization
+        if GLOBAL_INIT_CALLED.load(Ordering::Acquire) {
+            return Ok(GLOBAL_BACKEND.lock().unwrap()
+                .as_ref()
+                .map(Arc::clone)
+                .expect("Global backend initialized but not set"));
+        }
+
+        // Initialize under lock
+        let mut guard = GLOBAL_BACKEND.lock().unwrap();
+        if GLOBAL_INIT_CALLED.load(Ordering::Acquire) {
+            return Ok(guard.as_ref().map(Arc::clone)
+                .expect("Global backend initialized but not set"));
+        }
+
+        // Initialize HIP
         Self::initialize_hip()?;
 
         // Detect AMD GPU
         let device = Self::detect_amd_gpu()?;
 
-        // Create stream
-        let stream = HipStream::new()?;
+        // Create stream wrapped in Arc for shared ownership
+        let stream = Arc::new(HipStream::new()?);
 
-        Ok(HipBackend { device, stream })
+        let backend = Arc::new(HipBackend { device, stream });
+        *guard = Some(backend.clone());
+        GLOBAL_INIT_CALLED.store(true, Ordering::Release);
+
+        Ok(backend)
     }
 
     fn detect_amd_gpu() -> HipResult<HipDevice> {
@@ -523,23 +537,13 @@ impl HipBackend {
                 println!(
                     "Device {}: {} - {}MB VRAM",
                     device_id,
-                    unsafe {
-                        // Convert name from C string to Rust string
-                        let name_len = props
-                            .name
-                            .iter()
-                            .position(|&c| c == 0)
-                            .unwrap_or(props.name.len());
-                        let name_slice =
-                            std::slice::from_raw_parts(props.name.as_ptr() as *const u8, name_len);
-                        String::from_utf8_lossy(name_slice).into_owned()
-                    },
-                    props.totalGlobalMem / (1024 * 1024)
+                    props.name(),
+                    props.total_global_mem() / (1024 * 1024)
                 );
 
                 // Prefer device with most memory (likely discrete GPU)
-                if props.totalGlobalMem > max_memory {
-                    max_memory = props.totalGlobalMem;
+                if props.total_global_mem() > max_memory {
+                    max_memory = props.total_global_mem();
                     best_device = device_id;
                 }
             }
@@ -556,28 +560,11 @@ impl HipBackend {
             )));
         }
 
-        let device_name = unsafe {
-            // Find null terminator in name array
-            let mut len = 0;
-            for i in 0..props.name.len() {
-                if props.name[i] == 0 {
-                    len = i;
-                    break;
-                }
-            }
-            if len == 0 {
-                "Unknown".to_string()
-            } else {
-                let name_slice = std::slice::from_raw_parts(props.name.as_ptr() as *const u8, len);
-                String::from_utf8_lossy(name_slice).into_owned()
-            }
-        };
-
         Ok(HipDevice {
             device_id: best_device,
-            name: device_name,
-            memory: props.totalGlobalMem,
-            compute_units: props.multiProcessorCount,
+            name: props.name(),
+            memory: props.total_global_mem() as usize,
+            compute_units: props.multi_processor_count(),
         })
     }
 
@@ -1036,7 +1023,7 @@ impl DeviceTensor {
     }
 
     /// Get reference to HIP backend (this is a simplified approach)
-    pub fn hip_backend() -> HipResult<HipBackend> {
+    pub fn hip_backend() -> HipResult<Arc<HipBackend>> {
         HipBackend::new()
     }
 
@@ -1160,23 +1147,7 @@ impl HipBackend {
         &self,
         config: &crate::model::config::ModelConfig,
     ) -> HipResult<ModelRuntime> {
-        let scratch = self.create_scratch_buffers(config)?;
-        let kv_cache = crate::model::kv_cache::KVCache::new(
-            self,
-            config.num_hidden_layers,
-            config.num_attention_heads,
-            config.head_dim,
-            config.max_position_embeddings,
-        )
-        .map_err(|e| HipError::GenericError(format!("KV cache creation failed: {}", e)))?;
-
-        Ok(ModelRuntime {
-            backend: self.clone(),
-            execution_plan: None,
-            weight_buffers: Vec::new(),
-            scratch,
-            kv_cache,
-        })
+        ModelRuntime::new_with_config(config.clone())
     }
 
     /// MLP (SwiGLU) forward pass
@@ -1633,7 +1604,7 @@ impl HipBackend {
 /// Model runtime for managing device buffers and weights
 #[derive(Debug)]
 pub struct ModelRuntime {
-    backend: HipBackend,
+    backend: Arc<HipBackend>,
     execution_plan: Option<crate::model::execution_plan::ExecutionPlan>,
     weight_buffers: Vec<usize>, // Store sizes instead of buffers
     scratch: crate::backend::scratch::ScratchBufferManager,
@@ -1643,7 +1614,9 @@ pub struct ModelRuntime {
 impl ModelRuntime {
     /// Create new model runtime
     pub fn new() -> HipResult<Self> {
-        let backend = HipBackend::new()?;
+        // HipBackend::new() now returns &'static HipBackend, clone it
+        let backend_ref = HipBackend::new()?;
+        let backend = backend_ref.clone();
         let scratch = crate::backend::scratch::ScratchBufferManager::new(
             &backend, 32,   // num_heads
             2048, // max_seq_len
@@ -1671,6 +1644,7 @@ impl ModelRuntime {
 
     /// Create new model runtime with config
     pub fn new_with_config(config: crate::model::config::ModelConfig) -> HipResult<Self> {
+        // HipBackend::new() returns Arc<HipBackend>
         let backend = HipBackend::new()?;
         let scratch = crate::backend::scratch::ScratchBufferManager::new(
             &backend,
@@ -1807,36 +1781,48 @@ impl ModelRuntime {
 
     /// Load model from GGUF file
     pub fn load_model(&self, path: &str) -> HipResult<Self> {
+        eprintln!("DEBUG: load_model: Loading GGUF from path: {}", path);
+
         let loader = crate::loader::gguf::GgufLoader::new(path)
             .map_err(|e| HipError::GenericError(format!("Failed to load GGUF: {}", e)))?;
+        eprintln!("DEBUG: load_model: GgufLoader created successfully");
 
         let config = loader
             .to_model_config()
             .map_err(|e| HipError::GenericError(format!("Failed to create config: {}", e)))?;
+        eprintln!("DEBUG: load_model: Config created - layers={}, heads={}, hidden={}",
+                 config.num_hidden_layers, config.num_attention_heads, config.hidden_size);
 
+        eprintln!("DEBUG: load_model: Creating scratch buffer manager...");
         let scratch = crate::backend::scratch::ScratchBufferManager::new(
-            self.backend(),
+            &self.backend,
             config.num_attention_heads,
             config.max_position_embeddings,
             config.head_dim,
             config.hidden_size,
         )
         .map_err(|e| HipError::GenericError(format!("Scratch buffer creation failed: {}", e)))?;
+        eprintln!("DEBUG: load_model: Scratch buffer manager created");
 
+        eprintln!("DEBUG: load_model: Creating KV cache...");
         let kv_cache = crate::model::kv_cache::KVCache::new(
-            self.backend(),
+            &self.backend,
             config.num_hidden_layers,
             config.num_attention_heads,
             config.head_dim,
             config.max_position_embeddings,
         )
         .map_err(|e| HipError::GenericError(format!("KV cache creation failed: {}", e)))?;
+        eprintln!("DEBUG: load_model: KV cache created");
 
+        eprintln!("DEBUG: load_model: Creating execution plan from GGUF...");
         let execution_plan =
-            crate::model::execution_plan::ExecutionPlan::from_gguf(self.backend(), &loader)?;
+            crate::model::execution_plan::ExecutionPlan::from_gguf(&self.backend, &loader)?;
+        eprintln!("DEBUG: load_model: Execution plan created successfully");
 
+        eprintln!("DEBUG: load_model: ModelRuntime created successfully");
         Ok(ModelRuntime {
-            backend: self.backend().clone(),
+            backend: self.backend.clone(),
             execution_plan: Some(execution_plan),
             weight_buffers: Vec::new(),
             scratch,
@@ -1849,17 +1835,17 @@ impl ModelRuntime {
         &self,
         execution_plan: crate::model::execution_plan::ExecutionPlan,
     ) -> HipResult<Self> {
-        Self::from_execution_plan_with_backend(self.backend(), execution_plan)
+        Self::from_execution_plan_with_backend(execution_plan)
     }
 
-    /// Create model runtime from execution plan using an explicit backend
+    /// Create model runtime from execution plan using the singleton backend
     pub fn from_execution_plan_with_backend(
-        backend: &HipBackend,
         execution_plan: crate::model::execution_plan::ExecutionPlan,
     ) -> HipResult<Self> {
+        let backend = HipBackend::new()?;
         let config = execution_plan.config();
         let scratch = crate::backend::scratch::ScratchBufferManager::new(
-            backend,
+            &backend,
             config.num_attention_heads,
             config.max_position_embeddings,
             config.head_dim,
@@ -1868,7 +1854,7 @@ impl ModelRuntime {
         .map_err(|e| HipError::GenericError(format!("Scratch buffer creation failed: {}", e)))?;
 
         let kv_cache = crate::model::kv_cache::KVCache::new(
-            backend,
+            &backend,
             config.num_hidden_layers,
             config.num_attention_heads,
             config.head_dim,
@@ -1877,7 +1863,7 @@ impl ModelRuntime {
         .map_err(|e| HipError::GenericError(format!("KV cache creation failed: {}", e)))?;
 
         Ok(ModelRuntime {
-            backend: backend.clone(),
+            backend,
             execution_plan: Some(execution_plan),
             weight_buffers: Vec::new(),
             scratch,

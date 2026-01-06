@@ -23,7 +23,7 @@ pub enum GgufError {
 
 pub type GgufResult<T> = Result<T, GgufError>;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GgufDataType {
     F32,
     F16,
@@ -87,20 +87,29 @@ pub struct GgufModel {
 
 impl GgufModel {
     pub fn load<P: AsRef<Path>>(path: P) -> GgufResult<Self> {
+        eprintln!("DEBUG: Starting GGUF load...");
         let file = File::open(path)?;
         let mut reader = BufReader::new(file);
 
+        eprintln!("DEBUG: Reading header...");
         // Read header
         let header = Self::read_header(&mut reader)?;
+        eprintln!("DEBUG: Header read OK");
 
+        eprintln!("DEBUG: Reading metadata...");
         // Read metadata
         let metadata = Self::read_metadata(&mut reader, header.kv_count)?;
+        eprintln!("DEBUG: Metadata read OK");
 
+        eprintln!("DEBUG: Reading tensor info...");
         // Read tensor info
         let tensors = Self::read_tensor_info(&mut reader, header.tensor_count)?;
+        eprintln!("DEBUG: Tensor info read OK");
 
+        eprintln!("DEBUG: Reading tensor data...");
         // Read tensor data
         let tensors = Self::read_tensor_data(&mut reader, tensors)?;
+        eprintln!("DEBUG: Tensor data read OK");
 
         Ok(GgufModel {
             header,
@@ -137,36 +146,94 @@ impl GgufModel {
         kv_count: u64,
     ) -> GgufResult<HashMap<String, String>> {
         let mut metadata = HashMap::new();
+        eprintln!("DEBUG: Processing {} KV pairs...", kv_count);
 
-        for _ in 0..kv_count {
+        'metadata_loop: for i in 0..kv_count {
+            eprintln!("DEBUG: KV pair {}/{}", i + 1, kv_count);
+
+            // Read key length and key
             let key_len = reader.read_u64::<LittleEndian>()?;
+            eprintln!("DEBUG:   key_len={}", key_len);
+
+            if key_len > 10_000_000 {
+                return Err(GgufError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("key_len too large: {}", key_len)
+                )));
+            }
             let mut key = vec![0u8; key_len as usize];
             reader.read_exact(&mut key)?;
             let key = String::from_utf8_lossy(&key).to_string();
+            eprintln!("DEBUG:   key='{}'", key);
 
+            // Read value type (u32, 4 bytes)
             let value_type = reader.read_u32::<LittleEndian>()?;
-            let value_len = reader.read_u64::<LittleEndian>()?;
-            let mut value = vec![0u8; value_len as usize];
-            reader.read_exact(&mut value)?;
+            eprintln!("DEBUG:   value_type={}", value_type);
 
-            // For simplicity, convert all values to strings
+            // Read value data based on type
+            // Note: For some types (STRING, ARRAY), there's a value_len field.
+            // For fixed-size types (UINT32, etc.), the value follows directly.
             let value_str = match value_type {
-                1 | 2 | 3 | 4 | 5 | 6 => {
-                    // Numeric types
-                    format!("{:?}", value)
+                // UINT8 = 1
+                1 => {
+                    let val = reader.read_u8()?;
+                    format!("{}", val)
                 }
+                // UINT16 = 2
+                2 => {
+                    let val = reader.read_u16::<LittleEndian>()?;
+                    format!("{}", val)
+                }
+                // UINT32 = 4
+                4 => {
+                    let val = reader.read_u32::<LittleEndian>()?;
+                    format!("{}", val)
+                }
+                // INT32 = 5
+                5 => {
+                    let val = reader.read_i32::<LittleEndian>()?;
+                    format!("{}", val)
+                }
+                // FLOAT32 = 6
+                6 => {
+                    let val = reader.read_f32::<LittleEndian>()?;
+                    format!("{}", val)
+                }
+                // BOOL = 7
+                7 => {
+                    let val = reader.read_u8()?;
+                    format!("{}", val != 0)
+                }
+                // STRING = 8
                 8 => {
-                    // String
+                    let value_len = reader.read_u64::<LittleEndian>()?;
+                    eprintln!("DEBUG:   string value_len={}", value_len);
+                    if value_len > 100_000_000 {
+                        return Err(GgufError::IoError(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("value_len too large: {} for key '{}'", value_len, key)
+                        )));
+                    }
+                    let mut value = vec![0u8; value_len as usize];
+                    reader.read_exact(&mut value)?;
                     String::from_utf8_lossy(&value).to_string()
                 }
+                // ARRAY of various types (GGUF type 9, 10, 11, 12)
+                // For now, skip these - they're typically tokenizer data not needed for inference
+                9 | 10 | 11 | 12 => {
+                    eprintln!("DEBUG:   array type {}, stopping metadata parse (arrays not implemented)", value_type);
+                    // Arrays are typically at the end of metadata, so we can stop here
+                    break 'metadata_loop;
+                }
                 _ => {
-                    format!("binary_data_{}", value_type)
+                    return Err(GgufError::InvalidDataType(value_type));
                 }
             };
 
             metadata.insert(key, value_str);
         }
 
+        eprintln!("DEBUG: Metadata processing complete, {} entries loaded", metadata.len());
         Ok(metadata)
     }
 
@@ -175,21 +242,50 @@ impl GgufModel {
         tensor_count: u64,
     ) -> GgufResult<HashMap<String, GgufTensor>> {
         let mut tensors = HashMap::new();
+        eprintln!("DEBUG: Reading tensor info for {} tensors...", tensor_count);
 
-        for _ in 0..tensor_count {
+        for i in 0..tensor_count {
             let name_len = reader.read_u64::<LittleEndian>()?;
+
+            // Sanity check name_len
+            if name_len > 10_000 {
+                return Err(GgufError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("tensor name too large: {} bytes at index {}", name_len, i)
+                )));
+            }
+
             let mut name = vec![0u8; name_len as usize];
             reader.read_exact(&mut name)?;
             let name = String::from_utf8_lossy(&name).to_string();
 
             let n_dims = reader.read_u32::<LittleEndian>()?;
-            let mut shape = Vec::new();
-            for _ in 0..n_dims {
-                shape.push(reader.read_u64::<LittleEndian>()? as usize);
+            if n_dims > 8 {
+                return Err(GgufError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("tensor '{}' has too many dimensions: {}", name, n_dims)
+                )));
+            }
+
+            let mut shape = Vec::with_capacity(n_dims as usize);
+            for j in 0..n_dims {
+                let dim = reader.read_u64::<LittleEndian>()?;
+                if dim > 1_000_000_000 {
+                    return Err(GgufError::IoError(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("tensor '{}' dimension {} too large: {}", name, j, dim)
+                    )));
+                }
+                shape.push(dim as usize);
             }
 
             let data_type = GgufDataType::from_u32(reader.read_u32::<LittleEndian>()?)?;
             let offset = reader.read_u64::<LittleEndian>()?;
+
+            if i < 5 || i >= tensor_count - 2 {
+                eprintln!("DEBUG: [{}] name='{}' dtype={:?} shape={:?} offset={}",
+                         i, name, data_type, shape, offset);
+            }
 
             let tensor = GgufTensor {
                 name: name.clone(),
@@ -202,6 +298,7 @@ impl GgufModel {
             tensors.insert(name, tensor);
         }
 
+        eprintln!("DEBUG: Tensor info complete, {} tensors loaded", tensors.len());
         Ok(tensors)
     }
 
@@ -209,9 +306,62 @@ impl GgufModel {
         reader: &mut BufReader<File>,
         mut tensors: HashMap<String, GgufTensor>,
     ) -> GgufResult<HashMap<String, GgufTensor>> {
-        for (_, tensor) in tensors.iter_mut() {
-            let total_elements = tensor.shape.iter().product::<usize>();
-            let data_size = total_elements * tensor.data_type.size();
+        for (name, tensor) in tensors.iter_mut() {
+            eprintln!("DEBUG: tensor='{}' dtype={:?} shape={:?} offset={}",
+                     name, tensor.data_type, tensor.shape, tensor.offset);
+
+            // Use checked arithmetic to avoid overflow
+            let mut total_elements: usize = 1;
+            for &dim in &tensor.shape {
+                total_elements = total_elements.checked_mul(dim).ok_or_else(|| {
+                    GgufError::IoError(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("tensor shape product overflow for '{}': {:?}", name, tensor.shape)
+                    ))
+                })?;
+            }
+
+            // Sanity check: total elements should be reasonable for a 400MB file
+            // 400MB / 4 bytes per element = 100M elements max
+            if total_elements > 500_000_000 {
+                return Err(GgufError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("tensor '{}' has unreasonable element count: {}", name, total_elements)
+                )));
+            }
+
+            // Calculate data size based on quantization type
+            // For quantized types (Q4_0, Q8_0), we need to account for block size
+            let data_size = match tensor.data_type {
+                GgufDataType::Q4_0 => {
+                    // Q4_0: 32 values per 18 bytes
+                    let blocks = (total_elements + 31) / 32;
+                    blocks.checked_mul(18).ok_or_else(|| GgufError::IoError(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "tensor data size overflow"
+                    )))?
+                }
+                GgufDataType::Q8_0 => {
+                    // Q8_0: 32 values per 34 bytes (32 int8 + 1 f16 scale)
+                    let blocks = (total_elements + 31) / 32;
+                    blocks.checked_mul(34).ok_or_else(|| GgufError::IoError(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "tensor data size overflow"
+                    )))?
+                }
+                _ => {
+                    // For non-quantized types, size is element_count * bytes_per_element
+                    total_elements.checked_mul(tensor.data_type.size()).ok_or_else(|| {
+                        GgufError::IoError(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "tensor data size overflow"
+                        ))
+                    })?
+                }
+            };
+
+            eprintln!("DEBUG: elements={} size={}MB",
+                     total_elements, data_size / 1024 / 1024);
 
             reader.seek(SeekFrom::Start(tensor.offset))?;
             tensor.data.resize(data_size, 0);
