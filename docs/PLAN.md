@@ -1,7 +1,7 @@
 # ROCmForge Implementation Plan
 
-> GPU: AMD Radeon RX 7900 XT (gfx1100, RDNA3, wave32)
-> Last Updated: 2026-01-03
+> GPU: AMD Radeon RX 7900 XT (gfx1100, RDNA3, wave32) → AMD Instinct MI355 (CDNA4)
+> Last Updated: 2026-01-06
 > Rule: **Make it correct → make it measurable → then make it fast.**
 
 ---
@@ -15,190 +15,438 @@
 | Phase 3a | Non-Causal FlashAttention | ✅ Complete | 17/17 | 2025-01-03 |
 | Phase 3b | Causal Masking | ✅ Complete | 8/8 | 2025-01-03 |
 | Phase 4 | MLP Ops (SwiGLU, RMSNorm) | ✅ Complete | 8/8 | 2026-01-03 |
-| Phase 5 | Optional Optimizations | Pending | - | - |
+| Phase 4.5 | GGUF Vocab Size Inference | ✅ Complete | - | 2026-01-04 |
+| Phase 5 | Quantization (MXFP4/MXFP6) | 🔨 In Progress | - | 2026-01-06 |
 
-**Progress**: 4/5 phases complete (41/41 tests passing)
-
----
-
-## Phase 4: MLP Ops - Summary ✅
-
-### What Was Done
-
-1. **SwiGLU Activation Kernel** (`kernels/swiglu.hip`)
-   - Formula: `SwiGLU(x) = gate(x) * swish(up(x))` where `swish(x) = x * sigmoid(x)`
-   - Element-wise operation (no reduction)
-   - 5 tests passing
-
-2. **RMSNorm Kernel** (`kernels/rms_norm.hip`)
-   - Formula: `RMSNorm(x) = x / sqrt(mean(x^2) + eps) * weight`
-   - Row-wise reduction with shared memory
-   - 3 tests passing
-
-3. **GPU-Only Integration**
-   - Replaced CPU fallback in `src/backend/hip_backend.rs`
-   - Verified `HipBuffer::copy_from_buffer` uses `hipMemcpyDeviceToDevice`
-   - No `to_host_vec` in MLP forward pass
-
-### Key Technical Discoveries
-
-1. **Kernel Argument Pattern**: ALL arguments (including pointers) must go through intermediate mutable variables
-2. **Parallel Reduction**: Starting stride must be `BLOCK_SIZE / 2` to process all elements
-3. **GPU-to-GPU Copy**: Direct device-to-device memory copy confirmed
+**Progress**: Phases 1-4 complete (41/41 tests passing)
 
 ---
 
-## Phase 5: Optional Optimizations (Next)
+## Architecture Decision: Standard GGUF Format Only
 
-> These are performance optimizations, not required for correctness.
-> Profile first, then optimize what actually matters.
+### ❌ Rejected: Runtime Tensor Name Mapping
 
----
+**Decision**: ROCmForge will **NOT** implement per-model tensor name mapping at runtime.
 
-## Phase 4.5: GGUF Loader Vocab Size Inference ✅ COMPLETE
+**Rationale**:
+- Non-standard approach used by no other inference engine
+- Unsustainable: every new model requires custom mapping code
+- Creates maintenance burden
+- Against industry best practices
 
-**Priority:** High - Required for model compatibility
-**Status:** Complete
-**Completed:** 2026-01-04
+**What this means**:
+- Models must be converted TO standard GGUF format before use
+- ROCmForge enforces standard tensor naming conventions
+- Clear error messages when non-standard models are loaded
 
-### Problem
+### ✅ Accepted: AMD Quark for Quantization
 
-Some GGUF models do not include `{architecture}.vocab_size` metadata, causing:
-- `vocab_size = 0` in GgufMetadata
-- Potential crashes or incorrect model initialization
-- Models fail to load even though tensor data is valid
+**Decision**: Use AMD Quark toolkit for model quantization.
 
-### Solution Implemented
-
-Infer vocab_size from tensor shapes when metadata is missing:
-1. Check for `token_embd.weight`, `output.weight`, `lm_head.weight`, or `embed_tokens.weight` tensors
-2. Use tensor shape `[vocab_size, hidden_size]` or `[hidden_size, vocab_size]`
-3. Compare against known `hidden_size` to determine which dimension is vocab_size
-4. Fallback to architecture-specific defaults if inference fails
-
-### Files Modified
-- `src/loader/gguf.rs` - Added inference logic (lines 671-712, modified 229-278)
-
-### Summary
-- Helper method `infer_vocab_size_from_tensors()` implemented ✅
-- `to_model_config()` uses inferred vocab_size as fallback ✅
-- Code compiles successfully ✅
-- Documentation updated ✅
-
-### Technical Details
-
-**Method Added:**
-- `infer_vocab_size_from_tensors()` - Infers vocab_size from tensor shapes
-- Searches 4 common tensor names
-- Compares against known hidden_size
-- Uses heuristic when hidden_size unknown
-- Debug logging for transparency
-
-**Integration:**
-- `to_model_config()` now has 3-tier fallback:
-  1. Metadata vocab_size (if > 0)
-  2. Inferred from tensor shapes
-  3. Architecture-specific defaults (qwen2: 151936, llama: 32000, glm: 151552)
-
-### 5.1: GPU Sampler (top-k/top-p)
-
-**Goal**: Move token sampling to GPU to overlap with next token computation.
-
-**Current**: CPU-side sampling after decoding
-**Target**: GPU-side sampling with device-to-host transfer only for final token
-
-**Tasks**:
-- [ ] Profile current sampling latency
-- [ ] Implement `top_k_kernel` (select top-k values per row)
-- [ ] Implement `top_p_kernel` (nucleus sampling)
-- [ ] Implement `sample_kernel` (weighted random selection)
-- [ ] Integrate into decode loop
-
-**Expected Impact**: ~10-20% latency reduction for decode steps
+**Rationale**:
+- AMD's official quantization toolkit
+- Supports MXFP4, MXFP6, FP8, and traditional quantization
+- Integrates with vLLM (AMD-optimized version)
+- Open source, actively maintained
+- Follows OCP Microscaling Formats (MX) Specification v1.0
 
 ---
 
-### 5.2: Custom GEMM Kernels
+## Phase 5: AMD MXFP Quantization
 
-**Goal**: Evaluate if rocBLAS GEMM is a bottleneck.
+> **Goal**: Enable state-of-the-art quantization for AMD GPUs using AMD Quark
+> **Hardware Target**: AMD Instinct MI355 (CDNA4) with native MXFP support
+> **Fallback**: Software simulation for MI300/MI250/RDNA3
 
-**Prerequisite**: Profile with rocprofiler to identify hot paths
+### Overview
 
-**Tasks**:
-- [ ] Profile current matmul performance
-- [ ] Compare rocBLAS vs custom implementation
-- [ ] If rocBLAS is fast enough: skip
-- [ ] If not: implement tiled GEMM with LDS
+MXFP4 and MXFP6 are **block-scaled floating-point formats** defined by the OCP MX Specification:
 
-**Expected Impact**: Unknown (profiling required)
+| Format | Bits/Element | Range | Block Size | Scale Type | Memory vs FP16 |
+|--------|--------------|-------|------------|------------|----------------|
+| **MXFP4** | 4 (E2M1) | [-6, 6] | 32 | E8M0 (2^n) | 4x reduction |
+| **MXFP6** | 6 (E2M3) | [-7.5, 7.5] | 32 | E8M0 (2^n) | 2.67x reduction |
+| **FP8** | 8 (E4M3) | Various | Per-tensor | Various | 2x reduction |
 
-**Note**: RDNA3 does not have MFMA instructions, so matrix multiply acceleration
-is limited compared to CDNA3 datacenter GPUs.
-
----
-
-### 5.3: FP16 Support
-
-**Goal**: Use half precision for weights and activations to reduce memory bandwidth.
-
-**Tasks**:
-- [ ] Convert weights to FP16 (loader changes)
-- [ ] Implement FP16 kernels (or use __half in HIP)
-- [ ] Careful numerical stability testing
-- [ ] Benchmark FP16 vs FP32 latency
-
-**Expected Impact**: ~2x memory bandwidth reduction, ~1.5-2x speedup
-
-**Risks**:
-- Numerical underflow/overflow
-- Gradient scaling issues (if training)
+**Performance on AMD MI355**:
+- MXFP4/MXFP6: **4x throughput** vs FP16
+- MXFP6: Near-lossless accuracy on models >70B parameters
+- MXFP4: Best for very large models (>100B)
 
 ---
 
-### 5.4: Wave64 Tuning (CDNA3)
+### Phase 5.1: Setup & Dependencies
 
-**Goal**: Optimize for CDNA3 GPUs (wave64 instead of wave32).
+#### 5.1.1: Install AMD Quark
 
-**Current**: Tuned for RDNA3 (wave32, RX 7900 XT)
-**Target**: CDNA3 (MI300X, wave64)
+```bash
+# Method 1: PyPI (Recommended)
+pip install amd-quark
 
-**Tasks**:
-- [ ] Detect GPU architecture at runtime
-- [ ] Implement wave64 variants of kernels
-- [ ] Tune block sizes (512 threads instead of 256)
-- [ ] Benchmark both configurations
+# Method 2: From source
+git clone --recursive https://github.com/AMD/Quark
+cd Quark
+pip install .
 
-**Expected Impact**: Better performance on CDNA3 datacenter GPUs
+# Method 3: Download with examples
+wget -O amd_quark-0.9.zip https://download.amd.com/opendownload/Quark/amd_quark-0.9.zip
+unzip -o amd_quark-0.9.zip
+pip install amd-quark==0.9
+```
+
+**Version**: 0.9+ (latest as of September 2025)
+
+**Dependencies**:
+- Python 3.x
+- PyTorch (ROCm version for AMD GPUs)
+- HuggingFace Transformers
+- datasets
+- NumPy
+
+#### 5.1.2: ROCm Requirements
+
+```bash
+# ROCm 7.0+ required for MXFP support
+rocm-smi  # Verify installation
+
+# For development, use Docker
+docker run -it --rm \
+  --privileged \
+  --network=host \
+  --device=/dev/kfd \
+  --device=/dev/dri \
+  --group-add=video \
+  --cap-add=SYS_PTRACE \
+  --security-opt seccomp=unconfined \
+  --shm-size 8G \
+  -v $(pwd):/workspace \
+  -w /workspace \
+  rocm/vllm-dev:open-mi355-08052025 bash
+```
+
+---
+
+### Phase 5.2: Model Quantization with AMD Quark
+
+#### 5.2.1: Quantize a Model to MXFP4
+
+```python
+from transformers import AutoTokenizer, AutoModelForCausalLM
+from quark.torch import ModelQuantizer, ModelExporter
+from quark.torch.quantization import Config, QuantizationConfig
+from quark.torch.quantization import FP4PerGroupSpec, OCP_MXFP4Spec
+from datasets import load_dataset
+from torch.utils.data import DataLoader
+
+# 1. Load model
+MODEL_ID = "meta-llama/Llama-3.3-70B-Instruct"
+MAX_SEQ_LEN = 512
+GROUP_SIZE = 32
+
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL_ID, device_map="auto", torch_dtype="auto"
+)
+model.eval()
+
+tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, model_max_length=MAX_SEQ_LEN)
+tokenizer.pad_token = tokenizer.eos_token
+
+# 2. Prepare calibration data
+NUM_CALIBRATION = 512
+dataset = load_dataset("mit-han-lab/pile-val-backup", split="validation")
+text_data = dataset["text"][:NUM_CALIBRATION]
+
+tokenized = tokenizer(text_data, return_tensors="pt",
+    padding=True, truncation=True, max_length=MAX_SEQ_LEN)
+calib_dataloader = DataLoader(tokenized['input_ids'],
+    batch_size=1, drop_last=True)
+
+# 3. Configure MXFP4 quantization
+def FP4_PER_GROUP_SYM_SPEC(group_size, scale_format="e8m0",
+                           scale_calculation_mode="even", is_dynamic=True):
+    return FP4PerGroupSpec(
+        ch_axis=-1,
+        group_size=group_size,
+        scale_format=scale_format,
+        scale_calculation_mode=scale_calculation_mode,
+        is_dynamic=is_dynamic
+    ).to_quantization_spec()
+
+global_quant_config = QuantizationConfig(
+    input_tensors=FP4_PER_GROUP_SYM_SPEC(GROUP_SIZE, "e8m0", "even", True),
+    weight=FP4_PER_GROUP_SYM_SPEC(GROUP_SIZE, "e8m0", "even", False)
+)
+
+# Load algorithm config
+algo_config = {
+    "quant_algo": "autosmoothquant",  # Recommended for LLMs
+    "layer_quant_config": {},
+    "exclude_layers": ["lm_head"]
+}
+
+quant_config = Config(
+    global_quant_config=global_quant_config,
+    exclude=["lm_head"],
+    algo_config=algo_config
+)
+
+# 4. Quantize
+quantizer = ModelQuantizer(quant_config)
+quant_model = quantizer.quantize_model(model, calib_dataloader)
+
+# 5. Export
+export_path = "/workspace/models/Llama-3.3-70B-Instruct-MXFP4"
+exporter = ModelExporter(config=export_config, export_dir=export_path)
+model = exporter.get_export_model(quant_model, quant_config=quant_config,
+                                   custom_mode="quark", add_export_info_for_hf=True)
+model.save_pretrained(export_path)
+tokenizer.save_pretrained(export_path)
+```
+
+#### 5.2.2: Command-Line Quantization
+
+```bash
+cd ./amd_quark-0.9/examples/torch/language_modeling/llm_ptq/
+
+python3 quantize_quark.py \
+    --model_dir /workspace/models/Llama-3.3-70B-Instruct \
+    --model_attn_implementation "sdpa" \
+    --dataset /workspace/data/pile-val-backup \
+    --quant_scheme w_mxfp4_a_mxfp4 \
+    --group_size 32 \
+    --kv_cache_dtype fp8 \
+    --quant_algo autosmoothquant \
+    --min_kv_scale 1.0 \
+    --model_export hf_format \
+    --output_dir /workspace/models/Llama-3.3-70B-Instruct-MXFP4 \
+    --multi_gpu
+```
+
+**Available Quantization Schemes**:
+- `w_mxfp4_a_mxfp4`: MXFP4 weights + MXFP4 activations
+- `w_mxfp4_a_fp6_e2m3`: MXFP4 weights + FP6 activations
+- `w_mxfp4_a_mxfp6`: MXFP4 weights + MXFP6 activations (recommended for smaller models)
+
+**Supported Algorithms**:
+- `autosmoothquant`: AutoSmoothQuant (recommended for LLMs)
+- `gptq`: GPTQ
+- `awq`: AWQ
+- `quarot`: Quarot
+
+---
+
+### Phase 5.3: GGUF Format with MXFP Support
+
+#### 5.3.1: Add MXFP Tensor Types to GGUF Loader
+
+**File**: `src/loader/gguf.rs`
+
+```rust
+// Add to GGML_TYPE enum
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GgufTensorType {
+    // Existing types...
+    F32 = 0,
+    F16 = 1,
+    Q4_0 = 2,
+    Q4_1 = 3,
+    Q5_0 = 6,
+    Q5_1 = 7,
+    Q8_0 = 8,
+
+    // NEW: MXFP types
+    MXFP4 = 20,     // OCP MXFP4-E2M1 (4-bit)
+    MXFP6_E2M3 = 21, // OCP MXFP6-E2M3 (6-bit, recommended)
+    MXFP6_E3M2 = 22, // OCP MXFP6-E3M2 (6-bit)
+}
+```
+
+#### 5.3.2: MXFP Data Structures
+
+```rust
+// Block-scaled format: scale + elements
+#[repr(C)]
+pub struct MxfpBlock {
+    scale: E8M0,  // 8-bit exponent-only (2^scale)
+    elements: [u8; 32],  // 32 elements packed
+}
+
+// E8M0 scale format (exponent only)
+#[repr(C)]
+pub struct E8M0 {
+    exponent: i8,  // Power of two: value = 2^exponent
+}
+```
+
+#### 5.3.3: Dequantization Kernels
+
+**File**: `kernels/mxfp_dequant.hip` (NEW)
+
+```cpp
+// Dequantize MXFP4 to FP16
+__global__ void mxfp4_to_fp16_kernel(
+    const uint8_t* __restrict__ mxfp4_data,
+    half* __restrict__ fp16_output,
+    const int num_elements
+) {
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int block_idx = idx / 32;
+    const int elem_idx = idx % 32;
+
+    // Load scale (E8M0 format)
+    const int8_t scale_exp = ((int8_t*)mxfp4_data)[block_idx * 33];
+    const float scale = __exp2f((float)scale_exp);
+
+    // Load element (4-bit E2M1)
+    const uint8_t packed = mxfp4_data[block_idx * 33 + 1 + elem_idx / 2];
+    const uint8_t elem_4bit = (elem_idx % 2 == 0) ? (packed >> 4) : (packed & 0x0F);
+
+    // Decode E2M1 to float
+    const uint32_t sign = (elem_4bit >> 3) & 0x01;
+    const uint32_t exp = (elem_4bit >> 1) & 0x03;
+    const uint32_t mant = elem_4bit & 0x01;
+
+    float value;
+    if (exp == 0 && mant == 0) {
+        value = 0.0f;
+    } else {
+        value = scale * ((sign ? -1.0f : 1.0f) *
+                 ldexpf((float)(mant | 0x10), (int)exp - 5));
+    }
+
+    // Clip to MXFP4 range
+    value = fmaxf(-6.0f, fminf(6.0f, value));
+
+    fp16_output[idx] = __float2half(value);
+}
+```
+
+---
+
+### Phase 5.4: KV Cache Quantization
+
+#### 5.4.1: MXFP6 for KV Cache
+
+**Rationale**: MXFP6 provides better accuracy than MXFP4 for KV cache while still offering significant memory savings.
+
+**File**: `src/kv_cache/kv_cache.rs`
+
+```rust
+pub enum KvCacheDtype {
+    F32,
+    F16,
+    FP8,
+    MXFP6,  // NEW
+}
+
+pub struct KvCache {
+    dtype: KvCacheDtype,
+    // ... existing fields
+}
+```
+
+**Memory Savings for LLaMA-2 70B**:
+- FP16 KV cache: ~28 GB
+- MXFP6 KV cache: ~10.5 GB (62.5% reduction)
+- Enables single-GPU inference on 24GB cards
+
+---
+
+### Phase 5.5: Implementation Tasks
+
+| Task | Description | File | Estimate |
+|------|-------------|------|----------|
+| 5.5.1 | Add MXFP tensor types to GGUF enum | `src/loader/gguf.rs` | 1 day |
+| 5.5.2 | Implement E8M0 scale struct | `src/loader/gguf.rs` | 0.5 day |
+| 5.5.3 | Add MXFP block dequantization | `kernels/mxfp_dequant.hip` | 2 days |
+| 5.5.4 | Implement MXFP4 decoding kernel | `kernels/mxfp_dequant.hip` | 2 days |
+| 5.5.5 | Implement MXFP6 decoding kernel | `kernels/mxfp_dequant.hip` | 2 days |
+| 5.5.6 | Add KV cache MXFP6 support | `src/kv_cache/kv_cache.rs` | 2 days |
+| 5.5.7 | Update build.rs for MXFP kernels | `build.rs` | 0.5 day |
+| 5.5.8 | Write MXFP dequantization tests | `src/loader/mxfp_tests.rs` | 2 days |
+| 5.5.9 | Integration tests with Quark models | `tests/mxfp_integration.rs` | 3 days |
+| 5.5.10 | Documentation and examples | `docs/MXFP_GUIDE.md` | 1 day |
+
+**Total Estimate**: 16 days (3 weeks)
+
+---
+
+### Phase 5.6: Accuracy Validation
+
+#### 5.6.1: Perplexity Testing
+
+```bash
+# Install lm-evaluation-harness
+pip install lm-eval[api]
+
+# Evaluate quantized model
+lm_eval --model vllm \
+    --model_args pretrained=amd/Llama-2-70b-chat-hf-WMXFP4FP8-AMXFP4FP8-AMP-KVFP8,tensor_parallel_size=4,dtype=auto,gpu_memory_utilization=0.8 \
+    --tasks mmlu \
+    --batch_size auto
+```
+
+#### 5.6.2: Acceptance Criteria
+
+| Metric | Target |
+|--------|--------|
+| Perplexity increase (vs FP16) | <0.1 for MXFP6, <0.2 for MXFP4 |
+| MMLU score (70B models) | Within 1% of FP16 |
+| Memory reduction | >60% for KV cache, >75% for weights |
+| Throughput improvement | >2x on MI355 |
+
+---
+
+### Phase 5.7: Go/No-Go Criteria
+
+**Proceed if ALL of**:
+- ROCm 7.0+ stable on target hardware
+- AMD Quark quantization produces valid models
+- Dequantization kernels pass accuracy tests
+- <0.1% perplexity increase for MXFP6
+
+**Cancel if ANY of**:
+- >0.2% perplexity increase
+- Performance worse than FP16
+- ROCm MXFP implementation buggy
+- Cannot load Quark-quantized models
+
+---
+
+## Phase 4.5: GGUF Vocab Size Inference ✅ COMPLETE
+
+See TODO.md for details.
 
 ---
 
 ## Future Work (Beyond Phase 5)
 
-### Quantization
-- INT8/INT4 weight quantization
-- Quantization-aware training
-
-### Multi-GPU
-- Tensor parallelism for large models
+### Multi-GPU Support
+- Tensor parallelism for models >70B
 - Pipeline parallelism for layer distribution
 
-### Compilation
-- AOT compilation for specific model architectures
-- Kernel fusion for entire layers
+### Performance Optimization
+- GPU sampler (top-k/top-p on device)
+- Custom GEMM kernels (if profiling shows need)
+- Kernel fusion for entire transformer layers
+
+### Advanced Features
+- Speculative decoding
+- Prefix caching
+- Batching optimization
 
 ---
 
 ## Hardware Reference
 
-| Component | Value |
-|-----------|-------|
-| **GPU** | AMD Radeon RX 7900 XT (Navi 31) |
-| **Architecture** | gfx1100 (RDNA3) |
-| **Wavefront Size** | 32 (not 64!) |
-| **ROCm** | 7.1.52802 |
-| **Target Flag** | --offload-arch=gfx1100 |
-| **Block Size** | 256 threads (8 waves of 32) |
-| **Reduction** | stride starts at 16 for wave32 |
+| Component | RDNA3 (Current) | CDNA4 (Target) |
+|-----------|-----------------|----------------|
+| **GPU** | AMD Radeon RX 7900 XT | AMD Instinct MI355 |
+| **Architecture** | gfx1100 | gfx950 |
+| **Wavefront Size** | 32 | 64 (optional) |
+| **MXFP Support** | Software simulation | Native hardware |
+| **Matrix Cores** | None | 1,024 MX cores |
 
 ### Block Size Formula
 
@@ -208,23 +456,7 @@ constexpr int BLOCK_SIZE = 256;  // 8 waves of 32 threads
 constexpr int WARP_SIZE = 32;
 
 // Wave32 reduction
-for (int stride = 16; stride > 0; stride >>= 1) {
-    if (tid < stride) {
-        shared[tid] += shared[tid + stride];
-    }
-    __syncthreads();
-}
-```
-
-### For CDNA3 (future)
-
-```cpp
-// For CDNA3 (wave64)
-constexpr int BLOCK_SIZE = 512;  // 8 waves of 64 threads
-constexpr int WARP_SIZE = 64;
-
-// Wave64 reduction
-for (int stride = 32; stride > 0; stride >>= 1) {
+for (int stride = BLOCK_SIZE / 2; stride > 0; stride >>= 1) {
     if (tid < stride) {
         shared[tid] += shared[tid + stride];
     }
@@ -276,10 +508,8 @@ cargo test --features rocm --lib -- --nocapture
 | `CHANGELOG.md` | Chronological history of all changes |
 | `docs/TODO.md` | Detailed task tracking with progress |
 | `docs/PLAN.md` | This file - roadmap and future work |
-| `docs/implementation_roadmap.md` | Original plan with contract specs |
-| `docs/implementation_principles.md` | Engineering methodology |
-| `docs/kernel_research.md` | Kernel implementation research |
-| `docs/codebase_audit.md` | Current state audit |
+| `docs/QUICKSTART.md` | Quick start guide |
+| `docs/CODEBASE_AUDIT_REPORT_2026-01-06.md` | Comprehensive audit |
 
 ---
 
@@ -306,3 +536,23 @@ rocm-smi --showproductname
 rocm-smi --showmem
 rocm-smi --showuse
 ```
+
+---
+
+## References
+
+### AMD MXFP Documentation
+- [AMD MXFP4/MXFP6 Blog Post](https://rocm.blogs.amd.com/software-tools-optimization/mxfp4-mxfp6-quantization/README.html)
+- [OCP MX Specification v1.0](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf)
+- [AMD Quark Documentation](https://quark.docs.amd.com/)
+- [AMD Quark GitHub](https://github.com/AMD/Quark)
+
+### SDK Downloads
+- [amd-quark PyPI](https://pypi.org/project/amd-quark/)
+- [AMD Quark Download](https://download.amd.com/opendownload/Quark/amd_quark-0.9.zip)
+- [vLLM AMD Integration](https://docs.vllm.ai/en/stable/features/quantization/quark/)
+
+### Pre-Quantized Models
+- `amd/Llama-2-70b-chat-hf-WMXFP4FP8-AMXFP4FP8-AMP-KVFP8`
+- `amd/Mixtral-8x7B-Instruct-v0.1-WMXFP4FP8-AMXFP4FP8-AMP-KVFP8`
+- `amd/Qwen3-8B-WMXFP4FP8-AMXFP4FP8-AMP-KVFP8`
