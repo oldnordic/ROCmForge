@@ -584,15 +584,182 @@ impl GgufLoader {
         Ok(self.tensors.clone())
     }
 
-    /// Load tensors and upload to GPU
+    /// Load tensors and upload to GPU using batched memory pooling.
+    /// This allocates multiple moderate-sized buffers instead of thousands of small allocations,
+    /// avoiding ROCm driver bugs while staying within reasonable allocation limits.
     pub fn load_to_gpu(&self, backend: &HipBackend) -> Result<HashMap<String, DeviceTensor>> {
-        let mut gpu_tensors = HashMap::new();
+        use crate::backend::hip_backend::HipBuffer;
 
+        // Pool size: 1 GB per pool (large enough for biggest tensors, small enough for ROCm)
+        const POOL_SIZE: usize = 1024 * 1024 * 1024;
+
+        // Calculate tensor sizes
+        let mut tensor_list: Vec<(String, usize)> = Vec::new();
         for (name, tensor) in &self.tensors {
-            let device_tensor = self.upload_tensor_to_gpu(backend, tensor)?;
-            gpu_tensors.insert(name.clone(), device_tensor);
+            let num_elements = tensor.shape.total_elements();
+            let tensor_bytes = num_elements * std::mem::size_of::<f32>();
+            tensor_list.push((name.clone(), tensor_bytes));
         }
 
+        let total_bytes: usize = tensor_list.iter().map(|(_, size)| size).sum();
+        eprintln!("DEBUG: Batched memory pooling - total: {} bytes ({:.2} MB), tensors: {}",
+                  total_bytes, total_bytes as f64 / 1024.0 / 1024.0, tensor_list.len());
+
+        // Find max tensor size to ensure pool is large enough
+        let max_tensor_size = tensor_list.iter().map(|(_, size)| *size).max().unwrap_or(0);
+        let actual_pool_size = POOL_SIZE.max(max_tensor_size);
+        eprintln!("DEBUG: Pool size: {} MB (max tensor: {} MB)",
+                  actual_pool_size / 1024 / 1024, max_tensor_size / 1024 / 1024);
+
+        // Create memory pools (account for 4KB alignment padding)
+        const ALIGNMENT: usize = 4096;
+        let mut pools: Vec<HipBuffer> = Vec::new();
+        let mut current_pool_bytes = 0usize;
+
+        for (_, tensor_bytes) in &tensor_list {
+            // Account for alignment padding when calculating pool usage
+            let aligned_tensor_bytes = (tensor_bytes + ALIGNMENT - 1) & !(ALIGNMENT - 1);
+            if current_pool_bytes + aligned_tensor_bytes > actual_pool_size {
+                // Start a new pool
+                pools.push(backend.allocate_buffer(actual_pool_size)
+                    .map_err(|e| anyhow!("Failed to allocate memory pool: {}", e))?);
+                current_pool_bytes = 0;
+                eprintln!("DEBUG: Allocated new memory pool #{}", pools.len());
+            }
+            current_pool_bytes += aligned_tensor_bytes;
+        }
+
+        // Allocate final pool if needed
+        if current_pool_bytes > 0 {
+            pools.push(backend.allocate_buffer(current_pool_bytes)
+                .map_err(|e| anyhow!("Failed to allocate final memory pool: {}", e))?);
+            eprintln!("DEBUG: Allocated final memory pool #{} (size: {} bytes)",
+                      pools.len(), current_pool_bytes);
+        }
+
+        eprintln!("DEBUG: Created {} memory pools, total allocation: {} bytes",
+                  pools.len(), pools.iter().map(|p| p.size()).sum::<usize>());
+
+        // Upload tensors to their respective pools
+        let mut gpu_tensors = HashMap::new();
+        let mut pool_idx = 0usize;
+        let mut offset = 0usize;
+
+        // Skip memory pooling for tensors that might need transpose (large or specific names)
+        // ROCm D2H from sub-buffers is unreliable
+        const LARGE_TENSOR_THRESHOLD: usize = 32 * 1024 * 1024;  // 32 MB
+
+        for (name, tensor) in &self.tensors {
+            let num_elements = tensor.shape.total_elements();
+            let tensor_bytes = num_elements * std::mem::size_of::<f32>();
+
+            // Skip memory pooling for:
+            // 1. Large tensors (>32 MB)
+            // 2. Embedding/LM head tensors (need transpose)
+            // 3. Tensors with [vocab_size, hidden] shape (need transpose)
+            // 4. QKV attention tensors (need concatenation)
+            let needs_transpose = tensor.shape.dims().len() == 2 &&
+                ((tensor.shape.dims()[0] == 151936 || tensor.shape.dims()[1] == 151936) ||
+                 name.contains("embd") || name.contains("output"));
+            let is_qkv = name.contains("attn_") || name.contains("q_proj") ||
+                         name.contains("k_proj") || name.contains("v_proj");
+            let is_large = tensor_bytes > LARGE_TENSOR_THRESHOLD;
+
+            if is_large || needs_transpose || is_qkv {
+                eprintln!("DEBUG: Skipping memory pool for tensor '{}' ({} MB, large={}, transpose={}, qkv={})",
+                         name, tensor_bytes / 1024 / 1024, is_large, needs_transpose, is_qkv);
+                let device_tensor = DeviceTensor::from_host_vec(
+                    backend,
+                    match tensor.tensor_type {
+                        GgufTensorType::F32 => {
+                            tensor.data.chunks_exact(4)
+                                .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                                .collect()
+                        }
+                        GgufTensorType::F16 => {
+                            tensor.data.chunks_exact(2)
+                                .map(|chunk| {
+                                    let bits = u16::from_le_bytes([chunk[0], chunk[1]]);
+                                    half::f16::from_bits(bits).to_f32()
+                                })
+                                .collect()
+                        }
+                        GgufTensorType::Q8_0 => self.dequantize_q8_0(tensor)?,
+                        GgufTensorType::Q4_0 => self.dequantize_q4_0(tensor)?,
+                        GgufTensorType::Q4_1 => self.dequantize_q4_1(tensor)?,
+                        GgufTensorType::Q5_0 => self.dequantize_q5_0(tensor)?,
+                        GgufTensorType::Q5_1 => self.dequantize_q5_1(tensor)?,
+                        _ => return Err(anyhow!("Unsupported tensor type for tensor '{}'", name)),
+                    },
+                    tensor.shape.clone(),
+                ).map_err(|e| anyhow!("Failed to create tensor '{}': {}", name, e))?;
+                gpu_tensors.insert(name.clone(), device_tensor);
+                continue;
+            }
+
+            // Check if we need to move to next pool
+            if offset + tensor_bytes > pools[pool_idx].size() {
+                pool_idx += 1;
+                offset = 0;
+            }
+
+            // Dequantize to FP32 based on tensor type
+            let f32_data: Vec<f32> = match tensor.tensor_type {
+                GgufTensorType::F32 => {
+                    tensor.data.chunks_exact(4)
+                        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                        .collect()
+                }
+                GgufTensorType::F16 => {
+                    tensor.data.chunks_exact(2)
+                        .map(|chunk| {
+                            let bits = u16::from_le_bytes([chunk[0], chunk[1]]);
+                            half::f16::from_bits(bits).to_f32()
+                        })
+                        .collect()
+                }
+                GgufTensorType::Q8_0 => self.dequantize_q8_0(tensor)?,
+                GgufTensorType::Q4_0 => self.dequantize_q4_0(tensor)?,
+                GgufTensorType::Q4_1 => self.dequantize_q4_1(tensor)?,
+                GgufTensorType::Q5_0 => self.dequantize_q5_0(tensor)?,
+                GgufTensorType::Q5_1 => self.dequantize_q5_1(tensor)?,
+                GgufTensorType::Mxfp4 | GgufTensorType::Mxfp6E2m3 | GgufTensorType::Mxfp6E3m2 => {
+                    return Err(anyhow!("MXFP dequantization not implemented in memory-pooled load_to_gpu"));
+                }
+            };
+
+            // Create device tensor from current pool at current offset
+            let device_tensor = DeviceTensor::from_pool(
+                &pools[pool_idx],
+                offset,
+                f32_data,
+                tensor.shape.clone(),
+            ).map_err(|e| anyhow!("Failed to create tensor '{}' from pool #{}: {}", name, pool_idx, e))?;
+
+            gpu_tensors.insert(name.clone(), device_tensor);
+
+            // Advance offset for next tensor (ALIGN TO 4KB BOUNDARY)
+            // ROCm requires 4KB-aligned device pointers for D2H copies
+            const ALIGNMENT: usize = 4096;
+            offset = (offset + tensor_bytes + ALIGNMENT - 1) & !(ALIGNMENT - 1);
+
+            // Synchronize after each tensor to ensure data is written to GPU
+            // This is critical for memory pool sub-buffers
+            if pool_idx == 0 && offset > (256 * 1024 * 1024) {
+                // Sync after uploading ~256 MB to first pool (embedding layer)
+                crate::backend::hip_backend::synchronize_device()
+                    .map_err(|e| anyhow!("Sync failed: {}", e))?;
+            }
+        }
+
+        // Final synchronization after all uploads
+        eprintln!("DEBUG: Synchronizing after all tensor uploads");
+        crate::backend::hip_backend::synchronize_device()
+            .map_err(|e| anyhow!("Final sync failed: {}", e))?;
+        eprintln!("DEBUG: Final sync complete");
+
+        eprintln!("DEBUG: All {} tensors uploaded to GPU via {} memory pools",
+                  gpu_tensors.len(), pools.len());
         Ok(gpu_tensors)
     }
 

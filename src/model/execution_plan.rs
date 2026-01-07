@@ -950,6 +950,8 @@ impl ExecutionPlan {
 
         let rows = shape[0];
         let cols = shape[1];
+        eprintln!("DEBUG: transpose_2d_tensor: shape=[{}, {}], size={} bytes",
+                 rows, cols, tensor.len() * std::mem::size_of::<f32>());
         let host = tensor.to_host_vec()?;
         let mut transposed = vec![0.0f32; host.len()];
 

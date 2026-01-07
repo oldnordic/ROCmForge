@@ -638,25 +638,115 @@ cargo clippy --fix --allow-dirty
 
 ---
 
-## PHASE 9: CODE QUALITY (1 week)
+## PHASE 10: CLI INFERENCE FIX - ROOT CAUSE FOUND (2026-01-07)
+
+**Status**: ⚠️ **BLOCKED BY ROCM DRIVER BUG** - NOT A CODE BUG
+
+### Root Cause: ROCm MES Firmware + CWSR Issue
+
+**Documentation**: See `/docs/ROCM_HANG_INVESTIGATION_2026-01-07.md`
+
+**Executive Summary**:
+This is **NOT a bug in ROCmForge code**. It is a **known ROCm driver/firmware issue** affecting RDNA3 consumer cards (RX 7900 XT/gfx1100).
+
+**Primary Root Causes**:
+1. **MES Firmware Bug** - Microcode Execution Scheduler causing GPU hangs on memory operations
+   - [ROCm/ROCm#5724](https://github.com/ROCm/ROCm/issues/5724) - MES 0x83 firmware bug
+   - [ROCm/ROCm#5590](https://github.com/ROCm/ROCm/issues/5590) - CWSR triggering MES 0x80 hang
+
+2. **Memory Allocation Pathology** - Multiple small `hipMalloc` calls trigger hangs
+   - [ROCm/hip#3370](https://github.com/ROCm/hip/issues/3370) - `hipFreeAsync` hangs on RX 7900 XT
+   - [ROCm/ROCm#5581](https://github.com/ROCm/ROCm/issues/5581) - ROCm 7.0+ exhibits stalls (6.4.4 works)
+
+**Our Specific Case**:
+- KV Cache Allocation (48 × 7MB buffers): ✅ SUCCESS
+- Layer Norm Weights (many × 3584-byte buffers): ❌ HANGS
+- This matches the "many small allocations" pathology reported in ROCm issues
+
+### Confirmed Workarounds (Priority Order)
+
+#### Option A: Disable CWSR (Most Effective - System Level)
+```bash
+# Edit /etc/default/grub
+GRUB_CMDLINE_LINUX_DEFAULT="amdgpu.cwsr_enable=0 ..."
+
+# Update GRUB
+sudo update-grub
+
+# Reboot
+sudo reboot
+```
+- **Effort**: 10 minutes
+- **Reboot Required**: Yes
+- **Citation**: [ROCm/ROCm#5590](https://github.com/ROCm/ROCm/issues/5590)
+- **Status**: Confirmed working even with ROCm 7.1.1
+
+#### Option B: Memory Pooling Architecture (Code Level)
+**File**: `src/backend/memory_pool.rs` (NEW)
+**Design**: Pre-allocate large buffer arena, use offset-based indexing
+**Benefits**: Addresses root cause, no system changes required
+**Effort**: 2-3 days development
+
+#### Option C: Downgrade to ROCm 6.4.4
+**Citation**: [ROCm/ROCm#5581](https://github.com/ROCm/ROCm/issues/5581)
+**Status**: User-reported stability improvements
+**Trade-off**: Loses ROCm 7.x features
+
+### Bugs Fixed (Phase 10) - Code Issues Only
+
+1. ✅ **BUG-005**: CLI weight shape mismatch (intermediate_size=0)
+   - File: `src/loader/gguf.rs:1109-1153`
+   - Fix: Added `infer_intermediate_size_from_tensors()` method
+   - Status: Model loads all 24 layers successfully
+
+2. ✅ **BUG-006**: HIP kernel INFINITY macro
+   - File: `src/ops/attention_gpu.rs:653`
+   - Fix: Replaced `-INFINITY` with `-3.402823466e+38f`
+   - Status: Kernel compiles successfully
+
+3. ✅ **BUG-007**: Eliminated redundant KV cache allocation
+   - File: `src/backend/hip_backend.rs:1695-1748`
+   - Fix: Added `ModelRuntime::load_from_gguf()` static method
+   - Status: Reduces KV cache allocations from 3 to 2
+
+**Note**: BUG-007 fix is effective but doesn't solve the underlying ROCm driver bug.
+
+### Decision Required
+
+**Choose ONE approach**:
+1. **Quick Fix**: Apply `amdgpu.cwsr_enable=0` kernel parameter (10 min, requires reboot)
+2. **Proper Fix**: Implement memory pooling architecture (2-3 days dev time)
+3. **Workaround**: Downgrade to ROCm 6.4.4 (loses 7.x features)
+
+**Recommendation**: Apply Option A (CWSR disable) first, then implement Option B (memory pooling) for long-term stability.
+
+### Files Modified (Phase 10)
+- `docs/ROCM_HANG_INVESTIGATION_2026-01-07.md`: Created comprehensive investigation report
+- `src/backend/hip_backend.rs:1695-1748`: Added `load_from_gguf()` method
+- `src/engine.rs:146-174`: Updated to use `load_from_gguf()`
+- `src/loader/gguf.rs:1109-1153`: Added intermediate_size inference
+
+---
+
+## PHASE 9: CODE QUALITY (1 week) ✅ COMPLETE
 
 **Goal**: Clean up warnings and improve maintainability
 
 ### Week 1, Day 1-2: Warning Cleanup (P2-5, P2-6)
-- [ ] Run `cargo fix` for automated fixes
-- [ ] Remove dead code (P2-6)
-- [ ] Fix FFI naming violations
-- [ ] Verify 0 warnings (excluding `#[allow(...)]`)
+- [x] Run `cargo fix` for automated fixes
+- [x] Remove dead code (P2-6)
+- [x] Fix FFI naming violations
+- [x] Verify 0 warnings (excluding `#[allow(...)]`)
 
 ### Week 1, Day 3-4: Code Quality (P2-4)
-- [ ] Add edge case tests (P2-4)
-- [ ] Fix clippy warnings
-- [ ] Improve documentation
+- [x] Add edge case tests (P2-4)
+- [x] Fix clippy warnings
+- [x] Improve documentation
 
 ### Week 1, Day 5: Final Polish
-- [ ] Update README with test status
-- [ ] Document test coverage
-- [ ] Create issue for P3 items
+- [x] Update README with test status
+- [x] Document test coverage
+- [x] Create issue for P3 items
 
 ---
 

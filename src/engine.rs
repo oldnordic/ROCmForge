@@ -155,13 +155,15 @@ impl InferenceEngine {
             .ok_or_else(|| EngineError::ModelLoadFailed("Invalid model path".to_string()))?
             .to_string();
 
-        // ModelRuntime::load_model() uses the fixed GGUF loader (src/loader/gguf.rs)
-        // which correctly handles tensor types per ggml/gguf.h spec
-        let runtime =
-            ModelRuntime::new().map_err(|e| EngineError::ModelLoadFailed(e.to_string()))?;
-        let runtime = runtime
-            .load_model(&path_string)
-            .map_err(|e| EngineError::ModelLoadFailed(e.to_string()))?;
+        // IMPORTANT: Wrap GPU operations in spawn_blocking to prevent tokio runtime starvation
+        // ROCm driver can hang when GPU operations block the async runtime
+        // Also use load_from_gguf() to avoid creating a wasteful default KV cache
+        let runtime = tokio::task::spawn_blocking(move || {
+            ModelRuntime::load_from_gguf(&path_string)
+                .map_err(|e| EngineError::ModelLoadFailed(e.to_string()))
+        })
+        .await
+        .map_err(|e| EngineError::ModelLoadFailed(format!("Join error: {}", e)))??;
 
         info!("Loaded GGUF model successfully");
         self.model = None; // Old loader is deprecated, using ModelRuntime only
@@ -185,21 +187,26 @@ impl InferenceEngine {
 
     pub async fn start(&self) -> EngineResult<()> {
         info!("Starting ROCmForge inference engine");
+        eprintln!("DEBUG: start() called, setting is_running=true");
 
         // Set running flag
         *self.is_running.write().await = true;
+        eprintln!("DEBUG: start() is_running now true");
 
         info!("ROCmForge inference engine started");
         Ok(())
     }
 
     pub async fn run_inference_loop(&self) {
+        eprintln!("DEBUG: run_inference_loop() called");
         let is_running = {
             let flag = self.is_running.read().await;
+            eprintln!("DEBUG: run_inference_loop() is_running={}", *flag);
             *flag
         };
 
         if is_running {
+            eprintln!("DEBUG: run_inference_loop() spawning inference loop task");
             // Start inference loop in background
             let config = self.config.clone();
             let backend = self.backend.clone();
@@ -214,6 +221,7 @@ impl InferenceEngine {
             let is_running = self.is_running.clone();
 
             tokio::spawn(async move {
+                eprintln!("DEBUG: Inference loop task started");
                 let engine_clone = InferenceEngine {
                     config,
                     backend,
@@ -229,6 +237,8 @@ impl InferenceEngine {
                 };
                 engine_clone.inference_loop().await;
             });
+        } else {
+            eprintln!("DEBUG: run_inference_loop() NOT spawning because is_running=false");
         }
     }
 
@@ -328,10 +338,20 @@ impl InferenceEngine {
             .execution_plan()
             .cloned()
             .ok_or_else(|| EngineError::InferenceFailed("Execution plan missing".to_string()))?;
-        let new_runtime = base_runtime
-            .from_execution_plan(execution_plan)
-            .map_err(|e| EngineError::InferenceFailed(e.to_string()))?;
         drop(base_runtime);
+
+        // IMPORTANT: Wrap GPU operations in spawn_blocking to prevent tokio runtime starvation
+        // from_execution_plan creates a new backend, scratch buffers, and KV cache
+        let new_runtime = tokio::task::spawn_blocking(move || {
+            // Recreate a base runtime to call from_execution_plan
+            let temp_base = crate::backend::hip_backend::ModelRuntime::new()
+                .map_err(|e| EngineError::InferenceFailed(e.to_string()))?;
+            temp_base
+                .from_execution_plan(execution_plan)
+                .map_err(|e| EngineError::InferenceFailed(e.to_string()))
+        })
+        .await
+        .map_err(|e| EngineError::InferenceFailed(format!("Join error: {}", e)))??;
 
         let mut states = self.request_states.write().await;
         states.entry(request_id).or_insert(RequestRuntimeState {
@@ -382,19 +402,32 @@ impl InferenceEngine {
 
     async fn inference_loop(&self) {
         info!("Starting inference loop");
+        eprintln!("DEBUG: inference_loop() started");
 
+        let mut iteration = 0u64;
         while *self.is_running.read().await {
+            iteration += 1;
+            if iteration % 100 == 0 {
+                eprintln!("DEBUG: inference_loop iteration {}", iteration);
+            }
+
             let start_time = Instant::now();
 
             // Check if we can create a batch
-            let can_batch = {
+            let (pending, can_create) = {
                 let scheduler = self.scheduler.read().await;
-                scheduler.has_pending_requests() && scheduler.can_create_batch()
+                (scheduler.has_pending_requests(), scheduler.can_create_batch())
             };
 
-            if can_batch {
+            if iteration % 100 == 0 || (pending && can_create) {
+                eprintln!("DEBUG: inference_loop iter={} has_pending={} can_create={}", iteration, pending, can_create);
+            }
+
+            if can_create {
+                eprintln!("DEBUG: inference_loop calling process_batch()");
                 if let Err(e) = self.process_batch().await {
                     error!("Error processing batch: {}", e);
+                    eprintln!("DEBUG: Error processing batch: {}", e);
                 }
             }
 
@@ -406,6 +439,7 @@ impl InferenceEngine {
         }
 
         info!("Inference loop stopped");
+        eprintln!("DEBUG: inference_loop() stopped");
     }
 
     async fn process_batch(&self) -> EngineResult<()> {

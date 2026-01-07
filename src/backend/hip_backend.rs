@@ -227,6 +227,9 @@ pub struct HipBuffer {
 struct HipBufferInner {
     ptr: *mut c_void,
     size: usize,
+    // For sub-allocated buffers: offset from ptr in bytes
+    // When offset > 0, this buffer is a view into a parent allocation
+    offset: usize,
 }
 
 impl HipBuffer {
@@ -251,7 +254,7 @@ impl HipBuffer {
         }
 
         Ok(HipBuffer {
-            inner: Arc::new(HipBufferInner { ptr, size }),
+            inner: Arc::new(HipBufferInner { ptr, size, offset: 0 }),
         })
     }
 
@@ -260,7 +263,32 @@ impl HipBuffer {
     }
 
     fn ptr(&self) -> *mut c_void {
-        self.inner.ptr
+        // For sub-allocated views, add offset to base pointer
+        if self.inner.offset > 0 {
+            unsafe { self.inner.ptr.add(self.inner.offset) }
+        } else {
+            self.inner.ptr
+        }
+    }
+
+    /// Create a view into this buffer at a specific byte offset.
+    /// This creates a sub-allocation without allocating new GPU memory.
+    /// The parent buffer owns the GPU memory and will free it when dropped.
+    pub fn sub_buffer_view(&self, offset: usize, size: usize) -> HipResult<Self> {
+        if offset + size > self.size() {
+            return Err(HipError::MemoryAllocationFailed(format!(
+                "Sub-buffer out of bounds: offset={} + size={} > parent_size={}",
+                offset, size, self.size()
+            )));
+        }
+
+        Ok(HipBuffer {
+            inner: Arc::new(HipBufferInner {
+                ptr: self.inner.ptr,  // Share same base pointer
+                size,
+                offset: self.inner.offset + offset,  // Accumulate offset
+            }),
+        })
     }
 
     pub fn copy_from_host<T>(&self, data: &[T]) -> HipResult<()> {
@@ -272,10 +300,12 @@ impl HipBuffer {
             )));
         }
 
+        let ptr = self.ptr();
+
         // Use hipMemcpyHtoD to copy from host to device
         let result = unsafe {
             hipMemcpy(
-                self.ptr(),
+                ptr,
                 data.as_ptr() as *const c_void,
                 byte_size,
                 HIP_MEMCPY_HOST_TO_DEVICE,
@@ -284,9 +314,15 @@ impl HipBuffer {
 
         if result != HIP_SUCCESS {
             return Err(HipError::MemoryCopyFailed(format!(
-                "hipMemcpyHtoD failed with code {}",
-                result
+                "hipMemcpyHtoD failed with code {} (ptr={:?}, size={}, offset={})",
+                result, ptr, byte_size, self.inner.offset
             )));
+        }
+
+        // Debug for large copies
+        if byte_size > 100 * 1024 * 1024 {
+            eprintln!("DEBUG: copy_from_host succeeded: ptr={:?}, size={} MB, offset={}",
+                     ptr, byte_size / 1024 / 1024, self.inner.offset);
         }
 
         Ok(())
@@ -301,20 +337,29 @@ impl HipBuffer {
             )));
         }
 
+        // For sub-allocated buffers, synchronize before reading
+        if self.inner.offset > 0 {
+            unsafe { hipDeviceSynchronize() };
+        }
+
+        let ptr = self.ptr();
+
         // Use hipMemcpyDtoH to copy from device to host
         let result = unsafe {
             hipMemcpy(
                 data.as_mut_ptr() as *mut c_void,
-                self.ptr(),
+                ptr,
                 byte_size,
                 HIP_MEMCPY_DEVICE_TO_HOST,
             )
         };
 
         if result != HIP_SUCCESS {
+            let ptr_addr = ptr as usize;
+            let is_aligned = (ptr_addr % 4096) == 0;
             return Err(HipError::MemoryCopyFailed(format!(
-                "hipMemcpyDtoH failed with code {}",
-                result
+                "hipMemcpyDtoH failed with code {} (base_ptr={:?}, offset={}, final_ptr=0x{:x}, size={} MB, aligned={})",
+                result, self.inner.ptr, self.inner.offset, ptr_addr, byte_size / 1024 / 1024, is_aligned
             )));
         }
 
@@ -636,7 +681,7 @@ impl HipBackend {
         }
 
         let buffer = HipBuffer {
-            inner: Arc::new(HipBufferInner { ptr, size }),
+            inner: Arc::new(HipBufferInner { ptr, size, offset: 0 }),
         };
         println!(
             "DEBUG: allocate_buffer: created buffer with size {} bytes",
@@ -1064,9 +1109,8 @@ impl DeviceTensor {
         let mut host_data = vec![0.0f32; self.len()];
         unsafe {
             let ptr = host_data.as_mut_ptr() as *mut u8;
-            // Use correct byte size based on number of elements, not potentially corrupted buffer size
-            let expected_byte_size = self.len() * std::mem::size_of::<f32>();
-            let byte_slice = std::slice::from_raw_parts_mut(ptr, expected_byte_size);
+            let byte_size = self.len() * std::mem::size_of::<f32>();
+            let byte_slice = std::slice::from_raw_parts_mut(ptr, byte_size);
             self.buffer.copy_to_host(byte_slice)?;
         }
         Ok(host_data)
@@ -1115,6 +1159,31 @@ impl DeviceTensor {
         let total_bytes = host_data.len() * std::mem::size_of::<f32>();
 
         let buffer = backend.allocate_buffer(total_bytes)?;
+        buffer.copy_from_host(&host_data)?;
+
+        Ok(DeviceTensor { buffer, shape })
+    }
+
+    /// Create device tensor as a sub-allocation from a memory pool.
+    /// This avoids individual hipMalloc calls for each tensor.
+    ///
+    /// # Arguments
+    /// * `pool` - The parent GPU memory pool (large pre-allocated buffer)
+    /// * `offset` - Byte offset into the pool where this tensor's data starts
+    /// * `host_data` - Host data to copy to the sub-allocated region
+    /// * `shape` - Tensor shape
+    pub fn from_pool(
+        pool: &HipBuffer,
+        offset: usize,
+        host_data: Vec<f32>,
+        shape: TensorShape,
+    ) -> HipResult<Self> {
+        let total_bytes = host_data.len() * std::mem::size_of::<f32>();
+
+        // Create a sub-buffer view at the specified offset
+        let buffer = pool.sub_buffer_view(offset, total_bytes)?;
+
+        // Copy data to the sub-allocated region
         buffer.copy_from_host(&host_data)?;
 
         Ok(DeviceTensor { buffer, shape })
@@ -1656,11 +1725,15 @@ pub struct ModelRuntime {
 }
 
 impl ModelRuntime {
-    /// Create new model runtime
+    /// Create new model runtime with minimal overhead
+    /// NOTE: This creates a default KV cache that will be discarded if load_model() is called.
+    /// For direct GGUF loading without waste, use load_from_gguf() instead.
     pub fn new() -> HipResult<Self> {
+        eprintln!("DEBUG: ModelRuntime::new() called");
         // HipBackend::new() now returns &'static HipBackend, clone it
         let backend_ref = HipBackend::new()?;
         let backend = backend_ref.clone();
+        eprintln!("DEBUG: ModelRuntime::new() backend created, creating scratch buffer...");
         let scratch = crate::backend::scratch::ScratchBufferManager::new(
             &backend, 32,   // num_heads
             2048, // max_seq_len
@@ -1668,6 +1741,7 @@ impl ModelRuntime {
             4096, // hidden_size
         )
         .map_err(|e| HipError::GenericError(format!("Scratch buffer creation failed: {}", e)))?;
+        eprintln!("DEBUG: ModelRuntime::new() scratch buffer created, creating KV cache...");
 
         let kv_cache = crate::model::kv_cache::KVCache::new(
             &backend, 32,   // num_layers
@@ -1676,10 +1750,66 @@ impl ModelRuntime {
             2048, // max_seq_len
         )
         .map_err(|e| HipError::GenericError(format!("KV cache creation failed: {}", e)))?;
+        eprintln!("DEBUG: ModelRuntime::new() KV cache created, returning ModelRuntime");
 
         Ok(ModelRuntime {
             backend,
             execution_plan: None,
+            weight_buffers: Vec::new(),
+            scratch,
+            kv_cache,
+        })
+    }
+
+    /// Load model directly from GGUF file without creating an intermediate runtime
+    /// This avoids creating a wasteful default KV cache (32 layers) that would be discarded.
+    pub fn load_from_gguf(path: &str) -> HipResult<Self> {
+        eprintln!("DEBUG: load_from_gguf: Loading GGUF from path: {}", path);
+
+        let loader = crate::loader::gguf::GgufLoader::new(path)
+            .map_err(|e| HipError::GenericError(format!("Failed to load GGUF: {}", e)))?;
+        eprintln!("DEBUG: load_from_gguf: GgufLoader created successfully");
+
+        let config = loader
+            .to_model_config()
+            .map_err(|e| HipError::GenericError(format!("Failed to create config: {}", e)))?;
+        eprintln!("DEBUG: load_from_gguf: Config created - layers={}, heads={}, hidden={}",
+                 config.num_hidden_layers, config.num_attention_heads, config.hidden_size);
+
+        // Create backend
+        let backend = HipBackend::new()?;
+
+        eprintln!("DEBUG: load_from_gguf: Creating scratch buffer manager...");
+        let scratch = crate::backend::scratch::ScratchBufferManager::new(
+            &backend,
+            config.num_attention_heads,
+            config.max_position_embeddings,
+            config.head_dim,
+            config.hidden_size,
+        )
+        .map_err(|e| HipError::GenericError(format!("Scratch buffer creation failed: {}", e)))?;
+        eprintln!("DEBUG: load_from_gguf: Scratch buffer manager created");
+
+        eprintln!("DEBUG: load_from_gguf: Creating KV cache...");
+        let kv_cache = crate::model::kv_cache::KVCache::new(
+            &backend,
+            config.num_hidden_layers,
+            config.num_attention_heads,
+            config.head_dim,
+            config.max_position_embeddings,
+        )
+        .map_err(|e| HipError::GenericError(format!("KV cache creation failed: {}", e)))?;
+        eprintln!("DEBUG: load_from_gguf: KV cache created");
+
+        eprintln!("DEBUG: load_from_gguf: Creating execution plan from GGUF...");
+        let execution_plan =
+            crate::model::execution_plan::ExecutionPlan::from_gguf(&backend, &loader)?;
+        eprintln!("DEBUG: load_from_gguf: Execution plan created successfully");
+
+        eprintln!("DEBUG: load_from_gguf: ModelRuntime created successfully");
+        Ok(ModelRuntime {
+            backend,
+            execution_plan: Some(execution_plan),
             weight_buffers: Vec::new(),
             scratch,
             kv_cache,

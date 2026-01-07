@@ -46,12 +46,17 @@ impl KVCache {
         head_dim: usize,
         max_seq_len: usize,
     ) -> KVCacheResult<Self> {
+        eprintln!("DEBUG: KVCache::new() called with layers={}, heads={}, head_dim={}, max_seq_len={}",
+                 num_layers, num_heads, head_dim, max_seq_len);
         // Preallocate keys and values for all layers
         let mut keys = Vec::with_capacity(num_layers);
         let mut values = Vec::with_capacity(num_layers);
         let current_seq_len = vec![0; num_layers];
 
-        for _layer in 0..num_layers {
+        for layer in 0..num_layers {
+            if layer % 8 == 0 || layer == num_layers - 1 {
+                eprintln!("DEBUG: KVCache::new() allocating layer {}/{}", layer + 1, num_layers);
+            }
             // Key/Value tensor shape: [max_seq_len, num_heads, head_dim]
             let kv_shape = TensorShape::from_dims(&[max_seq_len, num_heads, head_dim]);
 
@@ -64,6 +69,7 @@ impl KVCache {
             values.push(value_tensor);
         }
 
+        eprintln!("DEBUG: KVCache::new() completed all {} layers, returning KVCache", num_layers);
         Ok(KVCache {
             backend: backend.clone(),
             num_layers,
