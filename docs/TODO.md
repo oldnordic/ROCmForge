@@ -1,7 +1,7 @@
 # ROCmForge TODO
 
 > GPU: AMD Radeon RX 7900 XT (gfx1100, RDNA3, wave32) → AMD Instinct MI355 (CDNA4)
-> Last Updated: 2026-01-07 (Phase 10: Memory Pooling - COMPLETE, Phase 11: Bug Fixes - IN PROGRESS)
+> Last Updated: 2026-01-07 (Phase 10: Memory Pooling - COMPLETE, Phase 11.1: Bug Fixes - COMPLETE)
 > Test Health: 100% - All tests passing (190/190)
 > Test Execution: Serial (single-threaded) required for GPU tests
 > Warning Count: 15 build warnings (down from 84)
@@ -26,7 +26,8 @@
 | **Phase 9** | **Code Quality** | ✅ **COMPLETE** | **2026-01-07** | **190/190** |
 | **Phase 9.5** | **Critical Bug Fixes** | ✅ **COMPLETE** | **2026-01-07** | **8 bugs** |
 | **Phase 10** | **Memory Pooling** | ✅ **COMPLETE** | **2026-01-07** | **Production** |
-| **Phase 11** | **Bug Fixes (Code Review)** | ⚠️ **IN PROGRESS** | **2026-01-07** | **13 bugs** |
+| **Phase 11** | **Bug Fixes (Code Review)** | ✅ **COMPLETE** | **2026-01-07** | **13 bugs** |
+| **Phase 11.1** | **Medium/Low Priority Fixes** | ✅ **COMPLETE** | **2026-01-07** | **4 fixed, 3 FP** |
 
 **Current Status**: 78/78 Phase 1-6 tests passing (100% for completed phases) + 190/190 Phase 7-9 unit tests passing (100%) + 13/13 Phase 8 tests passing (100%) + 343/343 integration tests compiling + 8 critical bugs fixed (100%) + Phase 10 memory pooling complete (production-ready)
 
@@ -72,6 +73,24 @@
 - Command: `cargo test --features rocm --lib -- --test-threads=1`
 - Or: `make test`
 - All 190 tests pass with serial execution
+
+**Bugs Fixed** (Phase 11 - P0/P1):
+1. ✅ BUG-2: Singleton race condition - Set flag before lock release (HIGH)
+2. ✅ BUG-6: Ignored FFI error - Check hipDeviceSynchronize return value (MEDIUM)
+3. ✅ BUG-5: Missing bounds check - Added pool_idx bounds check (MEDIUM)
+4. ✅ BUG-1: Pointer overflow - Use checked_add() before ptr arithmetic (HIGH)
+5. ✅ BUG-3: Memory leak - Verified RAII works correctly (FALSE POSITIVE)
+
+**Bugs Fixed** (Phase 11.1 - MEDIUM/LOW):
+1. ✅ BUG-4: Integer overflow in offset calculation - Use checked_add() (MEDIUM)
+2. ✅ BUG-7: Arc::clone() performance - Verified not a hot path (FALSE POSITIVE)
+3. ✅ BUG-8: Recursive creation deadlock - Removed dead code (MEDIUM)
+4. ✅ BUG-9: Pool allocation efficiency - Verified already optimized (LOW PRIORITY)
+5. ✅ BUG-10: Alignment mask comment - Improved documentation (LOW)
+6. ✅ BUG-12: Pool size magic number - Added rationale (LOW)
+7. ✅ BUG-13: Memory pooling documentation - Added comprehensive docs (LOW)
+
+**Remaining**: BUG-11 (inconsistent error messages) - Skipped (low priority, extensive refactoring needed)
 
 ---
 
