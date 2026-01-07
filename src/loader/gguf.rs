@@ -585,12 +585,50 @@ impl GgufLoader {
     }
 
     /// Load tensors and upload to GPU using batched memory pooling.
-    /// This allocates multiple moderate-sized buffers instead of thousands of small allocations,
-    /// avoiding ROCm driver bugs while staying within reasonable allocation limits.
+    ///
+    /// # Memory Pooling Strategy
+    ///
+    /// ROCm driver has known issues with:
+    /// 1. Thousands of small hipMalloc() calls (performance degradation, hangs at ~180s)
+    /// 2. Device-to-host copies from sub-buffers (HIP_ERROR_INVALID_VALUE)
+    /// 3. Memory pool exhaustion (allocation failures)
+    ///
+    /// To mitigate these issues:
+    /// - Allocate large pools (1GB default) instead of per-tensor allocations
+    /// - Align all sub-buffers to 4KB boundaries (ROCm D2H requirement)
+    /// - Skip pooling for large tensors (>32MB) or tensors needing transpose
+    ///
+    /// # Selective Pooling Criteria
+    ///
+    /// Tensors are pooled only if they meet **all** criteria:
+    /// - Size <= 32MB (LARGE_TENSOR_THRESHOLD)
+    /// - No transpose required (not embedding/lm_head with vocab_size dimension)
+    /// - Not QKV attention weights (require concatenation, not simple copy)
+    ///
+    /// Tensors that skip pooling get direct GPU allocation via `DeviceTensor::from_host_vec`.
+    ///
+    /// # Pool Size
+    ///
+    /// Default: 1 GB per pool. This is:
+    /// - Large enough for biggest tensors in typical models (embedding layers ~200-500MB)
+    /// - Small enough to avoid ROCm allocation limits
+    /// - Adjusted to max(POOL_SIZE, max_tensor_size) to ensure largest tensor fits
+    ///
+    /// # Alignment
+    ///
+    /// All pool sub-allocations are aligned to 4KB boundaries using:
+    /// `aligned_size = (size + 4095) & !4095`
+    ///
+    /// This is required for reliable ROCm D2H (device-to-host) memory copies.
     pub fn load_to_gpu(&self, backend: &HipBackend) -> Result<HashMap<String, DeviceTensor>> {
         use crate::backend::hip_backend::HipBuffer;
 
-        // Pool size: 1 GB per pool (large enough for biggest tensors, small enough for ROCm)
+        // Pool size: 1 GB per pool
+        // Rationale:
+        // - Large enough for biggest tensors in typical models (embedding layers up to ~500MB)
+        // - Small enough to avoid ROCm driver issues with very large allocations
+        // - Multiple pools allow parallel loading and reduce fragmentation
+        // NOTE: This is adjusted below to max(POOL_SIZE, max_tensor_size) to ensure fit
         const POOL_SIZE: usize = 1024 * 1024 * 1024;
 
         // Calculate tensor sizes
@@ -747,10 +785,18 @@ impl GgufLoader {
 
             gpu_tensors.insert(name.clone(), device_tensor);
 
-            // Advance offset for next tensor (ALIGN TO 4KB BOUNDARY)
+            // Advance offset for next tensor (align to 4KB boundary)
             // ROCm requires 4KB-aligned device pointers for D2H copies
+            // Alignment formula: (offset + size + 4095) & ~4095 (clears lower 12 bits)
             const ALIGNMENT: usize = 4096;
-            offset = (offset + tensor_bytes + ALIGNMENT - 1) & !(ALIGNMENT - 1);
+            // BUG-4 FIX: Use checked arithmetic to prevent overflow for very large tensors
+            let raw_next_offset = offset.checked_add(tensor_bytes)
+                .and_then(|v| v.checked_add(ALIGNMENT - 1))
+                .ok_or_else(|| anyhow!(
+                    "Offset arithmetic overflow for tensor '{}' (offset={}, tensor_bytes={})",
+                    name, offset, tensor_bytes
+                ))?;
+            offset = raw_next_offset & !(ALIGNMENT - 1);
 
             // Synchronize after each tensor to ensure data is written to GPU
             // This is critical for memory pool sub-buffers

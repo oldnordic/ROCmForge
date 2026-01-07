@@ -1121,11 +1121,6 @@ impl DeviceTensor {
         &self.buffer
     }
 
-    /// Get reference to HIP backend (this is a simplified approach)
-    pub fn hip_backend() -> HipResult<Arc<HipBackend>> {
-        HipBackend::new()
-    }
-
     /// Get size in bytes
     pub fn size(&self) -> usize {
         self.buffer.size()
