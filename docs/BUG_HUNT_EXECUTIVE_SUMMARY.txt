@@ -1,0 +1,244 @@
+================================================================================
+                    ROCmForge Bug Hunt Executive Summary
+================================================================================
+
+Date: 2026-01-06
+Agent: debugger
+Scope: Full codebase audit after code drift fixes
+
+================================================================================
+                              CRITICAL FINDINGS
+================================================================================
+
+STATUS: ⚠️ 3 CRITICAL BUGS FOUND - IMMEDIATE ACTION REQUIRED
+
+The ROCmForge codebase compiles successfully (library only) but has critical
+issues that prevent test compilation and violate coding standards.
+
+================================================================================
+                           BUG BREAKDOWN
+================================================================================
+
+Total Bugs Found:        12
+├─ Critical (P0):        3  (compilation blockers)
+├─ High-Severity (P1):   5  (code quality violations)
+├─ Medium-Severity (P2): 1  (cleanup needed)
+└─ Low-Severity (P3):    3  (documentation/style)
+
+================================================================================
+                         CRITICAL BUGS (P0)
+================================================================================
+
+[1] MISSING FILE REFERENCE - gguf_loader.rs
+    Location:  src/loader/mod.rs:4,9
+    Impact:    Ambiguous imports, breaks 15+ files
+    Fix Time:  5 minutes
+    Fix:       Remove "pub mod gguf_loader;" and "pub use gguf_loader::*;"
+
+[2] BROKEN TEST FILE - test_direct_cpu.rs
+    Location:  tests/test_direct_cpu.rs:5-7,28
+    Impact:    3 compilation errors, prevents test suite from running
+    Fix Time:  10 minutes
+    Fix:       Remove circular imports, add direct imports
+
+[3] AMBIGUOUS GLOB RE-EXPORTS
+    Location:  src/loader/mod.rs:8-9
+    Impact:    Compiler warnings, broken type resolution
+    Fix Time:  1 minute (auto-fixed with bug #1)
+
+================================================================================
+                        HIGH-SEVERITY BUGS (P1)
+================================================================================
+
+[4] MXFP6 ENUM NAMING - 66+ references
+    Location:  src/loader/gguf.rs:379-380 + 25+ files
+    Impact:    Violates Rust conventions, breaking API change
+    Fix Time:  1-2 hours
+    Fix:       Rename MXFP6_E2M3 → Mxfp6E2m3, MXFP6_E3M2 → Mxfp6E3m2
+
+[5] f16 STRUCT NAMING
+    Location:  src/loader/gguf.rs:1328
+    Impact:    Violates Rust conventions
+    Fix Time:  5 minutes
+    Fix:       Rename struct f16 → F16
+
+[6] HIP CONSTANTS NAMING
+    Location:  src/backend/hip_backend.rs:48-51
+    Impact:    Violates Rust conventions for constants
+    Fix Time:  10 minutes
+    Fix:       Rename to SCREAMING_SNAKE_CASE (e.g., HIP_SUCCESS)
+
+[7] BLAS PARAMETERS NAMING
+    Location:  src/backend/hip_blas.rs:127-132
+    Impact:    Violates Rust naming conventions
+    Fix Time:  5 minutes
+    Fix:       Rename A/B/C → a/b/c or matrix_a/matrix_b/matrix_c
+
+[8] UNUSED CODE - 81 warnings
+    Location:  Throughout codebase
+    Impact:    Code clutter, maintenance burden
+    Fix Time:  30 minutes
+    Fix:       Run "cargo fix" and manually review
+
+================================================================================
+                           IMPACT ANALYSIS
+================================================================================
+
+Compilation Status:
+  ✓ Library:   Compiles successfully (with warnings)
+  ✗ Tests:     FAILS to compile (3 errors in test_direct_cpu.rs)
+  ✓ Binaries:  Compiles successfully (with warnings)
+
+Warning Count:
+  Current:     81 warnings
+  Target:      < 10 warnings (after cleanup)
+
+Affected Files:
+  Code:        25+ files require changes
+  Tests:       7+ test files require import updates
+  Docs:        39 references to old enum names
+
+Breaking Changes:
+  - MXFP6 enum rename (BUG #4) affects public API
+  - f16 struct rename (BUG #5) may affect public API
+  - HIP constant rename (BUG #6) may affect FFI users
+
+================================================================================
+                         RECOMMENDED ACTIONS
+================================================================================
+
+PHASE 1: CRITICAL FIXES (15 minutes)
+  1. Remove gguf_loader from mod.rs (2 lines)
+  2. Fix test_direct_cpu.rs imports
+  3. Fix engine.rs import path
+  4. Verify: cargo build --lib && cargo test --test test_direct_cpu
+
+PHASE 2: HIGH-PRIORITY FIXES (2-3 hours)
+  4. Rename MXFP6 enums (66+ changes across code and docs)
+  5. Rename f16 struct
+  6. Rename HIP constants
+  7. Rename BLAS parameters
+  8. Run cargo fix for unused code
+
+PHASE 3: TEST UPDATES (20 minutes)
+  9. Update 7+ test files to use correct imports
+
+PHASE 4: DOCUMENTATION (30 minutes)
+  10. Update 39 documentation references
+
+PHASE 5: VERIFICATION (15 minutes)
+  11. Full build and test suite
+  12. Run clippy for final check
+
+Total Estimated Time: 3.5-4.5 hours
+
+================================================================================
+                            QUICK FIX
+================================================================================
+
+To immediately fix the 3 critical bugs (15 minutes):
+
+1. Edit src/loader/mod.rs:
+   - Remove line 4: "pub mod gguf_loader;"
+   - Remove line 9: "pub use gguf_loader::*;"
+
+2. Edit src/engine.rs:129:
+   - Change: crate::loader::gguf_loader::GgufLoader
+   - To:      crate::loader::gguf::GgufLoader
+
+3. Edit tests/test_direct_cpu.rs:
+   - Remove lines 3-10 (broken mod structure)
+   - Add: use rocmforge::attention::cpu::CpuBackend;
+   - Add type annotation to line 28
+
+4. Verify:
+   $ cargo build --lib
+   $ cargo test --test test_direct_cpu
+
+================================================================================
+                          VERIFICATION COMMANDS
+================================================================================
+
+After applying fixes, verify:
+
+  # Clean build (should succeed with 0 errors)
+  cargo clean && cargo build --lib
+
+  # Build all binaries (should succeed)
+  cargo build --bins
+
+  # Run all tests (should all pass)
+  cargo test --workspace
+
+  # Check for remaining gguf_loader references (should be none)
+  grep -rn "gguf_loader" src/ tests/
+
+  # Count warnings (should be significantly reduced)
+  cargo build 2>&1 | grep -c "^warning:"
+
+  # Run clippy (should have no critical warnings)
+  cargo clippy -- -D warnings
+
+================================================================================
+                          FILES GENERATED
+================================================================================
+
+This bug hunt generated the following documentation:
+
+  1. docs/BUG_HUNT_REPORT_2026-01-06.md
+     → Complete detailed report with analysis and fixes
+
+  2. docs/BUG_HUNT_QUICKSUMMARY.md
+     → Quick reference for developers
+
+  3. docs/BUG_HUNT_FIX_CHECKLIST.md
+     → Step-by-step fix checklist with progress tracking
+
+  4. docs/BUG_HUNT_BUG_LIST.md
+     → Complete list of all bugs found with details
+
+  5. docs/BUG_HUNT_EXECUTIVE_SUMMARY.txt
+     → This file - executive summary
+
+================================================================================
+                            CONCLUSION
+================================================================================
+
+The ROCmForge codebase has 12 bugs requiring fixes. The main library compiles
+successfully, but test compilation fails and there are numerous code quality
+issues.
+
+Critical issues are straightforward to fix (15 minutes). The most time-
+consuming fix is renaming MXFP6 enums (1-2 hours) due to the large number
+of references.
+
+No fundamental design flaws were detected. These are post-refactoring cleanup
+issues that are fully resolvable.
+
+================================================================================
+                          NEXT STEPS
+================================================================================
+
+Immediate:
+  1. Review this executive summary
+  2. Review detailed bug report (BUG_HUNT_REPORT_2026-01-06.md)
+  3. Begin Phase 1 critical fixes
+
+Short-term:
+  4. Complete all critical and high-severity fixes
+  5. Update documentation
+  6. Run full test suite verification
+
+Long-term:
+  7. Set up pre-commit hooks to prevent similar issues
+  8. Add CI checks for naming conventions
+  9. Establish code review guidelines
+
+================================================================================
+
+Report Generated: 2026-01-06
+Agent: debugger
+Status: ⚠️ ACTION REQUIRED
+Priority: HIGH
+
+================================================================================

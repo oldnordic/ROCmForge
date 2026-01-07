@@ -288,7 +288,7 @@ impl HipBuffer {
     pub fn sub_buffer_view(&self, offset: usize, size: usize) -> HipResult<Self> {
         if offset + size > self.size() {
             return Err(HipError::MemoryAllocationFailed(format!(
-                "Sub-buffer out of bounds: offset={} + size={} > parent_size={}",
+                "GPU memory sub-allocation failed: offset={} size={} > buffer_size={}",
                 offset, size, self.size()
             )));
         }

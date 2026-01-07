@@ -662,7 +662,7 @@ impl GgufLoader {
             if current_pool_bytes + aligned_tensor_bytes > actual_pool_size {
                 // Start a new pool
                 pools.push(backend.allocate_buffer(actual_pool_size)
-                    .map_err(|e| anyhow!("Failed to allocate memory pool: {}", e))?);
+                    .map_err(|e| anyhow!("GPU memory pool #{} allocation failed: {}", pools.len() + 1, e))?);
                 current_pool_bytes = 0;
                 eprintln!("DEBUG: Allocated new memory pool #{}", pools.len());
             }
@@ -672,7 +672,7 @@ impl GgufLoader {
         // Allocate final pool if needed
         if current_pool_bytes > 0 {
             pools.push(backend.allocate_buffer(current_pool_bytes)
-                .map_err(|e| anyhow!("Failed to allocate final memory pool: {}", e))?);
+                .map_err(|e| anyhow!("GPU memory pool #{} allocation failed (size={}): {}", pools.len() + 1, current_pool_bytes, e))?);
             eprintln!("DEBUG: Allocated final memory pool #{} (size: {} bytes)",
                       pools.len(), current_pool_bytes);
         }
@@ -781,7 +781,7 @@ impl GgufLoader {
                 offset,
                 f32_data,
                 tensor.shape.clone(),
-            ).map_err(|e| anyhow!("Failed to create tensor '{}' from pool #{}: {}", name, pool_idx, e))?;
+            ).map_err(|e| anyhow!("GPU memory pool #{} tensor '{}' creation failed: {}", pool_idx, name, e))?;
 
             gpu_tensors.insert(name.clone(), device_tensor);
 
