@@ -200,8 +200,10 @@ async fn run_http_generate(host: &str, body: GenerateRequest) -> anyhow::Result<
     let url = format!("{}/generate", host.trim_end_matches('/'));
     let resp = client.post(url).json(&body).send().await?;
     if !resp.status().is_success() {
-        let text = resp.text().await.unwrap_or_default();
-        anyhow::bail!("Server returned error: {}", text);
+        let status = resp.status();
+        let text = resp.text().await
+            .unwrap_or_else(|e| format!("<failed to read error body: {}>", e));
+        anyhow::bail!("Server returned error {}: {}", status, text);
     }
     let response: GenerateResponse = resp.json().await?;
     println!("request_id: {}", response.request_id);
@@ -275,8 +277,10 @@ async fn fetch_status(host: &str, request_id: u32) -> anyhow::Result<()> {
     let url = format!("{}/status/{}", host.trim_end_matches('/'), request_id);
     let resp = client.get(url).send().await?;
     if !resp.status().is_success() {
-        let text = resp.text().await.unwrap_or_default();
-        anyhow::bail!("Server returned error: {}", text);
+        let status = resp.status();
+        let text = resp.text().await
+            .unwrap_or_else(|e| format!("<failed to read error body: {}>", e));
+        anyhow::bail!("Server returned error {}: {}", status, text);
     }
     let status: GenerateResponse = resp.json().await?;
     println!(
@@ -292,8 +296,10 @@ async fn cancel_http_request(host: &str, request_id: u32) -> anyhow::Result<()> 
     let url = format!("{}/cancel/{}", host.trim_end_matches('/'), request_id);
     let resp = client.post(url).send().await?;
     if !resp.status().is_success() {
-        let text = resp.text().await.unwrap_or_default();
-        anyhow::bail!("Server returned error: {}", text);
+        let status = resp.status();
+        let text = resp.text().await
+            .unwrap_or_else(|e| format!("<failed to read error body: {}>", e));
+        anyhow::bail!("Server returned error {}: {}", status, text);
     }
     let response: GenerateResponse = resp.json().await?;
     println!(
@@ -472,11 +478,8 @@ async fn create_engine(gguf: &str) -> anyhow::Result<Arc<InferenceEngine>> {
     engine.start().await?;
 
     // Start inference loop in background - don't block on it!
-    let engine_clone = engine.clone();
-    tokio::spawn(async move {
-        // Ignore errors on shutdown
-        let _ = engine_clone.run_inference_loop().await;
-    });
+    // Note: run_inference_loop() internally spawns the task, so we don't spawn here
+    engine.run_inference_loop().await;
 
     Ok(engine)
 }
