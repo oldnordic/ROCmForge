@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Issue 1: Remove Debug Print Statements ✅ COMPLETE
 
-**Problem**: Found 101 instances of `eprintln!` debug statements in production code.
+**Problem**: Found 101 instances of `eprintln!` debug statements in library code.
 
 **Solution**: Replaced all with appropriate `tracing` macros:
 - GPU fallback errors → `tracing::warn!`
@@ -67,9 +67,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Issue 3: Audit expect() Calls ✅ DOCUMENTED
 
-**Problem**: Originally reported 276 expect() calls in production code.
+**Problem**: Originally reported 276 expect() calls in non-test code.
 
-**Actual Audit Found**: 28 expect() calls in production code (excluding tests)
+**Actual Audit Found**: 28 expect() calls in non-test code (excluding tests)
 
 **Audit Results**:
 | Category | Count | Action | Rationale |
@@ -82,7 +82,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Conclusion**: 28 expect() calls is much lower than reported. 24 are acceptable (FFI constraints, test code, documented invariants). 4 need individual review (low priority).
 
-**Status**: Documented as ACCEPTABLE for production use.
+**Status**: Documented as ACCEPTABLE for deployment use.
 
 ---
 
@@ -120,22 +120,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Priority**: P1/P2 - HIGH/MEDIUM (Code Quality)
 **Estimated Effort**: Completed
 **Impact Assessment**:
-- **Before**: Debug prints in production, API confusion, unverified expect() calls
+- **Before**: Debug prints in library code, API confusion, unverified expect() calls
 - **After**: Structured logging, clear API, documented invariants
 
 ---
 
 ### Phase 13: Unwrap Hell Elimination ⚠️ **IN PROGRESS (2026-01-11)**
 
-**Summary**: Eliminate unwrap() and expect() calls in production code to improve error handling and production stability.
+**Summary**: Eliminate unwrap() and expect() calls in library code to improve error handling and stability.
 
-**Progress**: ~7% complete (20/276 production unwrap() fixed)
+**Progress**: ~7% complete (20/276 library unwrap() fixed)
 
 **Status**: IN PROGRESS - Task 13.1 COMPLETE, Task 13.2 STARTED
 
 **Background**: Code quality assessment on 2026-01-11 identified critical "unwrap hell" issue:
 - **431 total** unwrap() calls across codebase
-- **276 in non-test production code** (P0 CRITICAL)
+- **276 in non-test library code** (P0 CRITICAL)
 - **276** expect() calls in non-test code (P1 HIGH)
 
 **Risk Assessment**:
@@ -245,7 +245,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Task 14.1: Consolidate Duplicate KV Cache Implementations ✅
 
 **Problem**: Two KV cache implementations with confusing naming:
-- `src/kv_cache/kv_cache.rs` (1,116 LOC) - Paged KV cache (production)
+- `src/kv_cache/kv_cache.rs` (1,116 LOC) - Paged KV cache (core)
 - `src/model/kv_cache.rs` (285 LOC) - Simple KV cache (legacy)
 
 **Solution**: Clarified through documentation without breaking changes:
@@ -753,7 +753,7 @@ if is_large || needs_transpose || is_qkv {
 
 ### Phase 9.5: Critical Bug Fixes ✅ COMPLETE
 
-**Summary**: Fixed 8 critical bugs (3 numerical precision, 5 memory safety) to bridge to production readiness.
+**Summary**: Fixed 8 critical bugs (3 numerical precision, 5 memory safety) to improve reliability.
 
 **Bug Fixes**:
 
@@ -840,7 +840,7 @@ if is_large || needs_transpose || is_qkv {
 - `kernels/weighted_matmul.hip` - Tensor indexing fix
 - `docs/BUG_FIX_CHRONICLE.md` - Comprehensive bug documentation (NEW)
 
-**Production Readiness**: ✅ READY
+**Deployment Readiness**: ✅ READY
 - All critical bugs resolved
 - 100% test health achieved
 - Memory safety vulnerabilities addressed
@@ -989,11 +989,11 @@ if is_large || needs_transpose || is_qkv {
 - `src/engine.rs` - Fixed panic handling
 - `src/model/glm_position.rs` - Fixed test expectations
 
-**Production Readiness**: ✅ READY
+**Deployment Readiness**: ✅ READY
 - All critical bugs resolved
 - 100% test health achieved
 - No known critical issues
-- Ready for production deployment
+- Ready for deployment testing
 - No performance degradation
 
 **Next Steps**: Phase 8 - Model Support (MQA, Q4_1/Q5_0/Q5_1 dequantization)
@@ -1381,11 +1381,11 @@ if is_large || needs_transpose || is_qkv {
 **Next Phase**: Phase 13: Unwrap Hell Elimination (P0 CRITICAL)
 **Test Health**: 100% (203/203 unit tests passing)
 **Total Tests**: 203 unit tests + 343 integration tests
-**Code Quality**: B- (78/100) - 276 unwrap() calls in production code (P0 issue)
+**Code Quality**: B- (78/100) - 276 unwrap() calls in library code (P0 issue)
 
 **Hardware Target**:
 - Development: AMD Radeon RX 7900 XT (gfx1100, RDNA3, wave32)
-- Production: AMD Instinct MI355 (CDNA4)
+- Target Server: AMD Instinct MI355 (CDNA4)
 
 **Dependencies**:
 - ROCm 5.7+

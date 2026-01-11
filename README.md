@@ -6,7 +6,9 @@ A high-performance inference engine specifically designed for AMD GPUs using ROC
 
 ## Project Status
 
-In Development| Phase 15 Complete**
+**Alpha Software - Phase 15 Complete**
+
+This is **alpha software** under active development. Components work individually but end-to-end integration is incomplete.
 
 | Component | Status | Tests | Notes |
 |-----------|--------|-------|-------|
@@ -98,7 +100,7 @@ Phase 5: OCP MX Specification v1.0 compliant MXFP4/MXFP6 support
 
 2. **End-to-End Inference**: Not fully tested with real models
    - Status: Individual components tested, integration incomplete
-   - Impact: Cannot guarantee production model execution
+   - Impact: Cannot guarantee reliable model execution
    - Plan: Add integration tests with real models
 
 ### Medium Priority (Non-Blockers)
@@ -208,7 +210,7 @@ watch -n 1 rocm-smi
   --temperature 0.7
 ```
 
-### HTTP Server (Recommended)
+### HTTP Server (Recommended for Testing)
 
 ```bash
 # Start server
@@ -255,7 +257,7 @@ curl -X POST http://localhost:8080/v1/completions \
 - [ ] End-to-end integration tests with real models
 - [ ] Multi-GPU tensor parallelism
 - [ ] Performance benchmarks vs llama.cpp, vLLM
-- [ ] Production deployment guide
+- [ ] Deployment guide
 
 ## Development
 
@@ -301,8 +303,16 @@ Inspired by:
 
 ## Disclaimer
 
-This project is under active development. Core GPU kernels are complete and tested (145/145 tests passing). The HTTP server API is stable for production use. The CLI has known stability issues and should be considered experimental. End-to-end model execution is not fully tested. APIs may change.
+**This is alpha software.** It is not suitable for any critical use. Components work individually but end-to-end model execution is not fully tested. APIs will change. Bugs exist.
+
+**What this means:**
+- ✅ GPU kernels work (145/145 tests pass)
+- ✅ Individual components are tested
+- ⚠️ CLI may crash
+- ⚠️ End-to-end inference not fully tested
+- ❌ Not ready for any real deployment
+- ❌ Use at your own risk
 
 ---
 
-**Status**: Production Ready (HTTP Server) / Experimental (CLI) | **Tests**: 145/145 Passing (100%) | **Code Quality**: B+ (82/100) | **Hardware**: AMD Radeon RX 7900 XT (gfx1100) | **Last Updated**: January 2026 | **Phase**: 15 Complete
+**Status**: Alpha | **Tests**: 145/145 Passing (100%) | **Code Quality**: B+ (82/100) | **Hardware**: AMD Radeon RX 7900 XT (gfx1100) | **Last Updated**: January 2026 | **Phase**: 15 Complete
