@@ -33,7 +33,7 @@ use crate::model::{config::ModelConfig, glm_position::GlmPositionHandler, kv_cac
 use crate::ops::attention_gpu::HipAttentionKernels;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::Mutex as StdMutex;  // Renamed to avoid conflict with once_cell::sync
+  // Renamed to avoid conflict with once_cell::sync
 use once_cell::sync::OnceCell;
 
 /// Detected model architecture based on tensor naming patterns
@@ -431,7 +431,7 @@ impl ExecutionPlan {
 
     /// Create layer plan with LazyTensor handles
     fn create_layer_plan_lazy(
-        config: &ModelConfig,
+        _config: &ModelConfig,
         lazy_tensors: &HashMap<String, LazyTensor>,
         layer_idx: usize,
         architecture: &Architecture,

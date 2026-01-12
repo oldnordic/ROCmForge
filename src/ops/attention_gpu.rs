@@ -20,7 +20,6 @@ use crate::model::kv_cache::KVCache;
 use crate::tensor::matmul::matmul_f32;
 #[cfg(feature = "rocm")]
 use once_cell::sync::OnceCell;
-use std::ffi::c_void;
 
 /// GPU Attention Kernels for Phase E
 ///

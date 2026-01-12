@@ -5,7 +5,6 @@
 
 #![allow(non_snake_case)] // Kernel parameter names follow HIP conventions
 
-use std::ffi::c_void;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 

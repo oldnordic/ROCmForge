@@ -1,5 +1,5 @@
 use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
-use rocmforge::backend::hip_backend::{DeviceTensor, HipBackend};
+use rocmforge::backend::hip_backend::HipBackend;
 use serial_test::serial;
 use rocmforge::loader::gguf::GgufLoader;
 use rocmforge::loader::lazy_tensor::LazyTensor;
@@ -11,7 +11,7 @@ use std::sync::Arc;
 fn create_test_backend() -> Arc<HipBackend> {
     let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
-    Arc::clone(fixture.backend())
+    fixture.backend().clone()
 }
 
 /// Helper function to get tensor shape from LazyTensor (Phase 2: handles unloaded tensors)

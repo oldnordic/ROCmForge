@@ -78,6 +78,40 @@ pub fn discover_models(dir_override: Option<&str>) -> Result<Vec<ModelInfo>> {
     Ok(models)
 }
 
+/// Recursively collect all GGUF files in a directory tree
+fn collect_gguf_files(base_dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut gguf_files = Vec::new();
+    collect_gguf_files_recursive(base_dir, &mut gguf_files)?;
+    Ok(gguf_files)
+}
+
+/// Helper function to recursively collect GGUF files
+fn collect_gguf_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+    let entries = std::fs::read_dir(dir)
+        .with_context(|| format!("Failed to read directory {}", dir.display()))?;
+
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            // Recursively search subdirectories
+            collect_gguf_files_recursive(&path, files)?;
+        } else if path.is_file() {
+            // Check if it's a GGUF file
+            if path
+                .extension()
+                .map(|e| e.eq_ignore_ascii_case("gguf"))
+                .unwrap_or(false)
+            {
+                files.push(path);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub fn discover_models_with_cache(dir_override: Option<&str>) -> Result<(Vec<ModelInfo>, u64)> {
     let base_dir = resolve_models_dir(dir_override)?;
     if !base_dir.exists() {
@@ -88,58 +122,52 @@ pub fn discover_models_with_cache(dir_override: Option<&str>) -> Result<(Vec<Mod
     let mut cache = MetadataCache::load(&base_dir);
     let mut cache_dirty = false;
     let mut seen_paths = HashSet::new();
-    for entry in std::fs::read_dir(&base_dir)
-        .with_context(|| format!("Failed to read model directory {}", base_dir.display()))?
-    {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_file()
-            && path
-                .extension()
-                .map(|e| e.eq_ignore_ascii_case("gguf"))
-                .unwrap_or(false)
-        {
-            let tokenizer = infer_tokenizer_path(path.to_string_lossy().as_ref());
-            let (metadata, cache_status) =
-                match load_or_cache_metadata(&path, &base_dir, &mut cache, false).map(|info| {
-                    cache_dirty |= info.updated_cache;
+
+    // Recursively collect all GGUF files
+    let gguf_files = collect_gguf_files(&base_dir)?;
+    tracing::debug!("Found {} GGUF files in {}", gguf_files.len(), base_dir.display());
+
+    for path in gguf_files {
+        let tokenizer = infer_tokenizer_path(path.to_string_lossy().as_ref());
+        let (metadata, cache_status) =
+            match load_or_cache_metadata(&path, &base_dir, &mut cache, false).map(|info| {
+                cache_dirty |= info.updated_cache;
+                (
+                    info.summary,
+                    CacheStatus {
+                        cached: info.cached,
+                        refreshed: info.updated_cache,
+                    },
+                )
+            }) {
+                Ok(summary) => summary,
+                Err(err) => {
+                    warn!(
+                        "Failed to inspect GGUF metadata for {}: {}",
+                        path.display(),
+                        err
+                    );
                     (
-                        info.summary,
+                        None,
                         CacheStatus {
-                            cached: info.cached,
-                            refreshed: info.updated_cache,
+                            cached: false,
+                            refreshed: false,
                         },
                     )
-                }) {
-                    Ok(summary) => summary,
-                    Err(err) => {
-                        warn!(
-                            "Failed to inspect GGUF metadata for {}: {}",
-                            path.display(),
-                            err
-                        );
-                        (
-                            None,
-                            CacheStatus {
-                                cached: false,
-                                refreshed: false,
-                            },
-                        )
-                    }
-                };
-            let name = path
-                .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| path.display().to_string());
-            seen_paths.insert(path.to_string_lossy().into_owned());
-            entries.push(ModelInfo {
-                name,
-                path: path.to_string_lossy().into_owned(),
-                tokenizer,
-                metadata,
-                cache_status: Some(cache_status),
-            });
-        }
+                }
+            };
+        let name = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        seen_paths.insert(path.to_string_lossy().into_owned());
+        entries.push(ModelInfo {
+            name,
+            path: path.to_string_lossy().into_owned(),
+            tokenizer,
+            metadata,
+            cache_status: Some(cache_status),
+        });
     }
 
     entries.sort_by(|a, b| a.name.cmp(&b.name));
@@ -296,11 +324,14 @@ fn cleanup_tokenizer_blobs(base_dir: &Path, cache: &MetadataCache) -> bool {
     }
 
     if total_size > MAX_TOKENIZER_CACHE_BYTES {
-        valid_files.sort_by_key(|(_, _, modified)| {
-            modified
-                .and_then(|ts| ts.duration_since(UNIX_EPOCH).ok())
-                .map(|d| d.as_secs())
-                .unwrap_or(0)
+        valid_files.sort_by_key(|(_, len, modified)| {
+            (
+                modified
+                    .and_then(|ts| ts.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0),
+                std::cmp::Reverse(*len), // Sort by size descending (largest first) when times are equal
+            )
         });
         for (path, len, _) in valid_files {
             if total_size <= MAX_TOKENIZER_CACHE_BYTES {

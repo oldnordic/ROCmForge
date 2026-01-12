@@ -1931,9 +1931,9 @@ impl GgufLoader {
 
         // Extract result from Arc<RwLock>
         let result = Arc::try_unwrap(result_lock)
-            .map_err(|e| anyhow!("Failed to extract result: Arc still has owners"))?
+            .map_err(|_e| anyhow!("Failed to extract result: Arc still has owners"))?
             .into_inner()
-            .map_err(|e| anyhow!("Failed to get inner value: RwLock poisoned"))?;
+            .map_err(|_e| anyhow!("Failed to get inner value: RwLock poisoned"))?;
 
         Ok(result)
     }
@@ -1992,9 +1992,9 @@ impl GgufLoader {
 
         // Extract result from Arc<RwLock>
         let result = Arc::try_unwrap(result_lock)
-            .map_err(|e| anyhow!("Failed to extract result: Arc still has owners"))?
+            .map_err(|_e| anyhow!("Failed to extract result: Arc still has owners"))?
             .into_inner()
-            .map_err(|e| anyhow!("Failed to get inner value: RwLock poisoned"))?;
+            .map_err(|_e| anyhow!("Failed to get inner value: RwLock poisoned"))?;
 
         Ok(result)
     }

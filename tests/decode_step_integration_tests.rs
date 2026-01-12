@@ -4,12 +4,150 @@
 //! KVCache, and existing GPU/CPU operations.
 
 use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
-use rocmforge::backend::hip_backend::{DeviceTensor, HipBackend, ModelRuntime};
+use rocmforge::backend::hip_backend::{DeviceTensor, ModelRuntime};
 use rocmforge::backend::scratch::ScratchBufferManager;
+use rocmforge::loader::gguf::GgufLoader;
 use rocmforge::loader::mmap_loader::TensorShape;
 use rocmforge::model::config::{ModelConfig, ModelType};
 use rocmforge::model::execution_plan::ExecutionPlan;
 use rocmforge::model::kv_cache::KVCache;
+use std::fs;
+use std::path::Path;
+use tempfile::tempdir;
+
+/// Create a minimal synthetic GGUF file for testing decode_step
+fn create_minimal_gguf_file(path: &Path, config: &ModelConfig) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    let mut file = fs::File::create(path)?;
+
+    // GGUF magic number: "GGUF"
+    file.write_all(b"GGUF")?;
+
+    // Version: 3
+    file.write_all(&3u32.to_le_bytes())?;
+
+    // Tensor count: minimal set for decode_step testing
+    let mut tensor_info: Vec<(String, Vec<usize>)> = Vec::new();
+
+    // Add embedding weights
+    tensor_info.push(("token_embd.weight".to_string(), vec![config.vocab_size, config.hidden_size]));
+
+    // Add LM head (tied to embeddings)
+    tensor_info.push(("output.weight".to_string(), vec![config.vocab_size, config.hidden_size]));
+
+    // Add layer 0 weights (for single layer test)
+    let layer_prefix = "blk.0.";
+    tensor_info.push((format!("{}attn_q.weight", layer_prefix), vec![config.hidden_size, config.hidden_size]));
+    tensor_info.push((format!("{}attn_k.weight", layer_prefix), vec![config.head_dim, config.hidden_size]));
+    tensor_info.push((format!("{}attn_v.weight", layer_prefix), vec![config.head_dim, config.hidden_size]));
+    tensor_info.push((format!("{}attn_output.weight", layer_prefix), vec![config.hidden_size, config.hidden_size]));
+    tensor_info.push((format!("{}ffn_gate.weight", layer_prefix), vec![config.intermediate_size, config.hidden_size]));
+    tensor_info.push((format!("{}ffn_up.weight", layer_prefix), vec![config.intermediate_size, config.hidden_size]));
+    tensor_info.push((format!("{}ffn_down.weight", layer_prefix), vec![config.hidden_size, config.intermediate_size]));
+    tensor_info.push((format!("{}attn_norm.weight", layer_prefix), vec![config.hidden_size]));
+    tensor_info.push((format!("{}ffn_norm.weight", layer_prefix), vec![config.hidden_size]));
+
+    // For multi-layer test, add layer 1
+    if config.num_hidden_layers > 1 {
+        let layer_prefix = "blk.1.";
+        tensor_info.push((format!("{}attn_q.weight", layer_prefix), vec![config.hidden_size, config.hidden_size]));
+        tensor_info.push((format!("{}attn_k.weight", layer_prefix), vec![config.head_dim, config.hidden_size]));
+        tensor_info.push((format!("{}attn_v.weight", layer_prefix), vec![config.head_dim, config.hidden_size]));
+        tensor_info.push((format!("{}attn_output.weight", layer_prefix), vec![config.hidden_size, config.hidden_size]));
+        tensor_info.push((format!("{}ffn_gate.weight", layer_prefix), vec![config.intermediate_size, config.hidden_size]));
+        tensor_info.push((format!("{}ffn_up.weight", layer_prefix), vec![config.intermediate_size, config.hidden_size]));
+        tensor_info.push((format!("{}ffn_down.weight", layer_prefix), vec![config.hidden_size, config.intermediate_size]));
+        tensor_info.push((format!("{}attn_norm.weight", layer_prefix), vec![config.hidden_size]));
+        tensor_info.push((format!("{}ffn_norm.weight", layer_prefix), vec![config.hidden_size]));
+    }
+
+    let tensor_count = tensor_info.len() as u64;
+
+    // KV count: basic metadata
+    let kv_count = 10u64; // architecture, layers, heads, etc.
+
+    file.write_all(&tensor_count.to_le_bytes())?;
+    file.write_all(&kv_count.to_le_bytes())?;
+
+    // Write KV pairs (metadata)
+    let metadata = vec![
+        ("general.architecture", "llama".to_string()),
+        ("general.file_type", "0".to_string()), // FP32
+        ("llama.vocab_size", config.vocab_size.to_string()),
+        ("llama.n_layers", config.num_hidden_layers.to_string()),
+        ("llama.n_heads", config.num_attention_heads.to_string()),
+        ("llama.n_embd", config.hidden_size.to_string()),
+        ("llama.intermediate_size", config.intermediate_size.to_string()),
+        ("llama.head_dim", config.head_dim.to_string()),
+        ("llama.max_position_embeddings", config.max_position_embeddings.to_string()),
+        ("llama.rms_norm_eps", "0.000001".to_string()),
+    ];
+
+    for (key, value) in metadata {
+        // Key length and key
+        let key_bytes = key.as_bytes();
+        file.write_all(&(key_bytes.len() as u64).to_le_bytes())?;
+        file.write_all(key_bytes)?;
+
+        // Value type: string (8)
+        file.write_all(&8u8.to_le_bytes())?;
+
+        // Value length and value
+        let value_bytes = value.as_bytes();
+        file.write_all(&(value_bytes.len() as u64).to_le_bytes())?;
+        file.write_all(value_bytes)?;
+    }
+
+    // Write tensor info
+    for (name, shape) in &tensor_info {
+        // Name length and name
+        let name_bytes = name.as_bytes();
+        file.write_all(&(name_bytes.len() as u64).to_le_bytes())?;
+        file.write_all(name_bytes)?;
+
+        // Number of dimensions
+        file.write_all(&(shape.len() as u32).to_le_bytes())?;
+
+        // Dimensions
+        for &dim in shape {
+            file.write_all(&(dim as u64).to_le_bytes())?;
+        }
+
+        // Tensor type: FP32 (0)
+        file.write_all(&0u32.to_le_bytes())?;
+
+        // Tensor offset (placeholder, will be updated)
+        file.write_all(&0u64.to_le_bytes())?;
+    }
+
+    // Write tensor data (FP32 weights with small random-like values)
+    for (name, shape) in &tensor_info {
+        let total_elements: usize = shape.iter().product();
+        let _data_size = total_elements * 4; // FP32 = 4 bytes per element
+
+        // Generate pseudo-random but deterministic values based on tensor name
+        let mut data = Vec::with_capacity(total_elements);
+        let mut seed = 0u32;
+        for byte in name.as_bytes() {
+            seed = seed.wrapping_add(*byte as u32);
+        }
+
+        for _i in 0..total_elements {
+            // Generate small pseudo-random values
+            seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+            let value = (seed % 2000) as f32 / 1000.0 - 1.0; // Range [-1.0, 1.0)
+            data.push(value.to_le_bytes());
+        }
+
+        // Write data as bytes
+        for chunk in data {
+            file.write_all(&chunk)?;
+        }
+    }
+
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {
@@ -38,13 +176,17 @@ mod tests {
             use_rotary_embeddings: true,
         };
 
-        // Create execution plan with synthetic weights
-        let plan_result = ExecutionPlan::new(&backend, &config);
-        assert!(plan_result.is_ok(), "Failed to create execution plan");
-        let execution_plan = plan_result.unwrap();
+        // Create temporary GGUF file for testing
+        let temp_dir = tempdir().unwrap();
+        let gguf_path = temp_dir.path().join("test_model.gguf");
+        create_minimal_gguf_file(&gguf_path, &config).unwrap();
 
-        // Create KV cache
-        let mut kv_cache = KVCache::new(&backend,
+        // Load GGUF and create execution plan
+        let loader = GgufLoader::new(&gguf_path.to_string_lossy()).unwrap();
+        let execution_plan = ExecutionPlan::from_gguf(&backend, &loader).unwrap();
+
+        // Create KV cache (unused in this test but created for consistency)
+        let _kv_cache = KVCache::new(&backend,
             config.num_hidden_layers,
             config.num_attention_heads,
             config.head_dim,
@@ -52,8 +194,8 @@ mod tests {
         )
         .unwrap();
 
-        // Create scratch buffer manager
-        let scratch = ScratchBufferManager::new(&backend,
+        // Create scratch buffer manager (unused in this test but created for consistency)
+        let _scratch = ScratchBufferManager::new(&backend,
             config.num_attention_heads,
             config.max_position_embeddings,
             config.head_dim,
@@ -69,7 +211,7 @@ mod tests {
 
         // Create input token embedding (simulate token id 42)
         let input_shape = TensorShape::from_dims(&[config.hidden_size]);
-        let mut input_tensor = DeviceTensor::empty(&backend, input_shape).unwrap();
+        let input_tensor = DeviceTensor::empty(&backend, input_shape).unwrap();
 
         // Initialize with test data
         let test_input: Vec<f32> = (0..config.hidden_size)
@@ -128,10 +270,14 @@ mod tests {
             use_rotary_embeddings: true,
         };
 
-        // Create execution plan
-        let plan_result = ExecutionPlan::new(&backend, &config);
-        assert!(plan_result.is_ok(), "Failed to create execution plan");
-        let execution_plan = plan_result.unwrap();
+        // Create temporary GGUF file for testing
+        let temp_dir = tempdir().unwrap();
+        let gguf_path = temp_dir.path().join("test_model.gguf");
+        create_minimal_gguf_file(&gguf_path, &config).unwrap();
+
+        // Load GGUF and create execution plan
+        let loader = GgufLoader::new(&gguf_path.to_string_lossy()).unwrap();
+        let execution_plan = ExecutionPlan::from_gguf(&backend, &loader).unwrap();
 
         // Test input
         let input_shape = TensorShape::from_dims(&[config.hidden_size]);
@@ -139,8 +285,8 @@ mod tests {
             .map(|i| (i as f32 * 0.05) + 1.0)
             .collect();
 
-        // GPU path test
-        let mut kv_cache_gpu = KVCache::new(&backend,
+        // GPU path test (unused variables in this test)
+        let _kv_cache_gpu = KVCache::new(&backend,
             config.num_hidden_layers,
             config.num_attention_heads,
             config.head_dim,
@@ -148,7 +294,7 @@ mod tests {
         )
         .unwrap();
 
-        let scratch_gpu = ScratchBufferManager::new(&backend,
+        let _scratch_gpu = ScratchBufferManager::new(&backend,
             config.num_attention_heads,
             config.max_position_embeddings,
             config.head_dim,
@@ -159,7 +305,7 @@ mod tests {
         let mut runtime_gpu = ModelRuntime::new_with_config(config.clone()).unwrap();
         runtime_gpu.set_execution_plan(execution_plan.clone());
 
-        let mut input_tensor_gpu = DeviceTensor::empty(&backend, input_shape.clone()).unwrap();
+        let input_tensor_gpu = DeviceTensor::empty(&backend, input_shape.clone()).unwrap();
         input_tensor_gpu
             .buffer()
             .copy_from_host(&test_input)
@@ -217,13 +363,17 @@ mod tests {
             use_rotary_embeddings: true,
         };
 
-        // Create execution plan
-        let plan_result = ExecutionPlan::new(&backend, &config);
-        assert!(plan_result.is_ok(), "Failed to create execution plan");
-        let execution_plan = plan_result.unwrap();
+        // Create temporary GGUF file for testing
+        let temp_dir = tempdir().unwrap();
+        let gguf_path = temp_dir.path().join("test_model.gguf");
+        create_minimal_gguf_file(&gguf_path, &config).unwrap();
+
+        // Load GGUF and create execution plan
+        let loader = GgufLoader::new(&gguf_path.to_string_lossy()).unwrap();
+        let execution_plan = ExecutionPlan::from_gguf(&backend, &loader).unwrap();
 
         // Create KV cache with initial length 0
-        let mut kv_cache = KVCache::new(&backend,
+        let kv_cache = KVCache::new(&backend,
             config.num_hidden_layers,
             config.num_attention_heads,
             config.head_dim,
@@ -235,7 +385,7 @@ mod tests {
         assert_eq!(kv_cache.get_current_length(0).unwrap(), 0);
 
         // Create scratch buffer
-        let scratch = ScratchBufferManager::new(&backend,
+        let _scratch = ScratchBufferManager::new(&backend,
             config.num_attention_heads,
             config.max_position_embeddings,
             config.head_dim,

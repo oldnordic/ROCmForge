@@ -1,6 +1,7 @@
 use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
 use serial_test::serial;
 use rocmforge::kv_cache::{CacheConfig, KvCache, KvCacheError};
+use rocmforge::backend::hip_backend::HipBackend;
 
 // ============================================================================
 // KV Cache Edge Cases

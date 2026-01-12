@@ -1,7 +1,6 @@
 //! Attention backend registry with pluggable implementations
 //! Supports CPU and GPU (ROCm) backends with runtime selection
 
-use super::AttentionError;
 use thiserror::Error;
 
 /// Error type for attention backend operations
@@ -145,7 +144,7 @@ pub struct AttentionBackendRegistry {
 
 impl AttentionBackendRegistry {
     pub fn new() -> Self {
-        let mut backends: Vec<Box<dyn BackendImplementation>> = vec![
+        let backends: Vec<Box<dyn BackendImplementation>> = vec![
             Box::new(cpu_backend::CpuAttentionBackend::new()),
         ];
 
