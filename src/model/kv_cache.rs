@@ -154,20 +154,28 @@ impl KVCache {
         // Copy to the appropriate layer in the large buffers
         let key_dst_offset = layer_offset_bytes + dst_offset_bytes;
         let value_dst_offset = layer_offset_bytes + dst_offset_bytes;
+        let chunk_bytes = chunk_elements * std::mem::size_of::<f32>();
 
-        self.keys_buffer.copy_from_buffer_region(
-            key_dst_offset,
-            key.buffer(),
-            0,
-            chunk_elements * std::mem::size_of::<f32>(),
-        )?;
+        // Validate offsets before creating sub-buffer views
+        if key_dst_offset + chunk_bytes > self.keys_buffer.size() {
+            return Err(KVCacheError::CapacityExceeded {
+                seq_len: current_len + seq_chunk,
+                max_seq_len: self.max_seq_len,
+            });
+        }
+        if value_dst_offset + chunk_bytes > self.values_buffer.size() {
+            return Err(KVCacheError::CapacityExceeded {
+                seq_len: current_len + seq_chunk,
+                max_seq_len: self.max_seq_len,
+            });
+        }
 
-        self.values_buffer.copy_from_buffer_region(
-            value_dst_offset,
-            value.buffer(),
-            0,
-            chunk_elements * std::mem::size_of::<f32>(),
-        )?;
+        // Create sub-buffer views and copy to avoid pointer arithmetic issues
+        let key_dst_view = self.keys_buffer.sub_buffer_view(key_dst_offset, chunk_bytes)?;
+        key_dst_view.copy_from_buffer(key.buffer())?;
+
+        let value_dst_view = self.values_buffer.sub_buffer_view(value_dst_offset, chunk_bytes)?;
+        value_dst_view.copy_from_buffer(value.buffer())?;
 
         self.current_seq_len[layer] += seq_chunk;
         Ok(())

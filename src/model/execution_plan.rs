@@ -580,15 +580,19 @@ impl ExecutionPlan {
         println!("PERF: Starting forward pass for {} tokens", seq_len);
 
         // Step 1: Token embedding lookup (loads embedding on-demand)
+        println!("PERF: Starting embedding lookup...");
         let embedding_start = std::time::Instant::now();
         let embedding = self.embedding_weights()?;
+        println!("PERF: Embedding weights loaded, shape: {:?}", embedding.shape().dims());
         let mut hidden_states = self.embedding_lookup(backend, input_tokens, &embedding)?;
         let embedding_time = embedding_start.elapsed();
-        println!("PERF: Embedding lookup: {:?}", embedding_time);
+        println!("PERF: Embedding lookup completed in {:?}, hidden_states shape: {:?}", embedding_time, hidden_states.shape().dims());
 
         // Step 2: Pass through all transformer layers (loads on-demand)
         let mut layer_times = Vec::new();
+        println!("PERF: Starting layer processing, {} layers total", self.layers.len());
         for (layer_idx, layer_plan) in self.layers.iter().enumerate() {
+            println!("PERF: Starting layer {}", layer_idx);
             let layer_start = std::time::Instant::now();
             hidden_states =
                 self.forward_layer(backend, &hidden_states, layer_plan, None, layer_idx)?;
@@ -1082,7 +1086,7 @@ impl ExecutionPlan {
         Ok(tensor)
     }
 
-    /// Scaled dot-product attention using GPU kernels
+    /// Scaled dot-product attention with detailed tracing
     fn scaled_dot_product_attention(
         &self,
         backend: &HipBackend,
@@ -1092,10 +1096,15 @@ impl ExecutionPlan {
         kv_cache: Option<&mut KVCache>,
         layer_idx: usize,
     ) -> HipResult<DeviceTensor> {
+        tracing::debug!("scaled_dot_product_attention: layer={} starting", layer_idx);
+
         // Validate input shapes
         let q_shape = q.shape().dims();
         let k_shape = k.shape().dims();
         let v_shape = v.shape().dims();
+
+        tracing::debug!("scaled_dot_product_attention: Q shape={:?}, K shape={:?}, V shape={:?}",
+                       q_shape, k_shape, v_shape);
 
         if q_shape.len() != 3 || k_shape.len() != 3 || v_shape.len() != 3 {
             return Err(HipError::GenericError(
@@ -1106,6 +1115,9 @@ impl ExecutionPlan {
         let seq_len = q_shape[0];
         let num_heads = q_shape[1];
         let head_dim = q_shape[2];
+
+        tracing::debug!("scaled_dot_product_attention: seq_len={}, num_heads={}, head_dim={}",
+                       seq_len, num_heads, head_dim);
 
         // Validate all tensors have compatible shapes
         if k_shape[0] != seq_len || k_shape[1] != num_heads || k_shape[2] != head_dim {
@@ -1120,16 +1132,62 @@ impl ExecutionPlan {
             ));
         }
 
-        // Create GPU attention kernels
+        tracing::debug!("scaled_dot_product_attention: shape validation passed");
+
+        // Try GPU path first
+        tracing::debug!("scaled_dot_product_attention: trying GPU path");
+        match self.try_gpu_attention(backend, q, k, v, kv_cache, layer_idx, seq_len, num_heads, head_dim) {
+            Ok(result) => {
+                tracing::debug!("scaled_dot_product_attention: GPU path succeeded");
+                Ok(result)
+            }
+            Err(e) => {
+                tracing::warn!("scaled_dot_product_attention: GPU path failed: {}, falling back to CPU", e);
+                self.compute_attention_cpu_fallback(
+                    backend,
+                    q,
+                    k,
+                    v,
+                    seq_len,
+                    seq_len,
+                    num_heads,
+                    head_dim,
+                )
+            }
+        }
+    }
+
+    /// Try GPU attention computation
+    fn try_gpu_attention(
+        &self,
+        backend: &HipBackend,
+        q: &DeviceTensor,
+        k: &DeviceTensor,
+        v: &DeviceTensor,
+        kv_cache: Option<&mut KVCache>,
+        layer_idx: usize,
+        seq_len: usize,
+        num_heads: usize,
+        head_dim: usize,
+    ) -> HipResult<DeviceTensor> {
+        tracing::debug!("try_gpu_attention: creating HipAttentionKernels");
+
+        // Create GPU attention kernels - this is where the crash likely happens
         let attention_kernels = HipAttentionKernels::new(backend)?;
+        tracing::debug!("try_gpu_attention: HipAttentionKernels created successfully");
 
         if let Some(cache) = kv_cache {
+            tracing::debug!("try_gpu_attention: using KV cache");
             cache.append(layer_idx, k, v)?;
             let current_len = cache.get_current_length(layer_idx)?;
+            tracing::debug!("try_gpu_attention: cache length={}", current_len);
+
             let attention_shape = TensorShape::from_dims(&[seq_len, current_len]);
             let attention_scores = DeviceTensor::empty(backend, attention_shape.clone())?;
             let softmax_temp = DeviceTensor::empty(backend, attention_shape)?;
             let cache_ref: &KVCache = &*cache;
+
+            tracing::debug!("try_gpu_attention: calling compute_attention with cache");
             return attention_kernels.compute_attention(
                 q,
                 &attention_scores,
@@ -1140,32 +1198,177 @@ impl ExecutionPlan {
             );
         }
 
+        tracing::debug!("try_gpu_attention: no KV cache, creating temporary buffers");
+
         // Create temporary buffers for attention computation
         let attention_shape = TensorShape::from_dims(&[seq_len, seq_len]);
         let mut attention_scores = DeviceTensor::empty(backend, attention_shape)?;
+        tracing::debug!("try_gpu_attention: attention_scores buffer created");
 
         let softmax_temp_shape = TensorShape::from_dims(&[seq_len, seq_len]);
         let softmax_temp = DeviceTensor::empty(backend, softmax_temp_shape)?;
+        tracing::debug!("try_gpu_attention: softmax_temp buffer created");
 
         // Step 1: Compute QK^T attention scores
+        tracing::debug!("try_gpu_attention: step 1 - compute_qk_t");
         attention_kernels.compute_qk_t(q, k, &mut attention_scores)?;
+        tracing::debug!("try_gpu_attention: step 1 complete");
 
-        // Step 2: Scale by 1/sqrt(head_dim) - manual scaling
+        // Step 2: Scale by 1/sqrt(head_dim)
+        tracing::debug!("try_gpu_attention: step 2 - scaling");
         let scale = 1.0 / (head_dim as f32).sqrt();
         backend.scale_inplace(&mut attention_scores, scale)?;
+        tracing::debug!("try_gpu_attention: step 2 complete");
 
-        // Step 3: Apply causal mask (for decoder-only models)
+        // Step 3: Apply causal mask
+        tracing::debug!("try_gpu_attention: step 3 - causal mask");
         attention_kernels.apply_causal_mask(&mut attention_scores, seq_len, seq_len)?;
+        tracing::debug!("try_gpu_attention: step 3 complete");
 
         // Step 4: Compute softmax
+        tracing::debug!("try_gpu_attention: step 4 - softmax");
         attention_kernels.compute_softmax(&mut attention_scores, &softmax_temp)?;
+        tracing::debug!("try_gpu_attention: step 4 complete");
 
         // Step 5: Compute attention-weighted V
+        tracing::debug!("try_gpu_attention: step 5 - attention @ V");
         let output_shape = TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
         let mut output = DeviceTensor::empty(backend, output_shape)?;
         attention_kernels.compute_attention_weighted_v(&attention_scores, v, &mut output)?;
+        tracing::debug!("try_gpu_attention: step 5 complete");
 
+        tracing::debug!("try_gpu_attention: GPU path completed successfully");
         Ok(output)
+    }
+
+    /// CPU fallback for attention computation
+    fn compute_attention_cpu_fallback(
+        &self,
+        backend: &HipBackend,
+        q: &DeviceTensor,
+        k: &DeviceTensor,
+        v: &DeviceTensor,
+        seq_len: usize,
+        kv_len: usize,
+        num_heads: usize,
+        head_dim: usize,
+    ) -> HipResult<DeviceTensor> {
+        tracing::debug!("compute_attention_cpu_fallback: starting CPU computation");
+
+        // Download tensors to CPU for computation
+        let q_host = q.to_host_vec()?;
+        let k_host = k.to_host_vec()?;
+        let v_host = v.to_host_vec()?;
+
+        tracing::debug!("compute_attention_cpu_fallback: downloaded tensors to CPU");
+
+        let mut output_host = vec![0.0f32; seq_len * num_heads * head_dim];
+
+        // Compute attention per head
+        for head in 0..num_heads {
+            let head_offset = head * head_dim;
+
+            // Extract Q, K, V for this head
+            let mut q_head = vec![0.0f32; seq_len * head_dim];
+            let mut k_head = vec![0.0f32; kv_len * head_dim];
+            let mut v_head = vec![0.0f32; kv_len * head_dim];
+
+            for i in 0..seq_len {
+                for d in 0..head_dim {
+                    q_head[i * head_dim + d] = q_host[i * num_heads * head_dim + head_offset + d];
+                }
+            }
+
+            for i in 0..kv_len {
+                for d in 0..head_dim {
+                    k_head[i * head_dim + d] = k_host[i * num_heads * head_dim + head_offset + d];
+                    v_head[i * head_dim + d] = v_host[i * num_heads * head_dim + head_offset + d];
+                }
+            }
+
+            // Compute QK^T
+            let mut attention_scores = vec![0.0f32; seq_len * kv_len];
+            for i in 0..seq_len {
+                for j in 0..kv_len {
+                    let mut sum = 0.0f32;
+                    for d in 0..head_dim {
+                        sum += q_head[i * head_dim + d] * k_head[j * head_dim + d];
+                    }
+                    attention_scores[i * kv_len + j] = sum;
+                }
+            }
+
+            // Scale by 1/sqrt(head_dim)
+            let scale = 1.0 / (head_dim as f32).sqrt();
+            for score in &mut attention_scores {
+                *score *= scale;
+            }
+
+            // Apply causal mask
+            for i in 0..seq_len {
+                for j in 0..kv_len {
+                    if j > i {
+                        attention_scores[i * kv_len + j] = f32::NEG_INFINITY;
+                    }
+                }
+            }
+
+            // Compute softmax
+            for i in 0..seq_len {
+                // Find max for numerical stability
+                let mut max_val = f32::NEG_INFINITY;
+                for j in 0..kv_len {
+                    let val = attention_scores[i * kv_len + j];
+                    if val > max_val {
+                        max_val = val;
+                    }
+                }
+
+                // Compute exp and sum
+                let mut sum = 0.0f32;
+                for j in 0..kv_len {
+                    let idx = i * kv_len + j;
+                    let val = attention_scores[idx];
+                    if val != f32::NEG_INFINITY {
+                        attention_scores[idx] = (val - max_val).exp();
+                        sum += attention_scores[idx];
+                    } else {
+                        attention_scores[idx] = 0.0f32;
+                    }
+                }
+
+                // Normalize
+                if sum > 0.0f32 {
+                    for j in 0..kv_len {
+                        attention_scores[i * kv_len + j] /= sum;
+                    }
+                }
+            }
+
+            // Compute attention @ V
+            let mut output_head = vec![0.0f32; seq_len * head_dim];
+            for i in 0..seq_len {
+                for d in 0..head_dim {
+                    let mut sum = 0.0f32;
+                    for j in 0..kv_len {
+                        sum += attention_scores[i * kv_len + j] * v_head[j * head_dim + d];
+                    }
+                    output_head[i * head_dim + d] = sum;
+                }
+            }
+
+            // Copy back to output
+            for i in 0..seq_len {
+                for d in 0..head_dim {
+                    output_host[i * num_heads * head_dim + head_offset + d] = output_head[i * head_dim + d];
+                }
+            }
+        }
+
+        tracing::debug!("compute_attention_cpu_fallback: CPU computation complete, uploading to GPU");
+
+        let output_shape = TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
+        DeviceTensor::from_host_vec(backend, output_host, output_shape)
     }
 
     /// Add residual connection using optimized GPU operations
