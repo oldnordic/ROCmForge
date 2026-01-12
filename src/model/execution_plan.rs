@@ -106,7 +106,7 @@ pub struct ExecutionPlan {
 
     // CACHED GPU TENSORS (after first access) - using OnceCell for thread-safe single initialization
     /// Cached embedding weights (loaded on first access)
-    embedding_weights_cached: OnceCell<DeviceTensor>,
+    embedding_weights_cached: OnceCell<Arc<DeviceTensor>>,
 
     /// Cached LM head (loaded on first access)
     lm_head_cached: OnceCell<DeviceTensor>,
@@ -189,21 +189,36 @@ impl ExecutionPlan {
     ///
     /// Returns cached GPU tensor if already loaded, otherwise loads on-demand.
     /// Thread-safe via OnceCell.
+    /// Handles transposition from [hidden_size, vocab_size] to [vocab_size, hidden_size] if needed.
     pub fn embedding_weights(&self) -> HipResult<DeviceTensor> {
         self.embedding_weights_cached.get_or_try_init(|| {
             match &*self.embedding_weights_lazy {
                 LazyTensor::Unloaded { name, .. } => {
                     tracing::debug!("Loading embedding tensor '{}' on-demand", name);
-                    let tensor = self.loader.load_tensor_to_gpu(name, &self.backend)
+                    let mut tensor = self.loader.load_tensor_to_gpu(name, &self.backend)
                         .map_err(|e| HipError::GenericError(format!("Failed to load embedding: {}", e)))?;
-                    Ok(DeviceTensor::clone(&tensor))
+
+                    // Check if transposition is needed
+                    let shape = tensor.shape().dims();
+                    if shape.len() == 2 {
+                        if shape[0] == self.config.hidden_size && shape[1] == self.config.vocab_size {
+                            // Need to transpose from [hidden_size, vocab_size] to [vocab_size, hidden_size]
+                            tracing::debug!("Transposing embedding tensor from [{}, {}] to [{}, {}]",
+                                          shape[0], shape[1], shape[1], shape[0]);
+                            tensor = Arc::new(Self::transpose_2d_tensor(&self.backend, &tensor)
+                                .map_err(|e| HipError::GenericError(format!("Failed to transpose embedding: {}", e)))?);
+                        }
+                        // If already [vocab_size, hidden_size], use as-is
+                    }
+
+                    Ok(tensor)
                 }
                 LazyTensor::Gpu { tensor, .. } => {
                     tracing::debug!("Embedding tensor already loaded (using cached)");
-                    Ok(DeviceTensor::clone(tensor))
+                    Ok(Arc::new(DeviceTensor::clone(tensor)))
                 }
             }
-        }).map(|t| DeviceTensor::clone(t))
+        }).map(|t| t.as_ref().clone())
     }
 
     /// Get or load LM head (lazy loading)
@@ -393,8 +408,15 @@ impl ExecutionPlan {
             if let Some(lazy) = lazy_tensors.get(*name) {
                 // Validate shape
                 if let Some(shape) = lazy.shape() {
-                    if shape.len() == 2 && shape[0] == config.vocab_size {
-                        return Ok(Arc::new(lazy.clone()));
+                    if shape.len() == 2 {
+                        // Check if shape matches expected [vocab_size, hidden_size] or transposed [hidden_size, vocab_size]
+                        if shape[0] == config.vocab_size && shape[1] == config.hidden_size {
+                            return Ok(Arc::new(lazy.clone()));
+                        }
+                        if shape[0] == config.hidden_size && shape[1] == config.vocab_size {
+                            // This is transposed, but we'll handle transposition during loading
+                            return Ok(Arc::new(lazy.clone()));
+                        }
                     }
                 }
             }
@@ -2555,4 +2577,3 @@ include!("gpu_attention_integration_tests.rs");
 #[cfg(test)]
 #[cfg(feature = "rocm")]
 include!("lazy_tests.rs");
-

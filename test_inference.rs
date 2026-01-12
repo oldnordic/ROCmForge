@@ -2,10 +2,10 @@ use rocmforge::backend::hip_backend::ModelRuntime;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🚀 Testing ROCmForge inference with Gemma 3 4B model");
+    println!("🚀 Testing ROCmForge inference with Llama 3.2 1B model");
 
     // Model path
-    let model_path = "/home/geramyl/.cache/huggingface/hub/models--ggml-org--gemma-3-4b-it-GGUF/snapshots/d0976223747697cb51e056d85c532013931fe52e/gemma-3-4b-it-Q4_K_M.gguf";
+    let model_path = "/home/geramyl/Documents/Programming/ROCmForge/models/Llama-3.2-1B-Instruct-Q4_K_M.gguf";
 
     println!("📁 Loading model from: {}", model_path);
 
