@@ -5,6 +5,8 @@ use serial_test::serial;
 #[cfg(feature = "rocm")]
 use rocmforge::attention::{Attention, AttentionBackend};
 #[cfg(feature = "rocm")]
+use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
+#[cfg(feature = "rocm")]
 use rocmforge::backend::{DeviceTensor, HipBackend};
 #[cfg(feature = "rocm")]
 use rocmforge::loader::mmap_loader::{open_mmap_weights, TensorShape};

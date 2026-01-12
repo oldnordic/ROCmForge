@@ -60,7 +60,7 @@
 
 use std::ffi::c_void;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use crate::backend::hip_backend::{HipBackend, HipError, HipKernel, HipModule};
 

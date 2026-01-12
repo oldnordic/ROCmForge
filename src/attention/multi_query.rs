@@ -285,7 +285,7 @@ impl MultiQueryAttention {
         v: &DeviceTensor,
         _mask: Option<&DeviceTensor>,
     ) -> AttentionResult<DeviceTensor> {
-        use crate::backend::hip_backend::{HipBackend, HipError};
+        use crate::backend::hip_backend::HipBackend;
         use crate::attention::kernels::{
             qkt_matmul_gpu_kernel_scaled, softmax_gpu_kernel, weighted_matmul_gpu_kernel
         };

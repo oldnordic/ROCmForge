@@ -3,6 +3,8 @@
 #[cfg(feature = "rocm")]
 use serial_test::serial;
 #[cfg(feature = "rocm")]
+use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
+#[cfg(feature = "rocm")]
 use rocmforge::backend::{DeviceTensor, HipBackend};
 #[cfg(feature = "rocm")]
 use rocmforge::loader::mmap_loader::TensorShape;

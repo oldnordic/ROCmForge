@@ -2,8 +2,7 @@
 //! Tests the complete transformer pipeline including LayerNorm, attention, and MLP
 
 use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
-use rocmforge::backend::hip_backend::{DeviceTensor, HipBackend};
-use serial_test::serial;
+use rocmforge::backend::hip_backend::DeviceTensor;
 use rocmforge::backend::scratch::ScratchBufferManager;
 use rocmforge::loader::mmap_loader::TensorShape;
 use rocmforge::model::config::{ModelConfig, ModelType};
