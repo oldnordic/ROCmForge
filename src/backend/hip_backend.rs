@@ -2067,42 +2067,117 @@ impl HipBackend {
         // hipBLAS uses default stream, while our kernel uses custom stream
         self.synchronize()?;
 
-        // Step 3: Apply SwiGLU activation using GPU kernel
+        // Step 3: Apply SwiGLU activation using GPU kernel (with CPU fallback)
         // SwiGLU = gate_output ⊙ Swish(up_output)
         // where Swish(x) = x ⊙ σ(x)
         #[cfg(feature = "rocm")]
         {
-            // Allocate device buffer for SwiGLU output
-            let swiglu_buffer = HipBuffer::new((seq_len * intermediate_size) * std::mem::size_of::<f32>())?;
+            // Try GPU kernel first, fall back to CPU if it fails
+            let gpu_success = {
+                // Allocate device buffer for SwiGLU output
+                match HipBuffer::new((seq_len * intermediate_size) * std::mem::size_of::<f32>()) {
+                    Ok(swiglu_buffer) => {
+                        // Launch GPU kernel for SwiGLU activation
+                        let kernel_result = unsafe {
+                            crate::mlp::kernels::swiglu_gpu_kernel(
+                                self,  // Pass caller's backend to ensure stream consistency
+                                gate_buffer.as_ptr() as *const f32,
+                                up_buffer.as_ptr() as *const f32,
+                                swiglu_buffer.as_mut_ptr() as *mut f32,
+                                seq_len as u32,
+                                intermediate_size as u32,
+                            )
+                        };
 
-            // Launch GPU kernel for SwiGLU activation
-            unsafe {
-                crate::mlp::kernels::swiglu_gpu_kernel(
-                    self,  // Pass caller's backend to ensure stream consistency
-                    gate_buffer.as_ptr() as *const f32,
-                    up_buffer.as_ptr() as *const f32,
-                    swiglu_buffer.as_mut_ptr() as *mut f32,
-                    seq_len as u32,
-                    intermediate_size as u32,
-                ).map_err(|e| HipError::GenericError(format!("SwiGLU GPU kernel failed: {}", e)))?;
+                        match kernel_result {
+                            Ok(()) => {
+                                // Synchronize to ensure kernel completes before down projection
+                                if self.synchronize().is_ok() {
+                                    // GPU path succeeded - use swiglu_buffer for down projection
+                                    let final_buffer = match matmul_f32(
+                                        &blas_handle,
+                                        &swiglu_buffer,
+                                        down_weight.buffer(),
+                                        seq_len as i32,
+                                        hidden_size as i32,
+                                        intermediate_size as i32,
+                                    ) {
+                                        Ok(buffer) => buffer,
+                                        Err(_) => return Err(HipError::GenericError("Down projection failed after GPU SwiGLU".to_string())),
+                                    };
+
+                                    // Copy result to output tensor (GPU to GPU)
+                                    if output.buffer().copy_from_buffer(&final_buffer).is_ok() {
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    false
+                                }
+                            }
+                            Err(_) => false,
+                        }
+                    }
+                    Err(_) => false,
+                }
+            };
+
+            // If GPU kernel failed, fall back to CPU implementation
+            if !gpu_success {
+                // CPU fallback: download tensors, apply SwiGLU, upload back
+                let mut gate_host = match vec_from_buffer(&gate_buffer, (seq_len * intermediate_size) as usize) {
+                    Ok(v) => v,
+                    Err(_) => return Err(HipError::GenericError("Failed to download gate buffer".to_string())),
+                };
+                let mut up_host = match vec_from_buffer(&up_buffer, (seq_len * intermediate_size) as usize) {
+                    Ok(v) => v,
+                    Err(_) => return Err(HipError::GenericError("Failed to download up buffer".to_string())),
+                };
+
+                // Apply SwiGLU activation on CPU
+                let mut swiglu_host = vec![0.0f32; (seq_len * intermediate_size) as usize];
+                for i in 0..swiglu_host.len() {
+                    let gate_val = gate_host[i];
+                    let up_val = up_host[i];
+                    // Swish activation: swish(x) = x * sigmoid(x)
+                    let sigmoid_up = 1.0 / (1.0 + (-up_val).exp());
+                    let swish_up = up_val * sigmoid_up;
+                    // SwiGLU: gate(x) * swish(up(x))
+                    swiglu_host[i] = gate_val * swish_up;
+                }
+
+                // Upload SwiGLU result back to GPU
+                let swiglu_buffer = match HipBuffer::new(swiglu_host.len() * std::mem::size_of::<f32>()) {
+                    Ok(b) => b,
+                    Err(_) => return Err(HipError::GenericError("Failed to allocate SwiGLU buffer".to_string())),
+                };
+                if swiglu_buffer.copy_from_host(&swiglu_host).is_err() {
+                    return Err(HipError::GenericError("Failed to upload SwiGLU result".to_string()));
+                }
+
+                // Step 4: Compute down projection: swiglu_output @ down_weight -> final_output
+                let final_buffer = match matmul_f32(
+                    &blas_handle,
+                    &swiglu_buffer,
+                    down_weight.buffer(),
+                    seq_len as i32,
+                    hidden_size as i32,
+                    intermediate_size as i32,
+                ) {
+                    Ok(b) => b,
+                    Err(_) => return Err(HipError::GenericError("Down projection failed in CPU fallback".to_string())),
+                };
+
+                // Copy result to output tensor
+                let mut output_host = match vec_from_buffer(&final_buffer, (seq_len * hidden_size) as usize) {
+                    Ok(v) => v,
+                    Err(_) => return Err(HipError::GenericError("Failed to download final result".to_string())),
+                };
+                if output.buffer().copy_from_host(&output_host).is_err() {
+                    return Err(HipError::GenericError("Failed to upload final result".to_string()));
+                }
             }
-
-            // Synchronize to ensure kernel completes before down projection
-            self.synchronize()?;
-
-            // Step 4: Compute down projection: swiglu_output @ down_weight -> final_output
-            let final_buffer = matmul_f32(
-                &blas_handle,
-                &swiglu_buffer,
-                down_weight.buffer(),
-                seq_len as i32,
-                hidden_size as i32,
-                intermediate_size as i32,
-            )
-            .map_err(|e| HipError::GenericError(format!("Down projection failed: {}", e)))?;
-
-            // Copy result to output tensor (GPU to GPU)
-            output.buffer().copy_from_buffer(&final_buffer)?;
         }
 
         #[cfg(not(feature = "rocm"))]
@@ -2675,6 +2750,18 @@ impl ModelRuntime {
 
         Ok(())
     }
+}
+
+/// Helper function to copy buffer to host vector
+fn vec_from_buffer(buffer: &HipBuffer, len: usize) -> HipResult<Vec<f32>> {
+    let mut host_data = vec![0.0f32; len];
+    unsafe {
+        let ptr = host_data.as_mut_ptr() as *mut u8;
+        let byte_size = len * std::mem::size_of::<f32>();
+        let byte_slice = std::slice::from_raw_parts_mut(ptr, byte_size);
+        buffer.copy_to_host(byte_slice)?;
+    }
+    Ok(host_data)
 }
 
 /// Synchronize device globally using STREAM-AWARE synchronization

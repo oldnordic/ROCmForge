@@ -273,75 +273,116 @@ impl GlmPositionHandler {
 
         // Apply RoPE if configured
         if let Some(rope) = &self.rope {
-            // Create backend for kernel execution
-            let backend = HipBackend::new().map_err(|e| {
-                AttentionError::HandleCreation(format!("Failed to create HIP backend: {}", e))
-            })?;
+            // Try GPU kernel first, fall back to CPU if it fails
+            let gpu_success = if let Ok(backend) = HipBackend::new() {
+                // Upload cos/sin to GPU for the positions we need
+                // cos/sin shape: [seq_len, head_dim/2]
+                let half_dim = head_dim / 2;
 
-            // Upload cos/sin to GPU for the positions we need
-            // cos/sin shape: [seq_len, head_dim/2]
-            let half_dim = head_dim / 2;
-
-            // Check position bounds
-            for &pos in position_ids {
-                if pos >= rope.config().max_seq_len {
-                    return Err(AttentionError::DimensionError(format!(
-                        "Position ID {} exceeds maximum sequence length {}",
-                        pos, rope.config().max_seq_len
-                    )));
+                // Check position bounds
+                for &pos in position_ids {
+                    if pos >= rope.config().max_seq_len {
+                        return Err(AttentionError::DimensionError(format!(
+                            "Position ID {} exceeds maximum sequence length {}",
+                            pos, rope.config().max_seq_len
+                        )));
+                    }
                 }
-            }
 
-            // Extract cos/sin for the positions we need
-            let mut cos_gpu = Vec::with_capacity(seq_len * half_dim);
-            let mut sin_gpu = Vec::with_capacity(seq_len * half_dim);
-            for &pos in position_ids {
-                let cos_offset = pos * half_dim;
-                let sin_offset = pos * half_dim;
-                cos_gpu.extend_from_slice(&rope.cos()[cos_offset..cos_offset + half_dim]);
-                sin_gpu.extend_from_slice(&rope.sin()[sin_offset..sin_offset + half_dim]);
-            }
+                // Extract cos/sin for the positions we need
+                let mut cos_gpu = Vec::with_capacity(seq_len * half_dim);
+                let mut sin_gpu = Vec::with_capacity(seq_len * half_dim);
+                for &pos in position_ids {
+                    let cos_offset = pos * half_dim;
+                    let sin_offset = pos * half_dim;
+                    cos_gpu.extend_from_slice(&rope.cos()[cos_offset..cos_offset + half_dim]);
+                    sin_gpu.extend_from_slice(&rope.sin()[sin_offset..sin_offset + half_dim]);
+                }
 
-            // Create cos/sin device tensors
-            let cos_shape = TensorShape::from_dims(&[seq_len, half_dim]);
-            let cos_device = DeviceTensor::from_host_vec(&backend, cos_gpu, cos_shape).map_err(|e| {
-                AttentionError::MemoryAllocation(format!("Failed to allocate cos tensor: {}", e))
-            })?;
+                // Create cos/sin device tensors
+                let cos_shape = TensorShape::from_dims(&[seq_len, half_dim]);
+                let cos_device = match DeviceTensor::from_host_vec(&backend, cos_gpu, cos_shape) {
+                    Ok(t) => t,
+                    Err(_) => return Err(AttentionError::MemoryAllocation("Failed to allocate cos tensor".to_string())),
+                };
 
-            let sin_shape = TensorShape::from_dims(&[seq_len, half_dim]);
-            let sin_device = DeviceTensor::from_host_vec(&backend, sin_gpu, sin_shape).map_err(|e| {
-                AttentionError::MemoryAllocation(format!("Failed to allocate sin tensor: {}", e))
-            })?;
+                let sin_shape = TensorShape::from_dims(&[seq_len, half_dim]);
+                let sin_device = match DeviceTensor::from_host_vec(&backend, sin_gpu, sin_shape) {
+                    Ok(t) => t,
+                    Err(_) => return Err(AttentionError::MemoryAllocation("Failed to allocate sin tensor".to_string())),
+                };
 
-            // Get device pointers
-            let q_ptr = q.buffer().as_mut_ptr() as *mut f32;
-            let k_ptr = k.buffer().as_mut_ptr() as *mut f32;
-            let cos_ptr = cos_device.as_ptr() as *const f32;
-            let sin_ptr = sin_device.as_ptr() as *const f32;
+                // Get device pointers
+                let q_ptr = q.buffer().as_mut_ptr() as *mut f32;
+                let k_ptr = k.buffer().as_mut_ptr() as *mut f32;
+                let cos_ptr = cos_device.as_ptr() as *const f32;
+                let sin_ptr = sin_device.as_ptr() as *const f32;
 
-            // Call GPU kernel
-            let result = unsafe {
-                position_embeddings_gpu_kernel(
-                    q_ptr,
-                    k_ptr,
-                    cos_ptr,
-                    sin_ptr,
-                    seq_len as u32,
-                    num_heads as u32,
-                    head_dim as u32,
-                )
+                // Call GPU kernel
+                let result = unsafe {
+                    position_embeddings_gpu_kernel(
+                        q_ptr,
+                        k_ptr,
+                        cos_ptr,
+                        sin_ptr,
+                        seq_len as u32,
+                        num_heads as u32,
+                        head_dim as u32,
+                    )
+                };
+
+                if result == 0 {
+                    // Synchronize to ensure kernel completes
+                    if backend.synchronize().is_ok() {
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
             };
 
-            if result != 0 {
-                return Err(AttentionError::GpuOperation(
-                    "GPU kernel execution failed".to_string()
-                ));
-            }
+            // If GPU kernel failed, fall back to CPU implementation
+            if !gpu_success {
+                // CPU fallback: download tensors, apply RoPE, upload back
+                let q_host = match q.to_host_vec() {
+                    Ok(v) => v,
+                    Err(_) => return Err(AttentionError::MemoryCopy("Failed to download Q tensor".to_string())),
+                };
+                let k_host = match k.to_host_vec() {
+                    Ok(v) => v,
+                    Err(_) => return Err(AttentionError::MemoryCopy("Failed to download K tensor".to_string())),
+                };
 
-            // Synchronize to ensure kernel completes
-            backend.synchronize().map_err(|e| {
-                AttentionError::Synchronization(format!("GPU synchronization failed: {}", e))
-            })?;
+                let mut q_with_pos = q_host.clone();
+                let mut k_with_pos = k_host.clone();
+                rope.apply_q(&mut q_with_pos, position_ids, num_heads)
+                    .and_then(|_| rope.apply_k(&mut k_with_pos, position_ids, num_heads))
+                    .map_err(|e| AttentionError::GpuOperation(format!("CPU RoPE fallback failed: {}", e)))?;
+
+                // Create new tensors with the modified data
+                let backend = match HipBackend::new() {
+                    Ok(b) => b,
+                    Err(_) => return Err(AttentionError::HandleCreation("Failed to create backend for CPU fallback".to_string())),
+                };
+
+                let q_shape = q.shape().clone();
+                let q_new = match DeviceTensor::from_host_vec(&backend, q_with_pos, q_shape) {
+                    Ok(t) => t,
+                    Err(_) => return Err(AttentionError::MemoryAllocation("Failed to upload Q tensor".to_string())),
+                };
+
+                let k_shape = k.shape().clone();
+                let k_new = match DeviceTensor::from_host_vec(&backend, k_with_pos, k_shape) {
+                    Ok(t) => t,
+                    Err(_) => return Err(AttentionError::MemoryAllocation("Failed to upload K tensor".to_string())),
+                };
+
+                return Ok((q_new, k_new));
+            }
         } else {
             // For GLM without RoPE, we might apply other position encoding schemes
             // For now, leave tensors unchanged (could add learned position embeddings here)
