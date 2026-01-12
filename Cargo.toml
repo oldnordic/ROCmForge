@@ -82,6 +82,10 @@ harness = false
 name = "inspect_gguf"
 path = "src/bin/inspect_gguf.rs"
 
+[[bin]]
+name = "test_inference"
+path = "test_inference.rs"
+
 [features]
 default = []
 rocm = []
