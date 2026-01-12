@@ -207,7 +207,7 @@ mod tests {
         let mut runtime = ModelRuntime::new_with_config(config.clone()).unwrap();
 
         // Set the execution plan
-        runtime.set_execution_plan(execution_plan).unwrap();
+        runtime.set_execution_plan(execution_plan);
 
         // Create input token embedding (simulate token id 42)
         let input_shape = TensorShape::from_dims(&[config.hidden_size]);
@@ -300,7 +300,7 @@ mod tests {
         .unwrap();
 
         let mut runtime_gpu = ModelRuntime::new_with_config(config.clone()).unwrap();
-        runtime_gpu.set_execution_plan(execution_plan.clone()).unwrap();
+        runtime_gpu.set_execution_plan(execution_plan.clone());
 
         let input_tensor_gpu = DeviceTensor::empty(&backend, input_shape.clone()).unwrap();
         input_tensor_gpu
@@ -385,7 +385,7 @@ mod tests {
 
         // Create runtime
         let mut runtime = ModelRuntime::new_with_config(config.clone()).unwrap();
-        runtime.set_execution_plan(execution_plan).unwrap();
+        runtime.set_execution_plan(execution_plan);
 
         // First token
         let input_shape = TensorShape::from_dims(&[config.hidden_size]);
