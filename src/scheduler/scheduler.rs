@@ -415,7 +415,9 @@ impl Scheduler {
 
             if let Some(pos) = pos {
                 // SAFETY: pos is guaranteed to be valid because we just found it via position()
-                let mut request = self.pending_queue.remove(pos)
+                let mut request = self
+                    .pending_queue
+                    .remove(pos)
                     .expect("Failed to remove request at valid position");
 
                 // Check if this request fits well with current batch
@@ -497,7 +499,9 @@ impl Scheduler {
             .position(|r| r.request_id == request_id)
         {
             // SAFETY: pos is guaranteed to be valid because we just found it via position()
-            let mut request = self.pending_queue.remove(pos)
+            let mut request = self
+                .pending_queue
+                .remove(pos)
                 .expect("Failed to remove request at valid position");
             request.cancel()?;
             self.completed_requests.insert(request_id, request.clone());
@@ -571,12 +575,15 @@ impl Scheduler {
         for (_req_id, request) in &self.processing_requests {
             if request.state == RequestState::Processing {
                 iteration_batch.requests.push(request.clone());
-                iteration_batch.sequence_positions.push(request.total_tokens());
+                iteration_batch
+                    .sequence_positions
+                    .push(request.total_tokens());
             }
         }
 
         // Fill empty slots with new requests from pending queue
-        while iteration_batch.size() < self.config.max_batch_size && !self.pending_queue.is_empty() {
+        while iteration_batch.size() < self.config.max_batch_size && !self.pending_queue.is_empty()
+        {
             if let Some(mut request) = self.pending_queue.pop_front() {
                 request.start_processing()?;
                 let req_id = request.request_id;
@@ -592,7 +599,10 @@ impl Scheduler {
 
     /// Update an iteration batch after processing
     /// Returns the list of completed requests
-    pub fn update_iteration_batch(&mut self, mut batch: IterationBatch) -> SchedulerResult<Vec<GenerationRequest>> {
+    pub fn update_iteration_batch(
+        &mut self,
+        mut batch: IterationBatch,
+    ) -> SchedulerResult<Vec<GenerationRequest>> {
         // Compact the batch to identify completed requests
         batch.compact();
 
@@ -812,7 +822,9 @@ mod tests {
         batch.sequence_positions.push(5);
 
         // Mark one as complete
-        batch.requests[1].complete(Some("test".to_string())).unwrap();
+        batch.requests[1]
+            .complete(Some("test".to_string()))
+            .unwrap();
 
         // Compact should remove completed request
         batch.compact();
@@ -902,7 +914,9 @@ mod tests {
         let mut scheduler = Scheduler::new(config);
 
         // Submit and start a request
-        scheduler.submit_request(vec![1; 5], 2, 0.8, 50, 0.9).unwrap();
+        scheduler
+            .submit_request(vec![1; 5], 2, 0.8, 50, 0.9)
+            .unwrap();
         let batch = scheduler.get_next_iteration_batch().unwrap();
 
         // Get the request ID and complete it through the scheduler
@@ -927,7 +941,9 @@ mod tests {
         let mut scheduler = Scheduler::new(config);
 
         // Submit a request that needs multiple iterations
-        scheduler.submit_request(vec![1, 2, 3], 10, 0.8, 50, 0.9).unwrap();
+        scheduler
+            .submit_request(vec![1, 2, 3], 10, 0.8, 50, 0.9)
+            .unwrap();
 
         // First iteration
         let batch1 = scheduler.get_next_iteration_batch().unwrap();
@@ -976,7 +992,9 @@ mod tests {
         let mut scheduler = Scheduler::new(config);
 
         // Submit a request
-        scheduler.submit_request(vec![1, 2, 3], 10, 0.8, 50, 0.9).unwrap();
+        scheduler
+            .submit_request(vec![1, 2, 3], 10, 0.8, 50, 0.9)
+            .unwrap();
 
         // Get iteration batch (creates clones)
         let batch = scheduler.get_next_iteration_batch().unwrap();
@@ -1064,14 +1082,14 @@ mod tests {
 
     #[test]
     fn test_iteration_batch_get_block_tables() {
-        use crate::kv_cache::{KvCache, CacheConfig};
         use crate::backend::HipBackend;
+        use crate::kv_cache::{CacheConfig, KvCache};
         use std::sync::Arc;
 
         let backend = HipBackend::new().unwrap(); // Already returns Arc<HipBackend>
         let cache_config = CacheConfig::new(16, 10, 32, 128, 24).unwrap();
         let cache = Arc::new(std::sync::RwLock::new(
-            KvCache::new(cache_config, backend).unwrap()
+            KvCache::new(cache_config, backend).unwrap(),
         ));
 
         let mut batch = IterationBatch::new();
@@ -1117,14 +1135,14 @@ mod tests {
 
     #[test]
     fn test_iteration_batch_get_block_tables_empty() {
-        use crate::kv_cache::{KvCache, CacheConfig};
         use crate::backend::HipBackend;
+        use crate::kv_cache::{CacheConfig, KvCache};
         use std::sync::Arc;
 
         let backend = HipBackend::new().unwrap(); // Already returns Arc<HipBackend>
         let cache_config = CacheConfig::new(16, 10, 32, 128, 24).unwrap();
         let cache = Arc::new(std::sync::RwLock::new(
-            KvCache::new(cache_config, backend).unwrap()
+            KvCache::new(cache_config, backend).unwrap(),
         ));
 
         let batch = IterationBatch::new();
@@ -1140,20 +1158,22 @@ mod tests {
 
     #[test]
     fn test_iteration_batch_allocate_blocks_on_growth() {
-        use crate::kv_cache::{KvCache, CacheConfig};
         use crate::backend::HipBackend;
+        use crate::kv_cache::{CacheConfig, KvCache};
         use std::sync::Arc;
 
         let backend = HipBackend::new().unwrap(); // Already returns Arc<HipBackend>
         let cache_config = CacheConfig::new(4, 10, 32, 128, 24).unwrap(); // block_size=4
         let cache = Arc::new(std::sync::RwLock::new(
-            KvCache::new(cache_config, backend).unwrap()
+            KvCache::new(cache_config, backend).unwrap(),
         ));
 
         let mut scheduler = Scheduler::new(SchedulerConfig::default());
 
         // Submit a request and start processing
-        scheduler.submit_request(vec![1, 2, 3], 20, 0.8, 50, 0.9).unwrap();
+        scheduler
+            .submit_request(vec![1, 2, 3], 20, 0.8, 50, 0.9)
+            .unwrap();
         let req_id = 0;
 
         // Get first batch to start processing
@@ -1167,7 +1187,9 @@ mod tests {
                 cache.append_token_paged(req_id, 100 + i as u32).unwrap();
             }
 
-            scheduler.add_generated_token(req_id, 100 + i as u32).unwrap();
+            scheduler
+                .add_generated_token(req_id, 100 + i as u32)
+                .unwrap();
 
             // Every block_size tokens, should allocate new block
             // At token 4 (i=3), we should have 1 block (tokens 0-3)
@@ -1178,9 +1200,14 @@ mod tests {
                 assert!(blocks.is_some());
                 let block_count = blocks.unwrap().len();
                 let expected_blocks = ((i + 1) + 3) / 4; // Ceiling division
-                assert_eq!(block_count, expected_blocks,
+                assert_eq!(
+                    block_count,
+                    expected_blocks,
                     "Expected {} blocks at token {}, got {}",
-                    expected_blocks, i + 1, block_count);
+                    expected_blocks,
+                    i + 1,
+                    block_count
+                );
             }
         }
 
@@ -1193,21 +1220,25 @@ mod tests {
 
     #[test]
     fn test_scheduler_iteration_with_paged_cache() {
-        use crate::kv_cache::{KvCache, CacheConfig};
         use crate::backend::HipBackend;
+        use crate::kv_cache::{CacheConfig, KvCache};
         use std::sync::Arc;
 
         let backend = HipBackend::new().unwrap(); // Already returns Arc<HipBackend>
         let cache_config = CacheConfig::new(16, 100, 32, 128, 24).unwrap();
         let cache = Arc::new(std::sync::RwLock::new(
-            KvCache::new(cache_config, backend).unwrap()
+            KvCache::new(cache_config, backend).unwrap(),
         ));
 
         let mut scheduler = Scheduler::new(SchedulerConfig::default());
 
         // Submit multiple requests
-        let req1 = scheduler.submit_request(vec![1, 2, 3], 10, 0.8, 50, 0.9).unwrap();
-        let req2 = scheduler.submit_request(vec![4, 5, 6], 10, 0.8, 50, 0.9).unwrap();
+        let req1 = scheduler
+            .submit_request(vec![1, 2, 3], 10, 0.8, 50, 0.9)
+            .unwrap();
+        let req2 = scheduler
+            .submit_request(vec![4, 5, 6], 10, 0.8, 50, 0.9)
+            .unwrap();
 
         // Get first iteration batch
         let batch1 = scheduler.get_next_iteration_batch().unwrap();

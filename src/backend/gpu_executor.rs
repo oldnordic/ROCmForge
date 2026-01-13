@@ -132,7 +132,7 @@ impl GpuModelExecutor {
         self.backend
             .launch_kernel_with_module(
                 kernel,
-                (seq_len as u32, 1, 1),                        // grid_dim
+                (seq_len as u32, 1, 1),                         // grid_dim
                 ((hidden_size.div_ceil(32) * 32) as u32, 1, 1), // block_dim (round up to warp size)
                 &args,
             )

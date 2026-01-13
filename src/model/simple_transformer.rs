@@ -66,13 +66,17 @@ impl Linear {
             linear = linear.with_gpu_buffer();
         }
 
+        #[cfg(not(feature = "rocm"))]
+        {
+            // Nothing to do
+        }
+
         linear
     }
 
     #[cfg(feature = "rocm")]
     fn with_gpu_buffer(mut self) -> Self {
         use crate::backend::HipBackend;
-        
 
         // Initialize HIP backend and get memory info
         let backend = match HipBackend::new() {
@@ -326,8 +330,6 @@ impl SimpleAttention {
 
     #[cfg(feature = "rocm")]
     fn forward_gpu(&self, input: &[f32]) -> ModelResult<Vec<f32>> {
-        
-
         // Debug logging for GPU usage (gated by debug assertions)
         #[cfg(debug_assertions)]
         tracing::debug!("Using GPU-accelerated attention (fallback to CPU for now)");

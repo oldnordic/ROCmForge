@@ -5,8 +5,8 @@
 //! - Use a single shared backend (no multiple allocations)
 //! - Check for memory leaks after each test
 
-use once_cell::sync::Lazy;
 use crate::backend::HipBackend;
+use once_cell::sync::Lazy;
 
 /// Global GPU test fixture
 ///
@@ -100,7 +100,9 @@ impl GpuTestFixture {
     ///
     /// Panics if memory leaked exceeds tolerance
     pub fn assert_no_leak(&self, tolerance_percent: usize) {
-        let (free, _total) = self.backend.get_memory_info()
+        let (free, _total) = self
+            .backend
+            .get_memory_info()
             .expect("Failed to query GPU memory");
 
         let free_mb = free / 1024 / 1024;

@@ -5,19 +5,20 @@
 
 #[cfg(test)]
 mod tests {
-    use serial_test::serial;
     use rocmforge::backend::{DeviceTensor, HipBackend};
     use rocmforge::loader::TensorShape;
     use rocmforge::model::config::ModelConfig;
     use rocmforge::model::kv_cache::KVCache;
     use rocmforge::ops::attention_gpu::HipAttentionKernels;
+    use serial_test::serial;
 
     /// Test basic HIP backend creation for attention kernels
     #[test]
     #[cfg(feature = "rocm")]
     #[serial]
     fn test_hip_backend_creation() {
-        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        let fixture = rocmforge::GPU_FIXTURE
+            .as_ref()
             .expect("GPU not available - test skipped");
         let _backend = fixture.backend();
         assert!(true, "HIP backend created successfully");
@@ -38,7 +39,8 @@ mod tests {
     #[cfg(feature = "rocm")]
     #[serial]
     fn test_hip_attention_kernels_creation() {
-        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        let fixture = rocmforge::GPU_FIXTURE
+            .as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
         // This should fail until we implement HipAttentionKernels
@@ -68,7 +70,8 @@ mod tests {
     #[cfg(feature = "rocm")]
     #[serial]
     fn test_gpu_qk_kernel() {
-        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        let fixture = rocmforge::GPU_FIXTURE
+            .as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
 
@@ -144,7 +147,8 @@ mod tests {
     #[cfg(feature = "rocm")]
     #[serial]
     fn test_gpu_softmax_kernel() {
-        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        let fixture = rocmforge::GPU_FIXTURE
+            .as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
 
@@ -219,7 +223,8 @@ mod tests {
     #[cfg(feature = "rocm")]
     #[serial]
     fn test_gpu_attention_v_kernel() {
-        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        let fixture = rocmforge::GPU_FIXTURE
+            .as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
 
@@ -294,7 +299,8 @@ mod tests {
     #[cfg(feature = "rocm")]
     #[serial]
     fn test_gpu_attention_pipeline() {
-        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        let fixture = rocmforge::GPU_FIXTURE
+            .as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
 
@@ -371,7 +377,8 @@ mod tests {
     #[cfg(feature = "rocm")]
     #[serial]
     fn test_attention_kernel_error_handling() {
-        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        let fixture = rocmforge::GPU_FIXTURE
+            .as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
         let kernels =

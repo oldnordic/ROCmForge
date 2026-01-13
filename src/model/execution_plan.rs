@@ -24,17 +24,20 @@
 //! - **Caching**: GPU cache in `GgufLoader` (thread-safe RwLock)
 //! - **Thread Safety**: `Arc<LazyTensor>` is Send + Sync, OnceCell for cached tensors
 
-use crate::backend::{DeviceTensor, HipBackend, HipError, HipResult};
 use crate::attention::rope::RopeConfig;
+use crate::backend::{DeviceTensor, HipBackend, HipError, HipResult};
 use crate::loader::gguf::GgufLoader;
 use crate::loader::lazy_tensor::LazyTensor;
 use crate::loader::TensorShape;
+use crate::ggml::backend::GgmlBackend;
+use crate::ggml::{executor::execute_graph, Graph, Layout, Op, TensorDesc, DType};
+use crate::ggml::hip_backend::HipGgmlBackend;
 use crate::model::{config::ModelConfig, glm_position::GlmPositionHandler, kv_cache::KVCache};
 use crate::ops::attention_gpu::HipAttentionKernels;
+use once_cell::sync::OnceCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::Mutex as StdMutex;  // Renamed to avoid conflict with once_cell::sync
-use once_cell::sync::OnceCell;
+use std::sync::Mutex as StdMutex; // Renamed to avoid conflict with once_cell::sync
 
 /// Detected model architecture based on tensor naming patterns
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,7 +89,7 @@ pub struct LoadingStats {
 ///
 /// Contains lazy tensor handles and execution information for all layers.
 /// Tensors are loaded on-demand during first forward pass.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ExecutionPlan {
     layers: Vec<LayerPlan>,
     config: ModelConfig,
@@ -94,6 +97,9 @@ pub struct ExecutionPlan {
     // LAZY TENSOR FIELDS (Phase 2)
     /// Lazy tensor handle for embedding weights (loaded on-demand)
     embedding_weights_lazy: Arc<LazyTensor>,
+
+    /// Embedding layout as stored in GGUF
+    embedding_layout: Layout,
 
     /// Lazy tensor handle for LM head (loaded on-demand)
     lm_head_lazy: Arc<LazyTensor>,
@@ -111,23 +117,85 @@ pub struct ExecutionPlan {
     /// Cached LM head (loaded on first access)
     lm_head_cached: OnceCell<DeviceTensor>,
 
+    /// Cached ggml embedding plan (persistent buffers + graph)
+    embedding_plan: OnceCell<EmbeddingGgmlPlan>,
+
+    /// Cached ggml layer plans for decode path
+    layer_ggml_plans: OnceCell<Vec<LayerGgmlPlan>>,
+
+    /// Cached RoPE tables on GPU (if configured)
+    rope_cache: OnceCell<RopeCache>,
+
     /// Position encoding handler for applying RoPE embeddings
     position_handler: Option<GlmPositionHandler>,
+}
+
+#[derive(Debug)]
+struct EmbeddingGgmlPlan {
+    graph: Graph,
+    backend: StdMutex<HipGgmlBackend>,
+    tokens_buffer: crate::backend::HipBuffer,
+    output_buffer: crate::backend::HipBuffer,
+    max_seq_len: usize,
+    hidden_size: usize,
+}
+
+#[derive(Debug)]
+struct RopeCache {
+    cos: DeviceTensor,
+    sin: DeviceTensor,
+    half_dim: usize,
+    max_seq_len: usize,
+}
+
+#[derive(Debug)]
+struct LayerGgmlPlan {
+    graph: StdMutex<Graph>,
+    backend: StdMutex<HipGgmlBackend>,
+    input_id: crate::ggml::TensorId,
+    output_id: crate::ggml::TensorId,
+    kv_read_k_id: crate::ggml::TensorId,
+    kv_read_v_id: crate::ggml::TensorId,
+    kv_write_k_id: crate::ggml::TensorId,
+    kv_write_v_id: crate::ggml::TensorId,
+    scores_id: crate::ggml::TensorId,
+    softmax_id: crate::ggml::TensorId,
+    cos_id: crate::ggml::TensorId,
+    sin_id: crate::ggml::TensorId,
+    num_heads: usize,
+    head_dim: usize,
+    hidden_size: usize,
+    max_seq_len: usize,
 }
 
 /// Execution plan for a single transformer layer
 ///
 /// Contains lazy tensor handles for all weights needed for layer execution:
-/// - QKV projection (fused Q, K, V)
+/// - QKV projection (fused Q, K, V OR separate Q, K, V)
 /// - Output projection
 /// - MLP layers (gate_proj, up_proj, down_proj for GLM)
 /// - Layer normalization weights
 #[derive(Debug, Clone)]
 pub struct LayerPlan {
     /// Fused QKV projection weight matrix [3 * hidden_size, hidden_size]
+    /// NOTE: Some models (e.g., Qwen2) use separate Q, K, V weights instead.
+    /// Check q_weight, k_weight, v_weight below - if those are present, use them.
     pub qkv_weight: Arc<LazyTensor>,
-    /// Optional QKV bias [3 * hidden_size]
+
+    /// Separate Q projection weight [hidden_size, hidden_size]
+    /// Present when model uses separate Q, K, V projections (e.g., Qwen2)
+    pub q_weight: Option<Arc<LazyTensor>>,
+    /// Separate K projection weight [hidden_size, kv_dim]
+    pub k_weight: Option<Arc<LazyTensor>>,
+    /// Separate V projection weight [hidden_size, kv_dim]
+    pub v_weight: Option<Arc<LazyTensor>>,
+
+    /// Optional QKV bias [3 * hidden_size] (for fused) or separate biases
     pub qkv_bias: Option<Arc<LazyTensor>>,
+    pub q_bias: Option<Arc<LazyTensor>>,
+    pub k_bias: Option<Arc<LazyTensor>>,
+    pub v_bias: Option<Arc<LazyTensor>>,
+
     /// Output projection weight [hidden_size, hidden_size]
     pub o_proj: Arc<LazyTensor>,
     /// Optional output projection bias [hidden_size]
@@ -166,7 +234,8 @@ impl ExecutionPlan {
     #[deprecated(note = "Use ExecutionPlan::from_gguf() instead for lazy loading")]
     pub fn new(_backend: &HipBackend, _config: &ModelConfig) -> HipResult<Self> {
         Err(HipError::GenericError(
-            "ExecutionPlan::new() is deprecated. Use ExecutionPlan::from_gguf() instead.".to_string()
+            "ExecutionPlan::new() is deprecated. Use ExecutionPlan::from_gguf() instead."
+                .to_string(),
         ))
     }
 
@@ -190,38 +259,53 @@ impl ExecutionPlan {
     /// Returns cached GPU tensor if already loaded, otherwise loads on-demand.
     /// Thread-safe via OnceCell.
     pub fn embedding_weights(&self) -> HipResult<DeviceTensor> {
-        self.embedding_weights_cached.get_or_try_init(|| {
-            match &*self.embedding_weights_lazy {
+        self.embedding_weights_cached
+            .get_or_try_init(|| match &*self.embedding_weights_lazy {
                 LazyTensor::Unloaded { name, .. } => {
                     tracing::debug!("Loading embedding tensor '{}' on-demand", name);
-                    let tensor = self.loader.load_tensor_to_gpu(name, &self.backend)
-                        .map_err(|e| HipError::GenericError(format!("Failed to load embedding: {}", e)))?;
+                    let tensor = self
+                        .loader
+                        .load_tensor_to_gpu(name, &self.backend)
+                        .map_err(|e| {
+                            HipError::GenericError(format!("Failed to load embedding: {}", e))
+                        })?;
                     Ok(DeviceTensor::clone(&tensor))
                 }
                 LazyTensor::Gpu { tensor, .. } => {
                     tracing::debug!("Embedding tensor already loaded (using cached)");
                     Ok(DeviceTensor::clone(tensor))
                 }
-            }
-        }).map(|t| DeviceTensor::clone(t))
+            })
+            .map(|t| DeviceTensor::clone(t))
     }
 
     /// Get or load LM head (lazy loading)
     pub fn lm_head(&self) -> HipResult<DeviceTensor> {
-        self.lm_head_cached.get_or_try_init(|| {
+        eprintln!(">>> lm_head(): Getting LM head tensor...");
+        let result = self.lm_head_cached.get_or_try_init(|| {
+            eprintln!(">>> lm_head(): Not cached, loading...");
             match &*self.lm_head_lazy {
                 LazyTensor::Unloaded { name, .. } => {
-                    tracing::debug!("Loading LM head tensor '{}' on-demand", name);
-                    let tensor = self.loader.load_tensor_to_gpu(name, &self.backend)
-                        .map_err(|e| HipError::GenericError(format!("Failed to load LM head: {}", e)))?;
+                    eprintln!(">>> lm_head(): Loading tensor '{}' on-demand", name);
+                    let tensor = self
+                        .loader
+                        .load_tensor_to_gpu(name, &self.backend)
+                        .map_err(|e| {
+                            HipError::GenericError(format!("Failed to load LM head: {}", e))
+                        })?;
+                    eprintln!(">>> lm_head(): Tensor loaded successfully");
                     Ok(DeviceTensor::clone(&tensor))
                 }
                 LazyTensor::Gpu { tensor, .. } => {
-                    tracing::debug!("LM head tensor already loaded (using cached)");
+                    eprintln!(">>> lm_head(): Already on GPU, using cached");
                     Ok(DeviceTensor::clone(tensor))
                 }
             }
-        }).map(|t| DeviceTensor::clone(t))
+        });
+        eprintln!(">>> lm_head(): Got tensor, cloning...");
+        let result = result.map(|t| DeviceTensor::clone(t));
+        eprintln!(">>> lm_head(): Complete");
+        result
     }
 
     /// Apply LM head to hidden states to produce logits
@@ -230,7 +314,9 @@ impl ExecutionPlan {
         backend: &HipBackend,
         hidden_states: &DeviceTensor,
     ) -> HipResult<DeviceTensor> {
+        eprintln!(">>> apply_lm_head(): Starting LM head matmul...");
         let lm_head = self.lm_head()?;
+        eprintln!(">>> apply_lm_head(): Got LM head tensor, calling matmul...");
         self.matmul(backend, hidden_states, &lm_head, None)
     }
 
@@ -239,13 +325,15 @@ impl ExecutionPlan {
         match &**lazy {
             LazyTensor::Unloaded { name, .. } => {
                 tracing::debug!("Loading tensor '{}' on-demand", name);
-                let tensor = self.loader.load_tensor_to_gpu(name, &self.backend)
-                    .map_err(|e| HipError::GenericError(format!("Failed to load tensor '{}': {}", name, e)))?;
+                let tensor = self
+                    .loader
+                    .load_tensor_to_gpu(name, &self.backend)
+                    .map_err(|e| {
+                        HipError::GenericError(format!("Failed to load tensor '{}': {}", name, e))
+                    })?;
                 Ok(DeviceTensor::clone(&tensor))
             }
-            LazyTensor::Gpu { tensor, .. } => {
-                Ok(DeviceTensor::clone(tensor))
-            }
+            LazyTensor::Gpu { tensor, .. } => Ok(DeviceTensor::clone(tensor)),
         }
     }
 
@@ -255,9 +343,7 @@ impl ExecutionPlan {
     /// - Qwen2: tensors start with `blk.N.`
     /// - LLaMA: tensors start with `transformer.layers.N.`
     /// - Mistral: tensors start with `model.layers.N.`
-    fn detect_architecture(
-        tensor_names: &HashSet<String>,
-    ) -> HipResult<Architecture> {
+    fn detect_architecture(tensor_names: &HashSet<String>) -> HipResult<Architecture> {
         // Check for Qwen2 pattern: blk.0.*
         let qwen2_pattern = "blk.0.";
         let has_qwen2 = tensor_names
@@ -287,7 +373,10 @@ impl ExecutionPlan {
             .any(|name| name.starts_with(mistral_pattern));
 
         if has_mistral {
-            println!("Detected architecture: Mistral (pattern: {})", mistral_pattern);
+            println!(
+                "Detected architecture: Mistral (pattern: {})",
+                mistral_pattern
+            );
             return Ok(Architecture::Mistral);
         }
 
@@ -316,9 +405,14 @@ impl ExecutionPlan {
     /// - No GPU uploads occur during construction (<5s initialization)
     /// - Tensors are loaded on-demand during first forward pass
     pub fn from_gguf(backend: &HipBackend, loader: &GgufLoader) -> HipResult<Self> {
+        eprintln!("ExecutionPlan::from_gguf: Starting...");
         let config = loader
             .to_model_config()
             .map_err(|e| HipError::GenericError(format!("Failed to create model config: {}", e)))?;
+        eprintln!(
+            "ExecutionPlan::from_gguf: Config created, layers={}",
+            config.num_hidden_layers
+        );
 
         // ❌ REMOVE: Load all tensors to GPU (~55s)
         // Phase 2: Use lazy loading instead - no eager loading
@@ -326,6 +420,10 @@ impl ExecutionPlan {
 
         // ✅ NEW: Get lazy tensor handles (metadata only, <1s)
         let lazy_tensors: &HashMap<String, LazyTensor> = &loader.lazy_tensors;
+        eprintln!(
+            "ExecutionPlan::from_gguf: Got lazy tensors, count={}",
+            lazy_tensors.len()
+        );
 
         // Wrap loader and backend in Arc for lazy loading
         let loader_arc = Arc::new(loader.clone());
@@ -333,100 +431,196 @@ impl ExecutionPlan {
 
         // Detect architecture from lazy tensor names
         let tensor_names: HashSet<_> = lazy_tensors.keys().cloned().collect();
+        eprintln!("ExecutionPlan::from_gguf: Detecting architecture...");
         let architecture = Self::detect_architecture(&tensor_names)?;
         println!("Using {} architecture mapping", architecture.name());
+        eprintln!("ExecutionPlan::from_gguf: Architecture detected, mapping embedding...");
 
         // Map embedding and LM head to LazyTensor handles
-        let embedding_weights_lazy = Self::map_embedding_lazy(lazy_tensors, &config, &architecture)?;
+        eprintln!("ExecutionPlan::from_gguf: Mapping embedding weights...");
+        let (embedding_weights_lazy, embedding_layout) =
+            Self::map_embedding_lazy(lazy_tensors, &config, &architecture)?;
+        eprintln!("ExecutionPlan::from_gguf: Mapping LM head...");
         let lm_head_lazy = Self::map_lm_head_lazy(lazy_tensors, &config, &architecture)?;
+        eprintln!("ExecutionPlan::from_gguf: Creating layers...");
 
         // Create layers using LazyTensor handles
         let mut layers = Vec::with_capacity(config.num_hidden_layers);
         for layer_idx in 0..config.num_hidden_layers {
-            let layer_plan = Self::create_layer_plan_lazy(
-                &config,
-                lazy_tensors,
-                layer_idx,
-                &architecture,
-            )?;
+            if layer_idx % 8 == 0 || layer_idx == config.num_hidden_layers - 1 {
+                eprintln!(
+                    "ExecutionPlan::from_gguf: Creating layer {}/{}",
+                    layer_idx + 1,
+                    config.num_hidden_layers
+                );
+            }
+            let layer_plan =
+                Self::create_layer_plan_lazy(&config, lazy_tensors, layer_idx, &architecture)?;
             layers.push(layer_plan);
         }
+        eprintln!("ExecutionPlan::from_gguf: All layers created");
 
         // Initialize position encoding handler if rotary embeddings are enabled
+        eprintln!("ExecutionPlan::from_gguf: Creating position handler...");
         let position_handler = if config.use_rotary_embeddings {
             let rope_config = RopeConfig::new(config.head_dim, config.max_position_embeddings);
-            let glm_config = crate::model::glm_position::GlmPositionConfig::new(config.max_position_embeddings)
-                .with_rope(rope_config);
+            let glm_config =
+                crate::model::glm_position::GlmPositionConfig::new(config.max_position_embeddings)
+                    .with_rope(rope_config);
             Some(GlmPositionHandler::new(glm_config).map_err(|e| {
                 HipError::GenericError(format!("Failed to create position handler: {}", e))
             })?)
         } else {
             None
         };
+        eprintln!("ExecutionPlan::from_gguf: Position handler created, returning ExecutionPlan...");
 
         Ok(ExecutionPlan {
             layers,
             config,
             embedding_weights_lazy,
+            embedding_layout,
             lm_head_lazy,
             loader: loader_arc,
             backend: backend_arc,
             embedding_weights_cached: OnceCell::new(),
             lm_head_cached: OnceCell::new(),
+            embedding_plan: OnceCell::new(),
+            layer_ggml_plans: OnceCell::new(),
+            rope_cache: OnceCell::new(),
             position_handler,
         })
     }
 
     /// Map embedding weights to LazyTensor handle
+    ///
+    /// This function implements llama.cpp-compatible embedding detection:
+    /// - vocab_size == 0 means "unknown", not "invalid"
+    /// - Accepts both [vocab_size, hidden] and [hidden, vocab_size] layouts
+    /// - Infers vocab_size from tensor shape when metadata is missing
     fn map_embedding_lazy(
         lazy_tensors: &HashMap<String, LazyTensor>,
         config: &ModelConfig,
         _architecture: &Architecture,
-    ) -> HipResult<Arc<LazyTensor>> {
+    ) -> HipResult<(Arc<LazyTensor>, Layout)> {
         let embedding_names = [
             "token_embd.weight",
             "embed_tokens.weight",
             "word_embeddings.weight",
         ];
 
+        // Try to find and validate embedding tensor
         for name in &embedding_names {
             if let Some(lazy) = lazy_tensors.get(*name) {
-                // Validate shape
                 if let Some(shape) = lazy.shape() {
-                    if shape.len() == 2 && shape[0] == config.vocab_size {
+                    if shape.len() != 2 {
+                        continue;
+                    }
+
+                    let (d0, d1) = (shape[0], shape[1]);
+                    let hidden_size = config.hidden_size;
+
+                    // Determine vocab_size if unknown (== 0)
+                    let actual_vocab_size = if config.vocab_size == 0 {
+                        // Infer from shape: whichever dimension ISN'T hidden_size is vocab_size
+                        if d0 == hidden_size && d1 != hidden_size {
+                            d1 // [hidden, vocab] layout
+                        } else if d1 == hidden_size && d0 != hidden_size {
+                            d0 // [vocab, hidden] layout
+                        } else {
+                            // Can't determine - use larger dimension as vocab (llama.cpp heuristic)
+                            d0.max(d1)
+                        }
+                    } else {
+                        config.vocab_size
+                    };
+
+                    // Check if this tensor matches expected patterns
+                    // Accept: [vocab, hidden] OR [hidden, vocab]
+                    if d0 == actual_vocab_size && d1 == hidden_size {
+                        tracing::info!(
+                            "Found embedding tensor '{}' with shape {:?}, inferred vocab_size={}",
+                            name,
+                            shape,
+                            actual_vocab_size
+                        );
+                        return Ok((Arc::new(lazy.clone()), Layout::RowMajor));
+                    }
+
+                    if d0 == hidden_size && d1 == actual_vocab_size {
+                        tracing::info!(
+                            "Found embedding tensor '{}' with shape {:?}, inferred vocab_size={}",
+                            name,
+                            shape,
+                            actual_vocab_size
+                        );
+                        return Ok((Arc::new(lazy.clone()), Layout::ColMajor));
+                    }
+                }
+            }
+        }
+
+        // Fail with evidence (llama.cpp style - list what we found)
+        let mut found_tensors = Vec::new();
+        for name in &embedding_names {
+            if let Some(lazy) = lazy_tensors.get(*name) {
+                if let Some(shape) = lazy.shape() {
+                    found_tensors.push(format!("{}: {:?}", name, shape));
+                }
+            }
+        }
+
+        let error_msg = if found_tensors.is_empty() {
+            format!("No embedding tensor found (tried: {}). lazy_tensors has {} total keys. vocab_size={}, hidden_size={}",
+                   embedding_names.join(", "), lazy_tensors.len(), config.vocab_size, config.hidden_size)
+        } else {
+            format!("Found embedding tensors but shape validation failed. Found: {}. Expected 2D tensor with vocab_size={} and hidden_size={}",
+                   found_tensors.join(", "), config.vocab_size, config.hidden_size)
+        };
+
+        Err(HipError::GenericError(error_msg))
+    }
+
+    /// Map LM head to LazyTensor handle
+    ///
+    /// This function implements llama.cpp-compatible LM head detection:
+    /// - Accepts both [vocab, hidden] and [hidden, vocab] layouts
+    /// - Falls back to tied embeddings (token_embd.weight) when no separate LM head exists
+    fn map_lm_head_lazy(
+        lazy_tensors: &HashMap<String, LazyTensor>,
+        config: &ModelConfig,
+        _architecture: &Architecture,
+    ) -> HipResult<Arc<LazyTensor>> {
+        let lm_head_names = ["output.weight", "lm_head.weight", "logits.weight"];
+
+        // Try explicit LM head tensors first
+        for name in &lm_head_names {
+            if let Some(lazy) = lazy_tensors.get(*name) {
+                if let Some(shape) = lazy.shape() {
+                    if shape.len() == 2 {
+                        // Accept either layout - validation happens at usage time
+                        tracing::info!("Found LM head tensor '{}' with shape {:?}", name, shape);
                         return Ok(Arc::new(lazy.clone()));
                     }
                 }
             }
         }
 
-        Err(HipError::GenericError(
-            "No embedding tensor found (tried: token_embd.weight, embed_tokens.weight)".to_string()
-        ))
-    }
-
-    /// Map LM head to LazyTensor handle
-    fn map_lm_head_lazy(
-        lazy_tensors: &HashMap<String, LazyTensor>,
-        _config: &ModelConfig,
-        _architecture: &Architecture,
-    ) -> HipResult<Arc<LazyTensor>> {
-        let lm_head_names = ["output.weight", "lm_head.weight", "logits.weight"];
-
-        for name in &lm_head_names {
+        // For tied embeddings (Qwen2 style), try embedding tensors
+        let tied_names = ["token_embd.weight", "embed_tokens.weight"];
+        for name in &tied_names {
             if let Some(lazy) = lazy_tensors.get(*name) {
+                tracing::info!("Using tied embedding '{}' as LM head", name);
                 return Ok(Arc::new(lazy.clone()));
             }
         }
 
-        // For tied embeddings
-        if let Some(lazy) = lazy_tensors.get("token_embd.weight") {
-            return Ok(Arc::new(lazy.clone()));
-        }
-
-        Err(HipError::GenericError(
-            "No LM head tensor found".to_string()
-        ))
+        Err(HipError::GenericError(format!(
+            "No LM head tensor found (tried: {}). vocab_size={}, hidden_size={}",
+            lm_head_names.join(", "),
+            config.vocab_size,
+            config.hidden_size
+        )))
     }
 
     /// Create layer plan with LazyTensor handles
@@ -436,11 +630,17 @@ impl ExecutionPlan {
         layer_idx: usize,
         architecture: &Architecture,
     ) -> HipResult<LayerPlan> {
+        eprintln!(
+            ">>> CREATE_LAYER_PLAN_LAZY: layer_idx={}, starting...",
+            layer_idx
+        );
         let prefix = architecture.layer_prefix(layer_idx);
+        eprintln!(">>> CREATE_LAYER_PLAN_LAZY: prefix='{}'", prefix);
 
         // Helper to get lazy tensor or error
         let get_lazy = |name: &str| -> HipResult<Arc<LazyTensor>> {
-            lazy_tensors.get(name)
+            lazy_tensors
+                .get(name)
                 .cloned()
                 .map(Arc::new)
                 .ok_or_else(|| HipError::GenericError(format!("Tensor '{}' not found", name)))
@@ -450,9 +650,70 @@ impl ExecutionPlan {
             lazy_tensors.get(name).cloned().map(Arc::new)
         };
 
-        // Map attention weights
-        let qkv_weight = get_lazy(&format!("{}.attn_q.weight", prefix))?;
+        // Detect attention tensor format:
+        // - Some models (LLaMA) use fused QKV: attn_qkv.weight
+        // - Some models (Qwen2) use separate: attn_q.weight, attn_k.weight, attn_v.weight
+        let qkv_key = &format!("{}.attn_qkv.weight", prefix);
+        let q_key = &format!("{}.attn_q.weight", prefix);
+        let k_key = &format!("{}.attn_k.weight", prefix);
+        let v_key = &format!("{}.attn_v.weight", prefix);
+
+        let has_fused_qkv = lazy_tensors.contains_key(qkv_key);
+        let has_q = lazy_tensors.contains_key(q_key);
+        let has_k = lazy_tensors.contains_key(k_key);
+        let has_v = lazy_tensors.contains_key(v_key);
+        let has_separate_qkv = has_q && has_k && has_v;
+
+        eprintln!(">>> Layer {}: Detection - prefix='{}', has_fused_qkv={}, has_separate_qkv={} (q={}, k={}, v={})",
+                 layer_idx, prefix, has_fused_qkv, has_separate_qkv, has_q, has_k, has_v);
+
+        let (qkv_weight, q_weight, k_weight, v_weight, qkv_bias, q_bias, k_bias, v_bias) =
+            if has_fused_qkv {
+                // Model uses fused QKV weight
+                eprintln!(">>> Layer {}: Using fused QKV weight", layer_idx);
+                (
+                    get_lazy(&format!("{}.attn_qkv.weight", prefix))?,
+                    None,
+                    None,
+                    None,
+                    get_lazy_optional(&format!("{}.attn_qkv.bias", prefix)),
+                    None,
+                    None,
+                    None,
+                )
+            } else if has_separate_qkv {
+                // Model uses separate Q, K, V weights (e.g., Qwen2 with GQA)
+                eprintln!(">>> Layer {}: Using separate Q, K, V weights", layer_idx);
+                let q_weight = get_lazy(&format!("{}.attn_q.weight", prefix))?;
+                let k_weight = get_lazy(&format!("{}.attn_k.weight", prefix))?;
+                let v_weight = get_lazy(&format!("{}.attn_v.weight", prefix))?;
+                let q_bias = get_lazy_optional(&format!("{}.attn_q.bias", prefix));
+                let k_bias = get_lazy_optional(&format!("{}.attn_k.bias", prefix));
+                let v_bias = get_lazy_optional(&format!("{}.attn_v.bias", prefix));
+
+                // Create a placeholder qkv_weight (required by LayerPlan struct)
+                // It won't be used since q_weight, k_weight, v_weight are present
+                let qkv_weight = q_weight.clone();
+
+                (
+                    qkv_weight,
+                    Some(q_weight),
+                    Some(k_weight),
+                    Some(v_weight),
+                    None,
+                    q_bias,
+                    k_bias,
+                    v_bias,
+                )
+            } else {
+                return Err(HipError::GenericError(format!(
+                "Layer {}: Neither fused QKV ({0}.attn_qkv.weight) nor separate Q,K,V ({0}.attn_q/k/v.weight) found",
+                prefix
+            )));
+            };
+
         let o_proj = get_lazy(&format!("{}.attn_output.weight", prefix))?;
+        let o_proj_bias = get_lazy_optional(&format!("{}.attn_output.bias", prefix));
 
         // Map MLP weights
         let mlp_gate = get_lazy(&format!("{}.ffn_gate.weight", prefix))?;
@@ -467,9 +728,15 @@ impl ExecutionPlan {
 
         Ok(LayerPlan {
             qkv_weight,
-            qkv_bias: None,
+            q_weight,
+            k_weight,
+            v_weight,
+            qkv_bias,
+            q_bias,
+            k_bias,
+            v_bias,
             o_proj,
-            o_proj_bias: None,
+            o_proj_bias,
             mlp_gate_proj: mlp_gate.clone(),
             mlp_up_proj: mlp_up,
             mlp_down_proj: mlp_down.clone(),
@@ -507,7 +774,7 @@ impl ExecutionPlan {
         &self,
         backend: &HipBackend,
         input_tokens: &[u32],
-        _embedding_weights: &DeviceTensor,  // Deprecated: ignored, uses lazy loading
+        _embedding_weights: &DeviceTensor, // Deprecated: ignored, uses lazy loading
     ) -> HipResult<DeviceTensor> {
         let seq_len = input_tokens.len();
         let _hidden_size = self.config.hidden_size;
@@ -583,26 +850,823 @@ impl ExecutionPlan {
     /// Token embedding lookup
     ///
     /// Converts token IDs to embeddings using the embedding weight matrix.
+    fn build_embedding_plan(
+        &self,
+        backend: &HipBackend,
+        embedding_weights: &DeviceTensor,
+    ) -> HipResult<EmbeddingGgmlPlan> {
+        let embed_shape = embedding_weights.shape().dims();
+        if embed_shape.len() != 2 {
+            return Err(HipError::GenericError(format!(
+                "Embedding weight shape must be 2D, got {:?}",
+                embed_shape
+            )));
+        }
+
+        let (n_embd, _vocab_size) = match self.embedding_layout {
+            Layout::RowMajor => (embed_shape[1], embed_shape[0]),
+            Layout::ColMajor => (embed_shape[0], embed_shape[1]),
+            Layout::Strided => {
+                return Err(HipError::GenericError(
+                    "Strided layout not supported for embeddings".to_string(),
+                ));
+            }
+        };
+
+        if n_embd != self.config.hidden_size {
+            return Err(HipError::GenericError(format!(
+                "Embedding hidden size mismatch: expected {}, got {}",
+                self.config.hidden_size, n_embd
+            )));
+        }
+
+        let max_seq_len = std::cmp::max(1, self.config.max_position_embeddings);
+        let tokens_bytes = max_seq_len
+            .checked_mul(std::mem::size_of::<u32>())
+            .ok_or_else(|| {
+                HipError::GenericError("Token buffer size overflow".to_string())
+            })?;
+        let output_elems = max_seq_len.checked_mul(n_embd).ok_or_else(|| {
+            HipError::GenericError("Output buffer element overflow".to_string())
+        })?;
+        let output_bytes = output_elems
+            .checked_mul(std::mem::size_of::<f32>())
+            .ok_or_else(|| HipError::GenericError("Output buffer size overflow".to_string()))?;
+
+        let mut graph = Graph::new();
+        let weights_id = graph.add_tensor(TensorDesc::new(
+            embed_shape.to_vec(),
+            DType::F32,
+            self.embedding_layout,
+        ));
+        let tokens_id = graph.add_tensor(TensorDesc::new(
+            vec![max_seq_len],
+            DType::U32,
+            Layout::RowMajor,
+        ));
+        let output_id = graph.add_tensor(TensorDesc::new(
+            vec![max_seq_len, n_embd],
+            DType::F32,
+            Layout::RowMajor,
+        ));
+        graph.add_node(Op::GetRows, vec![weights_id, tokens_id], vec![output_id]);
+
+        let mut ggml_backend = HipGgmlBackend::new(Arc::clone(&self.backend));
+        let weights_desc = graph.tensors[weights_id.0].clone();
+        ggml_backend
+            .bind(&weights_desc, embedding_weights.buffer().clone())
+            .map_err(|e| HipError::GenericError(format!("GetRows bind weights failed: {:?}", e)))?;
+
+        let tokens_desc = graph.tensors[tokens_id.0].clone();
+        let tokens_buffer = backend.allocate_buffer(tokens_bytes)?;
+        ggml_backend
+            .bind(&tokens_desc, tokens_buffer.clone())
+            .map_err(|e| HipError::GenericError(format!("GetRows bind tokens failed: {:?}", e)))?;
+
+        let output_desc = graph.tensors[output_id.0].clone();
+        let output_buffer = backend.allocate_buffer(output_bytes)?;
+        ggml_backend
+            .bind(&output_desc, output_buffer.clone())
+            .map_err(|e| HipError::GenericError(format!("GetRows bind output failed: {:?}", e)))?;
+
+        Ok(EmbeddingGgmlPlan {
+            graph,
+            backend: StdMutex::new(ggml_backend),
+            tokens_buffer,
+            output_buffer,
+            max_seq_len,
+            hidden_size: n_embd,
+        })
+    }
+
+    fn rope_cache(&self) -> HipResult<Option<&RopeCache>> {
+        let Some(ref position_handler) = self.position_handler else {
+            return Ok(None);
+        };
+        let Some(rope) = position_handler.rope() else {
+            return Ok(None);
+        };
+
+        let cache = self.rope_cache.get_or_try_init(|| {
+            let half_dim = rope.config().head_dim / 2;
+            let max_seq_len = rope.config().max_seq_len;
+            let cos_shape = TensorShape::from_dims(&[max_seq_len, half_dim]);
+            let sin_shape = TensorShape::from_dims(&[max_seq_len, half_dim]);
+            let cos_tensor =
+                DeviceTensor::from_host_vec(&self.backend, rope.cos().to_vec(), cos_shape)?;
+            let sin_tensor =
+                DeviceTensor::from_host_vec(&self.backend, rope.sin().to_vec(), sin_shape)?;
+            Ok::<RopeCache, HipError>(RopeCache {
+                cos: cos_tensor,
+                sin: sin_tensor,
+                half_dim,
+                max_seq_len,
+            })
+        })?;
+
+        Ok(Some(cache))
+    }
+
+    fn build_layer_ggml_plans(&self, _backend: &HipBackend) -> HipResult<Vec<LayerGgmlPlan>> {
+        let mut plans = Vec::with_capacity(self.layers.len());
+        let rope_cache = self.rope_cache()?;
+
+        for layer_plan in &self.layers {
+            let qkv_weight = self.get_or_load_tensor(&layer_plan.qkv_weight)?;
+            let q_weight = layer_plan
+                .q_weight
+                .as_ref()
+                .map(|w| self.get_or_load_tensor(w))
+                .transpose()?;
+            let k_weight = layer_plan
+                .k_weight
+                .as_ref()
+                .map(|w| self.get_or_load_tensor(w))
+                .transpose()?;
+            let v_weight = layer_plan
+                .v_weight
+                .as_ref()
+                .map(|w| self.get_or_load_tensor(w))
+                .transpose()?;
+            let qkv_bias = layer_plan
+                .qkv_bias
+                .as_ref()
+                .map(|b| self.get_or_load_tensor(b))
+                .transpose()?;
+            let q_bias = layer_plan
+                .q_bias
+                .as_ref()
+                .map(|b| self.get_or_load_tensor(b))
+                .transpose()?;
+            let k_bias = layer_plan
+                .k_bias
+                .as_ref()
+                .map(|b| self.get_or_load_tensor(b))
+                .transpose()?;
+            let v_bias = layer_plan
+                .v_bias
+                .as_ref()
+                .map(|b| self.get_or_load_tensor(b))
+                .transpose()?;
+
+            let o_proj = self.get_or_load_tensor(&layer_plan.o_proj)?;
+            let o_proj_bias = layer_plan
+                .o_proj_bias
+                .as_ref()
+                .map(|b| self.get_or_load_tensor(b))
+                .transpose()?;
+            let mlp_gate_proj = self.get_or_load_tensor(&layer_plan.mlp_gate_proj)?;
+            let mlp_up_proj = self.get_or_load_tensor(&layer_plan.mlp_up_proj)?;
+            let mlp_down_proj = self.get_or_load_tensor(&layer_plan.mlp_down_proj)?;
+            let norm1_weight = self.get_or_load_tensor(&layer_plan.norm1_weight)?;
+            let norm1_bias = layer_plan
+                .norm1_bias
+                .as_ref()
+                .map(|b| self.get_or_load_tensor(b))
+                .transpose()?;
+            let norm2_weight = self.get_or_load_tensor(&layer_plan.norm2_weight)?;
+            let norm2_bias = layer_plan
+                .norm2_bias
+                .as_ref()
+                .map(|b| self.get_or_load_tensor(b))
+                .transpose()?;
+
+            let use_separate_qkv = q_weight.is_some() && k_weight.is_some() && v_weight.is_some();
+
+            let num_heads = self.config.num_attention_heads;
+            let head_dim = self.config.head_dim;
+            let hidden_size = self.config.hidden_size;
+            let max_seq_len = self.config.max_position_embeddings.max(1);
+
+            let mut graph = Graph::new();
+
+            let input_id = graph.add_tensor(TensorDesc::new(
+                vec![1, hidden_size],
+                DType::F32,
+                Layout::RowMajor,
+            ));
+            let norm1_id = graph.add_tensor(TensorDesc::new(
+                vec![1, hidden_size],
+                DType::F32,
+                Layout::RowMajor,
+            ));
+            let norm2_id = graph.add_tensor(TensorDesc::new(
+                vec![1, hidden_size],
+                DType::F32,
+                Layout::RowMajor,
+            ));
+
+            let norm1_w_id = graph.add_tensor(TensorDesc::new(
+                norm1_weight.shape().dims().to_vec(),
+                DType::F32,
+                Layout::RowMajor,
+            ));
+            let norm1_bias_id = norm1_bias.as_ref().map(|bias| {
+                graph.add_tensor(TensorDesc::new(
+                    bias.shape().dims().to_vec(),
+                    DType::F32,
+                    Layout::RowMajor,
+                ))
+            });
+            let mut norm1_inputs = vec![input_id, norm1_w_id];
+            if let Some(bias_id) = norm1_bias_id {
+                norm1_inputs.push(bias_id);
+            }
+            graph.add_node(Op::LayerNorm { eps: 1e-6 }, norm1_inputs, vec![norm1_id]);
+
+            let q_flat_id = graph.add_tensor(TensorDesc::new(
+                vec![1, hidden_size],
+                DType::F32,
+                Layout::RowMajor,
+            ));
+            let k_flat_id = graph.add_tensor(TensorDesc::new(
+                vec![1, hidden_size],
+                DType::F32,
+                Layout::RowMajor,
+            ));
+            let v_flat_id = graph.add_tensor(TensorDesc::new(
+                vec![1, hidden_size],
+                DType::F32,
+                Layout::RowMajor,
+            ));
+            let q_id = graph.add_tensor(
+                TensorDesc::new(vec![1, num_heads, head_dim], DType::F32, Layout::RowMajor)
+                    .view_of(q_flat_id, 0),
+            );
+            let k_id = graph.add_tensor(
+                TensorDesc::new(vec![1, num_heads, head_dim], DType::F32, Layout::RowMajor)
+                    .view_of(k_flat_id, 0),
+            );
+            let v_id = graph.add_tensor(
+                TensorDesc::new(vec![1, num_heads, head_dim], DType::F32, Layout::RowMajor)
+                    .view_of(v_flat_id, 0),
+            );
+
+            let mut q_w_id = None;
+            let mut k_w_id = None;
+            let mut v_w_id = None;
+            let mut qkv_w_id = None;
+            let mut qkv_bias_id = None;
+            let mut q_bias_id = None;
+            let mut k_bias_id = None;
+            let mut v_bias_id = None;
+            let mut o_proj_bias_id = None;
+
+            let (q_src_id, k_src_id, v_src_id) = if use_separate_qkv {
+                let q_id_local = graph.add_tensor(TensorDesc::new(
+                    q_weight.as_ref().unwrap().shape().dims().to_vec(),
+                    DType::F32,
+                    Layout::RowMajor,
+                ));
+                let k_id_local = graph.add_tensor(TensorDesc::new(
+                    k_weight.as_ref().unwrap().shape().dims().to_vec(),
+                    DType::F32,
+                    Layout::RowMajor,
+                ));
+                let v_id_local = graph.add_tensor(TensorDesc::new(
+                    v_weight.as_ref().unwrap().shape().dims().to_vec(),
+                    DType::F32,
+                    Layout::RowMajor,
+                ));
+                q_w_id = Some(q_id_local);
+                k_w_id = Some(k_id_local);
+                v_w_id = Some(v_id_local);
+                if q_bias.is_some() {
+                    let bias_id = graph.add_tensor(TensorDesc::new(
+                        vec![1, hidden_size],
+                        DType::F32,
+                        Layout::RowMajor,
+                    ));
+                    q_bias_id = Some(bias_id);
+                    let q_mm_id = graph.add_tensor(TensorDesc::new(
+                        vec![1, hidden_size],
+                        DType::F32,
+                        Layout::RowMajor,
+                    ));
+                    graph.add_node(Op::MatMul, vec![norm1_id, q_id_local], vec![q_mm_id]);
+                    graph.add_node(Op::Add, vec![q_mm_id, bias_id], vec![q_flat_id]);
+                } else {
+                    graph.add_node(Op::MatMul, vec![norm1_id, q_id_local], vec![q_flat_id]);
+                }
+
+                if k_bias.is_some() {
+                    let bias_id = graph.add_tensor(TensorDesc::new(
+                        vec![1, hidden_size],
+                        DType::F32,
+                        Layout::RowMajor,
+                    ));
+                    k_bias_id = Some(bias_id);
+                    let k_mm_id = graph.add_tensor(TensorDesc::new(
+                        vec![1, hidden_size],
+                        DType::F32,
+                        Layout::RowMajor,
+                    ));
+                    graph.add_node(Op::MatMul, vec![norm1_id, k_id_local], vec![k_mm_id]);
+                    graph.add_node(Op::Add, vec![k_mm_id, bias_id], vec![k_flat_id]);
+                } else {
+                    graph.add_node(Op::MatMul, vec![norm1_id, k_id_local], vec![k_flat_id]);
+                }
+
+                if v_bias.is_some() {
+                    let bias_id = graph.add_tensor(TensorDesc::new(
+                        vec![1, hidden_size],
+                        DType::F32,
+                        Layout::RowMajor,
+                    ));
+                    v_bias_id = Some(bias_id);
+                    let v_mm_id = graph.add_tensor(TensorDesc::new(
+                        vec![1, hidden_size],
+                        DType::F32,
+                        Layout::RowMajor,
+                    ));
+                    graph.add_node(Op::MatMul, vec![norm1_id, v_id_local], vec![v_mm_id]);
+                    graph.add_node(Op::Add, vec![v_mm_id, bias_id], vec![v_flat_id]);
+                } else {
+                    graph.add_node(Op::MatMul, vec![norm1_id, v_id_local], vec![v_flat_id]);
+                }
+
+                (q_flat_id, k_flat_id, v_flat_id)
+            } else {
+                let qkv_id = graph.add_tensor(TensorDesc::new(
+                    vec![1, hidden_size * 3],
+                    DType::F32,
+                    Layout::RowMajor,
+                ));
+                let qkv_id_local = graph.add_tensor(TensorDesc::new(
+                    qkv_weight.shape().dims().to_vec(),
+                    DType::F32,
+                    Layout::RowMajor,
+                ));
+                qkv_w_id = Some(qkv_id_local);
+                let qkv_mm_id = if qkv_bias.is_some() {
+                    graph.add_tensor(TensorDesc::new(
+                        vec![1, hidden_size * 3],
+                        DType::F32,
+                        Layout::RowMajor,
+                    ))
+                } else {
+                    qkv_id
+                };
+                graph.add_node(Op::MatMul, vec![norm1_id, qkv_id_local], vec![qkv_mm_id]);
+                if qkv_bias.is_some() {
+                    let bias_id = graph.add_tensor(TensorDesc::new(
+                        vec![1, hidden_size * 3],
+                        DType::F32,
+                        Layout::RowMajor,
+                    ));
+                    qkv_bias_id = Some(bias_id);
+                    graph.add_node(Op::Add, vec![qkv_mm_id, bias_id], vec![qkv_id]);
+                }
+                graph.add_node(
+                    Op::SplitQkv,
+                    vec![qkv_id],
+                    vec![q_flat_id, k_flat_id, v_flat_id],
+                );
+                (q_flat_id, k_flat_id, v_flat_id)
+            };
+
+            let cos_id = graph.add_tensor(TensorDesc::new(
+                vec![1, head_dim / 2],
+                DType::F32,
+                Layout::RowMajor,
+            ));
+            let sin_id = graph.add_tensor(TensorDesc::new(
+                vec![1, head_dim / 2],
+                DType::F32,
+                Layout::RowMajor,
+            ));
+
+            let q_rope_id = graph.add_tensor(TensorDesc::new(
+                vec![1, num_heads, head_dim],
+                DType::F32,
+                Layout::RowMajor,
+            ));
+            let k_rope_id = graph.add_tensor(TensorDesc::new(
+                vec![1, num_heads, head_dim],
+                DType::F32,
+                Layout::RowMajor,
+            ));
+            graph.add_node(Op::Reshape, vec![q_src_id], vec![q_id]);
+            graph.add_node(Op::Reshape, vec![k_src_id], vec![k_id]);
+            graph.add_node(Op::Reshape, vec![v_src_id], vec![v_id]);
+
+            if rope_cache.is_some() {
+                graph.add_node(Op::Rope, vec![q_id, cos_id, sin_id], vec![q_rope_id]);
+                graph.add_node(Op::Rope, vec![k_id, cos_id, sin_id], vec![k_rope_id]);
+            } else {
+                graph.add_node(Op::Copy, vec![q_id], vec![q_rope_id]);
+                graph.add_node(Op::Copy, vec![k_id], vec![k_rope_id]);
+            }
+
+            let kv_read_k_id = graph.add_tensor(
+                TensorDesc::new(
+                    vec![max_seq_len, num_heads, head_dim],
+                    DType::F32,
+                    Layout::RowMajor,
+                )
+                .view_of(crate::ggml::TensorId(0), 0),
+            );
+            let kv_read_v_id = graph.add_tensor(
+                TensorDesc::new(
+                    vec![max_seq_len, num_heads, head_dim],
+                    DType::F32,
+                    Layout::RowMajor,
+                )
+                .view_of(crate::ggml::TensorId(0), 0),
+            );
+            let kv_write_k_id = graph.add_tensor(
+                TensorDesc::new(
+                    vec![1, num_heads, head_dim],
+                    DType::F32,
+                    Layout::RowMajor,
+                )
+                .view_of(crate::ggml::TensorId(0), 0),
+            );
+            let kv_write_v_id = graph.add_tensor(
+                TensorDesc::new(
+                    vec![1, num_heads, head_dim],
+                    DType::F32,
+                    Layout::RowMajor,
+                )
+                .view_of(crate::ggml::TensorId(0), 0),
+            );
+
+            graph.add_node(Op::Copy, vec![k_rope_id], vec![kv_write_k_id]);
+            graph.add_node(Op::Copy, vec![v_id], vec![kv_write_v_id]);
+
+            let scores_id = graph.add_tensor(TensorDesc::new(
+                vec![1, max_seq_len],
+                DType::F32,
+                Layout::RowMajor,
+            ));
+            let softmax_id = graph.add_tensor(TensorDesc::new(
+                vec![1, max_seq_len],
+                DType::F32,
+                Layout::RowMajor,
+            ));
+            let attn_out_id = graph.add_tensor(TensorDesc::new(
+                vec![1, num_heads, head_dim],
+                DType::F32,
+                Layout::RowMajor,
+            ));
+
+            graph.add_node(
+                Op::Attention,
+                vec![q_rope_id, kv_read_k_id, kv_read_v_id, scores_id, softmax_id],
+                vec![attn_out_id],
+            );
+
+            let attn_flat_id = graph.add_tensor(TensorDesc::new(
+                vec![1, hidden_size],
+                DType::F32,
+                Layout::RowMajor,
+            ));
+            graph.add_node(Op::Reshape, vec![attn_out_id], vec![attn_flat_id]);
+
+            let o_proj_id = graph.add_tensor(TensorDesc::new(
+                o_proj.shape().dims().to_vec(),
+                DType::F32,
+                Layout::RowMajor,
+            ));
+            let attn_proj_id = graph.add_tensor(TensorDesc::new(
+                vec![1, hidden_size],
+                DType::F32,
+                Layout::RowMajor,
+            ));
+            let attn_proj_mm_id = if o_proj_bias.is_some() {
+                graph.add_tensor(TensorDesc::new(
+                    vec![1, hidden_size],
+                    DType::F32,
+                    Layout::RowMajor,
+                ))
+            } else {
+                attn_proj_id
+            };
+            graph.add_node(
+                Op::MatMul,
+                vec![attn_flat_id, o_proj_id],
+                vec![attn_proj_mm_id],
+            );
+            if o_proj_bias.is_some() {
+                let bias_id = graph.add_tensor(TensorDesc::new(
+                    vec![1, hidden_size],
+                    DType::F32,
+                    Layout::RowMajor,
+                ));
+                o_proj_bias_id = Some(bias_id);
+                graph.add_node(Op::Add, vec![attn_proj_mm_id, bias_id], vec![attn_proj_id]);
+            }
+
+            let attn_residual_id = graph.add_tensor(TensorDesc::new(
+                vec![1, hidden_size],
+                DType::F32,
+                Layout::RowMajor,
+            ));
+            graph.add_node(Op::Add, vec![attn_proj_id, input_id], vec![attn_residual_id]);
+
+            let norm2_w_id = graph.add_tensor(TensorDesc::new(
+                norm2_weight.shape().dims().to_vec(),
+                DType::F32,
+                Layout::RowMajor,
+            ));
+            let norm2_bias_id = norm2_bias.as_ref().map(|bias| {
+                graph.add_tensor(TensorDesc::new(
+                    bias.shape().dims().to_vec(),
+                    DType::F32,
+                    Layout::RowMajor,
+                ))
+            });
+            let mut norm2_inputs = vec![attn_residual_id, norm2_w_id];
+            if let Some(bias_id) = norm2_bias_id {
+                norm2_inputs.push(bias_id);
+            }
+            graph.add_node(Op::LayerNorm { eps: 1e-6 }, norm2_inputs, vec![norm2_id]);
+
+            let mlp_gate_id = graph.add_tensor(TensorDesc::new(
+                mlp_gate_proj.shape().dims().to_vec(),
+                DType::F32,
+                Layout::RowMajor,
+            ));
+            let mlp_up_id = graph.add_tensor(TensorDesc::new(
+                mlp_up_proj.shape().dims().to_vec(),
+                DType::F32,
+                Layout::RowMajor,
+            ));
+            let mlp_down_id = graph.add_tensor(TensorDesc::new(
+                mlp_down_proj.shape().dims().to_vec(),
+                DType::F32,
+                Layout::RowMajor,
+            ));
+            let mlp_out_id = graph.add_tensor(TensorDesc::new(
+                vec![1, hidden_size],
+                DType::F32,
+                Layout::RowMajor,
+            ));
+            graph.add_node(
+                Op::MlpSwiglu,
+                vec![norm2_id, mlp_gate_id, mlp_up_id, mlp_down_id],
+                vec![mlp_out_id],
+            );
+
+            let output_id = graph.add_tensor(TensorDesc::new(
+                vec![1, hidden_size],
+                DType::F32,
+                Layout::RowMajor,
+            ));
+            graph.add_node(Op::Add, vec![mlp_out_id, attn_residual_id], vec![output_id]);
+
+            let mut ggml_backend = HipGgmlBackend::new(Arc::clone(&self.backend));
+            ggml_backend.bind(&graph.tensors[norm1_w_id.0], norm1_weight.buffer().clone())?;
+            ggml_backend.bind(&graph.tensors[norm2_w_id.0], norm2_weight.buffer().clone())?;
+            if let (Some(bias), Some(bias_id)) = (norm1_bias.as_ref(), norm1_bias_id) {
+                ggml_backend.bind(&graph.tensors[bias_id.0], bias.buffer().clone())?;
+            }
+            if let (Some(bias), Some(bias_id)) = (norm2_bias.as_ref(), norm2_bias_id) {
+                ggml_backend.bind(&graph.tensors[bias_id.0], bias.buffer().clone())?;
+            }
+            ggml_backend.bind(&graph.tensors[o_proj_id.0], o_proj.buffer().clone())?;
+            ggml_backend.bind(&graph.tensors[mlp_gate_id.0], mlp_gate_proj.buffer().clone())?;
+            ggml_backend.bind(&graph.tensors[mlp_up_id.0], mlp_up_proj.buffer().clone())?;
+            ggml_backend.bind(&graph.tensors[mlp_down_id.0], mlp_down_proj.buffer().clone())?;
+
+            if use_separate_qkv {
+                ggml_backend.bind(
+                    &graph.tensors[q_w_id.ok_or_else(|| {
+                        HipError::GenericError("Missing Q weight id".to_string())
+                    })?.0],
+                    q_weight.as_ref().unwrap().buffer().clone(),
+                )?;
+                ggml_backend.bind(
+                    &graph.tensors[k_w_id.ok_or_else(|| {
+                        HipError::GenericError("Missing K weight id".to_string())
+                    })?.0],
+                    k_weight.as_ref().unwrap().buffer().clone(),
+                )?;
+                ggml_backend.bind(
+                    &graph.tensors[v_w_id.ok_or_else(|| {
+                        HipError::GenericError("Missing V weight id".to_string())
+                    })?.0],
+                    v_weight.as_ref().unwrap().buffer().clone(),
+                )?;
+                if let (Some(bias), Some(bias_id)) = (q_bias.as_ref(), q_bias_id) {
+                    ggml_backend.bind(&graph.tensors[bias_id.0], bias.buffer().clone())?;
+                }
+                if let (Some(bias), Some(bias_id)) = (k_bias.as_ref(), k_bias_id) {
+                    ggml_backend.bind(&graph.tensors[bias_id.0], bias.buffer().clone())?;
+                }
+                if let (Some(bias), Some(bias_id)) = (v_bias.as_ref(), v_bias_id) {
+                    ggml_backend.bind(&graph.tensors[bias_id.0], bias.buffer().clone())?;
+                }
+            } else {
+                ggml_backend.bind(
+                    &graph.tensors[qkv_w_id.ok_or_else(|| {
+                        HipError::GenericError("Missing QKV weight id".to_string())
+                    })?.0],
+                    qkv_weight.buffer().clone(),
+                )?;
+                if let (Some(bias), Some(bias_id)) = (qkv_bias.as_ref(), qkv_bias_id) {
+                    ggml_backend.bind(&graph.tensors[bias_id.0], bias.buffer().clone())?;
+                }
+            }
+
+            if let Some(rope_cache) = rope_cache {
+                ggml_backend.bind(&graph.tensors[cos_id.0], rope_cache.cos.buffer().clone())?;
+                ggml_backend.bind(&graph.tensors[sin_id.0], rope_cache.sin.buffer().clone())?;
+            }
+
+            if let (Some(bias), Some(bias_id)) = (o_proj_bias.as_ref(), o_proj_bias_id) {
+                ggml_backend.bind(&graph.tensors[bias_id.0], bias.buffer().clone())?;
+            }
+
+            let scores_bytes = max_seq_len
+                .checked_mul(std::mem::size_of::<f32>())
+                .ok_or_else(|| HipError::GenericError("Scores buffer size overflow".to_string()))?;
+            let scores_buffer = self.backend.allocate_buffer(scores_bytes)?;
+            let softmax_buffer = self.backend.allocate_buffer(scores_bytes)?;
+            ggml_backend.bind(&graph.tensors[scores_id.0], scores_buffer)?;
+            ggml_backend.bind(&graph.tensors[softmax_id.0], softmax_buffer)?;
+
+            plans.push(LayerGgmlPlan {
+                graph: StdMutex::new(graph),
+                backend: StdMutex::new(ggml_backend),
+                input_id,
+                output_id,
+                kv_read_k_id,
+                kv_read_v_id,
+                kv_write_k_id,
+                kv_write_v_id,
+                scores_id,
+                softmax_id,
+                cos_id,
+                sin_id,
+                num_heads,
+                head_dim,
+                hidden_size,
+                max_seq_len,
+            });
+        }
+
+        Ok(plans)
+    }
+
+    pub(crate) fn forward_layer_ggml_decode(
+        &self,
+        backend: &HipBackend,
+        hidden_states: &DeviceTensor,
+        kv_cache: &mut KVCache,
+        layer_idx: usize,
+    ) -> HipResult<DeviceTensor> {
+        let plans = self
+            .layer_ggml_plans
+            .get_or_try_init(|| self.build_layer_ggml_plans(backend))?;
+        let plan = plans.get(layer_idx).ok_or_else(|| {
+            HipError::GenericError(format!("Missing ggml plan for layer {}", layer_idx))
+        })?;
+
+        let current_len = kv_cache.current_seq_len(layer_idx)?;
+        if current_len >= plan.max_seq_len {
+            return Err(HipError::GenericError(format!(
+                "KV cache capacity exceeded at layer {} (len={}, max={})",
+                layer_idx, current_len, plan.max_seq_len
+            )));
+        }
+        let new_len = current_len + 1;
+        let stride = plan.num_heads * plan.head_dim;
+        let elem_bytes = std::mem::size_of::<f32>();
+        let write_bytes = stride
+            .checked_mul(elem_bytes)
+            .ok_or_else(|| HipError::GenericError("KV write size overflow".to_string()))?;
+        let read_bytes = new_len
+            .checked_mul(stride)
+            .and_then(|v| v.checked_mul(elem_bytes))
+            .ok_or_else(|| HipError::GenericError("KV read size overflow".to_string()))?;
+        let write_offset = current_len
+            .checked_mul(stride)
+            .and_then(|v| v.checked_mul(elem_bytes))
+            .ok_or_else(|| HipError::GenericError("KV write offset overflow".to_string()))?;
+
+        let (kv_keys, kv_values) = kv_cache.layer_tensors(layer_idx)?;
+
+        let mut graph = plan
+            .graph
+            .lock()
+            .map_err(|_| HipError::GenericError("Layer graph lock poisoned".to_string()))?;
+        graph.tensors[plan.kv_read_k_id.0].set_shape(vec![new_len, plan.num_heads, plan.head_dim]);
+        graph.tensors[plan.kv_read_v_id.0].set_shape(vec![new_len, plan.num_heads, plan.head_dim]);
+        graph.tensors[plan.scores_id.0].set_shape(vec![1, new_len]);
+        graph.tensors[plan.softmax_id.0].set_shape(vec![1, new_len]);
+
+        let mut ggml_backend = plan
+            .backend
+            .lock()
+            .map_err(|_| HipError::GenericError("Layer backend lock poisoned".to_string()))?;
+
+        ggml_backend
+            .bind(&graph.tensors[plan.input_id.0], hidden_states.buffer().clone())
+            .map_err(|e| HipError::GenericError(format!("Bind input failed: {:?}", e)))?;
+
+        ggml_backend
+            .bind(&graph.tensors[plan.kv_read_k_id.0], kv_keys.buffer().clone())
+            .map_err(|e| HipError::GenericError(format!("Bind KV read K failed: {:?}", e)))?;
+        ggml_backend
+            .bind(&graph.tensors[plan.kv_read_v_id.0], kv_values.buffer().clone())
+            .map_err(|e| HipError::GenericError(format!("Bind KV read V failed: {:?}", e)))?;
+
+        let kv_write_k_view = kv_keys.buffer().sub_buffer_view(write_offset, write_bytes)?;
+        let kv_write_v_view = kv_values.buffer().sub_buffer_view(write_offset, write_bytes)?;
+        ggml_backend
+            .bind(&graph.tensors[plan.kv_write_k_id.0], kv_write_k_view)
+            .map_err(|e| HipError::GenericError(format!("Bind KV write K failed: {:?}", e)))?;
+        ggml_backend
+            .bind(&graph.tensors[plan.kv_write_v_id.0], kv_write_v_view)
+            .map_err(|e| HipError::GenericError(format!("Bind KV write V failed: {:?}", e)))?;
+
+        if let Some(rope_cache) = self.rope_cache()? {
+            let rope_offset = current_len
+                .checked_mul(rope_cache.half_dim)
+                .and_then(|v| v.checked_mul(elem_bytes))
+                .ok_or_else(|| HipError::GenericError("RoPE offset overflow".to_string()))?;
+            let rope_bytes = rope_cache
+                .half_dim
+                .checked_mul(elem_bytes)
+                .ok_or_else(|| HipError::GenericError("RoPE view size overflow".to_string()))?;
+
+            let cos_view = rope_cache
+                .cos
+                .buffer()
+                .sub_buffer_view(rope_offset, rope_bytes)?;
+            let sin_view = rope_cache
+                .sin
+                .buffer()
+                .sub_buffer_view(rope_offset, rope_bytes)?;
+
+            ggml_backend
+                .bind(&graph.tensors[plan.cos_id.0], cos_view)
+                .map_err(|e| HipError::GenericError(format!("Bind RoPE cos failed: {:?}", e)))?;
+            ggml_backend
+                .bind(&graph.tensors[plan.sin_id.0], sin_view)
+                .map_err(|e| HipError::GenericError(format!("Bind RoPE sin failed: {:?}", e)))?;
+        }
+
+        execute_graph(&mut *ggml_backend, &graph)
+            .map_err(|e| HipError::GenericError(format!("GGML layer exec failed: {:?}", e)))?;
+
+        kv_cache.advance(layer_idx, 1)?;
+
+        let output_buf = ggml_backend
+            .buffer(plan.output_id)
+            .ok_or_else(|| HipError::GenericError("Missing output buffer".to_string()))?
+            .clone();
+        let output_shape = TensorShape::from_dims(&[1, plan.hidden_size]);
+        DeviceTensor::from_buffer(backend, output_buf, output_shape)
+    }
+
     pub fn embedding_lookup(
         &self,
         backend: &HipBackend,
         input_tokens: &[u32],
         embedding_weights: &DeviceTensor,
     ) -> HipResult<DeviceTensor> {
+        eprintln!(
+            ">>> embedding_lookup: Starting with {} tokens",
+            input_tokens.len()
+        );
+        eprintln!(">>> embedding_lookup: Getting seq_len and hidden_size...");
         let seq_len = input_tokens.len();
         let hidden_size = self.config.hidden_size;
+        eprintln!(
+            ">>> embedding_lookup: seq_len={}, hidden_size={}",
+            seq_len, hidden_size
+        );
 
-        // Validate embedding weight shape: [vocab_size, hidden_size]
+        eprintln!(">>> embedding_lookup: About to call embedding_weights.shape().dims()...");
         let embed_shape = embedding_weights.shape().dims();
-        if embed_shape.len() != 2 || embed_shape[1] != hidden_size {
+        eprintln!(">>> embedding_lookup: Got shape {:?}", embed_shape);
+
+        let plan = self.embedding_plan.get_or_try_init(|| {
+            self.build_embedding_plan(backend, embedding_weights)
+        })?;
+
+        if seq_len > plan.max_seq_len {
             return Err(HipError::GenericError(format!(
-                "Embedding weight shape must be [vocab_size, hidden_size], got {:?}",
-                embed_shape
+                "Sequence length {} exceeds embedding capacity {}",
+                seq_len, plan.max_seq_len
+            )));
+        }
+
+        if plan.hidden_size != hidden_size {
+            return Err(HipError::GenericError(format!(
+                "Embedding hidden size mismatch: expected {}, got {}",
+                hidden_size, plan.hidden_size
             )));
         }
 
         // Validate token IDs
-        let vocab_size = embed_shape[0];
+        let vocab_size = match self.embedding_layout {
+            Layout::RowMajor => embed_shape[0],
+            Layout::ColMajor => embed_shape[1],
+            Layout::Strided => embed_shape[0],
+        };
         for &token_id in input_tokens {
             if token_id as usize >= vocab_size {
                 return Err(HipError::GenericError(format!(
@@ -614,28 +1678,29 @@ impl ExecutionPlan {
 
         // Create output tensor: [seq_len, hidden_size]
         let output_shape = TensorShape::from_dims(&[seq_len, hidden_size]);
+        eprintln!(">>> embedding_lookup: Creating output tensor and executing GetRows...");
+        eprintln!(
+            ">>> embedding_lookup: About to write {} tokens into shared buffer",
+            input_tokens.len()
+        );
+        let mut padded_tokens = vec![0u32; plan.max_seq_len];
+        padded_tokens[..seq_len].copy_from_slice(input_tokens);
+        backend.copy_to_device(&plan.tokens_buffer, &padded_tokens)?;
 
-        // Efficient GPU embedding lookup via device-to-device copies
-        let mut hidden_states = DeviceTensor::empty(backend, output_shape)?;
-        for (i, &token_id) in input_tokens.iter().enumerate() {
-            let token_index = token_id as usize;
-            if token_index >= vocab_size {
-                return Err(HipError::GenericError(format!(
-                    "Token ID {} out of bounds for vocab size {}",
-                    token_index, vocab_size
-                )));
-            }
+        let mut ggml_backend = plan.backend.lock().map_err(|_| {
+            HipError::GenericError("GetRows backend lock poisoned".to_string())
+        })?;
+        execute_graph(&mut *ggml_backend, &plan.graph)
+            .map_err(|e| HipError::GenericError(format!("GetRows execute failed: {:?}", e)))?;
 
-            let src_offset = token_index * hidden_size;
-            let dst_offset = i * hidden_size;
-            hidden_states.copy_from_device_region(
-                dst_offset,
-                embedding_weights,
-                src_offset,
-                hidden_size,
-            )?;
-        }
+        let output_bytes = seq_len
+            .checked_mul(hidden_size)
+            .and_then(|v| v.checked_mul(std::mem::size_of::<f32>()))
+            .ok_or_else(|| HipError::GenericError("Output view size overflow".to_string()))?;
+        let output_view = plan.output_buffer.sub_buffer_view(0, output_bytes)?;
+        let hidden_states = DeviceTensor::from_buffer(backend, output_view, output_shape)?;
 
+        eprintln!(">>> embedding_lookup: Complete");
         Ok(hidden_states)
     }
 
@@ -658,78 +1723,185 @@ impl ExecutionPlan {
         kv_cache: Option<&mut KVCache>,
         layer_idx: usize,
     ) -> HipResult<DeviceTensor> {
-        tracing::debug!("forward_layer() layer={} starting", layer_idx);
+        let layer_start = std::time::Instant::now();
+        eprintln!(">>> forward_layer({}): START", layer_idx);
+
         let input_shape = hidden_states.shape().dims();
         let _seq_len = input_shape[0];
         let _hidden_size = input_shape[1];
 
         // Load all layer weights on-demand (cached after first access)
+        let load_start = std::time::Instant::now();
+
+        // Load attention weights - handle both fused and separate QKV formats
         let qkv_weight = self.get_or_load_tensor(&layer_plan.qkv_weight)?;
-        let qkv_bias = layer_plan.qkv_bias.as_ref()
+        let qkv_bias = layer_plan
+            .qkv_bias
+            .as_ref()
             .map(|b| self.get_or_load_tensor(b))
             .transpose()?;
+
+        // Load separate Q, K, V weights if model uses them (e.g., Qwen2)
+        let q_weight = layer_plan
+            .q_weight
+            .as_ref()
+            .map(|w| self.get_or_load_tensor(w))
+            .transpose()?;
+        let k_weight = layer_plan
+            .k_weight
+            .as_ref()
+            .map(|w| self.get_or_load_tensor(w))
+            .transpose()?;
+        let v_weight = layer_plan
+            .v_weight
+            .as_ref()
+            .map(|w| self.get_or_load_tensor(w))
+            .transpose()?;
+        let q_bias = layer_plan
+            .q_bias
+            .as_ref()
+            .map(|b| self.get_or_load_tensor(b))
+            .transpose()?;
+        let k_bias = layer_plan
+            .k_bias
+            .as_ref()
+            .map(|b| self.get_or_load_tensor(b))
+            .transpose()?;
+        let v_bias = layer_plan
+            .v_bias
+            .as_ref()
+            .map(|b| self.get_or_load_tensor(b))
+            .transpose()?;
+
         let o_proj = self.get_or_load_tensor(&layer_plan.o_proj)?;
-        let o_proj_bias = layer_plan.o_proj_bias.as_ref()
+        let o_proj_bias = layer_plan
+            .o_proj_bias
+            .as_ref()
             .map(|b| self.get_or_load_tensor(b))
             .transpose()?;
         let mlp_gate_proj = self.get_or_load_tensor(&layer_plan.mlp_gate_proj)?;
         let mlp_up_proj = self.get_or_load_tensor(&layer_plan.mlp_up_proj)?;
         let mlp_down_proj = self.get_or_load_tensor(&layer_plan.mlp_down_proj)?;
         let norm1_weight = self.get_or_load_tensor(&layer_plan.norm1_weight)?;
-        let norm1_bias = layer_plan.norm1_bias.as_ref()
+        let norm1_bias = layer_plan
+            .norm1_bias
+            .as_ref()
             .map(|b| self.get_or_load_tensor(b))
             .transpose()?;
         let norm2_weight = self.get_or_load_tensor(&layer_plan.norm2_weight)?;
-        let norm2_bias = layer_plan.norm2_bias.as_ref()
+        let norm2_bias = layer_plan
+            .norm2_bias
+            .as_ref()
             .map(|b| self.get_or_load_tensor(b))
             .transpose()?;
+        eprintln!(
+            ">>> forward_layer({}): weights loaded in {:?}",
+            layer_idx,
+            load_start.elapsed()
+        );
 
         // Store input for residual connection
         let residual = hidden_states.clone();
 
         // Step 1: Pre-attention LayerNorm
-        tracing::debug!("forward_layer() layer={} step 1: pre-attention LayerNorm", layer_idx);
-        let normed_hidden = self.layer_norm(
-            backend,
-            hidden_states,
-            &norm1_weight,
-            norm1_bias.as_ref(),
-        )?;
-        tracing::debug!("forward_layer() layer={} step 1 complete", layer_idx);
+        eprintln!(
+            ">>> forward_layer({}): Step 1/6 - Pre-attention LayerNorm starting...",
+            layer_idx
+        );
+        let step_start = std::time::Instant::now();
+        let normed_hidden =
+            self.layer_norm(backend, hidden_states, &norm1_weight, norm1_bias.as_ref())?;
+        eprintln!(
+            ">>> forward_layer({}): Step 1/6 - LayerNorm complete ({:?})",
+            layer_idx,
+            step_start.elapsed()
+        );
 
         // Step 2: Self-attention
-        tracing::debug!("forward_layer() layer={} step 2: self-attention", layer_idx);
-        let attention_output = self.self_attention(
-            backend,
-            &normed_hidden,
-            &qkv_weight,
-            qkv_bias.as_ref(),
-            &o_proj,
-            o_proj_bias.as_ref(),
-            kv_cache,
+        eprintln!(
+            ">>> forward_layer({}): Step 2/6 - Self-attention starting...",
+            layer_idx
+        );
+        let step_start = std::time::Instant::now();
+
+        // Determine if using separate QKV or fused QKV based on what's available
+        let use_separate_qkv = q_weight.is_some() && k_weight.is_some() && v_weight.is_some();
+
+        let attention_output = if use_separate_qkv {
+            // Model uses separate Q, K, V projections (e.g., Qwen2)
+            self.self_attention_separate(
+                backend,
+                &normed_hidden,
+                &q_weight.unwrap(),
+                &k_weight.unwrap(),
+                &v_weight.unwrap(),
+                q_bias.as_ref(),
+                k_bias.as_ref(),
+                v_bias.as_ref(),
+                &o_proj,
+                o_proj_bias.as_ref(),
+                kv_cache,
+                layer_idx,
+            )?
+        } else {
+            // Model uses fused QKV projection (e.g., LLaMA)
+            self.self_attention(
+                backend,
+                &normed_hidden,
+                &qkv_weight,
+                qkv_bias.as_ref(),
+                &o_proj,
+                o_proj_bias.as_ref(),
+                kv_cache,
+                layer_idx,
+            )?
+        };
+        eprintln!(
+            ">>> forward_layer({}): Step 2/6 - Self-attention complete ({:?})",
             layer_idx,
-        )?;
-        tracing::debug!("forward_layer() layer={} step 2 complete", layer_idx);
+            step_start.elapsed()
+        );
 
         // Step 3: Add residual connection
-        tracing::debug!("forward_layer() layer={} step 3: add residual", layer_idx);
+        eprintln!(
+            ">>> forward_layer({}): Step 3/6 - Add residual (attention)...",
+            layer_idx
+        );
+        let step_start = std::time::Instant::now();
         let attention_with_residual = self.add_residual(backend, &attention_output, &residual)?;
+        eprintln!(
+            ">>> forward_layer({}): Step 3/6 - Residual complete ({:?})",
+            layer_idx,
+            step_start.elapsed()
+        );
 
         // Store attention output for second residual
         let attention_residual = attention_with_residual.clone();
 
         // Step 4: Pre-MLP LayerNorm
-        tracing::debug!("forward_layer() layer={} step 4: pre-MLP LayerNorm", layer_idx);
+        eprintln!(
+            ">>> forward_layer({}): Step 4/6 - Pre-MLP LayerNorm starting...",
+            layer_idx
+        );
+        let step_start = std::time::Instant::now();
         let normed_attention = self.layer_norm(
             backend,
             &attention_with_residual,
             &norm2_weight,
             norm2_bias.as_ref(),
         )?;
-        tracing::debug!("forward_layer() layer={} step 4 complete", layer_idx);
+        eprintln!(
+            ">>> forward_layer({}): Step 4/6 - Pre-MLP LayerNorm complete ({:?})",
+            layer_idx,
+            step_start.elapsed()
+        );
 
         // Step 5: MLP (SwiGLU)
-        tracing::debug!("forward_layer() layer={} step 5: MLP SwiGLU", layer_idx);
+        eprintln!(
+            ">>> forward_layer({}): Step 5/6 - MLP SwiGLU starting...",
+            layer_idx
+        );
+        let step_start = std::time::Instant::now();
         let mlp_output = self.mlp_swiglu(
             backend,
             &normed_attention,
@@ -737,13 +1909,30 @@ impl ExecutionPlan {
             &mlp_up_proj,
             &mlp_down_proj,
         )?;
-        tracing::debug!("forward_layer() layer={} step 5 complete", layer_idx);
+        eprintln!(
+            ">>> forward_layer({}): Step 5/6 - MLP SwiGLU complete ({:?})",
+            layer_idx,
+            step_start.elapsed()
+        );
 
         // Step 6: Add residual connection
-        tracing::debug!("forward_layer() layer={} step 6: add residual", layer_idx);
+        eprintln!(
+            ">>> forward_layer({}): Step 6/6 - Add residual (MLP)...",
+            layer_idx
+        );
+        let step_start = std::time::Instant::now();
         let final_output = self.add_residual(backend, &mlp_output, &attention_residual)?;
-        tracing::debug!("forward_layer() layer={} complete", layer_idx);
+        eprintln!(
+            ">>> forward_layer({}): Step 6/6 - Residual complete ({:?})",
+            layer_idx,
+            step_start.elapsed()
+        );
 
+        eprintln!(
+            ">>> forward_layer({}): COMPLETE (total time: {:?})",
+            layer_idx,
+            layer_start.elapsed()
+        );
         Ok(final_output)
     }
 
@@ -782,6 +1971,9 @@ impl ExecutionPlan {
         kv_cache: Option<&mut KVCache>,
         layer_idx: usize,
     ) -> HipResult<DeviceTensor> {
+        eprintln!(">>>   self_attention({}): START", layer_idx);
+        let attn_start = std::time::Instant::now();
+
         let input_shape = hidden_states.shape().dims();
         let seq_len = input_shape[0];
         let hidden_size = input_shape[1];
@@ -790,14 +1982,39 @@ impl ExecutionPlan {
 
         // Step 1: Project to Q, K, V using GPU matrix multiplication
         // QKV projection: [seq_len, hidden_size] x [hidden_size, 3*hidden_size] -> [seq_len, 3*hidden_size]
+        eprintln!(
+            ">>>   self_attention({}): Step 1/6 - QKV projection matmul...",
+            layer_idx
+        );
+        let step_start = std::time::Instant::now();
         let qkv_proj = self.matmul(backend, hidden_states, qkv_weight, qkv_bias)?;
+        eprintln!(
+            ">>>   self_attention({}): Step 1/6 - QKV projection done ({:?})",
+            layer_idx,
+            step_start.elapsed()
+        );
 
         // Step 2: Split Q, K, V directly on GPU
+        eprintln!(
+            ">>>   self_attention({}): Step 2/6 - Extract Q,K,V tensors...",
+            layer_idx
+        );
+        let step_start = std::time::Instant::now();
         let (mut q_reshaped, mut k_reshaped, v_reshaped) =
             self.extract_qkv_tensors(backend, &qkv_proj, seq_len, num_heads, head_dim)?;
+        eprintln!(
+            ">>>   self_attention({}): Step 2/6 - Q,K,V extracted ({:?})",
+            layer_idx,
+            step_start.elapsed()
+        );
 
         // Step 3: Apply position encoding to Q and K tensors (FIX-1)
         // This is critical for correct model behavior - RoPE adds positional information
+        eprintln!(
+            ">>>   self_attention({}): Step 3/6 - Apply RoPE position embeddings...",
+            layer_idx
+        );
+        let step_start = std::time::Instant::now();
         if let Some(ref position_handler) = self.position_handler {
             // Generate sequential position IDs: [0, 1, 2, ..., seq_len-1]
             let position_ids: Vec<usize> = (0..seq_len).collect();
@@ -806,14 +2023,19 @@ impl ExecutionPlan {
             // Use GPU method when available, otherwise use CPU fallback
             #[cfg(feature = "rocm")]
             {
-                let (q_with_pos, k_with_pos) = position_handler.apply_position_embeddings_device(
-                    q_reshaped.clone(),
-                    k_reshaped.clone(),
-                    &position_ids,
-                    num_heads,
-                ).map_err(|e| {
-                    HipError::GenericError(format!("Failed to apply position embeddings: {}", e))
-                })?;
+                let (q_with_pos, k_with_pos) = position_handler
+                    .apply_position_embeddings_device(
+                        q_reshaped.clone(),
+                        k_reshaped.clone(),
+                        &position_ids,
+                        num_heads,
+                    )
+                    .map_err(|e| {
+                        HipError::GenericError(format!(
+                            "Failed to apply position embeddings: {}",
+                            e
+                        ))
+                    })?;
                 q_reshaped = q_with_pos;
                 k_reshaped = k_with_pos;
             }
@@ -821,19 +2043,21 @@ impl ExecutionPlan {
             #[cfg(not(feature = "rocm"))]
             {
                 // CPU fallback: download tensors, apply RoPE, upload back
-                let q_host = q_reshaped.to_host_vec()
+                let q_host = q_reshaped
+                    .to_host_vec()
                     .map_err(|e| HipError::GenericError(format!("Failed to download Q: {}", e)))?;
-                let k_host = k_reshaped.to_host_vec()
+                let k_host = k_reshaped
+                    .to_host_vec()
                     .map_err(|e| HipError::GenericError(format!("Failed to download K: {}", e)))?;
 
-                let (q_with_pos, k_with_pos) = position_handler.apply_position_embeddings(
-                    q_host,
-                    k_host,
-                    &position_ids,
-                    num_heads,
-                ).map_err(|e| {
-                    HipError::GenericError(format!("Failed to apply position embeddings: {}", e))
-                })?;
+                let (q_with_pos, k_with_pos) = position_handler
+                    .apply_position_embeddings(q_host, k_host, &position_ids, num_heads)
+                    .map_err(|e| {
+                        HipError::GenericError(format!(
+                            "Failed to apply position embeddings: {}",
+                            e
+                        ))
+                    })?;
 
                 // Upload position-encoded tensors back to GPU
                 let q_shape = TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
@@ -845,9 +2069,19 @@ impl ExecutionPlan {
                     .map_err(|e| HipError::GenericError(format!("Failed to upload K: {}", e)))?;
             }
         }
+        eprintln!(
+            ">>>   self_attention({}): Step 3/6 - RoPE done ({:?})",
+            layer_idx,
+            step_start.elapsed()
+        );
 
         // Step 4: Scaled dot-product attention (still CPU fallback for now)
         // TODO: Replace with GPU attention kernel
+        eprintln!(
+            ">>>   self_attention({}): Step 4/6 - Scaled dot-product attention...",
+            layer_idx
+        );
+        let step_start = std::time::Instant::now();
         let attention_output = self.scaled_dot_product_attention(
             backend,
             &q_reshaped,
@@ -856,8 +2090,18 @@ impl ExecutionPlan {
             kv_cache,
             layer_idx,
         )?;
+        eprintln!(
+            ">>>   self_attention({}): Step 4/6 - Attention done ({:?})",
+            layer_idx,
+            step_start.elapsed()
+        );
 
         // Step 5: Reshape back: [seq_len, hidden_size]
+        eprintln!(
+            ">>>   self_attention({}): Step 5/6 - Flatten attention output...",
+            layer_idx
+        );
+        let step_start = std::time::Instant::now();
         let output_reshaped = self.flatten_attention_output(
             backend,
             &attention_output,
@@ -865,10 +2109,211 @@ impl ExecutionPlan {
             num_heads,
             head_dim,
         )?;
+        eprintln!(
+            ">>>   self_attention({}): Step 5/6 - Flatten done ({:?})",
+            layer_idx,
+            step_start.elapsed()
+        );
 
         // Step 6: Output projection using GPU matrix multiplication
+        eprintln!(
+            ">>>   self_attention({}): Step 6/6 - Output projection matmul...",
+            layer_idx
+        );
+        let step_start = std::time::Instant::now();
         let final_output = self.matmul(backend, &output_reshaped, o_proj, o_proj_bias)?;
+        eprintln!(
+            ">>>   self_attention({}): Step 6/6 - Output projection done ({:?})",
+            layer_idx,
+            step_start.elapsed()
+        );
 
+        eprintln!(
+            ">>>   self_attention({}): COMPLETE (total: {:?})",
+            layer_idx,
+            attn_start.elapsed()
+        );
+        Ok(final_output)
+    }
+
+    /// Self-attention computation with separate Q, K, V projections
+    ///
+    /// Used by models like Qwen2 that store attention weights separately
+    /// rather than as a fused QKV matrix. This is common with GQA (Grouped Query Attention)
+    /// where K and V have fewer dimensions than Q.
+    fn self_attention_separate(
+        &self,
+        backend: &HipBackend,
+        hidden_states: &DeviceTensor,
+        q_weight: &DeviceTensor,
+        k_weight: &DeviceTensor,
+        v_weight: &DeviceTensor,
+        q_bias: Option<&DeviceTensor>,
+        k_bias: Option<&DeviceTensor>,
+        v_bias: Option<&DeviceTensor>,
+        o_proj: &DeviceTensor,
+        o_proj_bias: Option<&DeviceTensor>,
+        kv_cache: Option<&mut KVCache>,
+        layer_idx: usize,
+    ) -> HipResult<DeviceTensor> {
+        eprintln!(">>>   self_attention_separate({}): START", layer_idx);
+        let attn_start = std::time::Instant::now();
+
+        let input_shape = hidden_states.shape().dims();
+        let seq_len = input_shape[0];
+        let hidden_size = input_shape[1];
+        let num_heads = self.config.num_attention_heads;
+        let head_dim = hidden_size / num_heads;
+
+        // Step 1: Separate Q, K, V projections using GPU matrix multiplication
+        // Q: [seq_len, hidden_size] x [hidden_size, hidden_size] -> [seq_len, hidden_size]
+        // K: [seq_len, hidden_size] x [hidden_size, kv_dim] -> [seq_len, kv_dim]
+        // V: [seq_len, hidden_size] x [hidden_size, kv_dim] -> [seq_len, kv_dim]
+        eprintln!(
+            ">>>   self_attention_separate({}): Step 1/7 - Q,K,V projection matmuls...",
+            layer_idx
+        );
+        let step_start = std::time::Instant::now();
+        let q_proj = self.matmul(backend, hidden_states, q_weight, q_bias)?;
+        let k_proj = self.matmul(backend, hidden_states, k_weight, k_bias)?;
+        let v_proj = self.matmul(backend, hidden_states, v_weight, v_bias)?;
+        eprintln!(
+            ">>>   self_attention_separate({}): Step 1/7 - Projections done ({:?})",
+            layer_idx,
+            step_start.elapsed()
+        );
+
+        // Step 2: Reshape Q, K, V for multi-head attention
+        // Q: [seq_len, hidden_size] -> [seq_len, num_heads, head_dim]
+        // K, V: [seq_len, kv_dim] -> [seq_len, num_kv_heads, head_dim]
+        eprintln!(
+            ">>>   self_attention_separate({}): Step 2/7 - Reshape Q,K,V for attention...",
+            layer_idx
+        );
+        let step_start = std::time::Instant::now();
+
+        let q_reshaped =
+            self.reshape_for_attention(backend, &q_proj, seq_len, num_heads, head_dim)?;
+
+        // For K and V, we need to determine kv_dim from their shape
+        let k_shape = k_proj.shape().dims();
+        let kv_dim = k_shape[1];
+        // GQA: num_kv_heads might be less than num_heads
+        let num_kv_heads = kv_dim / head_dim;
+
+        let k_reshaped =
+            self.reshape_for_attention(backend, &k_proj, seq_len, num_kv_heads, head_dim)?;
+        let v_reshaped =
+            self.reshape_for_attention(backend, &v_proj, seq_len, num_kv_heads, head_dim)?;
+
+        eprintln!(">>>   self_attention_separate({}): Step 2/7 - Reshape done (num_heads={}, num_kv_heads={})",
+                 layer_idx, num_heads, num_kv_heads);
+
+        // Step 3: Apply position encoding to Q and K tensors (RoPE)
+        // NOTE: Using CPU path for now due to GPU RoPE backend synchronization issue with GQA
+        eprintln!(
+            ">>>   self_attention_separate({}): Step 3/7 - Apply RoPE position embeddings...",
+            layer_idx
+        );
+        let step_start = std::time::Instant::now();
+        let (q_reshaped, k_reshaped) = if let Some(ref position_handler) = self.position_handler {
+            let position_ids: Vec<usize> = (0..seq_len).collect();
+
+            // For GQA: apply RoPE separately to Q and K with different head counts
+            let rope = position_handler
+                .rope()
+                .ok_or_else(|| HipError::GenericError("RoPE not configured".to_string()))?;
+
+            // Download Q and K to host, apply RoPE separately, upload back
+            let mut q_host = q_reshaped
+                .to_host_vec()
+                .map_err(|e| HipError::GenericError(format!("Failed to download Q: {}", e)))?;
+            let mut k_host = k_reshaped
+                .to_host_vec()
+                .map_err(|e| HipError::GenericError(format!("Failed to download K: {}", e)))?;
+
+            // Apply RoPE to Q with num_heads (in-place)
+            rope.apply_q(&mut q_host, &position_ids, num_heads)
+                .map_err(|e| HipError::GenericError(format!("Failed to apply RoPE to Q: {}", e)))?;
+
+            // Apply RoPE to K with num_kv_heads (in-place, different for GQA!)
+            rope.apply_k(&mut k_host, &position_ids, num_kv_heads)
+                .map_err(|e| HipError::GenericError(format!("Failed to apply RoPE to K: {}", e)))?;
+
+            let q_shape = TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
+            let q_with_pos = DeviceTensor::from_host_vec(backend, q_host, q_shape)
+                .map_err(|e| HipError::GenericError(format!("Failed to upload Q: {}", e)))?;
+
+            let k_shape = TensorShape::from_dims(&[seq_len, num_kv_heads, head_dim]);
+            let k_with_pos = DeviceTensor::from_host_vec(backend, k_host, k_shape)
+                .map_err(|e| HipError::GenericError(format!("Failed to upload K: {}", e)))?;
+            (q_with_pos, k_with_pos)
+        } else {
+            (q_reshaped, k_reshaped)
+        };
+        eprintln!(
+            ">>>   self_attention_separate({}): Step 3/7 - RoPE done ({:?})",
+            layer_idx,
+            step_start.elapsed()
+        );
+
+        // Step 4: Scaled dot-product attention
+        eprintln!(
+            ">>>   self_attention_separate({}): Step 4/7 - Scaled dot-product attention...",
+            layer_idx
+        );
+        let step_start = std::time::Instant::now();
+        let attention_output = self.scaled_dot_product_attention(
+            backend,
+            &q_reshaped,
+            &k_reshaped,
+            &v_reshaped,
+            kv_cache,
+            layer_idx,
+        )?;
+        eprintln!(
+            ">>>   self_attention_separate({}): Step 4/7 - Attention done ({:?})",
+            layer_idx,
+            step_start.elapsed()
+        );
+
+        // Step 5: Reshape back: [seq_len, hidden_size]
+        eprintln!(
+            ">>>   self_attention_separate({}): Step 5/7 - Flatten attention output...",
+            layer_idx
+        );
+        let step_start = std::time::Instant::now();
+        let output_reshaped = self.flatten_attention_output(
+            backend,
+            &attention_output,
+            seq_len,
+            num_heads,
+            head_dim,
+        )?;
+        eprintln!(
+            ">>>   self_attention_separate({}): Step 5/7 - Flatten done ({:?})",
+            layer_idx,
+            step_start.elapsed()
+        );
+
+        // Step 6: Output projection using GPU matrix multiplication
+        eprintln!(
+            ">>>   self_attention_separate({}): Step 6/7 - Output projection matmul...",
+            layer_idx
+        );
+        let step_start = std::time::Instant::now();
+        let final_output = self.matmul(backend, &output_reshaped, o_proj, o_proj_bias)?;
+        eprintln!(
+            ">>>   self_attention_separate({}): Step 6/7 - Output projection done ({:?})",
+            layer_idx,
+            step_start.elapsed()
+        );
+
+        eprintln!(
+            ">>>   self_attention_separate({}): COMPLETE (total: {:?})",
+            layer_idx,
+            attn_start.elapsed()
+        );
         Ok(final_output)
     }
 
@@ -905,11 +2350,20 @@ impl ExecutionPlan {
         weight: &DeviceTensor,
         bias: Option<&DeviceTensor>,
     ) -> HipResult<DeviceTensor> {
+        eprintln!(">>>       matmul: ENTRY - getting shapes...");
         use crate::backend::hip_blas::HipBlasHandle;
         use crate::tensor::matmul::matmul_f32;
 
         let input_shape = input.shape().dims();
         let weight_shape = weight.shape().dims();
+        let batch_size = input_shape[0];
+        let input_dim = input_shape[1];
+        let output_dim = weight_shape[1];
+
+        eprintln!(
+            ">>>       matmul: input_shape={:?}, weight_shape={:?}, expecting output_dim={}",
+            input_shape, weight_shape, output_dim
+        );
 
         let batch_size = input_shape[0];
         let input_dim = input_shape[1];
@@ -923,20 +2377,28 @@ impl ExecutionPlan {
             )));
         }
 
+        eprintln!(">>>       matmul: input_shape={:?}, weight_shape={:?}, expecting output_dim=3*hidden={}",
+                 input.shape().dims(), weight.shape().dims(), 3 * input_dim);
+        let matmul_start = std::time::Instant::now();
+
         // Create hipBLAS handle for matrix operations
         let blas_handle = HipBlasHandle::new().map_err(|e| {
             HipError::GenericError(format!("Failed to create hipBLAS handle: {}", e))
         })?;
+        eprintln!(">>>       matmul: hipBLAS handle created");
 
         // CRITICAL: Associate hipBLAS handle with our HIP stream
         // Without this, hipBLAS uses the default stream while our kernels use a custom stream,
         // causing synchronization issues and hangs.
-        blas_handle.set_stream(backend.stream().as_ptr()).map_err(|e| {
-            HipError::GenericError(format!("Failed to set hipBLAS stream: {}", e))
-        })?;
+        blas_handle
+            .set_stream(backend.stream().as_ptr())
+            .map_err(|e| HipError::GenericError(format!("Failed to set hipBLAS stream: {}", e)))?;
+        eprintln!(">>>       matmul: hipBLAS stream set");
 
         // Perform matrix multiplication: input @ weight -> output
         // input: [batch_size, input_dim], weight: [input_dim, output_dim] -> output: [batch_size, output_dim]
+        eprintln!(">>>       matmul: calling matmul_f32...",);
+        let matmul_call_start = std::time::Instant::now();
         let output_buffer = matmul_f32(
             &blas_handle,
             input.buffer(),
@@ -946,16 +2408,88 @@ impl ExecutionPlan {
             input_dim as i32,
         )
         .map_err(|e| HipError::GenericError(format!("Matrix multiplication failed: {}", e)))?;
+        eprintln!(
+            ">>>       matmul: matmul_f32 done in {:?}",
+            matmul_call_start.elapsed()
+        );
+
+        // CRITICAL: Synchronize after matmul_f32 to ensure GPU completes the operation
+        // before we try to copy the data. Without this, the memcpy blocks indefinitely.
+        eprintln!(">>>       matmul: synchronizing GPU...",);
+        let sync_start = std::time::Instant::now();
+        backend
+            .synchronize()
+            .map_err(|e| HipError::GenericError(format!("GPU sync failed: {}", e)))?;
+        eprintln!(
+            ">>>       matmul: GPU synchronized in {:?}",
+            sync_start.elapsed()
+        );
 
         let output_shape = TensorShape::from_dims(&[batch_size, output_dim]);
         let mut output_tensor = DeviceTensor::empty(backend, output_shape)?;
+        eprintln!(">>>       matmul: copying to output tensor...",);
         output_tensor.copy_from_device_buffer(&output_buffer)?;
+        // Synchronize again after copy to ensure data is actually transferred
+        backend
+            .synchronize()
+            .map_err(|e| HipError::GenericError(format!("Post-copy sync failed: {}", e)))?;
+        eprintln!(">>>       matmul: copy done",);
 
         if let Some(bias_tensor) = bias {
+            eprintln!(">>>       matmul: adding bias...",);
             backend.add_row_bias(&mut output_tensor, bias_tensor)?;
+            eprintln!(">>>       matmul: bias added",);
         }
 
+        eprintln!(">>>       matmul: COMPLETE in {:?}", matmul_start.elapsed());
         Ok(output_tensor)
+    }
+
+    /// Reshape a projected tensor for multi-head attention
+    ///
+    /// Takes a 2D tensor [seq_len, dim] and reshapes it to 3D [seq_len, num_heads, head_dim]
+    /// where dim = num_heads * head_dim. This is a simple reshape that changes the stride
+    /// interpretation - no data movement is required.
+    fn reshape_for_attention(
+        &self,
+        backend: &HipBackend,
+        proj: &DeviceTensor,
+        seq_len: usize,
+        num_heads: usize,
+        head_dim: usize,
+    ) -> HipResult<DeviceTensor> {
+        let expected_dim = num_heads * head_dim;
+        let proj_shape = proj.shape().dims();
+
+        eprintln!(">>>         reshape_for_attention: proj shape={:?}, expected=[{}, {}], target=[{}, {}, {}]",
+                 proj_shape, seq_len, expected_dim, seq_len, num_heads, head_dim);
+
+        if proj_shape[0] != seq_len || proj_shape[1] != expected_dim {
+            return Err(HipError::GenericError(format!(
+                "reshape_for_attention: proj shape {:?} doesn't match expected [{}, {}] where {} = {} * {}",
+                proj_shape, seq_len, expected_dim, expected_dim, num_heads, head_dim
+            )));
+        }
+
+        // For tensors that are already contiguous with the right total size,
+        // we can create a new DeviceTensor with a different shape interpretation.
+        // This is a view/reshape operation that doesn't copy data.
+
+        // Read the data and create a new tensor with the 3D shape
+        let proj_data = proj.to_host_vec().map_err(|e| {
+            HipError::GenericError(format!(
+                "reshape_for_attention: failed to download tensor: {}",
+                e
+            ))
+        })?;
+
+        let new_shape = TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
+        DeviceTensor::from_host_vec(backend, proj_data, new_shape).map_err(|e| {
+            HipError::GenericError(format!(
+                "reshape_for_attention: failed to upload tensor: {}",
+                e
+            ))
+        })
     }
 
     fn extract_qkv_tensors(
@@ -976,14 +2510,35 @@ impl ExecutionPlan {
             seq_len: usize,
             num_heads: usize,
             head_dim: usize,
+            name: &str,
         ) -> HipResult<DeviceTensor> {
+            eprintln!(
+                ">>>         copy_chunk({}): creating tensor [{},{},{}], offset={}",
+                name, seq_len, num_heads, head_dim, offset_elements
+            );
+            let step_start = std::time::Instant::now();
             let shape = TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
+            eprintln!(
+                ">>>         copy_chunk({}): calling DeviceTensor::empty...",
+                name
+            );
             let mut tensor = DeviceTensor::empty(backend, shape)?;
+            eprintln!(
+                ">>>         copy_chunk({}): empty done, calling copy_from_device_slice...",
+                name
+            );
             tensor.copy_from_device_slice(src, offset_elements)?;
+            eprintln!(
+                ">>>         copy_chunk({}): COMPLETE ({:?})",
+                name,
+                step_start.elapsed()
+            );
             Ok(tensor)
         }
 
-        let q = copy_chunk(backend, qkv_proj, 0, seq_len, num_heads, head_dim)?;
+        eprintln!(">>>       extract_qkv_tensors: Starting Q extraction...");
+        let q = copy_chunk(backend, qkv_proj, 0, seq_len, num_heads, head_dim, "Q")?;
+        eprintln!(">>>       extract_qkv_tensors: Q extracted, starting K extraction...");
         let k = copy_chunk(
             backend,
             qkv_proj,
@@ -991,7 +2546,9 @@ impl ExecutionPlan {
             seq_len,
             num_heads,
             head_dim,
+            "K",
         )?;
+        eprintln!(">>>       extract_qkv_tensors: K extracted, starting V extraction...");
         let v = copy_chunk(
             backend,
             qkv_proj,
@@ -999,7 +2556,9 @@ impl ExecutionPlan {
             seq_len,
             num_heads,
             head_dim,
+            "V",
         )?;
+        eprintln!(">>>       extract_qkv_tensors: All Q,K,V extracted successfully");
 
         Ok((q, k, v))
     }
@@ -1029,6 +2588,8 @@ impl ExecutionPlan {
         kv_cache: Option<&mut KVCache>,
         layer_idx: usize,
     ) -> HipResult<DeviceTensor> {
+        eprintln!(">>>     scaled_dot_product_attention({}): START", layer_idx);
+
         // Validate input shapes
         let q_shape = q.shape().dims();
         let k_shape = k.shape().dims();
@@ -1044,64 +2605,225 @@ impl ExecutionPlan {
         let num_heads = q_shape[1];
         let head_dim = q_shape[2];
 
-        // Validate all tensors have compatible shapes
-        if k_shape[0] != seq_len || k_shape[1] != num_heads || k_shape[2] != head_dim {
-            return Err(HipError::GenericError(
-                "K tensor shape must match Q tensor shape".to_string(),
-            ));
+        // For GQA: K and V may have fewer heads than Q (num_kv_heads <= num_heads)
+        // Validate seq_len and head_dim match, but allow different num_heads
+        let num_kv_heads = k_shape[1];
+
+        if k_shape[0] != seq_len || k_shape[2] != head_dim {
+            return Err(HipError::GenericError(format!(
+                "K tensor shape {:?} incompatible with Q shape {:?}",
+                k_shape, q_shape
+            )));
         }
 
-        if v_shape[0] != seq_len || v_shape[1] != num_heads || v_shape[2] != head_dim {
-            return Err(HipError::GenericError(
-                "V tensor shape must match Q tensor shape".to_string(),
-            ));
+        if v_shape[0] != seq_len || v_shape[2] != head_dim || v_shape[1] != num_kv_heads {
+            return Err(HipError::GenericError(format!(
+                "V tensor shape {:?} incompatible with K shape {:?}",
+                v_shape, k_shape
+            )));
         }
 
         // Create GPU attention kernels
+        eprintln!(
+            ">>>     scaled_dot_product_attention({}): Creating HipAttentionKernels...",
+            layer_idx
+        );
         let attention_kernels = HipAttentionKernels::new(backend)?;
+        eprintln!(
+            ">>>     scaled_dot_product_attention({}): HipAttentionKernels created",
+            layer_idx
+        );
 
-        if let Some(cache) = kv_cache {
-            cache.append(layer_idx, k, v)?;
-            let current_len = cache.get_current_length(layer_idx)?;
-            let attention_shape = TensorShape::from_dims(&[seq_len, current_len]);
-            let attention_scores = DeviceTensor::empty(backend, attention_shape.clone())?;
-            let softmax_temp = DeviceTensor::empty(backend, attention_shape)?;
-            let cache_ref: &KVCache = &*cache;
-            return attention_kernels.compute_attention(
-                q,
-                &attention_scores,
-                &softmax_temp,
-                cache_ref,
-                layer_idx,
-                current_len,
-            );
+        // Skip KV cache for GQA (when num_kv_heads < num_heads)
+        // TODO: Implement GQA-aware KV cache
+        let use_kv_cache = if let Some(cache) = kv_cache {
+            let k_shape = k.shape().dims();
+            let kv_heads = k_shape[1];
+            if kv_heads != num_heads {
+                eprintln!(">>>     scaled_dot_product_attention({}): GQA detected (kv_heads={} < num_heads={}), skipping KV cache",
+                         layer_idx, kv_heads, num_heads);
+                false
+            } else {
+                eprintln!(
+                    ">>>     scaled_dot_product_attention({}): Using KV cache path",
+                    layer_idx
+                );
+                cache.append(layer_idx, k, v)?;
+                let current_len = cache.get_current_length(layer_idx)?;
+                let attention_shape = TensorShape::from_dims(&[seq_len, current_len]);
+                let attention_scores = DeviceTensor::empty(backend, attention_shape.clone())?;
+                let softmax_temp = DeviceTensor::empty(backend, attention_shape)?;
+                let cache_ref: &KVCache = &*cache;
+                eprintln!(
+                    ">>>     scaled_dot_product_attention({}): Computing cached attention...",
+                    layer_idx
+                );
+                let result = attention_kernels.compute_attention(
+                    q,
+                    &attention_scores,
+                    &softmax_temp,
+                    cache_ref,
+                    layer_idx,
+                    current_len,
+                );
+                eprintln!(
+                    ">>>     scaled_dot_product_attention({}): Cached attention done",
+                    layer_idx
+                );
+                return result;
+            }
+        } else {
+            false
+        };
+
+        if use_kv_cache {
+            // Already handled above
+            unreachable!()
         }
 
+        // For GQA: expand K and V to match Q's head count
+        // The attention kernels expect all tensors to have the same num_heads
+        let (k_expanded, v_expanded) = if num_kv_heads != num_heads {
+            eprintln!(">>>     scaled_dot_product_attention({}): Expanding K/V from {} to {} heads for GQA...",
+                     layer_idx, num_kv_heads, num_heads);
+            let step_start = std::time::Instant::now();
+
+            // Download K and V to host
+            let k_host = k
+                .to_host_vec()
+                .map_err(|e| HipError::GenericError(format!("Failed to download K: {}", e)))?;
+            let v_host = v
+                .to_host_vec()
+                .map_err(|e| HipError::GenericError(format!("Failed to download V: {}", e)))?;
+
+            // Expand: each KV head is repeated for (num_heads / num_kv_heads) Q heads
+            let heads_per_kv = num_heads / num_kv_heads;
+            let mut k_expanded_host = vec![0.0f32; seq_len * num_heads * head_dim];
+            let mut v_expanded_host = vec![0.0f32; seq_len * num_heads * head_dim];
+
+            for kv_head in 0..num_kv_heads {
+                for q_head_offset in 0..heads_per_kv {
+                    let target_head = kv_head * heads_per_kv + q_head_offset;
+                    for seq in 0..seq_len {
+                        for dim in 0..head_dim {
+                            let kv_idx = ((seq * num_kv_heads + kv_head) * head_dim) + dim;
+                            let target_idx = ((seq * num_heads + target_head) * head_dim) + dim;
+                            k_expanded_host[target_idx] = k_host[kv_idx];
+                            v_expanded_host[target_idx] = v_host[kv_idx];
+                        }
+                    }
+                }
+            }
+
+            // Upload back to GPU
+            let k_shape = TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
+            let k_expanded = DeviceTensor::from_host_vec(backend, k_expanded_host, k_shape.clone())
+                .map_err(|e| HipError::GenericError(format!("Failed to upload K: {}", e)))?;
+
+            let v_expanded = DeviceTensor::from_host_vec(backend, v_expanded_host, k_shape)
+                .map_err(|e| HipError::GenericError(format!("Failed to upload V: {}", e)))?;
+
+            eprintln!(
+                ">>>     scaled_dot_product_attention({}): Expansion done ({:?})",
+                layer_idx,
+                step_start.elapsed()
+            );
+            (k_expanded, v_expanded)
+        } else {
+            (k.clone(), v.clone())
+        };
+
         // Create temporary buffers for attention computation
+        eprintln!(
+            ">>>     scaled_dot_product_attention({}): Allocating attention buffers...",
+            layer_idx
+        );
         let attention_shape = TensorShape::from_dims(&[seq_len, seq_len]);
         let mut attention_scores = DeviceTensor::empty(backend, attention_shape)?;
 
         let softmax_temp_shape = TensorShape::from_dims(&[seq_len, seq_len]);
         let softmax_temp = DeviceTensor::empty(backend, softmax_temp_shape)?;
+        eprintln!(
+            ">>>     scaled_dot_product_attention({}): Buffers allocated",
+            layer_idx
+        );
 
         // Step 1: Compute QK^T attention scores
-        attention_kernels.compute_qk_t(q, k, &mut attention_scores)?;
+        eprintln!(
+            ">>>     scaled_dot_product_attention({}): Step 1/5 - Compute QK^T...",
+            layer_idx
+        );
+        let step_start = std::time::Instant::now();
+        attention_kernels.compute_qk_t(q, &k_expanded, &mut attention_scores)?;
+        eprintln!(
+            ">>>     scaled_dot_product_attention({}): Step 1/5 - QK^T done ({:?})",
+            layer_idx,
+            step_start.elapsed()
+        );
 
         // Step 2: Scale by 1/sqrt(head_dim) - manual scaling
+        eprintln!(
+            ">>>     scaled_dot_product_attention({}): Step 2/5 - Scale...",
+            layer_idx
+        );
+        let step_start = std::time::Instant::now();
         let scale = 1.0 / (head_dim as f32).sqrt();
         backend.scale_inplace(&mut attention_scores, scale)?;
+        eprintln!(
+            ">>>     scaled_dot_product_attention({}): Step 2/5 - Scale done ({:?})",
+            layer_idx,
+            step_start.elapsed()
+        );
 
         // Step 3: Apply causal mask (for decoder-only models)
+        eprintln!(
+            ">>>     scaled_dot_product_attention({}): Step 3/5 - Apply causal mask...",
+            layer_idx
+        );
+        let step_start = std::time::Instant::now();
         attention_kernels.apply_causal_mask(&mut attention_scores, seq_len, seq_len)?;
+        eprintln!(
+            ">>>     scaled_dot_product_attention({}): Step 3/5 - Causal mask done ({:?})",
+            layer_idx,
+            step_start.elapsed()
+        );
 
         // Step 4: Compute softmax
+        eprintln!(
+            ">>>     scaled_dot_product_attention({}): Step 4/5 - Compute softmax...",
+            layer_idx
+        );
+        let step_start = std::time::Instant::now();
         attention_kernels.compute_softmax(&mut attention_scores, &softmax_temp)?;
+        eprintln!(
+            ">>>     scaled_dot_product_attention({}): Step 4/5 - Softmax done ({:?})",
+            layer_idx,
+            step_start.elapsed()
+        );
 
         // Step 5: Compute attention-weighted V
+        eprintln!(
+            ">>>     scaled_dot_product_attention({}): Step 5/5 - Compute attention-weighted V...",
+            layer_idx
+        );
+        let step_start = std::time::Instant::now();
         let output_shape = TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
         let mut output = DeviceTensor::empty(backend, output_shape)?;
-        attention_kernels.compute_attention_weighted_v(&attention_scores, v, &mut output)?;
+        attention_kernels.compute_attention_weighted_v(
+            &attention_scores,
+            &v_expanded,
+            &mut output,
+        )?;
+        eprintln!(
+            ">>>     scaled_dot_product_attention({}): Step 5/5 - Attention-weighted V done ({:?})",
+            layer_idx,
+            step_start.elapsed()
+        );
 
+        eprintln!(
+            ">>>     scaled_dot_product_attention({}): COMPLETE",
+            layer_idx
+        );
         Ok(output)
     }
 
@@ -1132,12 +2854,12 @@ impl ExecutionPlan {
     ///
     /// Extracts token embedding weights from GGUF and validates shape.
     /// Supports multiple naming conventions: token_embd, embed_tokens, word_embeddings.
+    /// llama.cpp-compatible: accepts both layouts, infers vocab_size when 0.
     fn map_embedding(
         backend: &HipBackend,
         config: &ModelConfig,
         gpu_tensors: &std::collections::HashMap<String, DeviceTensor>,
     ) -> HipResult<DeviceTensor> {
-        // Try different embedding tensor naming conventions
         let embedding_names = [
             "token_embd.weight",
             "embed_tokens.weight",
@@ -1148,7 +2870,6 @@ impl ExecutionPlan {
             if let Some(tensor) = gpu_tensors.get(*name) {
                 let shape = tensor.shape().dims();
 
-                // Validate embedding tensor shape: [vocab_size, hidden_size] or transposed
                 if shape.len() != 2 {
                     return Err(HipError::GenericError(format!(
                         "Embedding tensor '{}' should be 2D, got {}D",
@@ -1157,114 +2878,179 @@ impl ExecutionPlan {
                     )));
                 }
 
-                if shape[0] == config.vocab_size && shape[1] == config.hidden_size {
+                let (d0, d1) = (shape[0], shape[1]);
+                let hidden_size = config.hidden_size;
+
+                // Infer vocab_size if unknown (vocab_size == 0)
+                let actual_vocab_size = if config.vocab_size == 0 {
+                    // Use hidden_size as anchor to disambiguate
+                    if d0 == hidden_size && d1 != hidden_size {
+                        d1 // [hidden, vocab] layout
+                    } else if d1 == hidden_size && d0 != hidden_size {
+                        d0 // [vocab, hidden] layout
+                    } else {
+                        // Fallback: larger dimension is vocab
+                        d0.max(d1)
+                    }
+                } else {
+                    config.vocab_size
+                };
+
+                // Accept: [vocab, hidden] OR [hidden, vocab] (transpose if needed)
+                if d0 == actual_vocab_size && d1 == hidden_size {
+                    tracing::info!(
+                        "Found embedding '{}' with shape [{}, {}], vocab_size={}",
+                        name,
+                        d0,
+                        d1,
+                        actual_vocab_size
+                    );
                     return Ok(tensor.clone());
                 }
 
-                if shape[0] == config.hidden_size && shape[1] == config.vocab_size {
+                if d0 == hidden_size && d1 == actual_vocab_size {
+                    tracing::info!(
+                        "Found transposed embedding '{}' with shape [{}, {}], vocab_size={}",
+                        name,
+                        d0,
+                        d1,
+                        actual_vocab_size
+                    );
                     let transposed = Self::transpose_2d_tensor(backend, tensor)?;
                     return Ok(transposed);
                 }
-
-                return Err(HipError::GenericError(format!(
-                    "Embedding tensor '{}' shape [{}, {}] doesn't match expected [{}, {}] or [{}, {}]",
-                    name,
-                    shape[0],
-                    shape[1],
-                    config.vocab_size,
-                    config.hidden_size,
-                    config.hidden_size,
-                    config.vocab_size
-                )));
             }
         }
 
-        Err(HipError::GenericError(
-            "No embedding tensor found (tried: token_embd.weight, embed_tokens.weight, word_embeddings.weight)".to_string()
-        ))
+        Err(HipError::GenericError(format!(
+            "No embedding tensor found (tried: {}). vocab_size={}, hidden_size={}",
+            embedding_names.join(", "),
+            config.vocab_size,
+            config.hidden_size
+        )))
     }
 
     /// Map language model head weights from GGUF tensors
     ///
     /// Extracts LM head weights from GGUF and validates shape.
     /// Supports multiple naming conventions: output.weight, lm_head.weight, logits.weight.
-    /// Accepts weights stored as [hidden_size, vocab_size] or [vocab_size, hidden_size]
-    /// and ensures the execution plan stores them in [hidden_size, vocab_size] form.
+    /// llama.cpp-compatible: accepts both layouts, infers vocab_size when 0, supports tied embeddings.
     fn map_lm_head(
         backend: &HipBackend,
         config: &ModelConfig,
         gpu_tensors: &std::collections::HashMap<String, DeviceTensor>,
     ) -> HipResult<DeviceTensor> {
-        // Try different LM head tensor naming conventions
         let lm_head_names = ["output.weight", "lm_head.weight", "logits.weight"];
 
         for name in &lm_head_names {
             if let Some(tensor) = gpu_tensors.get(*name) {
                 let shape = tensor.shape().dims();
 
-                // Validate LM head tensor shape: [vocab_size, hidden_size]
                 if shape.len() != 2 {
-                    return Err(HipError::GenericError(format!(
-                        "LM head tensor '{}' should be 2D, got {}D",
+                    continue;
+                }
+
+                let (d0, d1) = (shape[0], shape[1]);
+                let hidden_size = config.hidden_size;
+
+                // Infer vocab_size if unknown (vocab_size == 0)
+                let actual_vocab_size = if config.vocab_size == 0 {
+                    if d0 == hidden_size && d1 != hidden_size {
+                        d1
+                    } else if d1 == hidden_size && d0 != hidden_size {
+                        d0
+                    } else {
+                        d0.max(d1)
+                    }
+                } else {
+                    config.vocab_size
+                };
+
+                // Accept: [vocab, hidden] OR [hidden, vocab]
+                if d0 == actual_vocab_size && d1 == hidden_size {
+                    tracing::info!(
+                        "Found LM head '{}' with shape [{}, {}], vocab_size={}",
                         name,
-                        shape.len()
-                    )));
-                }
-
-                let expected = (config.hidden_size, config.vocab_size);
-                if shape[0] == expected.0 && shape[1] == expected.1 {
-                    return Ok(tensor.clone());
-                }
-
-                if shape[0] == expected.1 && shape[1] == expected.0 {
-                    // Convert from [vocab_size, hidden_size] to [hidden_size, vocab_size]
+                        d0,
+                        d1,
+                        actual_vocab_size
+                    );
+                    // Transpose to [hidden, vocab] format
                     let transposed = Self::transpose_2d_tensor(backend, tensor)?;
                     return Ok(transposed);
                 }
 
-                return Err(HipError::GenericError(format!(
-                    "LM head tensor '{}' shape [{}, {}] doesn't match expected [{}, {}] or [{}, {}]",
-                    name,
-                    shape[0],
-                    shape[1],
-                    expected.0,
-                    expected.1,
-                    expected.1,
-                    expected.0
-                )));
+                if d0 == hidden_size && d1 == actual_vocab_size {
+                    tracing::info!(
+                        "Found LM head '{}' with shape [{}, {}], vocab_size={}",
+                        name,
+                        d0,
+                        d1,
+                        actual_vocab_size
+                    );
+                    return Ok(tensor.clone());
+                }
             }
         }
 
-        // For models with tied embeddings (like Qwen2), use token_embd.weight as LM head
-        // This is a common optimization where the embedding and output layers share weights
-        if let Some(tensor) = gpu_tensors.get("token_embd.weight") {
-            let shape = tensor.shape().dims();
+        // For tied embeddings (Qwen2 style), try embedding tensors
+        let tied_names = ["token_embd.weight", "embed_tokens.weight"];
+        for name in &tied_names {
+            if let Some(tensor) = gpu_tensors.get(*name) {
+                let shape = tensor.shape().dims();
 
-            // Validate shape: should be [hidden_size, vocab_size] or [vocab_size, hidden_size]
-            if shape.len() != 2 {
-                return Err(HipError::GenericError(format!(
-                    "token_embd.weight should be 2D for tied embeddings, got {}D",
-                    shape.len()
-                )));
-            }
+                if shape.len() != 2 {
+                    continue;
+                }
 
-            let expected = (config.hidden_size, config.vocab_size);
-            if shape[0] == expected.0 && shape[1] == expected.1 {
-                // Already in correct format [hidden_size, vocab_size]
-                return Ok(tensor.clone());
-            }
+                let (d0, d1) = (shape[0], shape[1]);
+                let hidden_size = config.hidden_size;
 
-            if shape[0] == expected.1 && shape[1] == expected.0 {
-                // Transpose from [vocab_size, hidden_size] to [hidden_size, vocab_size]
-                let transposed = Self::transpose_2d_tensor(backend, tensor)?;
-                return Ok(transposed);
+                // Infer vocab_size if unknown
+                let actual_vocab_size = if config.vocab_size == 0 {
+                    if d0 == hidden_size && d1 != hidden_size {
+                        d1
+                    } else if d1 == hidden_size && d0 != hidden_size {
+                        d0
+                    } else {
+                        d0.max(d1)
+                    }
+                } else {
+                    config.vocab_size
+                };
+
+                // Accept: [vocab, hidden] OR [hidden, vocab]
+                if d0 == actual_vocab_size && d1 == hidden_size {
+                    tracing::info!(
+                        "Using tied embedding '{}' as LM head, shape [{}, {}], vocab_size={}",
+                        name,
+                        d0,
+                        d1,
+                        actual_vocab_size
+                    );
+                    let transposed = Self::transpose_2d_tensor(backend, tensor)?;
+                    return Ok(transposed);
+                }
+
+                if d0 == hidden_size && d1 == actual_vocab_size {
+                    tracing::info!(
+                        "Using tied embedding '{}' as LM head, shape [{}, {}], vocab_size={}",
+                        name,
+                        d0,
+                        d1,
+                        actual_vocab_size
+                    );
+                    return Ok(tensor.clone());
+                }
             }
         }
 
-        Err(HipError::GenericError(
-            "No LM head tensor found (tried: output.weight, lm_head.weight, logits.weight, token_embd.weight)"
-                .to_string(),
-        ))
+        Err(HipError::GenericError(format!(
+            "No LM head tensor found (tried: {}). vocab_size={}, hidden_size={}",
+            lm_head_names.join(", "),
+            config.vocab_size,
+            config.hidden_size
+        )))
     }
 
     /// Transpose a 2D tensor on the host and upload it back to the device
@@ -1279,8 +3065,12 @@ impl ExecutionPlan {
 
         let rows = shape[0];
         let cols = shape[1];
-        tracing::debug!("transpose_2d_tensor: shape=[{}, {}], size={} bytes",
-                 rows, cols, tensor.len() * std::mem::size_of::<f32>());
+        tracing::debug!(
+            "transpose_2d_tensor: shape=[{}, {}], size={} bytes",
+            rows,
+            cols,
+            tensor.len() * std::mem::size_of::<f32>()
+        );
         let host = tensor.to_host_vec()?;
         let mut transposed = vec![0.0f32; host.len()];
 
@@ -1329,28 +3119,34 @@ impl ExecutionPlan {
 
         // If separate Q, K, V tensors exist, concatenate them
         if let (Some(q), Some(k), Some(v)) = (q_weight, k_weight, v_weight) {
-            println!("Layer {}: Found separate Q, K, V tensors - concatenating", layer_idx);
+            println!(
+                "Layer {}: Found separate Q, K, V tensors - concatenating",
+                layer_idx
+            );
             let qkv_weight = Self::concatenate_qkv_tensors(backend, q, k, v, config)?;
 
             // Get output projection
             let o_name = format!("{}.attn_output.weight", prefix);
             let o_name_alt = format!("{}.attn.o_proj.weight", prefix);
-            let o_weight = gpu_tensors.get(&o_name)
+            let o_weight = gpu_tensors
+                .get(&o_name)
                 .or_else(|| gpu_tensors.get(&o_name_alt))
-                .ok_or_else(|| HipError::GenericError(format!(
-                    "Output projection not found (tried: {}, {})",
-                    o_name, o_name_alt
-                )))?;
+                .ok_or_else(|| {
+                    HipError::GenericError(format!(
+                        "Output projection not found (tried: {}, {})",
+                        o_name, o_name_alt
+                    ))
+                })?;
 
             return Ok((qkv_weight, o_weight.clone()));
         }
 
         // Try fused QKV tensor
         let qkv_variants = vec![
-            format!("{}.attention.wq.weight", prefix),  // LLaMA-style
-            format!("{}.attention.query_key_value.weight", prefix),  // Falcon-style
-            format!("{}.self_attn.q_proj.weight", prefix),  // Mistral-style
-            format!("{}.attn.qkv.weight", prefix),  // Generic
+            format!("{}.attention.wq.weight", prefix), // LLaMA-style
+            format!("{}.attention.query_key_value.weight", prefix), // Falcon-style
+            format!("{}.self_attn.q_proj.weight", prefix), // Mistral-style
+            format!("{}.attn.qkv.weight", prefix),     // Generic
         ];
 
         let qkv_weight = qkv_variants
@@ -1390,8 +3186,8 @@ impl ExecutionPlan {
 
         // Get output projection
         let o_variants = vec![
-            format!("{}.attention.wo.weight", prefix),  // LLaMA-style
-            format!("{}.self_attn.o_proj.weight", prefix),  // Mistral-style
+            format!("{}.attention.wo.weight", prefix), // LLaMA-style
+            format!("{}.self_attn.o_proj.weight", prefix), // Mistral-style
             format!("{}.attn.o_proj.weight", prefix),  // Generic
             format!("{}.attn_output.weight", prefix),  // Qwen2-style
         ];
@@ -1423,7 +3219,10 @@ impl ExecutionPlan {
             )));
         }
 
-        println!("Layer {}: Found fused QKV tensor - using directly", layer_idx);
+        println!(
+            "Layer {}: Found fused QKV tensor - using directly",
+            layer_idx
+        );
         Ok((qkv_weight.clone(), o_weight.clone()))
     }
 
@@ -1459,19 +3258,35 @@ impl ExecutionPlan {
         // If any tensor is missing, this is not a Qwen2 model
         let q_weight = match q_weight {
             Some(t) => t,
-            None => return Err(HipError::GenericError("Qwen2 Q tensor not found".to_string())),
+            None => {
+                return Err(HipError::GenericError(
+                    "Qwen2 Q tensor not found".to_string(),
+                ))
+            }
         };
         let k_weight = match k_weight {
             Some(t) => t,
-            None => return Err(HipError::GenericError("Qwen2 K tensor not found".to_string())),
+            None => {
+                return Err(HipError::GenericError(
+                    "Qwen2 K tensor not found".to_string(),
+                ))
+            }
         };
         let v_weight = match v_weight {
             Some(t) => t,
-            None => return Err(HipError::GenericError("Qwen2 V tensor not found".to_string())),
+            None => {
+                return Err(HipError::GenericError(
+                    "Qwen2 V tensor not found".to_string(),
+                ))
+            }
         };
         let o_weight = match o_weight {
             Some(t) => t,
-            None => return Err(HipError::GenericError("Qwen2 O tensor not found".to_string())),
+            None => {
+                return Err(HipError::GenericError(
+                    "Qwen2 O tensor not found".to_string(),
+                ))
+            }
         };
 
         // Validate output projection shape: [hidden_size, hidden_size]
@@ -1490,7 +3305,8 @@ impl ExecutionPlan {
         }
 
         // Concatenate Q, K, V into fused QKV matrix
-        let qkv_weight = Self::concatenate_qkv_tensors(backend, q_weight, k_weight, v_weight, config)?;
+        let qkv_weight =
+            Self::concatenate_qkv_tensors(backend, q_weight, k_weight, v_weight, config)?;
 
         Ok((qkv_weight, o_weight.clone()))
     }
@@ -1747,23 +3563,23 @@ impl ExecutionPlan {
 
         // Try multiple naming variants for each component
         let gate_variants = vec![
-            format!("{}.ffn_gate.weight", prefix),  // Qwen2-style
-            format!("{}.mlp.gate_proj.weight", prefix),  // LLaMA/Mistral-style
-            format!("{}.feed_forward.w1.weight", prefix),  // Alternative
-            format!("{}.mlp.c_fc.weight", prefix),  // GPT-style
+            format!("{}.ffn_gate.weight", prefix),        // Qwen2-style
+            format!("{}.mlp.gate_proj.weight", prefix),   // LLaMA/Mistral-style
+            format!("{}.feed_forward.w1.weight", prefix), // Alternative
+            format!("{}.mlp.c_fc.weight", prefix),        // GPT-style
         ];
 
         let up_variants = vec![
-            format!("{}.ffn_up.weight", prefix),  // Qwen2-style
-            format!("{}.mlp.up_proj.weight", prefix),  // LLaMA/Mistral-style
-            format!("{}.feed_forward.w3.weight", prefix),  // Alternative
-            format!("{}.mlp.c_proj.weight", prefix),  // GPT-style
+            format!("{}.ffn_up.weight", prefix),          // Qwen2-style
+            format!("{}.mlp.up_proj.weight", prefix),     // LLaMA/Mistral-style
+            format!("{}.feed_forward.w3.weight", prefix), // Alternative
+            format!("{}.mlp.c_proj.weight", prefix),      // GPT-style
         ];
 
         let down_variants = vec![
-            format!("{}.ffn_down.weight", prefix),  // Qwen2-style
-            format!("{}.mlp.down_proj.weight", prefix),  // LLaMA/Mistral-style
-            format!("{}.feed_forward.w2.weight", prefix),  // Alternative
+            format!("{}.ffn_down.weight", prefix),        // Qwen2-style
+            format!("{}.mlp.down_proj.weight", prefix),   // LLaMA/Mistral-style
+            format!("{}.feed_forward.w2.weight", prefix), // Alternative
         ];
 
         let gate_weight = gate_variants
@@ -1856,15 +3672,27 @@ impl ExecutionPlan {
         // If any tensor is missing, this is not a Qwen2 model
         let gate_weight = match gate_weight {
             Some(t) => t,
-            None => return Err(HipError::GenericError("Qwen2 FFN gate tensor not found".to_string())),
+            None => {
+                return Err(HipError::GenericError(
+                    "Qwen2 FFN gate tensor not found".to_string(),
+                ))
+            }
         };
         let up_weight = match up_weight {
             Some(t) => t,
-            None => return Err(HipError::GenericError("Qwen2 FFN up tensor not found".to_string())),
+            None => {
+                return Err(HipError::GenericError(
+                    "Qwen2 FFN up tensor not found".to_string(),
+                ))
+            }
         };
         let down_weight = match down_weight {
             Some(t) => t,
-            None => return Err(HipError::GenericError("Qwen2 FFN down tensor not found".to_string())),
+            None => {
+                return Err(HipError::GenericError(
+                    "Qwen2 FFN down tensor not found".to_string(),
+                ))
+            }
         };
 
         // Validate and potentially transpose tensors to match expected shapes
@@ -2044,18 +3872,18 @@ impl ExecutionPlan {
 
         // Try multiple naming variants for attention norm (input/first layer norm)
         let attn_norm_variants = vec![
-            format!("{}.attn_norm.weight", prefix),  // Qwen2-style
+            format!("{}.attn_norm.weight", prefix),       // Qwen2-style
             format!("{}.attention_norm.weight", prefix),  // LLaMA-style
-            format!("{}.input_layernorm.weight", prefix),  // Mistral-style
-            format!("{}.ln_1.weight", prefix),  // GPT-style
-            format!("{}.pre_attention_layernorm.weight", prefix),  // Alternative
+            format!("{}.input_layernorm.weight", prefix), // Mistral-style
+            format!("{}.ln_1.weight", prefix),            // GPT-style
+            format!("{}.pre_attention_layernorm.weight", prefix), // Alternative
         ];
 
         // Try multiple naming variants for FFN norm (output/second layer norm)
         let ffn_norm_variants = vec![
-            format!("{}.ffn_norm.weight", prefix),  // Qwen2-style
-            format!("{}.post_attention_layernorm.weight", prefix),  // Mistral-style
-            format!("{}.ln_2.weight", prefix),  // GPT-style
+            format!("{}.ffn_norm.weight", prefix), // Qwen2-style
+            format!("{}.post_attention_layernorm.weight", prefix), // Mistral-style
+            format!("{}.ln_2.weight", prefix),     // GPT-style
         ];
 
         let attn_norm_weight = attn_norm_variants
@@ -2105,12 +3933,16 @@ impl ExecutionPlan {
             DeviceTensor::from_host_vec(backend, zeros, bias_shape)
         };
 
-        let attn_norm_bias_variants = [format!("{}.attn_norm.bias", prefix),
+        let attn_norm_bias_variants = [
+            format!("{}.attn_norm.bias", prefix),
             format!("{}.attention_norm.bias", prefix),
-            format!("{}.input_layernorm.bias", prefix)];
+            format!("{}.input_layernorm.bias", prefix),
+        ];
 
-        let ffn_norm_bias_variants = [format!("{}.ffn_norm.bias", prefix),
-            format!("{}.post_attention_layernorm.bias", prefix)];
+        let ffn_norm_bias_variants = [
+            format!("{}.ffn_norm.bias", prefix),
+            format!("{}.post_attention_layernorm.bias", prefix),
+        ];
 
         let attn_norm_bias = attn_norm_bias_variants
             .iter()
@@ -2160,12 +3992,20 @@ impl ExecutionPlan {
         // Try to find layer norm tensors (bias is optional)
         let attn_norm_weight = match gpu_tensors.get(&attn_norm_weight_name) {
             Some(t) => t,
-            None => return Err(HipError::GenericError("Qwen2 attn_norm.weight not found".to_string())),
+            None => {
+                return Err(HipError::GenericError(
+                    "Qwen2 attn_norm.weight not found".to_string(),
+                ))
+            }
         };
         let attn_norm_bias = gpu_tensors.get(&attn_norm_bias_name);
         let ffn_norm_weight = match gpu_tensors.get(&ffn_norm_weight_name) {
             Some(t) => t,
-            None => return Err(HipError::GenericError("Qwen2 ffn_norm.weight not found".to_string())),
+            None => {
+                return Err(HipError::GenericError(
+                    "Qwen2 ffn_norm.weight not found".to_string(),
+                ))
+            }
         };
         let ffn_norm_bias = gpu_tensors.get(&ffn_norm_bias_name);
 
@@ -2527,7 +4367,7 @@ impl LayerPlan {
     #[deprecated(note = "Layer plans are created by ExecutionPlan::from_gguf()")]
     fn new(_backend: &HipBackend, _config: &ModelConfig, _layer_idx: usize) -> HipResult<Self> {
         Err(HipError::GenericError(
-            "LayerPlan::new() is deprecated. Use ExecutionPlan::from_gguf() instead.".to_string()
+            "LayerPlan::new() is deprecated. Use ExecutionPlan::from_gguf() instead.".to_string(),
         ))
     }
 
@@ -2555,4 +4395,3 @@ include!("gpu_attention_integration_tests.rs");
 #[cfg(test)]
 #[cfg(feature = "rocm")]
 include!("lazy_tests.rs");
-

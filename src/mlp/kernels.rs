@@ -65,8 +65,8 @@ use std::sync::{Arc, Mutex};
 use crate::backend::hip_backend::{HipBackend, HipError, HipKernel, HipModule};
 
 // RDNA3 (wave32) tuning constants for AMD Radeon RX 7900 XT
-const BLOCK_SIZE: u32 = 256;  // 8 waves of 32 threads
-const WARP_SIZE: u32 = 32;     // RDNA3 wavefront size
+const BLOCK_SIZE: u32 = 256; // 8 waves of 32 threads
+const WARP_SIZE: u32 = 32; // RDNA3 wavefront size
 
 /// Cached kernel modules and functions for MLP operations
 ///
@@ -91,7 +91,8 @@ static GLOBAL_CACHE: Mutex<Option<KernelCache>> = Mutex::new(None);
 fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> {
     // First check if already initialized
     {
-        let cache = GLOBAL_CACHE.lock()
+        let cache = GLOBAL_CACHE
+            .lock()
             .map_err(|e| HipError::LockPoisoned(format!("GLOBAL_CACHE lock poisoned: {}", e)))?;
         if cache.is_some() {
             return Ok(&GLOBAL_CACHE);
@@ -99,7 +100,8 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
     }
 
     // Need to initialize - drop the read lock first
-    let mut cache = GLOBAL_CACHE.lock()
+    let mut cache = GLOBAL_CACHE
+        .lock()
         .map_err(|e| HipError::LockPoisoned(format!("GLOBAL_CACHE lock poisoned: {}", e)))?;
 
     // Double-check in case another thread initialized while we waited
@@ -110,15 +112,19 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
     // Load SwiGLU kernel module and function
     // Note: We use a temporary backend just for loading. The actual kernel
     // launch will use the caller's backend to ensure stream consistency.
-    let load_backend = HipBackend::new()
-        .map_err(|e| HipError::InitializationFailed(format!("Failed to create HipBackend for loading: {}", e)))?;
+    let load_backend = HipBackend::new().map_err(|e| {
+        HipError::InitializationFailed(format!("Failed to create HipBackend for loading: {}", e))
+    })?;
 
     let swiglu_path = std::env::var("SWIGLU_HSACO")
         .ok()
         .ok_or_else(|| HipError::KernelLoadFailed("SWIGLU_HSACO env var not set".to_string()))?;
 
     if !Path::new(&swiglu_path).exists() {
-        return Err(HipError::KernelLoadFailed(format!("HSACO not found: {}", swiglu_path)));
+        return Err(HipError::KernelLoadFailed(format!(
+            "HSACO not found: {}",
+            swiglu_path
+        )));
     }
 
     let swiglu_module = load_backend.load_module(&swiglu_path)?;
@@ -130,7 +136,10 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
         .ok_or_else(|| HipError::KernelLoadFailed("RMS_NORM_HSACO env var not set".to_string()))?;
 
     if !Path::new(&rms_norm_path).exists() {
-        return Err(HipError::KernelLoadFailed(format!("HSACO not found: {}", rms_norm_path)));
+        return Err(HipError::KernelLoadFailed(format!(
+            "HSACO not found: {}",
+            rms_norm_path
+        )));
     }
 
     let rms_norm_module = load_backend.load_module(&rms_norm_path)?;
@@ -178,12 +187,16 @@ pub unsafe fn swiglu_gpu_kernel(
 ) -> Result<(), String> {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock()
+            let cache = cache_ref
+                .lock()
                 .map_err(|e| format!("SwiGLU cache lock poisoned: {}", e))?;
-            let cache_ref = cache.as_ref()
+            let cache_ref = cache
+                .as_ref()
                 .ok_or_else(|| "SwiGLU cache not initialized".to_string())?;
 
-            let kernel = cache_ref.swiglu_kernel.as_ref()
+            let kernel = cache_ref
+                .swiglu_kernel
+                .as_ref()
                 .ok_or_else(|| "swiglu_kernel not loaded".to_string())?;
 
             let total_elements = seq_len * intermediate_size;
@@ -206,13 +219,15 @@ pub unsafe fn swiglu_gpu_kernel(
                 &mut intermediate_size_arg as *mut _ as *mut c_void,
             ];
 
-            backend.launch_kernel_with_module_shared(
-                kernel,
-                grid_dim,
-                block_dim,
-                args,
-                shared_mem_bytes,
-            ).map_err(|e| format!("Failed to launch swiglu kernel: {:?}", e))?;
+            backend
+                .launch_kernel_with_module_shared(
+                    kernel,
+                    grid_dim,
+                    block_dim,
+                    args,
+                    shared_mem_bytes,
+                )
+                .map_err(|e| format!("Failed to launch swiglu kernel: {:?}", e))?;
 
             Ok(())
         }
@@ -253,12 +268,16 @@ pub unsafe fn rms_norm_gpu_kernel(
 ) -> Result<(), String> {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock()
+            let cache = cache_ref
+                .lock()
                 .map_err(|e| format!("RMSNorm cache lock poisoned: {}", e))?;
-            let cache_ref = cache.as_ref()
+            let cache_ref = cache
+                .as_ref()
                 .ok_or_else(|| "RMSNorm cache not initialized".to_string())?;
 
-            let kernel = cache_ref.rms_norm_kernel.as_ref()
+            let kernel = cache_ref
+                .rms_norm_kernel
+                .as_ref()
                 .ok_or_else(|| "rms_norm_kernel not loaded".to_string())?;
 
             let grid_dim = (seq_len, 1, 1);
@@ -282,13 +301,15 @@ pub unsafe fn rms_norm_gpu_kernel(
                 &mut eps_arg as *mut _ as *mut c_void,
             ];
 
-            backend.launch_kernel_with_module_shared(
-                kernel,
-                grid_dim,
-                block_dim,
-                args,
-                shared_mem_bytes,
-            ).map_err(|e| format!("Failed to launch rms_norm kernel: {:?}", e))?;
+            backend
+                .launch_kernel_with_module_shared(
+                    kernel,
+                    grid_dim,
+                    block_dim,
+                    args,
+                    shared_mem_bytes,
+                )
+                .map_err(|e| format!("Failed to launch rms_norm kernel: {:?}", e))?;
 
             Ok(())
         }

@@ -76,12 +76,8 @@ pub use backend::AttentionBackend;
 // Note: The pluggable backend trait is now named BackendImplementation
 // to distinguish it from the AttentionBackend enum used for simple selection
 pub use backend_registry::{
-    AttentionBackendRegistry,
-    AttentionBackendError,
-    AttentionBackendResult,
-    AttentionConfig,
-    KvCacheLayout,
-    BackendImplementation,
+    AttentionBackendError, AttentionBackendRegistry, AttentionBackendResult, AttentionConfig,
+    BackendImplementation, KvCacheLayout,
 };
 use thiserror::Error;
 

@@ -31,8 +31,7 @@ mod phase2_rope_tests {
             .expect("CPU RoPE failed");
 
         // GPU run
-        let backend = crate::backend::HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = crate::backend::HipBackend::new().expect("Failed to create HIP backend");
 
         let shape = crate::loader::TensorShape::from_dims(&[2, 1, 4]); // [seq_len, num_heads, head_dim]
         let mut gpu_tensor = DeviceTensor::from_host_vec(&backend, input.clone(), shape)
@@ -41,8 +40,7 @@ mod phase2_rope_tests {
         rope.apply_q_device(&mut gpu_tensor, &position_ids, num_heads)
             .expect("GPU RoPE failed");
 
-        let gpu_result = gpu_tensor.to_host_vec()
-            .expect("Failed to copy from GPU");
+        let gpu_result = gpu_tensor.to_host_vec().expect("Failed to copy from GPU");
 
         // Compare
         assert_eq!(cpu_result.len(), gpu_result.len());
@@ -51,7 +49,10 @@ mod phase2_rope_tests {
             assert!(
                 diff < TEST_TOLERANCE,
                 "RoPE mismatch at {}: CPU={}, GPU={}, diff={}",
-                i, cpu_val, gpu_val, diff
+                i,
+                cpu_val,
+                gpu_val,
+                diff
             );
         }
     }
@@ -74,8 +75,7 @@ mod phase2_rope_tests {
             .expect("CPU RoPE failed");
 
         // GPU run
-        let backend = crate::backend::HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = crate::backend::HipBackend::new().expect("Failed to create HIP backend");
 
         let shape = crate::loader::TensorShape::from_dims(&[2, 2, 8]); // [seq_len, num_heads, head_dim]
         let mut gpu_tensor = DeviceTensor::from_host_vec(&backend, input.clone(), shape)
@@ -84,8 +84,7 @@ mod phase2_rope_tests {
         rope.apply_q_device(&mut gpu_tensor, &position_ids, num_heads)
             .expect("GPU RoPE failed");
 
-        let gpu_result = gpu_tensor.to_host_vec()
-            .expect("Failed to copy from GPU");
+        let gpu_result = gpu_tensor.to_host_vec().expect("Failed to copy from GPU");
 
         // Compare
         assert_eq!(cpu_result.len(), gpu_result.len());
@@ -94,7 +93,10 @@ mod phase2_rope_tests {
             assert!(
                 diff < TEST_TOLERANCE,
                 "RoPE mismatch at {}: CPU={}, GPU={}, diff={}",
-                i, cpu_val, gpu_val, diff
+                i,
+                cpu_val,
+                gpu_val,
+                diff
             );
         }
     }
@@ -116,8 +118,7 @@ mod phase2_rope_tests {
             .expect("CPU RoPE failed");
 
         // GPU run
-        let backend = crate::backend::HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = crate::backend::HipBackend::new().expect("Failed to create HIP backend");
 
         let shape = crate::loader::TensorShape::from_dims(&[1, 1, 4]);
         let mut gpu_tensor = DeviceTensor::from_host_vec(&backend, input.clone(), shape)
@@ -126,8 +127,7 @@ mod phase2_rope_tests {
         rope.apply_k_device(&mut gpu_tensor, &position_ids, num_heads)
             .expect("GPU RoPE failed");
 
-        let gpu_result = gpu_tensor.to_host_vec()
-            .expect("Failed to copy from GPU");
+        let gpu_result = gpu_tensor.to_host_vec().expect("Failed to copy from GPU");
 
         // Compare
         for (i, (cpu_val, gpu_val)) in cpu_result.iter().zip(gpu_result.iter()).enumerate() {
@@ -135,7 +135,10 @@ mod phase2_rope_tests {
             assert!(
                 diff < TEST_TOLERANCE,
                 "RoPE position 5 mismatch at {}: CPU={}, GPU={}, diff={}",
-                i, cpu_val, gpu_val, diff
+                i,
+                cpu_val,
+                gpu_val,
+                diff
             );
         }
     }
@@ -151,8 +154,7 @@ mod phase2_rope_tests {
         let num_heads = 1;
 
         // GPU run
-        let backend = crate::backend::HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = crate::backend::HipBackend::new().expect("Failed to create HIP backend");
 
         let shape = crate::loader::TensorShape::from_dims(&[1, 1, 8]);
         let mut gpu_tensor = DeviceTensor::from_host_vec(&backend, input.clone(), shape)
@@ -161,8 +163,7 @@ mod phase2_rope_tests {
         rope.apply_q_device(&mut gpu_tensor, &position_ids, num_heads)
             .expect("GPU RoPE failed");
 
-        let gpu_result = gpu_tensor.to_host_vec()
-            .expect("Failed to copy from GPU");
+        let gpu_result = gpu_tensor.to_host_vec().expect("Failed to copy from GPU");
 
         // At least some values should change from input
         let mut changed = false;
@@ -192,8 +193,7 @@ mod phase2_rope_tests {
             .expect("CPU RoPE failed");
 
         // GPU run
-        let backend = crate::backend::HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = crate::backend::HipBackend::new().expect("Failed to create HIP backend");
 
         let shape = crate::loader::TensorShape::from_dims(&[8, 1, 4]);
         let mut gpu_tensor = DeviceTensor::from_host_vec(&backend, input.clone(), shape)
@@ -202,8 +202,7 @@ mod phase2_rope_tests {
         rope.apply_q_device(&mut gpu_tensor, &position_ids, num_heads)
             .expect("GPU RoPE failed");
 
-        let gpu_result = gpu_tensor.to_host_vec()
-            .expect("Failed to copy from GPU");
+        let gpu_result = gpu_tensor.to_host_vec().expect("Failed to copy from GPU");
 
         // Compare all elements
         for (i, (cpu_val, gpu_val)) in cpu_result.iter().zip(gpu_result.iter()).enumerate() {
@@ -211,7 +210,10 @@ mod phase2_rope_tests {
             assert!(
                 diff < TEST_TOLERANCE,
                 "RoPE mismatch at {}: CPU={}, GPU={}, diff={}",
-                i, cpu_val, gpu_val, diff
+                i,
+                cpu_val,
+                gpu_val,
+                diff
             );
         }
     }

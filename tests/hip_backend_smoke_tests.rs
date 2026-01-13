@@ -15,7 +15,8 @@ mod tests {
     #[serial]
     fn test_load_smoke_kernel() -> HipResult<()> {
         // Test that HIP kernel compiles and loads successfully
-        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        let fixture = rocmforge::GPU_FIXTURE
+            .as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
 
@@ -41,7 +42,8 @@ mod tests {
     #[serial]
     fn test_execute_smoke_kernel() -> HipResult<()> {
         // Test kernel execution with real GPU memory operations
-        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        let fixture = rocmforge::GPU_FIXTURE
+            .as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
 
@@ -80,7 +82,8 @@ mod tests {
     #[serial]
     fn test_gpu_memory_roundtrip() -> HipResult<()> {
         // Test GPU memory allocation and data roundtrip
-        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        let fixture = rocmforge::GPU_FIXTURE
+            .as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
 
@@ -122,7 +125,8 @@ mod tests {
     #[serial]
     fn test_hip_error_handling() -> HipResult<()> {
         // Test error handling for invalid operations
-        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        let fixture = rocmforge::GPU_FIXTURE
+            .as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
 
@@ -149,7 +153,8 @@ mod tests {
     #[serial]
     fn test_gpu_buffer_allocation() -> HipResult<()> {
         // Test various GPU buffer sizes
-        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        let fixture = rocmforge::GPU_FIXTURE
+            .as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
 
@@ -175,7 +180,8 @@ mod tests {
     #[serial]
     fn test_kernel_symbol_resolution() -> HipResult<()> {
         // Test that kernel symbols can be resolved correctly
-        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        let fixture = rocmforge::GPU_FIXTURE
+            .as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
 

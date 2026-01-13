@@ -107,8 +107,7 @@ mod qkt_matmul_tests {
         let cpu_result = qkt_matmul_cpu_reference(&q, &k, batch, heads, seq_q, seq_k, dim);
 
         // GPU computation
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let q_shape = TensorShape::from_dims(&[batch, heads, seq_q, dim]);
         let k_shape = TensorShape::from_dims(&[batch, heads, seq_k, dim]);
@@ -118,8 +117,8 @@ mod qkt_matmul_tests {
             .expect("Failed to create Q tensor");
         let k_gpu = DeviceTensor::from_host_vec(&backend, k.clone(), k_shape)
             .expect("Failed to create K tensor");
-        let mut out_gpu = DeviceTensor::empty(&backend, out_shape)
-            .expect("Failed to create output tensor");
+        let mut out_gpu =
+            DeviceTensor::empty(&backend, out_shape).expect("Failed to create output tensor");
 
         // Call qkt_matmul_gpu_kernel
         // Parameters: (q, k, output, batch_size, seq_q, seq_k, num_heads, head_dim)
@@ -140,7 +139,8 @@ mod qkt_matmul_tests {
 
         backend.synchronize().expect("GPU synchronization failed");
 
-        let gpu_result = out_gpu.to_host_vec()
+        let gpu_result = out_gpu
+            .to_host_vec()
             .expect("Failed to copy output from GPU");
 
         assert_eq!(cpu_result.len(), gpu_result.len());
@@ -151,7 +151,10 @@ mod qkt_matmul_tests {
             assert!(
                 diff < TEST_TOLERANCE,
                 "QK^T mismatch at {}: CPU={}, GPU={}, diff={}",
-                i, cpu_val, gpu_val, diff
+                i,
+                cpu_val,
+                gpu_val,
+                diff
             );
         }
         println!("QK^T Max difference: {}", max_diff);
@@ -217,7 +220,12 @@ mod qkt_matmul_tests {
                     assert!(
                         diff < 1e-5,
                         "Layout mismatch at head={}, sq={}, sk={}: explicit={}, direct={}, diff={}",
-                        h, sq, sk, explicit_result[explicit_idx], sum, diff
+                        h,
+                        sq,
+                        sk,
+                        explicit_result[explicit_idx],
+                        sum,
+                        diff
                     );
                 }
             }

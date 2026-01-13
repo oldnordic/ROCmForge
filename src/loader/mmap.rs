@@ -4,10 +4,10 @@
 //! Instead of reading all tensor data into RAM immediately, we memory-map
 //! the file and load tensors on-demand when they're first accessed.
 
+use anyhow::Result;
 use memmap2::Mmap;
 use std::fs::File;
 use std::path::Path;
-use anyhow::Result;
 
 /// Memory-mapped GGUF file
 ///
@@ -61,8 +61,9 @@ impl MmapGguf {
             .map_err(|e| anyhow::anyhow!("Failed to open GGUF file '{}': {}", path.display(), e))?;
 
         // Use unsafe mmap for read-only access (safe because we're only reading)
-        let mmap = unsafe { Mmap::map(&file) }
-            .map_err(|e| anyhow::anyhow!("Failed to memory-map GGUF file '{}': {}", path.display(), e))?;
+        let mmap = unsafe { Mmap::map(&file) }.map_err(|e| {
+            anyhow::anyhow!("Failed to memory-map GGUF file '{}': {}", path.display(), e)
+        })?;
 
         tracing::debug!("Memory-mapped GGUF file: {} bytes", mmap.len());
 
@@ -90,7 +91,11 @@ impl MmapGguf {
         if end > self.mmap.len() {
             return Err(anyhow::anyhow!(
                 "Slice out of bounds: offset={}, size={}, requested range={}..{}, file size={}",
-                offset, size, start, end, self.mmap.len()
+                offset,
+                size,
+                start,
+                end,
+                self.mmap.len()
             ));
         }
 

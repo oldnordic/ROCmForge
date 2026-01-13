@@ -21,7 +21,7 @@ mod softmax_explicit_tests {
     use crate::loader::mmap_loader::TensorShape;
 
     const TEST_TOLERANCE: f32 = 1e-4;
-    const TEST_TOLERANCE_LARGE: f32 = 1e-3;  // For larger inputs due to FP reduction order
+    const TEST_TOLERANCE_LARGE: f32 = 1e-3; // For larger inputs due to FP reduction order
 
     /// CPU reference: softmax over last dimension (seq_k)
     ///
@@ -83,8 +83,7 @@ mod softmax_explicit_tests {
         let cpu_result = softmax_cpu_explicit(&scores, batch, heads, seq_q, seq_k);
 
         // GPU run
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let scores_shape = TensorShape::from_dims(&[batch, heads, seq_q, seq_k]);
 
@@ -100,16 +99,21 @@ mod softmax_explicit_tests {
         let result = unsafe {
             crate::attention::kernels::softmax_gpu_kernel(
                 scores_gpu.buffer().as_mut_ptr() as *mut f32,
-                total_rows,  // kernel's "batch_size" = total rows
-                row_len,     // kernel's "seq_len" = row length
+                total_rows, // kernel's "batch_size" = total rows
+                row_len,    // kernel's "seq_len" = row length
             )
         };
 
-        assert_eq!(result, 0, "softmax_gpu_kernel returned error code {}", result);
+        assert_eq!(
+            result, 0,
+            "softmax_gpu_kernel returned error code {}",
+            result
+        );
 
         backend.synchronize().expect("GPU synchronization failed");
 
-        let gpu_result = scores_gpu.to_host_vec()
+        let gpu_result = scores_gpu
+            .to_host_vec()
             .expect("Failed to copy output from GPU");
 
         assert_eq!(cpu_result.len(), gpu_result.len());
@@ -125,12 +129,14 @@ mod softmax_explicit_tests {
             assert!(
                 (cpu_sum - 1.0).abs() < 1e-5,
                 "CPU row {} sums to {} (expected ~1.0)",
-                row_idx, cpu_sum
+                row_idx,
+                cpu_sum
             );
             assert!(
                 (gpu_sum - 1.0).abs() < 1e-4,
                 "GPU row {} sums to {} (expected ~1.0)",
-                row_idx, gpu_sum
+                row_idx,
+                gpu_sum
             );
 
             // Compare element-wise
@@ -140,7 +146,11 @@ mod softmax_explicit_tests {
                 assert!(
                     diff < TEST_TOLERANCE,
                     "softmax mismatch at row={}, col={}: CPU={}, GPU={}, diff={}",
-                    row_idx, col, cpu_result[idx], gpu_result[idx], diff
+                    row_idx,
+                    col,
+                    cpu_result[idx],
+                    gpu_result[idx],
+                    diff
                 );
             }
         }
@@ -159,8 +169,7 @@ mod softmax_explicit_tests {
 
         let cpu_result = softmax_cpu_explicit(&scores, batch, heads, seq_q, seq_k);
 
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let scores_shape = TensorShape::from_dims(&[batch, heads, seq_q, seq_k]);
         let mut scores_gpu = DeviceTensor::from_host_vec(&backend, scores, scores_shape)
@@ -181,7 +190,8 @@ mod softmax_explicit_tests {
 
         backend.synchronize().expect("GPU synchronization failed");
 
-        let gpu_result = scores_gpu.to_host_vec()
+        let gpu_result = scores_gpu
+            .to_host_vec()
             .expect("Failed to copy output from GPU");
 
         // Verify rows sum to 1.0
@@ -193,7 +203,8 @@ mod softmax_explicit_tests {
             assert!(
                 (gpu_sum - 1.0).abs() < 1e-4,
                 "GPU row {} sums to {} (expected ~1.0)",
-                row_idx, gpu_sum
+                row_idx,
+                gpu_sum
             );
         }
 
@@ -203,7 +214,10 @@ mod softmax_explicit_tests {
             let diff = (cpu_val - gpu_val).abs();
             max_diff = max_diff.max(diff);
             if diff >= TEST_TOLERANCE_LARGE {
-                panic!("Mismatch at {}: CPU={}, GPU={}, diff={}", i, cpu_val, gpu_val, diff);
+                panic!(
+                    "Mismatch at {}: CPU={}, GPU={}, diff={}",
+                    i, cpu_val, gpu_val, diff
+                );
             }
         }
         println!("Softmax explicit non-square max diff: {}", max_diff);
@@ -222,8 +236,7 @@ mod softmax_explicit_tests {
 
         let cpu_result = softmax_cpu_explicit(&scores, batch, heads, seq_q, seq_k);
 
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let scores_shape = TensorShape::from_dims(&[batch, heads, seq_q, seq_k]);
         let mut scores_gpu = DeviceTensor::from_host_vec(&backend, scores, scores_shape)
@@ -244,7 +257,8 @@ mod softmax_explicit_tests {
 
         backend.synchronize().expect("GPU synchronization failed");
 
-        let gpu_result = scores_gpu.to_host_vec()
+        let gpu_result = scores_gpu
+            .to_host_vec()
             .expect("Failed to copy output from GPU");
 
         // Spot check: verify all rows sum to ~1.0
@@ -256,7 +270,8 @@ mod softmax_explicit_tests {
             assert!(
                 (gpu_sum - 1.0).abs() < 1e-3,
                 "GPU row {} sums to {} (expected ~1.0)",
-                row_idx, gpu_sum
+                row_idx,
+                gpu_sum
             );
         }
 
@@ -266,7 +281,11 @@ mod softmax_explicit_tests {
             max_diff = max_diff.max((cpu_val - gpu_val).abs());
         }
         println!("Softmax explicit 32x32 max diff: {}", max_diff);
-        assert!(max_diff < TEST_TOLERANCE_LARGE, "Max diff {} exceeds tolerance", max_diff);
+        assert!(
+            max_diff < TEST_TOLERANCE_LARGE,
+            "Max diff {} exceeds tolerance",
+            max_diff
+        );
     }
 
     /// Test numerical stability with large values
@@ -281,8 +300,7 @@ mod softmax_explicit_tests {
         // Large values that would overflow exp() without max normalization
         let scores: Vec<f32> = (0..total).map(|i| 1000.0 + (i as f32) * 0.1).collect();
 
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let scores_shape = TensorShape::from_dims(&[batch, heads, seq_q, seq_k]);
         let mut scores_gpu = DeviceTensor::from_host_vec(&backend, scores, scores_shape)
@@ -303,7 +321,8 @@ mod softmax_explicit_tests {
 
         backend.synchronize().expect("GPU synchronization failed");
 
-        let gpu_result = scores_gpu.to_host_vec()
+        let gpu_result = scores_gpu
+            .to_host_vec()
             .expect("Failed to copy output from GPU");
 
         // Verify all values are in valid range [0, 1]
@@ -311,7 +330,8 @@ mod softmax_explicit_tests {
             assert!(
                 val > 0.0 && val <= 1.0,
                 "Invalid softmax value at {}: {}",
-                i, val
+                i,
+                val
             );
         }
 
@@ -324,7 +344,8 @@ mod softmax_explicit_tests {
             assert!(
                 (row_sum - 1.0).abs() < 1e-4,
                 "Row {} sums to {} (expected ~1.0)",
-                row_idx, row_sum
+                row_idx,
+                row_sum
             );
         }
 

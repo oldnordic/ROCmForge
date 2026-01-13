@@ -58,9 +58,15 @@ mod gpu_path_regression_tests {
         // output: [seq_len, hidden_size] = [4, 8]
 
         let hidden_data: Vec<f32> = (0..seq_len * hidden_size).map(|i| i as f32 * 0.1).collect();
-        let gate_data: Vec<f32> = (0..hidden_size * intermediate_size).map(|i| i as f32 * 0.1).collect();
-        let up_data: Vec<f32> = (0..hidden_size * intermediate_size).map(|i| i as f32 * 0.1 - 0.5).collect();
-        let down_data: Vec<f32> = (0..intermediate_size * hidden_size).map(|i| i as f32 * 0.1 - 0.3).collect();
+        let gate_data: Vec<f32> = (0..hidden_size * intermediate_size)
+            .map(|i| i as f32 * 0.1)
+            .collect();
+        let up_data: Vec<f32> = (0..hidden_size * intermediate_size)
+            .map(|i| i as f32 * 0.1 - 0.5)
+            .collect();
+        let down_data: Vec<f32> = (0..intermediate_size * hidden_size)
+            .map(|i| i as f32 * 0.1 - 0.3)
+            .collect();
 
         let hidden_shape = TensorShape::from_dims(&[seq_len, hidden_size]);
         let weight_shape = TensorShape::from_dims(&[hidden_size, intermediate_size]);
@@ -75,14 +81,17 @@ mod gpu_path_regression_tests {
         let down_gpu = DeviceTensor::from_host_vec(&backend, down_data, down_shape)
             .expect("Failed to create down tensor");
 
-        let mut result_gpu = DeviceTensor::empty(&backend, hidden_shape)
-            .expect("Failed to create result tensor");
+        let mut result_gpu =
+            DeviceTensor::empty(&backend, hidden_shape).expect("Failed to create result tensor");
 
-        backend.mlp_swiglu(&hidden_gpu, &gate_gpu, &up_gpu, &down_gpu, &mut result_gpu)
+        backend
+            .mlp_swiglu(&hidden_gpu, &gate_gpu, &up_gpu, &down_gpu, &mut result_gpu)
             .expect("MLP SwiGLU failed");
 
         // Verify output is valid (non-zero, since inputs are non-zero)
-        let result = result_gpu.to_host_vec().expect("Failed to copy result to host");
+        let result = result_gpu
+            .to_host_vec()
+            .expect("Failed to copy result to host");
 
         // Result should be non-zero since we used non-zero inputs
         assert!(
@@ -107,15 +116,20 @@ mod gpu_path_regression_tests {
         let dst_buffer = HipBuffer::new(size).expect("Failed to create destination buffer");
 
         // Copy data to GPU
-        src_buffer.copy_from_host(&data).expect("Failed to copy to source");
+        src_buffer
+            .copy_from_host(&data)
+            .expect("Failed to copy to source");
 
         // GPU-to-GPU copy
-        dst_buffer.copy_from_buffer(&src_buffer)
+        dst_buffer
+            .copy_from_buffer(&src_buffer)
             .expect("Failed to copy from buffer");
 
         // Verify: copy back to host and check
         let mut result = vec![0.0f32; data.len()];
-        dst_buffer.copy_to_host(&mut result).expect("Failed to copy to host");
+        dst_buffer
+            .copy_to_host(&mut result)
+            .expect("Failed to copy to host");
 
         assert_eq!(result, data, "GPU-to-GPU copy produced incorrect data");
     }
@@ -143,6 +157,9 @@ mod gpu_path_regression_tests {
         // - for i in 0..swiglu_host.len() { ... }  // CPU loop
         // - swiglu_buffer.copy_from_host(&swiglu_host)?
 
-        assert!(true, "Documentation test: MLP layer should not use to_host_vec");
+        assert!(
+            true,
+            "Documentation test: MLP layer should not use to_host_vec"
+        );
     }
 }

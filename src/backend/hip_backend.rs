@@ -17,6 +17,15 @@ extern "C" {
     fn hipMalloc(ptr: *mut *mut c_void, size: usize) -> i32;
     fn hipFree(ptr: *mut c_void) -> i32;
     fn hipMemcpy(dst: *mut c_void, src: *const c_void, count: usize, kind: i32) -> i32;
+    fn hipMemcpy2D(
+        dst: *mut c_void,
+        dpitch: usize,
+        src: *const c_void,
+        spitch: usize,
+        width: usize,
+        height: usize,
+        kind: i32,
+    ) -> i32;
     fn hipMemcpyAsync(
         dst: *mut c_void,
         src: *const c_void,
@@ -78,7 +87,7 @@ const HIP_SUCCESS: i32 = 0;
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct HipDeviceProp {
-    _buffer: [u8; 1472],  // Exact C size - no more, no less
+    _buffer: [u8; 1472], // Exact C size - no more, no less
 }
 
 // Field offsets verified against hip_runtime_api.h
@@ -106,23 +115,36 @@ impl HipDeviceProp {
     pub fn total_global_mem(&self) -> u64 {
         // Read u64 at offset (size_t is 64-bit on AMD64)
         let bytes = &self._buffer[Self::TOTAL_GLOBAL_MEM_OFFSET..Self::TOTAL_GLOBAL_MEM_OFFSET + 8];
-        bytes.try_into().ok().map(u64::from_ne_bytes).unwrap_or_else(|| {
-            // SAFETY: Buffer is guaranteed to be 1472 bytes, and this slice is 8 bytes
-            // at a valid offset. This should never fail, but we handle it gracefully.
-            tracing::error!("FFI struct field access failed: total_global_mem slice has wrong length");
-            0
-        })
+        bytes
+            .try_into()
+            .ok()
+            .map(u64::from_ne_bytes)
+            .unwrap_or_else(|| {
+                // SAFETY: Buffer is guaranteed to be 1472 bytes, and this slice is 8 bytes
+                // at a valid offset. This should never fail, but we handle it gracefully.
+                tracing::error!(
+                    "FFI struct field access failed: total_global_mem slice has wrong length"
+                );
+                0
+            })
     }
 
     /// Get number of multiprocessors (compute units)
     pub fn multi_processor_count(&self) -> i32 {
-        let bytes = &self._buffer[Self::MULTI_PROCESSOR_COUNT_OFFSET..Self::MULTI_PROCESSOR_COUNT_OFFSET + 4];
-        bytes.try_into().ok().map(i32::from_ne_bytes).unwrap_or_else(|| {
-            // SAFETY: Buffer is guaranteed to be 1472 bytes, and this slice is 4 bytes
-            // at a valid offset. This should never fail, but we handle it gracefully.
-            tracing::error!("FFI struct field access failed: multi_processor_count slice has wrong length");
-            0
-        })
+        let bytes = &self._buffer
+            [Self::MULTI_PROCESSOR_COUNT_OFFSET..Self::MULTI_PROCESSOR_COUNT_OFFSET + 4];
+        bytes
+            .try_into()
+            .ok()
+            .map(i32::from_ne_bytes)
+            .unwrap_or_else(|| {
+                // SAFETY: Buffer is guaranteed to be 1472 bytes, and this slice is 4 bytes
+                // at a valid offset. This should never fail, but we handle it gracefully.
+                tracing::error!(
+                    "FFI struct field access failed: multi_processor_count slice has wrong length"
+                );
+                0
+            })
     }
 }
 
@@ -134,7 +156,9 @@ pub struct hipUUID {
 
 impl Default for HipDeviceProp {
     fn default() -> Self {
-        HipDeviceProp { _buffer: [0u8; 1472] }
+        HipDeviceProp {
+            _buffer: [0u8; 1472],
+        }
     }
 }
 
@@ -177,6 +201,12 @@ impl From<crate::model::kv_cache::KVCacheError> for HipError {
     }
 }
 
+impl From<crate::ggml::GgmlError> for HipError {
+    fn from(err: crate::ggml::GgmlError) -> Self {
+        HipError::GenericError(err.to_string())
+    }
+}
+
 // SAFETY: HipStream is Send+Sync because it only contains a raw pointer
 // and we ensure thread-safe access through proper synchronization
 // NOTE: HipStream does NOT implement Clone because cloning raw pointers
@@ -199,7 +229,11 @@ impl HipStream {
         // Create HIP stream
         tracing::debug!("HipStream::new: Calling hipStreamCreate...");
         let result = unsafe { hipStreamCreate(&mut stream) };
-        tracing::debug!("HipStream::new: hipStreamCreate returned result={}, stream={:?}", result, stream);
+        tracing::debug!(
+            "HipStream::new: hipStreamCreate returned result={}, stream={:?}",
+            result,
+            stream
+        );
 
         if result != HIP_SUCCESS {
             return Err(HipError::DeviceError(format!(
@@ -267,7 +301,7 @@ pub struct HipEvent {
 // HIP Event flags (from hip_runtime_api.h)
 const HIP_EVENT_DEFAULT: u32 = 0x0;
 const HIP_EVENT_DISABLE_TIMING: u32 = 0x1;
-const HIP_EVENT_RECORD_TIMING: u32 = 0x2;  // Default behavior
+const HIP_EVENT_RECORD_TIMING: u32 = 0x2; // Default behavior
 
 impl HipEvent {
     /// Create a new HIP event with default timing enabled
@@ -279,7 +313,11 @@ impl HipEvent {
         let mut event: *mut c_void = ptr::null_mut();
 
         let result = unsafe { hipEventCreate(&mut event) };
-        tracing::debug!("HipEvent::new: hipEventCreate returned result={}, event={:?}", result, event);
+        tracing::debug!(
+            "HipEvent::new: hipEventCreate returned result={}, event={:?}",
+            result,
+            event
+        );
 
         if result != HIP_SUCCESS {
             return Err(HipError::DeviceError(format!(
@@ -303,11 +341,18 @@ impl HipEvent {
     /// Use HIP_EVENT_DISABLE_TIMING for events used only for synchronization
     /// (slightly better performance when timing isn't needed).
     pub fn with_flags(flags: u32) -> HipResult<Self> {
-        tracing::debug!("HipEvent::with_flags: Creating HIP event with flags={}...", flags);
+        tracing::debug!(
+            "HipEvent::with_flags: Creating HIP event with flags={}...",
+            flags
+        );
         let mut event: *mut c_void = ptr::null_mut();
 
         let result = unsafe { hipEventCreateWithFlags(&mut event, flags) };
-        tracing::debug!("HipEvent::with_flags: hipEventCreateWithFlags returned result={}, event={:?}", result, event);
+        tracing::debug!(
+            "HipEvent::with_flags: hipEventCreateWithFlags returned result={}, event={:?}",
+            result,
+            event
+        );
 
         if result != HIP_SUCCESS {
             return Err(HipError::DeviceError(format!(
@@ -429,10 +474,16 @@ struct HipBufferInner {
 
 impl HipBuffer {
     pub fn new(size: usize) -> HipResult<Self> {
+        eprintln!(
+            ">>> HipBuffer::new: allocating {} bytes ({} MB)",
+            size,
+            size / 1024 / 1024
+        );
         let mut ptr: *mut c_void = ptr::null_mut();
 
         // Use hipMalloc to allocate device memory
         let result = unsafe { hipMalloc(&mut ptr, size) };
+        eprintln!(">>> HipBuffer::new: hipMalloc returned for {} bytes", size);
 
         if result != HIP_SUCCESS {
             return Err(HipError::MemoryAllocationFailed(format!(
@@ -449,7 +500,11 @@ impl HipBuffer {
         }
 
         Ok(HipBuffer {
-            inner: Arc::new(HipBufferInner { ptr, size, offset: 0 }),
+            inner: Arc::new(HipBufferInner {
+                ptr,
+                size,
+                offset: 0,
+            }),
         })
     }
 
@@ -467,8 +522,11 @@ impl HipBuffer {
             if new_offset < base_ptr {
                 // Arithmetic overflow - this should never happen with validated offsets
                 // But we handle it gracefully rather than causing undefined behavior
-                tracing::warn!("Pointer arithmetic overflow detected (base=0x{:x}, offset={})",
-                          base_ptr, self.inner.offset);
+                tracing::warn!(
+                    "Pointer arithmetic overflow detected (base=0x{:x}, offset={})",
+                    base_ptr,
+                    self.inner.offset
+                );
                 return std::ptr::null_mut();
             }
             new_offset as *mut c_void
@@ -484,15 +542,17 @@ impl HipBuffer {
         if offset + size > self.size() {
             return Err(HipError::MemoryAllocationFailed(format!(
                 "GPU memory sub-allocation failed: offset={} size={} > buffer_size={}",
-                offset, size, self.size()
+                offset,
+                size,
+                self.size()
             )));
         }
 
         Ok(HipBuffer {
             inner: Arc::new(HipBufferInner {
-                ptr: self.inner.ptr,  // Share same base pointer
+                ptr: self.inner.ptr, // Share same base pointer
                 size,
-                offset: self.inner.offset + offset,  // Accumulate offset
+                offset: self.inner.offset + offset, // Accumulate offset
             }),
         })
     }
@@ -502,11 +562,20 @@ impl HipBuffer {
         if byte_size > self.size() {
             return Err(HipError::MemoryAllocationFailed(format!(
                 "Source data too large: {} > {}",
-                byte_size, self.size()
+                byte_size,
+                self.size()
             )));
         }
 
         let ptr = self.ptr();
+
+        // Debug for large copies - BEFORE
+        if byte_size > 100 * 1024 * 1024 {
+            eprintln!(
+                ">>> copy_from_host: Starting {} MB copy...",
+                byte_size / 1024 / 1024
+            );
+        }
 
         // Use hipMemcpyHtoD to copy from host to device
         let result = unsafe {
@@ -518,6 +587,10 @@ impl HipBuffer {
             )
         };
 
+        if byte_size > 100 * 1024 * 1024 {
+            eprintln!(">>> copy_from_host: hipMemcpy returned {}", result);
+        }
+
         if result != HIP_SUCCESS {
             return Err(HipError::MemoryCopyFailed(format!(
                 "hipMemcpyHtoD failed with code {} (ptr={:?}, size={}, offset={})",
@@ -525,10 +598,9 @@ impl HipBuffer {
             )));
         }
 
-        // Debug for large copies
+        // Debug for large copies - AFTER
         if byte_size > 100 * 1024 * 1024 {
-            tracing::debug!("copy_from_host succeeded: ptr={:?}, size={} MB, offset={}",
-                     ptr, byte_size / 1024 / 1024, self.inner.offset);
+            eprintln!(">>> copy_from_host: Copy completed successfully");
         }
 
         Ok(())
@@ -558,7 +630,8 @@ impl HipBuffer {
         if byte_size > self.size() {
             return Err(HipError::MemoryAllocationFailed(format!(
                 "Source data too large: {} > {}",
-                byte_size, self.size()
+                byte_size,
+                self.size()
             )));
         }
 
@@ -584,8 +657,12 @@ impl HipBuffer {
 
         // Debug for large copies
         if byte_size > 100 * 1024 * 1024 {
-            tracing::debug!("copy_from_host_with_stream succeeded: ptr={:?}, size={} MB, offset={}",
-                     ptr, byte_size / 1024 / 1024, self.inner.offset);
+            tracing::debug!(
+                "copy_from_host_with_stream succeeded: ptr={:?}, size={} MB, offset={}",
+                ptr,
+                byte_size / 1024 / 1024,
+                self.inner.offset
+            );
         }
 
         Ok(())
@@ -624,20 +701,25 @@ impl HipBuffer {
     /// // New way (recommended):
     /// backend.copy_from_device_safe(&buffer, &mut data)?;
     /// ```
-    #[deprecated(since = "0.23.0", note = "Use HipBackend::copy_from_device_safe() instead - clearer intent")]
+    #[deprecated(
+        since = "0.23.0",
+        note = "Use HipBackend::copy_from_device_safe() instead - clearer intent"
+    )]
     pub fn copy_to_host<T>(&self, data: &mut [T]) -> HipResult<()> {
         let byte_size = std::mem::size_of_val(data);
         if byte_size > self.size() {
             return Err(HipError::MemoryAllocationFailed(format!(
                 "Destination buffer too small: {} > {}",
-                byte_size, self.size()
+                byte_size,
+                self.size()
             )));
         }
 
         // Phase 23: Use STREAM-AWARE synchronization instead of hipDeviceSynchronize
         // Get the global backend to access our stream
         let sync_result = if let Ok(guard) = GLOBAL_BACKEND.try_lock() {
-            guard.as_ref()
+            guard
+                .as_ref()
                 .map(|backend| {
                     // Use hipStreamSynchronize on our stream (SAFE - only waits for our stream)
                     unsafe { hipStreamSynchronize(backend.stream.as_ptr()) }
@@ -697,12 +779,17 @@ impl HipBuffer {
     /// Using the same stream for all operations (copies, kernels, hipBLAS) ensures
     /// proper ordering and avoids the synchronization issues that can occur when
     /// mixing default stream operations with custom stream operations.
-    pub fn copy_to_host_with_stream<T>(&self, data: &mut [T], stream: *mut c_void) -> HipResult<()> {
+    pub fn copy_to_host_with_stream<T>(
+        &self,
+        data: &mut [T],
+        stream: *mut c_void,
+    ) -> HipResult<()> {
         let byte_size = std::mem::size_of_val(data);
         if byte_size > self.size() {
             return Err(HipError::MemoryAllocationFailed(format!(
                 "Destination buffer too small: {} > {}",
-                byte_size, self.size()
+                byte_size,
+                self.size()
             )));
         }
 
@@ -735,11 +822,19 @@ impl HipBuffer {
         if src.size() != self.size() {
             return Err(HipError::MemoryCopyFailed(format!(
                 "Buffer size mismatch: src={} bytes, dst={} bytes",
-                src.size(), self.size()
+                src.size(),
+                self.size()
             )));
         }
 
-        let result = unsafe { hipMemcpy(self.ptr(), src.ptr(), self.size(), HIP_MEMCPY_DEVICE_TO_DEVICE) };
+        let result = unsafe {
+            hipMemcpy(
+                self.ptr(),
+                src.ptr(),
+                self.size(),
+                HIP_MEMCPY_DEVICE_TO_DEVICE,
+            )
+        };
 
         if result != HIP_SUCCESS {
             return Err(HipError::MemoryCopyFailed(format!(
@@ -761,13 +856,17 @@ impl HipBuffer {
         if src_offset_bytes + byte_len > src.size() {
             return Err(HipError::MemoryCopyFailed(format!(
                 "Source range out of bounds: offset={} len={} src_size={}",
-                src_offset_bytes, byte_len, src.size()
+                src_offset_bytes,
+                byte_len,
+                src.size()
             )));
         }
         if dst_offset_bytes + byte_len > self.size() {
             return Err(HipError::MemoryCopyFailed(format!(
                 "Destination range out of bounds: offset={} len={} dst_size={}",
-                dst_offset_bytes, byte_len, self.size()
+                dst_offset_bytes,
+                byte_len,
+                self.size()
             )));
         }
 
@@ -775,22 +874,106 @@ impl HipBuffer {
         let base_dst = self.ptr() as usize;
         let base_src = src.ptr() as usize;
 
-        let dst_ptr = base_dst.checked_add(dst_offset_bytes)
-            .ok_or_else(|| HipError::MemoryCopyFailed(
-                format!("Destination pointer arithmetic overflow (base=0x{:x}, offset={})",
-                       base_dst, dst_offset_bytes)
-            ))? as *mut c_void;
+        let dst_ptr = base_dst.checked_add(dst_offset_bytes).ok_or_else(|| {
+            HipError::MemoryCopyFailed(format!(
+                "Destination pointer arithmetic overflow (base=0x{:x}, offset={})",
+                base_dst, dst_offset_bytes
+            ))
+        })? as *mut c_void;
 
-        let src_ptr = base_src.checked_add(src_offset_bytes)
-            .ok_or_else(|| HipError::MemoryCopyFailed(
-                format!("Source pointer arithmetic overflow (base=0x{:x}, offset={})",
-                       base_src, src_offset_bytes)
-            ))? as *const c_void;
+        let src_ptr = base_src.checked_add(src_offset_bytes).ok_or_else(|| {
+            HipError::MemoryCopyFailed(format!(
+                "Source pointer arithmetic overflow (base=0x{:x}, offset={})",
+                base_src, src_offset_bytes
+            ))
+        })? as *const c_void;
         let result = unsafe { hipMemcpy(dst_ptr, src_ptr, byte_len, HIP_MEMCPY_DEVICE_TO_DEVICE) };
 
         if result != HIP_SUCCESS {
             return Err(HipError::MemoryCopyFailed(format!(
                 "hipMemcpyDtoD (region) failed with code {}",
+                result
+            )));
+        }
+
+        Ok(())
+    }
+
+    pub fn copy_from_buffer_strided_2d(
+        &self,
+        dst_offset_bytes: usize,
+        dst_pitch_bytes: usize,
+        src: &HipBuffer,
+        src_offset_bytes: usize,
+        src_pitch_bytes: usize,
+        width_bytes: usize,
+        height: usize,
+    ) -> HipResult<()> {
+        if height == 0 || width_bytes == 0 {
+            return Ok(());
+        }
+
+        let height_minus_one = height.saturating_sub(1);
+        let src_required = src_offset_bytes
+            .checked_add(height_minus_one.checked_mul(src_pitch_bytes).ok_or_else(|| {
+                HipError::MemoryCopyFailed("Source pitch multiplication overflow".to_string())
+            })?)
+            .and_then(|v| v.checked_add(width_bytes))
+            .ok_or_else(|| HipError::MemoryCopyFailed("Source size overflow".to_string()))?;
+        if src_required > src.size() {
+            return Err(HipError::MemoryCopyFailed(format!(
+                "Source range out of bounds: required={} src_size={}",
+                src_required,
+                src.size()
+            )));
+        }
+
+        let dst_required = dst_offset_bytes
+            .checked_add(height_minus_one.checked_mul(dst_pitch_bytes).ok_or_else(|| {
+                HipError::MemoryCopyFailed("Destination pitch multiplication overflow".to_string())
+            })?)
+            .and_then(|v| v.checked_add(width_bytes))
+            .ok_or_else(|| HipError::MemoryCopyFailed("Destination size overflow".to_string()))?;
+        if dst_required > self.size() {
+            return Err(HipError::MemoryCopyFailed(format!(
+                "Destination range out of bounds: required={} dst_size={}",
+                dst_required,
+                self.size()
+            )));
+        }
+
+        let base_dst = self.ptr() as usize;
+        let base_src = src.ptr() as usize;
+
+        let dst_ptr = base_dst.checked_add(dst_offset_bytes).ok_or_else(|| {
+            HipError::MemoryCopyFailed(format!(
+                "Destination pointer arithmetic overflow (base=0x{:x}, offset={})",
+                base_dst, dst_offset_bytes
+            ))
+        })? as *mut c_void;
+
+        let src_ptr = base_src.checked_add(src_offset_bytes).ok_or_else(|| {
+            HipError::MemoryCopyFailed(format!(
+                "Source pointer arithmetic overflow (base=0x{:x}, offset={})",
+                base_src, src_offset_bytes
+            ))
+        })? as *const c_void;
+
+        let result = unsafe {
+            hipMemcpy2D(
+                dst_ptr,
+                dst_pitch_bytes,
+                src_ptr,
+                src_pitch_bytes,
+                width_bytes,
+                height,
+                HIP_MEMCPY_DEVICE_TO_DEVICE,
+            )
+        };
+
+        if result != HIP_SUCCESS {
+            return Err(HipError::MemoryCopyFailed(format!(
+                "hipMemcpy2D D2D failed with code {}",
                 result
             )));
         }
@@ -884,7 +1067,7 @@ impl HipKernel {
 #[derive(Debug, Clone)]
 pub struct HipDevice {
     pub device_id: i32,
-    pub name: String,  // Revert to String for now
+    pub name: String, // Revert to String for now
     pub memory: usize,
     pub compute_units: i32,
 }
@@ -946,7 +1129,10 @@ impl HipBackend {
                     // Try to initialize HIP (lightweight check)
                     let init_result = hipInit(0);
                     if init_result != HIP_SUCCESS {
-                        tracing::debug!("HIP not available: hipInit failed with code {}", init_result);
+                        tracing::debug!(
+                            "HIP not available: hipInit failed with code {}",
+                            init_result
+                        );
                         return false;
                     }
 
@@ -954,7 +1140,10 @@ impl HipBackend {
                     let mut count: i32 = 0;
                     let count_result = hipGetDeviceCount(&mut count);
                     if count_result != HIP_SUCCESS {
-                        tracing::debug!("HIP not available: hipGetDeviceCount failed with code {}", count_result);
+                        tracing::debug!(
+                            "HIP not available: hipGetDeviceCount failed with code {}",
+                            count_result
+                        );
                         return false;
                     }
 
@@ -962,7 +1151,8 @@ impl HipBackend {
                     tracing::debug!("GPU available: {} ({} device(s))", available, count);
                     available
                 }
-            }).unwrap_or(false);
+            })
+            .unwrap_or(false);
 
             AVAILABLE.store(result, Ordering::Release);
             CHECKED.store(true, Ordering::Release);
@@ -987,18 +1177,24 @@ impl HipBackend {
     pub fn new() -> HipResult<Arc<Self>> {
         // Double-checked locking pattern for singleton initialization
         if GLOBAL_INIT_CALLED.load(Ordering::Acquire) {
-            return Ok(GLOBAL_BACKEND.lock()
-                .map_err(|e| HipError::LockPoisoned(format!("GLOBAL_BACKEND lock poisoned: {}", e)))?
+            return Ok(GLOBAL_BACKEND
+                .lock()
+                .map_err(|e| {
+                    HipError::LockPoisoned(format!("GLOBAL_BACKEND lock poisoned: {}", e))
+                })?
                 .as_ref()
                 .map(Arc::clone)
                 .expect("Global backend initialized but not set"));
         }
 
         // Initialize under lock
-        let mut guard = GLOBAL_BACKEND.lock()
+        let mut guard = GLOBAL_BACKEND
+            .lock()
             .map_err(|e| HipError::LockPoisoned(format!("GLOBAL_BACKEND lock poisoned: {}", e)))?;
         if GLOBAL_INIT_CALLED.load(Ordering::Acquire) {
-            return Ok(guard.as_ref().map(Arc::clone)
+            return Ok(guard
+                .as_ref()
+                .map(Arc::clone)
                 .expect("Global backend initialized but not set"));
         }
 
@@ -1008,6 +1204,24 @@ impl HipBackend {
         // Detect AMD GPU
         let device = Self::detect_amd_gpu()?;
 
+        // CRITICAL: Set the detected device as current HIP context
+        // Without this, HIP may use a different device context, causing allocation failures
+        eprintln!(
+            ">>> HipBackend::new: Setting device to {} ({})",
+            device.device_id, device.name
+        );
+        let set_result = unsafe { hipSetDevice(device.device_id) };
+        if set_result != HIP_SUCCESS {
+            return Err(HipError::DeviceError(format!(
+                "Failed to set device {}: hipSetDevice returned {}",
+                device.device_id, set_result
+            )));
+        }
+        tracing::debug!(
+            "HipBackend::new: Device {} set successfully",
+            device.device_id
+        );
+
         // Create stream wrapped in Arc for shared ownership
         let stream = Arc::new(HipStream::new()?);
 
@@ -1016,7 +1230,7 @@ impl HipBackend {
         // CRITICAL: Set flag BEFORE releasing lock to prevent race condition
         // Other threads check GLOBAL_INIT_CALLED before acquiring lock
         GLOBAL_INIT_CALLED.store(true, Ordering::Release);
-        drop(guard);  // Explicitly release lock before returning
+        drop(guard); // Explicitly release lock before returning
 
         Ok(backend)
     }
@@ -1214,7 +1428,11 @@ impl HipBackend {
     /// let mut host_data = vec![0.0f32; 1024];
     /// backend.copy_from_device_safe(&gpu_buffer, &mut host_data)?;
     /// ```
-    pub fn copy_from_device_safe<T>(&self, gpu_buffer: &HipBuffer, host_data: &mut [T]) -> HipResult<()> {
+    pub fn copy_from_device_safe<T>(
+        &self,
+        gpu_buffer: &HipBuffer,
+        host_data: &mut [T],
+    ) -> HipResult<()> {
         gpu_buffer.copy_to_host_with_stream(host_data, self.stream.as_ptr())
     }
 
@@ -1224,7 +1442,15 @@ impl HipBackend {
 
     /// Allocate buffer with memory limit checking (uses 80% of available memory as safety limit)
     pub fn allocate_buffer(&self, size: usize) -> HipResult<HipBuffer> {
-        println!("DEBUG: allocate_buffer: requesting {} bytes", size);
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static ALLOC_COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let count = ALLOC_COUNTER.fetch_add(1, Ordering::SeqCst);
+        eprintln!(
+            ">>> allocate_buffer #{}: requesting {} bytes ({} MB)",
+            count,
+            size,
+            size / 1024 / 1024
+        );
         let mut ptr: *mut c_void = ptr::null_mut();
 
         // Use hipMalloc to allocate device memory
@@ -1237,7 +1463,11 @@ impl HipBackend {
         }
 
         let buffer = HipBuffer {
-            inner: Arc::new(HipBufferInner { ptr, size, offset: 0 }),
+            inner: Arc::new(HipBufferInner {
+                ptr,
+                size,
+                offset: 0,
+            }),
         };
         println!(
             "DEBUG: allocate_buffer: created buffer with size {} bytes",
@@ -1473,9 +1703,9 @@ impl HipBackend {
         // CRITICAL: Associate hipBLAS handle with our HIP stream
         // Without this, hipBLAS uses the default stream while our kernels use a custom stream,
         // causing synchronization issues and hangs.
-        handle.set_stream(self.stream().as_ptr()).map_err(|e| {
-            HipError::GenericError(format!("Failed to set hipBLAS stream: {}", e))
-        })?;
+        handle
+            .set_stream(self.stream().as_ptr())
+            .map_err(|e| HipError::GenericError(format!("Failed to set hipBLAS stream: {}", e)))?;
 
         crate::backend::hip_blas::saxpy(
             &handle,
@@ -1501,9 +1731,9 @@ impl HipBackend {
         })?;
 
         // CRITICAL: Associate hipBLAS handle with our HIP stream
-        handle.set_stream(self.stream().as_ptr()).map_err(|e| {
-            HipError::GenericError(format!("Failed to set hipBLAS stream: {}", e))
-        })?;
+        handle
+            .set_stream(self.stream().as_ptr())
+            .map_err(|e| HipError::GenericError(format!("Failed to set hipBLAS stream: {}", e)))?;
 
         crate::backend::hip_blas::sscal(
             &handle,
@@ -1546,9 +1776,9 @@ impl HipBackend {
         })?;
 
         // CRITICAL: Associate hipBLAS handle with our HIP stream
-        handle.set_stream(self.stream().as_ptr()).map_err(|e| {
-            HipError::GenericError(format!("Failed to set hipBLAS stream: {}", e))
-        })?;
+        handle
+            .set_stream(self.stream().as_ptr())
+            .map_err(|e| HipError::GenericError(format!("Failed to set hipBLAS stream: {}", e)))?;
 
         let bias_ptr = bias.buffer().as_ptr() as *const f32;
         let mut row_ptr = tensor.buffer().as_ptr() as *mut f32;
@@ -1560,11 +1790,12 @@ impl HipBackend {
 
             // SAFETY: Check for pointer arithmetic overflow before advancing
             let current = row_ptr as usize;
-            row_ptr = current.checked_add(stride)
-                .ok_or_else(|| HipError::GenericError(
-                    format!("Pointer arithmetic overflow in add_bias_to_rows (current=0x{:x}, stride={})",
-                           current, stride)
-                ))? as *mut f32;
+            row_ptr = current.checked_add(stride).ok_or_else(|| {
+                HipError::GenericError(format!(
+                    "Pointer arithmetic overflow in add_bias_to_rows (current=0x{:x}, stride={})",
+                    current, stride
+                ))
+            })? as *mut f32;
         }
 
         Ok(())
@@ -1683,7 +1914,11 @@ impl DeviceTensor {
     ///
     /// This is used by AsyncLoader when GPU memory is already allocated
     /// and data has been uploaded via async copy.
-    pub fn from_buffer(_backend: &HipBackend, buffer: HipBuffer, shape: TensorShape) -> HipResult<Self> {
+    pub fn from_buffer(
+        _backend: &HipBackend,
+        buffer: HipBuffer,
+        shape: TensorShape,
+    ) -> HipResult<Self> {
         Ok(DeviceTensor { buffer, shape })
     }
 
@@ -1731,12 +1966,30 @@ impl DeviceTensor {
     /// causing tests to pass individually but fail when run together.
     pub fn empty(backend: &HipBackend, shape: TensorShape) -> HipResult<Self> {
         let total_bytes = shape.total_elements() * std::mem::size_of::<f32>();
+        eprintln!(
+            ">>> DeviceTensor::empty: About to allocate {} bytes ({} MB)...",
+            total_bytes,
+            total_bytes / 1024 / 1024
+        );
         let buffer = backend.allocate_buffer(total_bytes)?;
+        eprintln!(
+            ">>> DeviceTensor::empty: allocate_buffer returned successfully for {} bytes",
+            total_bytes
+        );
 
         // Zero-initialize GPU memory to prevent test isolation failures
         // This ensures clean state for each test, preventing garbage data
         // from previous kernel executions from contaminating new tests.
+        eprintln!(
+            ">>> DeviceTensor::empty: Calling hipMemset for {} bytes ({} MB)...",
+            total_bytes,
+            total_bytes / 1024 / 1024
+        );
         let result = unsafe { hipMemset(buffer.as_ptr(), 0, total_bytes) };
+        eprintln!(
+            ">>> DeviceTensor::empty: hipMemset returned for {} bytes",
+            total_bytes
+        );
 
         if result != HIP_SUCCESS {
             let error_msg = unsafe {
@@ -1939,12 +2192,13 @@ impl HipBackend {
         &self,
         config: &crate::model::config::ModelConfig,
     ) -> HipResult<crate::backend::scratch::ScratchBufferManager> {
+        // PHASE 24 FIX: Correct parameter order
         crate::backend::scratch::ScratchBufferManager::new(
             self,
             config.num_attention_heads,
-            config.max_position_embeddings,
+            config.hidden_size, // ← CORRECT: 3rd param
             config.head_dim,
-            config.hidden_size,
+            config.max_position_embeddings, // ← CORRECT: 5th param
         )
         .map_err(|e| HipError::GenericError(format!("Scratch buffer creation failed: {}", e)))
     }
@@ -2033,9 +2287,9 @@ impl HipBackend {
         // CRITICAL: Associate hipBLAS handle with our HIP stream
         // This ensures all hipBLAS operations (matmul) are queued on the same stream
         // as our custom HIP kernels, preventing synchronization issues and hangs.
-        blas_handle.set_stream(self.stream().as_ptr()).map_err(|e| {
-            HipError::GenericError(format!("Failed to set hipBLAS stream: {}", e))
-        })?;
+        blas_handle
+            .set_stream(self.stream().as_ptr())
+            .map_err(|e| HipError::GenericError(format!("Failed to set hipBLAS stream: {}", e)))?;
 
         // Step 1: Compute gate projection: hidden_states @ gate_weight -> gate_output
         // hidden_states: [seq_len, hidden_size], gate_weight: [hidden_size, intermediate_size]
@@ -2073,18 +2327,20 @@ impl HipBackend {
         #[cfg(feature = "rocm")]
         {
             // Allocate device buffer for SwiGLU output
-            let swiglu_buffer = HipBuffer::new((seq_len * intermediate_size) * std::mem::size_of::<f32>())?;
+            let swiglu_buffer =
+                HipBuffer::new((seq_len * intermediate_size) * std::mem::size_of::<f32>())?;
 
             // Launch GPU kernel for SwiGLU activation
             unsafe {
                 crate::mlp::kernels::swiglu_gpu_kernel(
-                    self,  // Pass caller's backend to ensure stream consistency
+                    self, // Pass caller's backend to ensure stream consistency
                     gate_buffer.as_ptr() as *const f32,
                     up_buffer.as_ptr() as *const f32,
                     swiglu_buffer.as_mut_ptr() as *mut f32,
                     seq_len as u32,
                     intermediate_size as u32,
-                ).map_err(|e| HipError::GenericError(format!("SwiGLU GPU kernel failed: {}", e)))?;
+                )
+                .map_err(|e| HipError::GenericError(format!("SwiGLU GPU kernel failed: {}", e)))?;
             }
 
             // Synchronize to ensure kernel completes before down projection
@@ -2172,9 +2428,9 @@ impl HipBackend {
         }
 
         // weight should match last dimension of input
-        let last_dim = *input_shape.dims().last().ok_or_else(|| HipError::GenericError(
-            "input must have at least one dimension".to_string(),
-        ))?;
+        let last_dim = *input_shape.dims().last().ok_or_else(|| {
+            HipError::GenericError("input must have at least one dimension".to_string())
+        })?;
         if weight_shape.dims() != [last_dim] {
             return Err(HipError::GenericError(
                 "weight must match last dimension of input".to_string(),
@@ -2268,7 +2524,8 @@ impl HipBackend {
         _kv_cache: &mut crate::model::kv_cache::KVCache,
     ) -> HipResult<()> {
         Err(HipError::GenericError(
-            "transformer_layer() is deprecated. Use ExecutionPlan::forward_layer() instead.".to_string()
+            "transformer_layer() is deprecated. Use ExecutionPlan::forward_layer() instead."
+                .to_string(),
         ))
     }
 
@@ -2316,9 +2573,9 @@ impl ModelRuntime {
         tracing::debug!("ModelRuntime::new() backend created, creating scratch buffer...");
         let scratch = crate::backend::scratch::ScratchBufferManager::new(
             &backend, 32,   // num_heads
-            2048, // max_seq_len
+            4096, // hidden_size (3rd param - was wrongly 4th)
             128,  // head_dim
-            4096, // hidden_size
+            2048, // max_seq_len (5th param - was wrongly 3rd)
         )
         .map_err(|e| HipError::GenericError(format!("Scratch buffer creation failed: {}", e)))?;
         tracing::debug!("ModelRuntime::new() scratch buffer created, creating KV cache...");
@@ -2353,24 +2610,31 @@ impl ModelRuntime {
         let config = loader
             .to_model_config()
             .map_err(|e| HipError::GenericError(format!("Failed to create config: {}", e)))?;
-        tracing::debug!("load_from_gguf: Config created - layers={}, heads={}, hidden={}",
-                 config.num_hidden_layers, config.num_attention_heads, config.hidden_size);
+        tracing::debug!(
+            "load_from_gguf: Config created - layers={}, heads={}, hidden={}",
+            config.num_hidden_layers,
+            config.num_attention_heads,
+            config.hidden_size
+        );
 
         // Create backend
         let backend = HipBackend::new()?;
 
         tracing::debug!("load_from_gguf: Creating scratch buffer manager...");
+        // PHASE 24 FIX: Correct parameter order
         let scratch = crate::backend::scratch::ScratchBufferManager::new(
             &backend,
             config.num_attention_heads,
-            config.max_position_embeddings,
+            config.hidden_size, // ← CORRECT: 3rd param
             config.head_dim,
-            config.hidden_size,
+            config.max_position_embeddings, // ← CORRECT: 5th param
         )
         .map_err(|e| HipError::GenericError(format!("Scratch buffer creation failed: {}", e)))?;
         tracing::debug!("load_from_gguf: Scratch buffer manager created");
+        eprintln!("load_from_gguf: Scratch buffer manager created");
 
         tracing::debug!("load_from_gguf: Creating KV cache...");
+        eprintln!("load_from_gguf: Creating KV cache...");
         let kv_cache = crate::model::kv_cache::KVCache::new(
             &backend,
             config.num_hidden_layers,
@@ -2380,13 +2644,17 @@ impl ModelRuntime {
         )
         .map_err(|e| HipError::GenericError(format!("KV cache creation failed: {}", e)))?;
         tracing::debug!("load_from_gguf: KV cache created");
+        eprintln!("load_from_gguf: KV cache created");
 
         tracing::debug!("load_from_gguf: Creating execution plan from GGUF...");
+        eprintln!("load_from_gguf: Creating execution plan from GGUF...");
         let execution_plan =
             crate::model::execution_plan::ExecutionPlan::from_gguf(&backend, &loader)?;
         tracing::debug!("load_from_gguf: Execution plan created successfully");
+        eprintln!("load_from_gguf: Execution plan created successfully");
 
         tracing::debug!("load_from_gguf: ModelRuntime created successfully");
+        eprintln!("load_from_gguf: ModelRuntime created successfully, returning...");
         Ok(ModelRuntime {
             backend,
             execution_plan: Some(execution_plan),
@@ -2400,12 +2668,13 @@ impl ModelRuntime {
     pub fn new_with_config(config: crate::model::config::ModelConfig) -> HipResult<Self> {
         // HipBackend::new() returns Arc<HipBackend>
         let backend = HipBackend::new()?;
+        // PHASE 24 FIX: Correct parameter order
         let scratch = crate::backend::scratch::ScratchBufferManager::new(
             &backend,
             config.num_attention_heads,
-            config.max_position_embeddings,
+            config.hidden_size, // ← CORRECT: 3rd param
             config.head_dim,
-            config.hidden_size,
+            config.max_position_embeddings, // ← CORRECT: 5th param
         )
         .map_err(|e| HipError::GenericError(format!("Scratch buffer creation failed: {}", e)))?;
 
@@ -2470,11 +2739,24 @@ impl ModelRuntime {
 
     /// Decode step with input tensor
     pub fn decode_step(&mut self, input: &DeviceTensor) -> HipResult<DeviceTensor> {
-        tracing::debug!("decode_step() called, input shape: {:?}", input.shape().dims());
+        eprintln!(">>> decode_step: ENTRY");
+        let start = std::time::Instant::now();
+        tracing::debug!(
+            "decode_step() called, input shape: {:?}",
+            input.shape().dims()
+        );
         let execution_plan = self.execution_plan.as_ref().ok_or_else(|| {
             HipError::GenericError("decode_step called without execution plan".to_string())
         })?;
-        tracing::debug!("decode_step() execution plan has {} layers", execution_plan.layers().len());
+        eprintln!(
+            ">>> decode_step: Got execution plan with {} layers (took {:?})",
+            execution_plan.layers().len(),
+            start.elapsed()
+        );
+        tracing::debug!(
+            "decode_step() execution plan has {} layers",
+            execution_plan.layers().len()
+        );
 
         if execution_plan.layers().is_empty() {
             return Err(HipError::GenericError(
@@ -2511,17 +2793,54 @@ impl ModelRuntime {
             )));
         };
 
-        tracing::debug!("decode_step() starting layer loop with {} layers", execution_plan.layers().len());
+        eprintln!(
+            ">>> decode_step: Starting layer loop with {} layers",
+            execution_plan.layers().len()
+        );
+        tracing::debug!(
+            "decode_step() starting layer loop with {} layers",
+            execution_plan.layers().len()
+        );
         for (layer_idx, layer_plan) in execution_plan.layers().iter().enumerate() {
-            tracing::debug!("decode_step() processing layer {}/{}", layer_idx + 1, execution_plan.layers().len());
-            hidden_states = execution_plan.forward_layer(
-                &self.backend,
-                &hidden_states,
-                layer_plan,
-                Some(&mut self.kv_cache),
-                layer_idx,
-            )?;
-            tracing::debug!("decode_step() completed layer {}/{}", layer_idx + 1, execution_plan.layers().len());
+            let layer_start = std::time::Instant::now();
+            eprintln!(
+                ">>> decode_step: Layer {}/{} starting...",
+                layer_idx + 1,
+                execution_plan.layers().len()
+            );
+            tracing::debug!(
+                "decode_step() processing layer {}/{}",
+                layer_idx + 1,
+                execution_plan.layers().len()
+            );
+            let seq_len = hidden_states.shape().dims()[0];
+            if seq_len == 1 {
+                hidden_states = execution_plan.forward_layer_ggml_decode(
+                    &self.backend,
+                    &hidden_states,
+                    &mut self.kv_cache,
+                    layer_idx,
+                )?;
+            } else {
+                hidden_states = execution_plan.forward_layer(
+                    &self.backend,
+                    &hidden_states,
+                    layer_plan,
+                    Some(&mut self.kv_cache),
+                    layer_idx,
+                )?;
+            }
+            eprintln!(
+                ">>> decode_step: Layer {}/{} complete ({:?} elapsed)",
+                layer_idx + 1,
+                execution_plan.layers().len(),
+                layer_start.elapsed()
+            );
+            tracing::debug!(
+                "decode_step() completed layer {}/{}",
+                layer_idx + 1,
+                execution_plan.layers().len()
+            );
         }
         tracing::debug!("decode_step() all layers completed, applying LM head");
 
@@ -2550,16 +2869,21 @@ impl ModelRuntime {
         let config = loader
             .to_model_config()
             .map_err(|e| HipError::GenericError(format!("Failed to create config: {}", e)))?;
-        tracing::debug!("load_model: Config created - layers={}, heads={}, hidden={}",
-                 config.num_hidden_layers, config.num_attention_heads, config.hidden_size);
+        tracing::debug!(
+            "load_model: Config created - layers={}, heads={}, hidden={}",
+            config.num_hidden_layers,
+            config.num_attention_heads,
+            config.hidden_size
+        );
 
         tracing::debug!("load_model: Creating scratch buffer manager...");
+        // PHASE 24 FIX: Correct parameter order
         let scratch = crate::backend::scratch::ScratchBufferManager::new(
             &self.backend,
             config.num_attention_heads,
-            config.max_position_embeddings,
+            config.hidden_size, // ← CORRECT: 3rd param
             config.head_dim,
-            config.hidden_size,
+            config.max_position_embeddings, // ← CORRECT: 5th param
         )
         .map_err(|e| HipError::GenericError(format!("Scratch buffer creation failed: {}", e)))?;
         tracing::debug!("load_model: Scratch buffer manager created");
@@ -2602,16 +2926,28 @@ impl ModelRuntime {
     pub fn from_execution_plan_with_backend(
         execution_plan: crate::model::execution_plan::ExecutionPlan,
     ) -> HipResult<Self> {
+        eprintln!(">>> from_execution_plan_with_backend ENTRY");
+        eprintln!(">>> from_execution_plan_with_backend: About to call HipBackend::new()...");
         let backend = HipBackend::new()?;
+        eprintln!(">>> from_execution_plan_with_backend: HipBackend::new() returned");
         let config = execution_plan.config();
+        // PHASE 24 FIX: Correct parameter order for ScratchBufferManager::new()
+        // OLD (WRONG): new(backend, num_heads, max_pos_emb, head_dim, hidden_size)
+        // NEW (CORRECT): new(backend, num_heads, hidden_size, head_dim, max_seq_len)
+        eprintln!("from_execution_plan_with_backend: Creating scratch with heads={}, hidden={}, head_dim={}, max_seq={}",
+                 config.num_attention_heads, config.hidden_size, config.head_dim, config.max_position_embeddings);
+        eprintln!(
+            ">>> from_execution_plan_with_backend: About to call ScratchBufferManager::new()..."
+        );
         let scratch = crate::backend::scratch::ScratchBufferManager::new(
             &backend,
             config.num_attention_heads,
-            config.max_position_embeddings,
-            config.head_dim,
-            config.hidden_size,
+            config.hidden_size,             // ← CORRECT: 3rd param is hidden_size
+            config.head_dim,                // ← CORRECT: 4th param is head_dim
+            config.max_position_embeddings, // ← CORRECT: 5th param is max_seq_len
         )
         .map_err(|e| HipError::GenericError(format!("Scratch buffer creation failed: {}", e)))?;
+        eprintln!(">>> from_execution_plan_with_backend: ScratchBufferManager::new() returned successfully");
 
         let kv_cache = crate::model::kv_cache::KVCache::new(
             &backend,
@@ -2679,12 +3015,15 @@ impl ModelRuntime {
 /// initialized the HIP backend.
 pub fn synchronize_device() -> HipResult<()> {
     // Get the global backend (singleton)
-    let backend = GLOBAL_BACKEND.lock()
+    let backend = GLOBAL_BACKEND
+        .lock()
         .map_err(|e| HipError::LockPoisoned(format!("GLOBAL_BACKEND lock poisoned: {}", e)))?
         .as_ref()
         .map(Arc::clone)
         .ok_or_else(|| {
-            HipError::DeviceError("HIP backend not initialized - call HipBackend::new() first".to_string())
+            HipError::DeviceError(
+                "HIP backend not initialized - call HipBackend::new() first".to_string(),
+            )
         })?;
 
     // Phase 23: Use STREAM-AWARE synchronization
@@ -2726,7 +3065,10 @@ pub struct AsyncLoader {
 impl AsyncLoader {
     /// Create a new async loader with 4 concurrent upload streams
     pub fn new() -> HipResult<Self> {
-        tracing::debug!("AsyncLoader::new: Creating async loader with {} streams", NUM_UPLOAD_STREAMS);
+        tracing::debug!(
+            "AsyncLoader::new: Creating async loader with {} streams",
+            NUM_UPLOAD_STREAMS
+        );
 
         let mut streams = Vec::with_capacity(NUM_UPLOAD_STREAMS);
         let mut events = Vec::with_capacity(NUM_UPLOAD_STREAMS);
@@ -2734,17 +3076,23 @@ impl AsyncLoader {
         // Create streams and events
         for i in 0..NUM_UPLOAD_STREAMS {
             tracing::debug!("AsyncLoader::new: Creating stream {}...", i);
-            let stream = HipStream::new()
-                .map_err(|e| HipError::DeviceError(format!("Failed to create upload stream {}: {}", i, e)))?;
+            let stream = HipStream::new().map_err(|e| {
+                HipError::DeviceError(format!("Failed to create upload stream {}: {}", i, e))
+            })?;
             streams.push(stream);
 
             // Create events for synchronization (timing disabled for performance)
-            let event = HipEvent::with_flags(HIP_EVENT_DISABLE_TIMING)
-                .map_err(|e| HipError::DeviceError(format!("Failed to create upload event {}: {}", i, e)))?;
+            let event = HipEvent::with_flags(HIP_EVENT_DISABLE_TIMING).map_err(|e| {
+                HipError::DeviceError(format!("Failed to create upload event {}: {}", i, e))
+            })?;
             events.push(event);
         }
 
-        tracing::debug!("AsyncLoader::new: Created {} streams and {} events", streams.len(), events.len());
+        tracing::debug!(
+            "AsyncLoader::new: Created {} streams and {} events",
+            streams.len(),
+            events.len()
+        );
         Ok(AsyncLoader { streams, events })
     }
 
@@ -2801,7 +3149,10 @@ impl AsyncLoader {
         // Record event after upload (marks completion)
         self.events[stream_idx].record(&self.streams[stream_idx])?;
 
-        tracing::trace!("AsyncLoader::upload_to_buffer: Upload queued on stream {}", stream_idx);
+        tracing::trace!(
+            "AsyncLoader::upload_to_buffer: Upload queued on stream {}",
+            stream_idx
+        );
         Ok(())
     }
 
@@ -2821,15 +3172,17 @@ impl AsyncLoader {
     /// Blocks until all pending uploads on all streams have completed.
     /// Call this before accessing the uploaded data on the GPU.
     pub fn synchronize(&self) -> HipResult<()> {
-        tracing::debug!("AsyncLoader::synchronize: Synchronizing all {} streams", NUM_UPLOAD_STREAMS);
+        tracing::debug!(
+            "AsyncLoader::synchronize: Synchronizing all {} streams",
+            NUM_UPLOAD_STREAMS
+        );
 
         // Synchronize each event (waits for all operations before the event)
         for (i, event) in self.events.iter().enumerate() {
             tracing::trace!("AsyncLoader::synchronize: Synchronizing stream {}...", i);
-            event.synchronize().map_err(|e| HipError::DeviceError(format!(
-                "Stream {} synchronization failed: {}",
-                i, e
-            )))?;
+            event.synchronize().map_err(|e| {
+                HipError::DeviceError(format!("Stream {} synchronization failed: {}", i, e))
+            })?;
         }
 
         tracing::debug!("AsyncLoader::synchronize: All streams synchronized");
@@ -2935,20 +3288,30 @@ mod tests {
         // Create a small buffer and copy it
         let buffer = HipBuffer::new(1024).expect("Failed to create buffer");
         let host_data = vec![42u8; 1024];
-        buffer.copy_from_host(&host_data).expect("Failed to copy to device");
+        buffer
+            .copy_from_host(&host_data)
+            .expect("Failed to copy to device");
 
         // Record start event
-        event_start.record(&backend.stream).expect("Failed to record start");
+        event_start
+            .record(&backend.stream)
+            .expect("Failed to record start");
 
         // Do some work
         let mut host_result = vec![0u8; 1024];
-        buffer.copy_to_host(&mut host_result).expect("Failed to copy to host");
+        buffer
+            .copy_to_host(&mut host_result)
+            .expect("Failed to copy to host");
 
         // Record end event
-        event_end.record(&backend.stream).expect("Failed to record end");
+        event_end
+            .record(&backend.stream)
+            .expect("Failed to record end");
 
         // Synchronize on end event
-        event_end.synchronize().expect("Failed to synchronize end event");
+        event_end
+            .synchronize()
+            .expect("Failed to synchronize end event");
 
         // Get elapsed time
         let elapsed = event_start
@@ -2980,11 +3343,15 @@ mod tests {
         assert!(result.is_ok(), "Upload should succeed");
 
         // Synchronize to ensure upload completes
-        loader.synchronize().expect("Synchronization should succeed");
+        loader
+            .synchronize()
+            .expect("Synchronization should succeed");
 
         // Verify data was uploaded
         let mut host_result = vec![0u8; 1024];
-        buffer.copy_to_host(&mut host_result).expect("Copy to host should succeed");
+        buffer
+            .copy_to_host(&mut host_result)
+            .expect("Copy to host should succeed");
         assert_eq!(host_data, host_result, "Uploaded data should match");
     }
 
@@ -3001,17 +3368,22 @@ mod tests {
         for (i, buffer) in buffers.iter().enumerate() {
             let host_data = vec![i as u8; 1024];
             let stream_idx = i % NUM_UPLOAD_STREAMS;
-            loader.upload_to_buffer(buffer, &host_data, stream_idx)
+            loader
+                .upload_to_buffer(buffer, &host_data, stream_idx)
                 .expect("Upload should succeed");
         }
 
         // Synchronize all uploads
-        loader.synchronize().expect("Synchronization should succeed");
+        loader
+            .synchronize()
+            .expect("Synchronization should succeed");
 
         // Verify all uploads
         for (i, buffer) in buffers.iter().enumerate() {
             let mut host_result = vec![0u8; 1024];
-            buffer.copy_to_host(&mut host_result).expect("Copy to host should succeed");
+            buffer
+                .copy_to_host(&mut host_result)
+                .expect("Copy to host should succeed");
             let expected = vec![i as u8; 1024];
             assert_eq!(expected, host_result, "Buffer {} data should match", i);
         }
@@ -3024,13 +3396,18 @@ mod tests {
         let host_data = vec![99u8; 1024];
 
         // Upload using automatic stream selection
-        loader.upload_auto(&buffer, &host_data)
+        loader
+            .upload_auto(&buffer, &host_data)
             .expect("Upload auto should succeed");
 
-        loader.synchronize().expect("Synchronization should succeed");
+        loader
+            .synchronize()
+            .expect("Synchronization should succeed");
 
         let mut host_result = vec![0u8; 1024];
-        buffer.copy_to_host(&mut host_result).expect("Copy to host should succeed");
+        buffer
+            .copy_to_host(&mut host_result)
+            .expect("Copy to host should succeed");
         assert_eq!(host_data, host_result, "Uploaded data should match");
     }
 

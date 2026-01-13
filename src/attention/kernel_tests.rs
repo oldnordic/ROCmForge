@@ -6,7 +6,7 @@
 #[cfg(feature = "rocm")]
 #[cfg(test)]
 mod phase1_kernel_tests {
-    use crate::attention::kernels::{scale_gpu_kernel, mask_gpu_kernel, softmax_gpu_kernel};
+    use crate::attention::kernels::{mask_gpu_kernel, scale_gpu_kernel, softmax_gpu_kernel};
     use crate::attention::mask::create_causal_mask;
     use crate::attention::softmax::softmax_in_place;
     use crate::backend::HipBuffer;
@@ -56,7 +56,10 @@ mod phase1_kernel_tests {
             assert!(
                 diff < TEST_TOLERANCE,
                 "scale mismatch at {}: CPU={}, GPU={}, diff={}",
-                i, cpu_val, gpu_val, diff
+                i,
+                cpu_val,
+                gpu_val,
+                diff
             );
         }
     }
@@ -109,13 +112,16 @@ mod phase1_kernel_tests {
                 assert!(
                     gpu_result[i] < -1e30,
                     "mask not applied at {}: expected -inf, got {}",
-                    i, gpu_result[i]
+                    i,
+                    gpu_result[i]
                 );
             } else {
                 assert!(
                     (cpu_result[i] - gpu_result[i]).abs() < TEST_TOLERANCE,
                     "mask mismatch at {}: CPU={}, GPU={}",
-                    i, cpu_result[i], gpu_result[i]
+                    i,
+                    cpu_result[i],
+                    gpu_result[i]
                 );
             }
         }
@@ -149,7 +155,8 @@ mod phase1_kernel_tests {
             assert!(
                 (row_sum - 1.0).abs() < 1e-6,
                 "CPU row {} sums to {} (expected ~1.0)",
-                row, row_sum
+                row,
+                row_sum
             );
         }
 
@@ -168,7 +175,11 @@ mod phase1_kernel_tests {
                 1, // batch_size
                 4, // seq_len
             );
-            assert_eq!(result, 0, "softmax_gpu_kernel returned error code {}", result);
+            assert_eq!(
+                result, 0,
+                "softmax_gpu_kernel returned error code {}",
+                result
+            );
         }
 
         gpu_buffer
@@ -185,7 +196,8 @@ mod phase1_kernel_tests {
             assert!(
                 (row_sum - 1.0).abs() < 1e-4,
                 "GPU row {} sums to {} (expected ~1.0)",
-                row, row_sum
+                row,
+                row_sum
             );
 
             // Compare CPU vs GPU element-wise
@@ -195,7 +207,11 @@ mod phase1_kernel_tests {
                 assert!(
                     diff < 1e-4,
                     "softmax mismatch at row={}, col={}: CPU={}, GPU={}, diff={}",
-                    row, col, cpu_result[idx], gpu_input[idx], diff
+                    row,
+                    col,
+                    cpu_result[idx],
+                    gpu_input[idx],
+                    diff
                 );
             }
         }
@@ -222,7 +238,11 @@ mod phase1_kernel_tests {
                 1, // batch_size
                 4, // seq_len (treated as 1 row of 4)
             );
-            assert_eq!(result, 0, "softmax_gpu_kernel returned error code {}", result);
+            assert_eq!(
+                result, 0,
+                "softmax_gpu_kernel returned error code {}",
+                result
+            );
         }
 
         gpu_buffer
@@ -271,7 +291,11 @@ mod phase1_kernel_tests {
                 1, // batch_size
                 8, // seq_len
             );
-            assert_eq!(result, 0, "softmax_gpu_kernel returned error code {}", result);
+            assert_eq!(
+                result, 0,
+                "softmax_gpu_kernel returned error code {}",
+                result
+            );
         }
 
         gpu_buffer
@@ -289,12 +313,14 @@ mod phase1_kernel_tests {
             assert!(
                 (gpu_sum - 1.0).abs() < 1e-4,
                 "GPU row {} sums to {}",
-                row, gpu_sum
+                row,
+                gpu_sum
             );
             assert!(
                 (cpu_sum - 1.0).abs() < 1e-6,
                 "CPU row {} sums to {}",
-                row, cpu_sum
+                row,
+                cpu_sum
             );
 
             for col in 0..8 {
@@ -303,7 +329,11 @@ mod phase1_kernel_tests {
                 assert!(
                     diff < 1e-4,
                     "mismatch at row={}, col={}: CPU={}, GPU={}, diff={}",
-                    row, col, cpu_result[idx], gpu_input[idx], diff
+                    row,
+                    col,
+                    cpu_result[idx],
+                    gpu_input[idx],
+                    diff
                 );
             }
         }

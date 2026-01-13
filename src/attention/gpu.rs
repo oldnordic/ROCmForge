@@ -63,22 +63,27 @@ impl GpuBackend {
         })?;
 
         // Copy data to GPU
-        q_gpu.copy_from_host(q).map_err(|e| {
-            AttentionError::MemoryCopy(format!("Failed to copy Q to GPU: {}", e))
-        })?;
-        k_gpu.copy_from_host(k).map_err(|e| {
-            AttentionError::MemoryCopy(format!("Failed to copy K to GPU: {}", e))
-        })?;
-        v_gpu.copy_from_host(v).map_err(|e| {
-            AttentionError::MemoryCopy(format!("Failed to copy V to GPU: {}", e))
-        })?;
+        q_gpu
+            .copy_from_host(q)
+            .map_err(|e| AttentionError::MemoryCopy(format!("Failed to copy Q to GPU: {}", e)))?;
+        k_gpu
+            .copy_from_host(k)
+            .map_err(|e| AttentionError::MemoryCopy(format!("Failed to copy K to GPU: {}", e)))?;
+        v_gpu
+            .copy_from_host(v)
+            .map_err(|e| AttentionError::MemoryCopy(format!("Failed to copy V to GPU: {}", e)))?;
 
         // Compute QK^T on GPU with fused scaling
         let mut scores = vec![0.0f32; batch_size * seq_len * seq_len];
         {
-            let scores_gpu = HipBuffer::new(batch_size * seq_len * seq_len * std::mem::size_of::<f32>()).map_err(|e| {
-                AttentionError::MemoryAllocation(format!("Failed to allocate scores buffer: {}", e))
-            })?;
+            let scores_gpu =
+                HipBuffer::new(batch_size * seq_len * seq_len * std::mem::size_of::<f32>())
+                    .map_err(|e| {
+                        AttentionError::MemoryAllocation(format!(
+                            "Failed to allocate scores buffer: {}",
+                            e
+                        ))
+                    })?;
 
             // QK^T matrix multiplication: (batch_size, seq_len, dim) x (batch_size, dim, seq_len) -> (batch_size, seq_len, seq_len)
             for b in 0..batch_size {
@@ -106,18 +111,12 @@ impl GpuBackend {
                 q_batch
                     .copy_from_host(&q[q_offset..q_offset + seq_len * dim])
                     .map_err(|e| {
-                        AttentionError::MemoryCopy(format!(
-                            "Failed to copy Q batch to GPU: {}",
-                            e
-                        ))
+                        AttentionError::MemoryCopy(format!("Failed to copy Q batch to GPU: {}", e))
                     })?;
                 k_batch
                     .copy_from_host(&k[k_offset..k_offset + dim * seq_len])
                     .map_err(|e| {
-                        AttentionError::MemoryCopy(format!(
-                            "Failed to copy K batch to GPU: {}",
-                            e
-                        ))
+                        AttentionError::MemoryCopy(format!("Failed to copy K batch to GPU: {}", e))
                     })?;
 
                 let scores_batch = matmul_f32(
@@ -180,13 +179,12 @@ impl GpuBackend {
                             e
                         ))
                     })?;
-                let mask_gpu = HipBuffer::new(std::mem::size_of_val(mask_data))
-                    .map_err(|e| {
-                        AttentionError::MemoryAllocation(format!(
-                            "Failed to allocate mask buffer: {}",
-                            e
-                        ))
-                    })?;
+                let mask_gpu = HipBuffer::new(std::mem::size_of_val(mask_data)).map_err(|e| {
+                    AttentionError::MemoryAllocation(format!(
+                        "Failed to allocate mask buffer: {}",
+                        e
+                    ))
+                })?;
 
                 scores_gpu.copy_from_host(&scores).map_err(|e| {
                     AttentionError::MemoryCopy(format!(
@@ -261,10 +259,7 @@ impl GpuBackend {
             }
 
             scores_gpu.copy_to_host(&mut scores).map_err(|e| {
-                AttentionError::MemoryCopy(format!(
-                    "Failed to copy softmax results to host: {}",
-                    e
-                ))
+                AttentionError::MemoryCopy(format!("Failed to copy softmax results to host: {}", e))
             })?;
         }
 
@@ -286,7 +281,10 @@ impl GpuBackend {
             scores_gpu.copy_from_host(&scores).map_err(|e| {
                 AttentionError::MemoryCopy(format!("Failed to copy scores to GPU: {}", e))
             })?;
-            let output_gpu = HipBuffer::new(batch_size * seq_len * dim * std::mem::size_of::<f32>()).map_err(|e| {
+            let output_gpu = HipBuffer::new(
+                batch_size * seq_len * dim * std::mem::size_of::<f32>(),
+            )
+            .map_err(|e| {
                 AttentionError::MemoryAllocation(format!("Failed to allocate output buffer: {}", e))
             })?;
 
@@ -324,10 +322,7 @@ impl GpuBackend {
                 v_batch
                     .copy_from_host(&v[v_offset..v_offset + seq_len * dim])
                     .map_err(|e| {
-                        AttentionError::MemoryCopy(format!(
-                            "Failed to copy V batch to GPU: {}",
-                            e
-                        ))
+                        AttentionError::MemoryCopy(format!("Failed to copy V batch to GPU: {}", e))
                     })?;
 
                 let output_batch = matmul_f32(
@@ -373,15 +368,15 @@ impl GpuBackend {
     ) -> AttentionResult<DeviceTensor> {
         // For now, fallback to host-based computation using DeviceTensor data
         // This establishes the integration pattern before optimizing for full GPU operation
-        let q_host = q.to_host_vec().map_err(|e| {
-            AttentionError::MemoryCopy(format!("Failed to copy Q to host: {}", e))
-        })?;
-        let k_host = k.to_host_vec().map_err(|e| {
-            AttentionError::MemoryCopy(format!("Failed to copy K to host: {}", e))
-        })?;
-        let v_host = v.to_host_vec().map_err(|e| {
-            AttentionError::MemoryCopy(format!("Failed to copy V to host: {}", e))
-        })?;
+        let q_host = q
+            .to_host_vec()
+            .map_err(|e| AttentionError::MemoryCopy(format!("Failed to copy Q to host: {}", e)))?;
+        let k_host = k
+            .to_host_vec()
+            .map_err(|e| AttentionError::MemoryCopy(format!("Failed to copy K to host: {}", e)))?;
+        let v_host = v
+            .to_host_vec()
+            .map_err(|e| AttentionError::MemoryCopy(format!("Failed to copy V to host: {}", e)))?;
         let mask_host = mask
             .map(|m| {
                 m.to_host_vec().map_err(|e| {

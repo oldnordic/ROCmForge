@@ -137,9 +137,10 @@ impl TensorShape {
                 1 // Last dimension has stride 1
             } else {
                 // Use checked multiplication to prevent overflow
-                dims[i + 1..].iter().copied().fold(1usize, |acc, x| {
-                    acc.checked_mul(x).unwrap_or(usize::MAX)
-                })
+                dims[i + 1..]
+                    .iter()
+                    .copied()
+                    .fold(1usize, |acc, x| acc.checked_mul(x).unwrap_or(usize::MAX))
             };
             strides.push(stride);
         }
@@ -165,9 +166,10 @@ impl TensorShape {
 
     /// Compute total number of elements
     pub fn total_elements(&self) -> usize {
-        self.dims.iter().copied().fold(1usize, |acc, x| {
-            acc.checked_mul(x).unwrap_or(usize::MAX)
-        })
+        self.dims
+            .iter()
+            .copied()
+            .fold(1usize, |acc, x| acc.checked_mul(x).unwrap_or(usize::MAX))
     }
 }
 

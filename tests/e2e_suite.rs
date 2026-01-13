@@ -114,7 +114,9 @@ impl GpuFixture {
     }
 
     fn assert_no_leak(&self, tolerance_percent: usize) {
-        let (free, _total) = self.backend.get_memory_info()
+        let (free, _total) = self
+            .backend
+            .get_memory_info()
             .expect("Failed to query GPU memory");
 
         let free_mb = free / 1024 / 1024;
@@ -146,33 +148,32 @@ impl GpuFixture {
 ///
 /// NOTE: This is duplicated from tests/common/mod.rs because integration tests
 /// cannot import from it directly.
-static GPU_FIXTURE: once_cell::sync::Lazy<Option<GpuFixture>> =
-    once_cell::sync::Lazy::new(|| {
-        if !HipBackend::gpu_available() {
-            eprintln!("⚠️  WARNING: GPU not available - skipping GPU tests");
-            eprintln!("To enable GPU tests, ensure:");
-            eprintln!("  1. AMD GPU is present");
-            eprintln!("  2. ROCm is installed (check with rocm-smi)");
-            eprintln!("  3. amdhip64 library is in LD_LIBRARY_PATH");
-            return None;
-        }
+static GPU_FIXTURE: once_cell::sync::Lazy<Option<GpuFixture>> = once_cell::sync::Lazy::new(|| {
+    if !HipBackend::gpu_available() {
+        eprintln!("⚠️  WARNING: GPU not available - skipping GPU tests");
+        eprintln!("To enable GPU tests, ensure:");
+        eprintln!("  1. AMD GPU is present");
+        eprintln!("  2. ROCm is installed (check with rocm-smi)");
+        eprintln!("  3. amdhip64 library is in LD_LIBRARY_PATH");
+        return None;
+    }
 
-        match GpuFixture::new() {
-            Ok(fixture) => {
-                eprintln!("✅ GPU Test Fixture initialized");
-                eprintln!("   Device: {}", fixture.device_name());
-                eprintln!("   Total Memory: {} MB", fixture.total_memory_mb());
-                eprintln!("   Free Memory: {} MB", fixture.free_memory_mb());
-                eprintln!("   Safe Alloc Limit: {} MB", fixture.safe_alloc_mb());
-                Some(fixture)
-            }
-            Err(e) => {
-                eprintln!("❌ ERROR: Failed to initialize GPU test fixture: {}", e);
-                eprintln!("   GPU tests will be skipped");
-                None
-            }
+    match GpuFixture::new() {
+        Ok(fixture) => {
+            eprintln!("✅ GPU Test Fixture initialized");
+            eprintln!("   Device: {}", fixture.device_name());
+            eprintln!("   Total Memory: {} MB", fixture.total_memory_mb());
+            eprintln!("   Free Memory: {} MB", fixture.free_memory_mb());
+            eprintln!("   Safe Alloc Limit: {} MB", fixture.safe_alloc_mb());
+            Some(fixture)
         }
-    });
+        Err(e) => {
+            eprintln!("❌ ERROR: Failed to initialize GPU test fixture: {}", e);
+            eprintln!("   GPU tests will be skipped");
+            None
+        }
+    }
+});
 
 // -----------------------------------------------------------------------------
 // Test Configuration and Helpers
@@ -237,7 +238,8 @@ fn std_dev(values: &[f32]) -> f32 {
         return 0.0;
     }
     let avg = mean(values);
-    let variance = values.iter().map(|&x| (x - avg).powi(2)).sum::<f32>() / (values.len() - 1) as f32;
+    let variance =
+        values.iter().map(|&x| (x - avg).powi(2)).sum::<f32>() / (values.len() - 1) as f32;
     variance.sqrt()
 }
 
@@ -257,7 +259,8 @@ fn tensors_match(t1: &DeviceTensor, t2: &DeviceTensor, tolerance: f32) -> anyhow
     let data2 = t2.to_host_vec()?;
 
     // Check element-wise equality with tolerance
-    let max_diff = data1.iter()
+    let max_diff = data1
+        .iter()
         .zip(data2.iter())
         .map(|(a, b)| (a - b).abs())
         .fold(0.0f32, f32::max);
@@ -268,7 +271,7 @@ fn tensors_match(t1: &DeviceTensor, t2: &DeviceTensor, tolerance: f32) -> anyhow
 /// Helper: Check if two HashMaps have the same tensor keys
 fn same_tensor_keys(
     map1: &HashMap<String, DeviceTensor>,
-    map2: &HashMap<String, DeviceTensor>
+    map2: &HashMap<String, DeviceTensor>,
 ) -> bool {
     let keys1: std::collections::HashSet<_> = map1.keys().collect();
     let keys2: std::collections::HashSet<_> = map2.keys().collect();
@@ -352,7 +355,11 @@ fn test_async_loading_basic() {
     for (name, tensor) in tensors_async.iter().take(5) {
         let shape = tensor.shape().dims();
         println!("  {}: {:?} ({} elements)", name, shape, tensor.len());
-        assert!(!shape.is_empty(), "Tensor {} should have non-empty shape", name);
+        assert!(
+            !shape.is_empty(),
+            "Tensor {} should have non-empty shape",
+            name
+        );
         assert!(tensor.len() > 0, "Tensor {} should have > 0 elements", name);
     }
 
@@ -442,8 +449,16 @@ fn test_async_loading_performance() {
     let speedup = seq_duration.as_secs_f64() / async_duration.as_secs_f64();
 
     println!("\nResults:");
-    println!("  Sequential: {:?} ({} tensors)", seq_duration, tensors_seq.len());
-    println!("  Async:      {:?} ({} tensors)", async_duration, tensors_async.len());
+    println!(
+        "  Sequential: {:?} ({} tensors)",
+        seq_duration,
+        tensors_seq.len()
+    );
+    println!(
+        "  Async:      {:?} ({} tensors)",
+        async_duration,
+        tensors_async.len()
+    );
     println!("  Speedup:    {:.2}x", speedup);
 
     // Assertions
@@ -674,8 +689,12 @@ fn test_async_loading_concurrent() {
 
             let duration = start.elapsed();
 
-            println!("  Thread {} completed: {:?} ({} tensors)",
-                     thread_id, duration, tensors.len());
+            println!(
+                "  Thread {} completed: {:?} ({} tensors)",
+                thread_id,
+                duration,
+                tensors.len()
+            );
 
             // Clean up tensors before returning
             drop(tensors);
@@ -831,7 +850,10 @@ fn test_async_loading_memory_safety() {
     println!("Model: {}", model_path.display());
 
     let (free_before, total_before) = fixture.memory_stats();
-    println!("Initial GPU memory: {} MB free / {} MB total", free_before, total_before);
+    println!(
+        "Initial GPU memory: {} MB free / {} MB total",
+        free_before, total_before
+    );
 
     // Load tensors
     let model_path_str = match path_to_str(&model_path) {
@@ -859,14 +881,21 @@ fn test_async_loading_memory_safety() {
     println!("Loaded {} tensors", tensors.len());
 
     let (free_after, total_after) = fixture.memory_stats();
-    println!("After load: {} MB free / {} MB total", free_after, total_after);
+    println!(
+        "After load: {} MB free / {} MB total",
+        free_after, total_after
+    );
 
     let used = free_before.saturating_sub(free_after);
     println!("GPU memory used: ~{} MB", used);
 
     // Verify memory usage is reasonable
     // Small models should use < 4GB
-    assert!(used < 4096, "Small model should use < 4GB, used ~{} MB", used);
+    assert!(
+        used < 4096,
+        "Small model should use < 4GB, used ~{} MB",
+        used
+    );
 
     // Drop tensors and verify memory is freed
     drop(tensors);
@@ -881,8 +910,10 @@ fn test_async_loading_memory_safety() {
         // Most memory should be recovered
         // Allow 10% tolerance for fragmentation
         let expected_recovered = free_before.saturating_sub(free_after);
-        assert!(recovered >= (expected_recovered * 9 / 10) || recovered == 0,
-                "Should recover most memory after dropping tensors");
+        assert!(
+            recovered >= (expected_recovered * 9 / 10) || recovered == 0,
+            "Should recover most memory after dropping tensors"
+        );
     }
 
     // Final leak check with tolerance
@@ -943,7 +974,9 @@ async fn create_engine_with_model(model_path: &PathBuf) -> anyhow::Result<Arc<In
 /// Helper: Get or infer tokenizer path
 fn get_tokenizer(model_path: &PathBuf) -> TokenizerAdapter {
     // Try to infer tokenizer path from model path
-    let model_dir = model_path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let model_dir = model_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
     let inferred_tokenizer = model_dir.join("tokenizer.json");
 
     let tokenizer_path = if inferred_tokenizer.exists() {
@@ -953,10 +986,14 @@ fn get_tokenizer(model_path: &PathBuf) -> TokenizerAdapter {
     };
 
     // Try embedded tokenizer from GGUF
-    let embedded = model_path.to_str()
+    let embedded = model_path
+        .to_str()
         .and_then(|p| rocmforge::tokenizer::embedded_tokenizer_from_gguf(p));
 
-    TokenizerAdapter::from_spec(tokenizer_path.as_deref(), embedded.as_ref().map(|t| t.json.as_str()))
+    TokenizerAdapter::from_spec(
+        tokenizer_path.as_deref(),
+        embedded.as_ref().map(|t| t.json.as_str()),
+    )
 }
 
 // -----------------------------------------------------------------------------
@@ -1007,14 +1044,26 @@ async fn test_model_loading_e2e() {
     assert!(stats.is_running, "Engine should be running");
     assert!(stats.model_loaded, "Model should be loaded");
 
-    println!("Engine stats: running={}, model_loaded={}", stats.is_running, stats.model_loaded);
+    println!(
+        "Engine stats: running={}, model_loaded={}",
+        stats.is_running, stats.model_loaded
+    );
 
     // Verify scheduler stats
-    assert_eq!(stats.scheduler_stats.pending_requests, 0, "Should have no pending requests");
-    assert_eq!(stats.scheduler_stats.processing_requests, 0, "Should have no processing requests");
+    assert_eq!(
+        stats.scheduler_stats.pending_requests, 0,
+        "Should have no pending requests"
+    );
+    assert_eq!(
+        stats.scheduler_stats.processing_requests, 0,
+        "Should have no processing requests"
+    );
 
     // Verify KV cache stats
-    assert_eq!(stats.cache_stats.active_sequences, 0, "Should have no active sequences");
+    assert_eq!(
+        stats.cache_stats.active_sequences, 0,
+        "Should have no active sequences"
+    );
 
     // Clean shutdown
     engine.stop().await.ok();
@@ -1065,7 +1114,11 @@ async fn test_inference_execution_e2e() {
     let prompt_tokens = tokenizer.encode(prompt);
 
     println!("Prompt: \"{}\"", prompt);
-    println!("Prompt tokens: {:?} ({} tokens)", prompt_tokens, prompt_tokens.len());
+    println!(
+        "Prompt tokens: {:?} ({} tokens)",
+        prompt_tokens,
+        prompt_tokens.len()
+    );
 
     // Submit inference request
     let max_tokens = 10;
@@ -1214,7 +1267,10 @@ async fn test_kv_cache_e2e() {
 
         // Check if request is processing (KV cache should be active)
         if stats.cache_stats.active_sequences > 0 {
-            println!("KV cache active: {} sequences", stats.cache_stats.active_sequences);
+            println!(
+                "KV cache active: {} sequences",
+                stats.cache_stats.active_sequences
+            );
             println!("KV cache tokens: {}", stats.cache_stats.total_tokens);
 
             // Verify cache is tracking our sequence
@@ -1324,10 +1380,7 @@ async fn test_scheduler_e2e() {
         let prompt = format!("Prompt {}", i);
         let prompt_tokens = tokenizer.encode(&prompt);
 
-        match engine
-            .submit_request(prompt_tokens, 3, 0.8, 50, 0.9)
-            .await
-        {
+        match engine.submit_request(prompt_tokens, 3, 0.8, 50, 0.9).await {
             Ok(id) => {
                 request_ids.push(id);
                 println!("  Request {} submitted: ID {}", i, id);
@@ -1395,7 +1448,10 @@ async fn test_scheduler_e2e() {
         }
     }
 
-    println!("Successfully completed: {}/{} requests", success_count, num_requests);
+    println!(
+        "Successfully completed: {}/{} requests",
+        success_count, num_requests
+    );
 
     // Clean shutdown
     engine.stop().await.ok();
@@ -1441,11 +1497,10 @@ async fn test_error_recovery_e2e() {
         }
     };
 
-    let result = engine.load_gguf_model("/nonexistent/path/to/model.gguf").await;
-    assert!(
-        result.is_err(),
-        "Should fail to load nonexistent model"
-    );
+    let result = engine
+        .load_gguf_model("/nonexistent/path/to/model.gguf")
+        .await;
+    assert!(result.is_err(), "Should fail to load nonexistent model");
     println!("  ✓ Correctly rejected invalid path");
 
     // Test 11.2: Empty prompt
@@ -1469,7 +1524,9 @@ async fn test_error_recovery_e2e() {
     println!("\n11.3: Testing invalid sampling parameters...");
 
     // Invalid temperature (negative)
-    let result = engine.submit_request(vec![1, 2, 3], 10, -0.5, 50, 0.9).await;
+    let result = engine
+        .submit_request(vec![1, 2, 3], 10, -0.5, 50, 0.9)
+        .await;
     assert!(result.is_err(), "Should reject negative temperature");
     println!("  ✓ Rejected negative temperature");
 
@@ -1488,13 +1545,13 @@ async fn test_error_recovery_e2e() {
     let tokenizer = get_tokenizer(&model_path);
     let prompt_tokens = tokenizer.encode("Cancel this request");
 
-    let request_id = match engine
-        .submit_request(prompt_tokens, 10, 0.8, 50, 0.9)
-        .await
-    {
+    let request_id = match engine.submit_request(prompt_tokens, 10, 0.8, 50, 0.9).await {
         Ok(id) => id,
         Err(e) => {
-            println!("WARNING: Failed to submit request for cancellation test: {}", e);
+            println!(
+                "WARNING: Failed to submit request for cancellation test: {}",
+                e
+            );
             engine.stop().await.ok();
             return;
         }
@@ -1511,7 +1568,10 @@ async fn test_error_recovery_e2e() {
         if status.state == rocmforge::scheduler::RequestState::Cancelled {
             println!("  ✓ Request state is Cancelled");
         } else {
-            println!("  WARNING: Request state is {:?}, not Cancelled", status.state);
+            println!(
+                "  WARNING: Request state is {:?}, not Cancelled",
+                status.state
+            );
         }
     }
 
@@ -1580,7 +1640,12 @@ async fn test_full_pipeline_e2e() {
         let inference_start = Instant::now();
         let prompt_tokens = tokenizer.encode(prompt);
 
-        println!("\n  Prompt {}: \"{}\" ({} tokens)", i + 1, prompt, prompt_tokens.len());
+        println!(
+            "\n  Prompt {}: \"{}\" ({} tokens)",
+            i + 1,
+            prompt,
+            prompt_tokens.len()
+        );
 
         let request_id = match engine
             .submit_request(prompt_tokens.clone(), 15, 0.8, 50, 0.9)
@@ -1612,9 +1677,16 @@ async fn test_full_pipeline_e2e() {
                 let count = status.generated_tokens.len();
                 total_tokens += count;
 
-                println!("    Generated {} tokens in {:?}", count, inference_start.elapsed());
+                println!(
+                    "    Generated {} tokens in {:?}",
+                    count,
+                    inference_start.elapsed()
+                );
                 println!("    Text: \"{}\"", text);
-                println!("    Throughput: {:.1} tokens/sec", count as f32 / inference_start.elapsed().as_secs_f32());
+                println!(
+                    "    Throughput: {:.1} tokens/sec",
+                    count as f32 / inference_start.elapsed().as_secs_f32()
+                );
                 break;
             }
 
@@ -1627,7 +1699,10 @@ async fn test_full_pipeline_e2e() {
     println!("\n3. Pipeline Summary:");
     println!("   Total time: {:?}", total_time);
     println!("   Total tokens generated: {}", total_tokens);
-    println!("   Average throughput: {:.1} tokens/sec", total_tokens as f32 / total_time.as_secs_f32());
+    println!(
+        "   Average throughput: {:.1} tokens/sec",
+        total_tokens as f32 / total_time.as_secs_f32()
+    );
 
     // Clean shutdown
     engine.stop().await.ok();

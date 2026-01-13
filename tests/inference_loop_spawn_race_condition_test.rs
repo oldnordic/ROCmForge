@@ -10,9 +10,9 @@
 //! Expected behavior: HTTP server pattern with external `tokio::spawn()`
 //! should be used to ensure the inference loop is scheduled immediately.
 
+use rocmforge::engine::{EngineConfig, InferenceEngine};
 use std::sync::Arc;
 use std::time::Duration;
-use rocmforge::engine::{EngineConfig, InferenceEngine};
 
 /// Test the BROKEN CLI pattern (no external tokio::spawn)
 ///
@@ -207,6 +207,9 @@ async fn test_compare_spawn_patterns() {
         tokio::time::sleep(Duration::from_millis(100)).await;
         let status = engine.get_request_status(request_id).await.unwrap();
         // This assertion might fail due to race condition
-        assert!(status.is_some(), "CLI pattern: Request should exist (may fail)");
+        assert!(
+            status.is_some(),
+            "CLI pattern: Request should exist (may fail)"
+        );
     }
 }

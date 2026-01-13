@@ -26,7 +26,9 @@ mod tests {
 
         // Append tokens using paged allocation (allocates blocks)
         for i in 0..20 {
-            cache.append_token_paged(sequence_id, i).expect("Failed to append token");
+            cache
+                .append_token_paged(sequence_id, i)
+                .expect("Failed to append token");
         }
 
         (backend, cache, sequence_id)
@@ -38,7 +40,8 @@ mod tests {
         let (_backend, cache, sequence_id) = create_paged_kv_cache();
 
         // Verify PageTable has blocks for this sequence
-        let blocks = cache.get_sequence_blocks_from_page_table(sequence_id)
+        let blocks = cache
+            .get_sequence_blocks_from_page_table(sequence_id)
             .expect("Failed to get blocks from page table");
 
         assert!(
@@ -52,7 +55,11 @@ mod tests {
             "PageTable should have at least one block"
         );
 
-        println!("PageTable has {} blocks for sequence {}", blocks.len(), sequence_id);
+        println!(
+            "PageTable has {} blocks for sequence {}",
+            blocks.len(),
+            sequence_id
+        );
     }
 
     // Test 2: Verify block allocation from BlockAllocator
@@ -62,10 +69,7 @@ mod tests {
 
         let (total, free) = cache.get_block_allocator_stats();
 
-        assert!(
-            total > 0,
-            "BlockAllocator should have total blocks"
-        );
+        assert!(total > 0, "BlockAllocator should have total blocks");
 
         assert!(
             free < total,
@@ -87,13 +91,15 @@ mod tests {
             assert!(
                 result.is_ok(),
                 "get_block_for_position should succeed for position {}: {:?}",
-                pos, result
+                pos,
+                result
             );
 
             let block_info = result.unwrap();
             assert!(
                 block_info.is_some(),
-                "Position {} should map to a block", pos
+                "Position {} should map to a block",
+                pos
             );
 
             let (block_id, offset) = block_info.unwrap();
@@ -107,11 +113,13 @@ mod tests {
 
             assert_eq!(
                 block_id, expected_block,
-                "Position {} should map to block {}", pos, expected_block
+                "Position {} should map to block {}",
+                pos, expected_block
             );
             assert_eq!(
                 offset, expected_offset,
-                "Position {} should have offset {}", pos, expected_offset
+                "Position {} should have offset {}",
+                pos, expected_offset
             );
         }
     }
@@ -127,15 +135,19 @@ mod tests {
 
         // Append 12 tokens with block_size=4 (should allocate 3 blocks)
         for i in 0..12 {
-            cache.append_token_paged(sequence_id, i).expect("Failed to append token");
+            cache
+                .append_token_paged(sequence_id, i)
+                .expect("Failed to append token");
         }
 
-        let blocks = cache.get_sequence_blocks_from_page_table(sequence_id)
+        let blocks = cache
+            .get_sequence_blocks_from_page_table(sequence_id)
             .expect("Failed to get blocks")
             .expect("Should have blocks");
 
         assert_eq!(
-            blocks.len(), 3,
+            blocks.len(),
+            3,
             "Sequence of 12 tokens with block_size=4 should have 3 blocks"
         );
 
@@ -147,17 +159,14 @@ mod tests {
     fn test_block_id_mappings_consistent() {
         let (_backend, cache, sequence_id) = create_paged_kv_cache();
 
-        let blocks = cache.get_sequence_blocks_from_page_table(sequence_id)
+        let blocks = cache
+            .get_sequence_blocks_from_page_table(sequence_id)
             .expect("Failed to get blocks")
             .expect("Should have blocks");
 
         // Verify block IDs are sequential
         for (i, &block_id) in blocks.iter().enumerate() {
-            assert_eq!(
-                block_id as usize, i,
-                "Block {} should have ID {}",
-                i, i
-            );
+            assert_eq!(block_id as usize, i, "Block {} should have ID {}", i, i);
         }
 
         println!("Block IDs are consistently numbered: {:?}", blocks);
@@ -173,7 +182,8 @@ mod tests {
         // Create a sequence without using paged append
         let sequence_id = 999u32; // Non-existent sequence
 
-        let blocks = cache.get_sequence_blocks_from_page_table(sequence_id)
+        let blocks = cache
+            .get_sequence_blocks_from_page_table(sequence_id)
             .expect("Failed to get blocks");
 
         assert!(
@@ -197,7 +207,8 @@ mod tests {
         // Check initial ref count
         let block = cache.get_block(block_id).expect("Failed to get block");
         assert_eq!(
-            block.ref_count(), 1,
+            block.ref_count(),
+            1,
             "Newly allocated block should have ref_count=1"
         );
 
@@ -206,7 +217,8 @@ mod tests {
 
         let block = cache.get_block(block_id).expect("Failed to get block");
         assert_eq!(
-            block.ref_count(), 2,
+            block.ref_count(),
+            2,
             "Block should have ref_count=2 after sharing"
         );
 

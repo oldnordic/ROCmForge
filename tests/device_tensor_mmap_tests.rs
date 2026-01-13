@@ -1,11 +1,11 @@
 //! Tests for DeviceTensor::from_mmap functionality
 
 #[cfg(feature = "rocm")]
-use serial_test::serial;
-#[cfg(feature = "rocm")]
 use rocmforge::backend::{DeviceTensor, HipBackend};
 #[cfg(feature = "rocm")]
 use rocmforge::loader::mmap_loader::{open_mmap_weights, TensorShape};
+#[cfg(feature = "rocm")]
+use serial_test::serial;
 #[cfg(feature = "rocm")]
 use std::io::Write;
 
@@ -27,7 +27,8 @@ fn test_device_tensor_from_mmap_basic() {
     let shape = TensorShape::from_dims(&[test_f32.len()]);
 
     // Create DeviceTensor from mmap
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let device_tensor = DeviceTensor::from_mmap(backend, &mmap_weights, shape.clone(), 0).unwrap();
@@ -57,7 +58,8 @@ fn test_device_tensor_from_mmap_partial_range() {
     let shape = TensorShape::from_dims(&[6]); // Total elements
 
     // Create DeviceTensor from partial range (elements 2-4)
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let partial_shape = TensorShape::from_dims(&[2]); // Only 2 elements
@@ -88,7 +90,8 @@ fn test_device_tensor_from_mmap_empty_range() {
     let _shape = TensorShape::from_dims(&[3]);
 
     // Create DeviceTensor from empty range - should handle gracefully
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let empty_shape = TensorShape::from_dims(&[0]);
@@ -124,7 +127,8 @@ fn test_device_tensor_from_mmap_bounds_check() {
     let shape = TensorShape::from_dims(&[3]);
 
     // Try to access beyond available data
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let oversized_shape = TensorShape::from_dims(&[5]);

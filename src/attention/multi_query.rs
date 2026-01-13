@@ -215,8 +215,10 @@ impl MultiQueryAttention {
         assert_eq!(num_q_heads, self.config.num_query_heads);
 
         // Allocate expanded tensors
-        let k_expanded_shape = crate::loader::TensorShape::from_dims(&[batch_size, seq_len, num_q_heads, head_dim]);
-        let v_expanded_shape = crate::loader::TensorShape::from_dims(&[batch_size, seq_len, num_q_heads, head_dim]);
+        let k_expanded_shape =
+            crate::loader::TensorShape::from_dims(&[batch_size, seq_len, num_q_heads, head_dim]);
+        let v_expanded_shape =
+            crate::loader::TensorShape::from_dims(&[batch_size, seq_len, num_q_heads, head_dim]);
 
         let backend = HipBackend::new().map_err(|e| {
             AttentionError::HandleCreation(format!("Failed to create HIP backend: {}", e))
@@ -247,7 +249,8 @@ impl MultiQueryAttention {
                 num_kv_heads as u32,
                 num_q_heads as u32,
                 head_dim as u32,
-            ).map_err(|e| {
+            )
+            .map_err(|e| {
                 AttentionError::GpuOperation(format!("KV replication kernel failed: {}", e))
             })?;
 
@@ -285,10 +288,10 @@ impl MultiQueryAttention {
         v: &DeviceTensor,
         _mask: Option<&DeviceTensor>,
     ) -> AttentionResult<DeviceTensor> {
-        use crate::backend::hip_backend::{HipBackend, HipError};
         use crate::attention::kernels::{
-            qkt_matmul_gpu_kernel_scaled, softmax_gpu_kernel, weighted_matmul_gpu_kernel
+            qkt_matmul_gpu_kernel_scaled, softmax_gpu_kernel, weighted_matmul_gpu_kernel,
         };
+        use crate::backend::hip_backend::{HipBackend, HipError};
 
         let backend = HipBackend::new().map_err(|e| {
             AttentionError::HandleCreation(format!("Failed to create HIP backend: {}", e))
@@ -303,7 +306,8 @@ impl MultiQueryAttention {
         let kv_seq_len = k.shape().dims()[1];
 
         // Allocate attention scores tensor
-        let scores_shape = crate::loader::TensorShape::from_dims(&[batch_size, seq_len, num_heads, kv_seq_len]);
+        let scores_shape =
+            crate::loader::TensorShape::from_dims(&[batch_size, seq_len, num_heads, kv_seq_len]);
         let mut scores = DeviceTensor::empty(&backend, scores_shape.clone()).map_err(|e| {
             AttentionError::MemoryAllocation(format!("Failed to allocate scores: {}", e))
         })?;
@@ -321,9 +325,8 @@ impl MultiQueryAttention {
                 num_heads as u32,
                 head_dim as u32,
                 scale,
-            ).map_err(|e| {
-                AttentionError::GpuOperation(format!("QK^T kernel failed: {}", e))
-            })?;
+            )
+            .map_err(|e| AttentionError::GpuOperation(format!("QK^T kernel failed: {}", e)))?;
 
             // Apply softmax
             softmax_gpu_kernel(
@@ -333,7 +336,8 @@ impl MultiQueryAttention {
             );
 
             // Allocate output tensor
-            let output_shape = crate::loader::TensorShape::from_dims(&[batch_size, seq_len, num_heads, head_dim]);
+            let output_shape =
+                crate::loader::TensorShape::from_dims(&[batch_size, seq_len, num_heads, head_dim]);
             let mut output = DeviceTensor::empty(&backend, output_shape.clone()).map_err(|e| {
                 AttentionError::MemoryAllocation(format!("Failed to allocate output: {}", e))
             })?;
@@ -348,7 +352,8 @@ impl MultiQueryAttention {
                 kv_seq_len as u32,
                 num_heads as u32,
                 head_dim as u32,
-            ).map_err(|e| {
+            )
+            .map_err(|e| {
                 AttentionError::GpuOperation(format!("Weighted matmul kernel failed: {}", e))
             })?;
 
@@ -366,7 +371,10 @@ impl MultiQueryAttention {
         let k_expected = self.config.num_kv_heads * self.config.head_dim;
         let v_expected = self.config.num_kv_heads * self.config.head_dim;
 
-        if !q.len().is_multiple_of(q_expected) || !k.len().is_multiple_of(k_expected) || !v.len().is_multiple_of(v_expected) {
+        if !q.len().is_multiple_of(q_expected)
+            || !k.len().is_multiple_of(k_expected)
+            || !v.len().is_multiple_of(v_expected)
+        {
             return Err(AttentionError::ShapeMismatch(
                 "Input tensor sizes are not compatible with head dimensions".to_string(),
             ));
@@ -400,7 +408,9 @@ impl MultiQueryAttention {
     /// Extract key/value sequence length
     fn extract_kv_seq_len(&self, k: &[f32], v: &[f32]) -> AttentionResult<usize> {
         let expected_per_token = self.config.num_kv_heads * self.config.head_dim;
-        if !k.len().is_multiple_of(expected_per_token) || !v.len().is_multiple_of(expected_per_token) {
+        if !k.len().is_multiple_of(expected_per_token)
+            || !v.len().is_multiple_of(expected_per_token)
+        {
             return Err(AttentionError::ShapeMismatch(
                 "KV tensor sizes are not compatible with head dimensions".to_string(),
             ));
@@ -787,7 +797,9 @@ mod tests {
         // Broadcast mask: [batch_size=1, seq_len=1, kv_seq_len=1] = [1]
         let mask_broadcast = vec![0.0]; // No masking
 
-        let output = mqa.forward(&q, &k, &v, None, Some(&mask_broadcast)).unwrap();
+        let output = mqa
+            .forward(&q, &k, &v, None, Some(&mask_broadcast))
+            .unwrap();
         assert_eq!(output.len(), q.len());
 
         // Verify computation happened

@@ -1,24 +1,53 @@
 //! Comprehensive TDD tests for loader modules
 
 use rocmforge::loader::{
-    GgufMetadata, GgufTensor, GgufTensorType,
-    OnnxDataType, OnnxLoader, OnnxSession, OnnxTensor,
+    GgufMetadata, GgufTensor, GgufTensorType, OnnxDataType, OnnxLoader, OnnxSession, OnnxTensor,
 };
 use tempfile::NamedTempFile;
 
 #[test]
 fn test_gguf_tensor_type_conversion() {
     // Test valid conversions
-    assert!(matches!(GgufTensorType::from_u32(0), Ok(GgufTensorType::F32)));
-    assert!(matches!(GgufTensorType::from_u32(1), Ok(GgufTensorType::F16)));
-    assert!(matches!(GgufTensorType::from_u32(2), Ok(GgufTensorType::Q4_0)));
-    assert!(matches!(GgufTensorType::from_u32(3), Ok(GgufTensorType::Q4_1)));
-    assert!(matches!(GgufTensorType::from_u32(6), Ok(GgufTensorType::Q5_0)));
-    assert!(matches!(GgufTensorType::from_u32(7), Ok(GgufTensorType::Q5_1)));
-    assert!(matches!(GgufTensorType::from_u32(8), Ok(GgufTensorType::Q8_0)));
-    assert!(matches!(GgufTensorType::from_u32(20), Ok(GgufTensorType::Mxfp4)));
-    assert!(matches!(GgufTensorType::from_u32(21), Ok(GgufTensorType::Mxfp6E2m3)));
-    assert!(matches!(GgufTensorType::from_u32(22), Ok(GgufTensorType::Mxfp6E3m2)));
+    assert!(matches!(
+        GgufTensorType::from_u32(0),
+        Ok(GgufTensorType::F32)
+    ));
+    assert!(matches!(
+        GgufTensorType::from_u32(1),
+        Ok(GgufTensorType::F16)
+    ));
+    assert!(matches!(
+        GgufTensorType::from_u32(2),
+        Ok(GgufTensorType::Q4_0)
+    ));
+    assert!(matches!(
+        GgufTensorType::from_u32(3),
+        Ok(GgufTensorType::Q4_1)
+    ));
+    assert!(matches!(
+        GgufTensorType::from_u32(6),
+        Ok(GgufTensorType::Q5_0)
+    ));
+    assert!(matches!(
+        GgufTensorType::from_u32(7),
+        Ok(GgufTensorType::Q5_1)
+    ));
+    assert!(matches!(
+        GgufTensorType::from_u32(8),
+        Ok(GgufTensorType::Q8_0)
+    ));
+    assert!(matches!(
+        GgufTensorType::from_u32(20),
+        Ok(GgufTensorType::Mxfp4)
+    ));
+    assert!(matches!(
+        GgufTensorType::from_u32(21),
+        Ok(GgufTensorType::Mxfp6E2m3)
+    ));
+    assert!(matches!(
+        GgufTensorType::from_u32(22),
+        Ok(GgufTensorType::Mxfp6E3m2)
+    ));
 
     // Test invalid conversion
     let result = GgufTensorType::from_u32(999);

@@ -3,17 +3,18 @@
 //! Tests for Phase G.2 - ExecutionPlan::forward() method implementation.
 //! These tests verify that the forward pass works correctly with real GGUF weights.
 
-use serial_test::serial;
 use rocmforge::backend::{DeviceTensor, HipBackend};
 use rocmforge::loader::gguf::GgufLoader;
 use rocmforge::loader::TensorShape;
 use rocmforge::model::{ExecutionPlan, ModelConfig};
+use serial_test::serial;
 
 /// Test basic forward pass functionality
 #[test]
 #[serial]
 fn test_forward_pass_basic() {
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
@@ -22,8 +23,8 @@ fn test_forward_pass_basic() {
     let gguf_loader = GgufLoader::new(gguf_path).expect("Failed to load GGUF");
 
     // Construct ExecutionPlan
-    let execution_plan = ExecutionPlan::from_gguf(backend, &gguf_loader)
-        .expect("Failed to construct ExecutionPlan");
+    let execution_plan =
+        ExecutionPlan::from_gguf(backend, &gguf_loader).expect("Failed to construct ExecutionPlan");
 
     // Load embedding weights
     let gpu_tensors = gguf_loader
@@ -66,15 +67,16 @@ fn test_forward_pass_basic() {
 #[test]
 #[serial]
 fn test_embedding_lookup() {
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
     let gguf_path = "tests/data/tiny_model.gguf";
     let gguf_loader = GgufLoader::new(gguf_path).expect("Failed to load GGUF");
 
-    let execution_plan = ExecutionPlan::from_gguf(backend, &gguf_loader)
-        .expect("Failed to construct ExecutionPlan");
+    let execution_plan =
+        ExecutionPlan::from_gguf(backend, &gguf_loader).expect("Failed to construct ExecutionPlan");
 
     let gpu_tensors = gguf_loader
         .load_to_gpu(backend)
@@ -124,22 +126,23 @@ fn test_embedding_lookup() {
 #[test]
 #[serial]
 fn test_layer_forward_pass() {
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
     let gguf_path = "tests/data/tiny_model.gguf";
     let gguf_loader = GgufLoader::new(gguf_path).expect("Failed to load GGUF");
 
-    let execution_plan = ExecutionPlan::from_gguf(backend, &gguf_loader)
-        .expect("Failed to construct ExecutionPlan");
+    let execution_plan =
+        ExecutionPlan::from_gguf(backend, &gguf_loader).expect("Failed to construct ExecutionPlan");
 
     // Create test input tensor [seq_len=2, hidden_size]
     let seq_len = 2;
     let hidden_size = execution_plan.config().hidden_size;
     let test_input_shape = TensorShape::from_dims(&[seq_len, hidden_size]);
-    let test_input = DeviceTensor::empty(backend, test_input_shape)
-        .expect("Failed to create test input tensor");
+    let test_input =
+        DeviceTensor::empty(backend, test_input_shape).expect("Failed to create test input tensor");
 
     // Test first layer
     let first_layer = &execution_plan.layers()[0];
@@ -167,15 +170,16 @@ fn test_layer_forward_pass() {
 #[test]
 #[serial]
 fn test_forward_pass_varying_seq_len() {
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
     let gguf_path = "tests/data/tiny_model.gguf";
     let gguf_loader = GgufLoader::new(gguf_path).expect("Failed to load GGUF");
 
-    let execution_plan = ExecutionPlan::from_gguf(backend, &gguf_loader)
-        .expect("Failed to construct ExecutionPlan");
+    let execution_plan =
+        ExecutionPlan::from_gguf(backend, &gguf_loader).expect("Failed to construct ExecutionPlan");
 
     let gpu_tensors = gguf_loader
         .load_to_gpu(backend)
@@ -223,15 +227,16 @@ fn test_forward_pass_varying_seq_len() {
 #[test]
 #[serial]
 fn test_forward_pass_error_handling() {
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
     let gguf_path = "tests/data/tiny_model.gguf";
     let gguf_loader = GgufLoader::new(gguf_path).expect("Failed to load GGUF");
 
-    let execution_plan = ExecutionPlan::from_gguf(backend, &gguf_loader)
-        .expect("Failed to construct ExecutionPlan");
+    let execution_plan =
+        ExecutionPlan::from_gguf(backend, &gguf_loader).expect("Failed to construct ExecutionPlan");
 
     // Test with empty input
     let empty_tokens: Vec<u32> = vec![];
@@ -252,15 +257,16 @@ fn test_forward_pass_error_handling() {
 #[test]
 #[serial]
 fn test_forward_pass_inference_pattern() {
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
     let gguf_path = "tests/data/tiny_model.gguf";
     let gguf_loader = GgufLoader::new(gguf_path).expect("Failed to load GGUF");
 
-    let execution_plan = ExecutionPlan::from_gguf(backend, &gguf_loader)
-        .expect("Failed to construct ExecutionPlan");
+    let execution_plan =
+        ExecutionPlan::from_gguf(backend, &gguf_loader).expect("Failed to construct ExecutionPlan");
 
     let gpu_tensors = gguf_loader
         .load_to_gpu(backend)
@@ -303,15 +309,16 @@ fn test_forward_pass_inference_pattern() {
 #[test]
 #[serial]
 fn test_forward_pass_performance() {
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
     let gguf_path = "tests/data/tiny_model.gguf";
     let gguf_loader = GgufLoader::new(gguf_path).expect("Failed to load GGUF");
 
-    let execution_plan = ExecutionPlan::from_gguf(backend, &gguf_loader)
-        .expect("Failed to construct ExecutionPlan");
+    let execution_plan =
+        ExecutionPlan::from_gguf(backend, &gguf_loader).expect("Failed to construct ExecutionPlan");
 
     let gpu_tensors = gguf_loader
         .load_to_gpu(backend)

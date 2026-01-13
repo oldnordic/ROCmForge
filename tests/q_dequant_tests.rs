@@ -43,12 +43,7 @@ fn dequantize_q4_1_reference(tensor: &GgufTensor) -> Vec<f32> {
 
         // Read min
         let min_bytes = &tensor.data[block_start + 4..block_start + 8];
-        let min = f32::from_le_bytes([
-            min_bytes[0],
-            min_bytes[1],
-            min_bytes[2],
-            min_bytes[3],
-        ]);
+        let min = f32::from_le_bytes([min_bytes[0], min_bytes[1], min_bytes[2], min_bytes[3]]);
 
         // Read quantized values (4-bit packed)
         let quant_start = block_start + 8;
@@ -98,12 +93,7 @@ fn dequantize_q5_0_reference(tensor: &GgufTensor) -> Vec<f32> {
 
         // Read high bits (qh)
         let qh_bytes = &tensor.data[block_start + 4..block_start + 8];
-        let qh = u32::from_le_bytes([
-            qh_bytes[0],
-            qh_bytes[1],
-            qh_bytes[2],
-            qh_bytes[3],
-        ]);
+        let qh = u32::from_le_bytes([qh_bytes[0], qh_bytes[1], qh_bytes[2], qh_bytes[3]]);
 
         // Read quantized values (4-bit packed + high bits)
         let quant_start = block_start + 8;
@@ -121,11 +111,7 @@ fn dequantize_q5_0_reference(tensor: &GgufTensor) -> Vec<f32> {
                     } else {
                         (packed >> 4) & 0x0F
                     };
-                    let high_bit = if bit_idx < 32 {
-                        (qh >> bit_idx) & 1
-                    } else {
-                        0
-                    };
+                    let high_bit = if bit_idx < 32 { (qh >> bit_idx) & 1 } else { 0 };
                     let quant = low_bits as u8 | ((high_bit as u8) << 4);
                     result[element_idx] = (quant as f32 - 16.0) * scale;
                 }
@@ -160,21 +146,11 @@ fn dequantize_q5_1_reference(tensor: &GgufTensor) -> Vec<f32> {
 
         // Read min
         let min_bytes = &tensor.data[block_start + 4..block_start + 8];
-        let min = f32::from_le_bytes([
-            min_bytes[0],
-            min_bytes[1],
-            min_bytes[2],
-            min_bytes[3],
-        ]);
+        let min = f32::from_le_bytes([min_bytes[0], min_bytes[1], min_bytes[2], min_bytes[3]]);
 
         // Read high bits (qh)
         let qh_bytes = &tensor.data[block_start + 8..block_start + 12];
-        let qh = u32::from_le_bytes([
-            qh_bytes[0],
-            qh_bytes[1],
-            qh_bytes[2],
-            qh_bytes[3],
-        ]);
+        let qh = u32::from_le_bytes([qh_bytes[0], qh_bytes[1], qh_bytes[2], qh_bytes[3]]);
 
         // Read quantized values (4-bit packed + high bits)
         let quant_start = block_start + 12;
@@ -192,11 +168,7 @@ fn dequantize_q5_1_reference(tensor: &GgufTensor) -> Vec<f32> {
                     } else {
                         (packed >> 4) & 0x0F
                     };
-                    let high_bit = if bit_idx < 32 {
-                        (qh >> bit_idx) & 1
-                    } else {
-                        0
-                    };
+                    let high_bit = if bit_idx < 32 { (qh >> bit_idx) & 1 } else { 0 };
                     let quant = low_bits as u8 | ((high_bit as u8) << 4);
                     result[element_idx] = min + (quant as f32) * scale;
                 }
@@ -231,7 +203,7 @@ mod q4_1_tests {
         // Values: 0, 1, 2, ..., 31 (packed 2 per byte)
         // Byte format: low_value in lower nibble, high_value in upper nibble
         for i in 0..16 {
-            let low = (i * 2) & 0x0F;      // Value at position i*2
+            let low = (i * 2) & 0x0F; // Value at position i*2
             let high = ((i * 2) + 1) & 0x0F; // Value at position i*2+1
             data.push(low | (high << 4));
         }
@@ -269,7 +241,7 @@ mod q4_1_tests {
         data.extend_from_slice(&scale.to_le_bytes());
         data.extend_from_slice(&min.to_le_bytes());
         for i in 0..16 {
-            let low = (i * 2) & 0x0F;      // Value at position i*2 in this block
+            let low = (i * 2) & 0x0F; // Value at position i*2 in this block
             let high = ((i * 2) + 1) & 0x0F; // Value at position i*2+1 in this block
             data.push(low | (high << 4));
         }
@@ -280,7 +252,7 @@ mod q4_1_tests {
         data.extend_from_slice(&scale2.to_le_bytes());
         data.extend_from_slice(&min2.to_le_bytes());
         for i in 0..16 {
-            let low = (i * 2) & 0x0F;      // Value at position i*2 in this block
+            let low = (i * 2) & 0x0F; // Value at position i*2 in this block
             let high = ((i * 2) + 1) & 0x0F; // Value at position i*2+1 in this block
             data.push(low | (high << 4));
         }
@@ -330,7 +302,7 @@ mod q4_1_tests {
 
         // 16 elements packed into 8 bytes
         for i in 0..8 {
-            let low = (i * 2) & 0x0F;      // Value at position i*2
+            let low = (i * 2) & 0x0F; // Value at position i*2
             let high = ((i * 2) + 1) & 0x0F; // Value at position i*2+1
             data.push(low | (high << 4));
         }

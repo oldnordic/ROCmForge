@@ -12,7 +12,7 @@ mod weighted_matmul_tests {
     use crate::loader::mmap_loader::TensorShape;
 
     const TEST_TOLERANCE: f32 = 1e-4;
-    const TEST_TOLERANCE_LARGE: f32 = 1e-3;  // For larger inputs due to FP reduction order
+    const TEST_TOLERANCE_LARGE: f32 = 1e-3; // For larger inputs due to FP reduction order
 
     /// Helper: Create softmax weights [batch, heads, seq_q, seq_k]
     fn create_weights_tensor(batch: usize, heads: usize, seq_q: usize, seq_k: usize) -> Vec<f32> {
@@ -95,11 +95,11 @@ mod weighted_matmul_tests {
         let v = create_v_tensor(batch, heads, seq_k, dim);
 
         // CPU reference
-        let cpu_result = weighted_matmul_cpu_reference(&weights, &v, batch, heads, seq_q, seq_k, dim);
+        let cpu_result =
+            weighted_matmul_cpu_reference(&weights, &v, batch, heads, seq_q, seq_k, dim);
 
         // GPU run
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let weights_shape = TensorShape::from_dims(&[batch, heads, seq_q, seq_k]);
         let v_shape = TensorShape::from_dims(&[batch, heads, seq_k, dim]);
@@ -109,8 +109,8 @@ mod weighted_matmul_tests {
             .expect("Failed to create weights tensor");
         let v_gpu = DeviceTensor::from_host_vec(&backend, v.clone(), v_shape)
             .expect("Failed to create V tensor");
-        let mut out_gpu = DeviceTensor::empty(&backend, out_shape)
-            .expect("Failed to create output tensor");
+        let mut out_gpu =
+            DeviceTensor::empty(&backend, out_shape).expect("Failed to create output tensor");
 
         let result = unsafe {
             crate::attention::kernels::weighted_matmul_gpu_kernel(
@@ -129,7 +129,8 @@ mod weighted_matmul_tests {
 
         backend.synchronize().expect("GPU synchronization failed");
 
-        let gpu_result = out_gpu.to_host_vec()
+        let gpu_result = out_gpu
+            .to_host_vec()
             .expect("Failed to copy output from GPU");
 
         assert_eq!(cpu_result.len(), gpu_result.len());
@@ -141,7 +142,10 @@ mod weighted_matmul_tests {
             assert!(
                 diff < TEST_TOLERANCE,
                 "Weighted matmul mismatch at {}: CPU={}, GPU={}, diff={}",
-                i, cpu_val, gpu_val, diff
+                i,
+                cpu_val,
+                gpu_val,
+                diff
             );
         }
         println!("Weighted matmul small max diff: {}", max_diff);
@@ -159,10 +163,10 @@ mod weighted_matmul_tests {
         let weights = create_weights_tensor(batch, heads, seq_q, seq_k);
         let v = create_v_tensor(batch, heads, seq_k, dim);
 
-        let cpu_result = weighted_matmul_cpu_reference(&weights, &v, batch, heads, seq_q, seq_k, dim);
+        let cpu_result =
+            weighted_matmul_cpu_reference(&weights, &v, batch, heads, seq_q, seq_k, dim);
 
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let weights_shape = TensorShape::from_dims(&[batch, heads, seq_q, seq_k]);
         let v_shape = TensorShape::from_dims(&[batch, heads, seq_k, dim]);
@@ -170,10 +174,10 @@ mod weighted_matmul_tests {
 
         let weights_gpu = DeviceTensor::from_host_vec(&backend, weights, weights_shape)
             .expect("Failed to create weights tensor");
-        let v_gpu = DeviceTensor::from_host_vec(&backend, v, v_shape)
-            .expect("Failed to create V tensor");
-        let mut out_gpu = DeviceTensor::empty(&backend, out_shape)
-            .expect("Failed to create output tensor");
+        let v_gpu =
+            DeviceTensor::from_host_vec(&backend, v, v_shape).expect("Failed to create V tensor");
+        let mut out_gpu =
+            DeviceTensor::empty(&backend, out_shape).expect("Failed to create output tensor");
 
         let result = unsafe {
             crate::attention::kernels::weighted_matmul_gpu_kernel(
@@ -192,7 +196,8 @@ mod weighted_matmul_tests {
 
         backend.synchronize().expect("GPU synchronization failed");
 
-        let gpu_result = out_gpu.to_host_vec()
+        let gpu_result = out_gpu
+            .to_host_vec()
             .expect("Failed to copy output from GPU");
 
         let mut max_diff = 0.0f32;
@@ -200,7 +205,11 @@ mod weighted_matmul_tests {
             max_diff = max_diff.max((cpu_val - gpu_val).abs());
         }
         println!("Weighted matmul 32x32 max diff: {}", max_diff);
-        assert!(max_diff < TEST_TOLERANCE_LARGE, "Max diff {} exceeds tolerance", max_diff);
+        assert!(
+            max_diff < TEST_TOLERANCE_LARGE,
+            "Max diff {} exceeds tolerance",
+            max_diff
+        );
     }
 
     /// Test 3: Non-square sequences (seq_q != seq_k)
@@ -215,10 +224,10 @@ mod weighted_matmul_tests {
         let weights = create_weights_tensor(batch, heads, seq_q, seq_k);
         let v = create_v_tensor(batch, heads, seq_k, dim);
 
-        let cpu_result = weighted_matmul_cpu_reference(&weights, &v, batch, heads, seq_q, seq_k, dim);
+        let cpu_result =
+            weighted_matmul_cpu_reference(&weights, &v, batch, heads, seq_q, seq_k, dim);
 
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let weights_shape = TensorShape::from_dims(&[batch, heads, seq_q, seq_k]);
         let v_shape = TensorShape::from_dims(&[batch, heads, seq_k, dim]);
@@ -226,10 +235,10 @@ mod weighted_matmul_tests {
 
         let weights_gpu = DeviceTensor::from_host_vec(&backend, weights, weights_shape)
             .expect("Failed to create weights tensor");
-        let v_gpu = DeviceTensor::from_host_vec(&backend, v, v_shape)
-            .expect("Failed to create V tensor");
-        let mut out_gpu = DeviceTensor::empty(&backend, out_shape)
-            .expect("Failed to create output tensor");
+        let v_gpu =
+            DeviceTensor::from_host_vec(&backend, v, v_shape).expect("Failed to create V tensor");
+        let mut out_gpu =
+            DeviceTensor::empty(&backend, out_shape).expect("Failed to create output tensor");
 
         let result = unsafe {
             crate::attention::kernels::weighted_matmul_gpu_kernel(
@@ -248,7 +257,8 @@ mod weighted_matmul_tests {
 
         backend.synchronize().expect("GPU synchronization failed");
 
-        let gpu_result = out_gpu.to_host_vec()
+        let gpu_result = out_gpu
+            .to_host_vec()
             .expect("Failed to copy output from GPU");
 
         let mut max_diff = 0.0f32;
@@ -256,7 +266,10 @@ mod weighted_matmul_tests {
             let diff = (cpu_val - gpu_val).abs();
             max_diff = max_diff.max(diff);
             if diff >= TEST_TOLERANCE_LARGE {
-                panic!("Mismatch at {}: CPU={}, GPU={}, diff={}", i, cpu_val, gpu_val, diff);
+                panic!(
+                    "Mismatch at {}: CPU={}, GPU={}, diff={}",
+                    i, cpu_val, gpu_val, diff
+                );
             }
         }
         println!("Weighted matmul non-square max diff: {}", max_diff);
@@ -278,7 +291,8 @@ mod weighted_matmul_tests {
         let v = create_v_tensor(batch, heads, seq_k, dim);
 
         // Our explicit layout reference
-        let explicit_result = weighted_matmul_cpu_reference(&weights, &v, batch, heads, seq_q, seq_k, dim);
+        let explicit_result =
+            weighted_matmul_cpu_reference(&weights, &v, batch, heads, seq_q, seq_k, dim);
 
         // Spot check: verify a few manual calculations
         // For head=0, query_pos=0, d=0:
@@ -287,7 +301,7 @@ mod weighted_matmul_tests {
         let sq = 0;
         let d = 0;
 
-        let weights_offset = h * seq_q * seq_k;  // batch=0
+        let weights_offset = h * seq_q * seq_k; // batch=0
         let v_offset = h * seq_k * dim;
 
         let mut manual_sum = 0.0f32;
@@ -303,7 +317,8 @@ mod weighted_matmul_tests {
         assert!(
             (manual_sum - explicit_val).abs() < 1e-6,
             "Layout verification failed: manual={}, explicit={}",
-            manual_sum, explicit_val
+            manual_sum,
+            explicit_val
         );
 
         println!("Explicit layout indexing verified correctly");

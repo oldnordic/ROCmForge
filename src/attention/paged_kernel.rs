@@ -33,10 +33,14 @@ impl PagedAttentionConfig {
             return Err(HipError::GenericError("Block size must be > 0".to_string()));
         }
         if self.num_heads == 0 {
-            return Err(HipError::GenericError("Number of heads must be > 0".to_string()));
+            return Err(HipError::GenericError(
+                "Number of heads must be > 0".to_string(),
+            ));
         }
         if self.head_dim == 0 {
-            return Err(HipError::GenericError("Head dimension must be > 0".to_string()));
+            return Err(HipError::GenericError(
+                "Head dimension must be > 0".to_string(),
+            ));
         }
         Ok(())
     }
@@ -91,11 +95,25 @@ impl PagedAttentionKernels {
         output: &mut DeviceTensor,
     ) -> HipResult<()> {
         // Validate inputs
-        self.validate_paged_attention_inputs(q, k_blocks, v_blocks, block_indices, block_offsets, output)?;
+        self.validate_paged_attention_inputs(
+            q,
+            k_blocks,
+            v_blocks,
+            block_indices,
+            block_offsets,
+            output,
+        )?;
 
         // For now, use CPU fallback implementation
         // This will be replaced with GPU kernel in Phase 3b
-        self.compute_paged_attention_cpu_fallback(q, k_blocks, v_blocks, block_indices, block_offsets, output)
+        self.compute_paged_attention_cpu_fallback(
+            q,
+            k_blocks,
+            v_blocks,
+            block_indices,
+            block_offsets,
+            output,
+        )
     }
 
     /// Compute paged attention with MQA (multi-query attention)
@@ -119,10 +137,26 @@ impl PagedAttentionKernels {
         output: &mut DeviceTensor,
     ) -> HipResult<()> {
         // Validate MQA inputs
-        self.validate_mqa_inputs(q, k_blocks, v_blocks, block_indices, block_offsets, num_kv_heads, output)?;
+        self.validate_mqa_inputs(
+            q,
+            k_blocks,
+            v_blocks,
+            block_indices,
+            block_offsets,
+            num_kv_heads,
+            output,
+        )?;
 
         // For now, use CPU fallback implementation
-        self.compute_paged_attention_mqa_cpu_fallback(q, k_blocks, v_blocks, block_indices, block_offsets, num_kv_heads, output)
+        self.compute_paged_attention_mqa_cpu_fallback(
+            q,
+            k_blocks,
+            v_blocks,
+            block_indices,
+            block_offsets,
+            num_kv_heads,
+            output,
+        )
     }
 
     /// Validate paged attention inputs

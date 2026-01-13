@@ -76,14 +76,16 @@ mod tests {
             .expect("Failed to create Q tensor");
 
         // Execute forward_device - should use GPU pipeline
-        let output_device = mqa.forward_device(&q_device, &k_device, &v_device, None, None)
+        let output_device = mqa
+            .forward_device(&q_device, &k_device, &v_device, None, None)
             .expect("forward_device failed");
 
         // Verify output shape matches input
         assert_eq!(output_device.shape().dims(), q_shape.dims());
 
         // Verify output is not all zeros
-        let output_host = output_device.to_host_vec()
+        let output_host = output_device
+            .to_host_vec()
             .expect("Failed to copy output to host");
         let non_zero_count = output_host.iter().filter(|&&x| x != 0.0).count();
         assert!(non_zero_count > 0, "Output should not be all zeros");
@@ -109,8 +111,7 @@ mod tests {
                 return;
             }
         };
-        let config = MultiQueryConfig::new(32, 128)
-            .with_kv_heads(8); // 32 query heads, 8 KV heads, head_dim=128
+        let config = MultiQueryConfig::new(32, 128).with_kv_heads(8); // 32 query heads, 8 KV heads, head_dim=128
         let mqa = MultiQueryAttention::new(config).expect("Failed to create MQA");
 
         let batch_size = 1;
@@ -144,12 +145,14 @@ mod tests {
         let q_device = DeviceTensor::from_host_vec(&backend, q_host.clone(), q_shape.clone())
             .expect("Failed to create Q tensor");
 
-        let output_device = mqa.forward_device(&q_device, &k_device, &v_device, None, None)
+        let output_device = mqa
+            .forward_device(&q_device, &k_device, &v_device, None, None)
             .expect("forward_device failed");
 
         assert_eq!(output_device.shape().dims(), q_shape.dims());
 
-        let output_host = output_device.to_host_vec()
+        let output_host = output_device
+            .to_host_vec()
             .expect("Failed to copy output to host");
         let non_zero_count = output_host.iter().filter(|&&x| x != 0.0).count();
         assert!(non_zero_count > 0, "Output should not be all zeros");
@@ -203,7 +206,8 @@ mod tests {
         }
 
         // CPU reference
-        let cpu_output = mqa.forward(&q_host, &k_host, &v_host, None, None)
+        let cpu_output = mqa
+            .forward(&q_host, &k_host, &v_host, None, None)
             .expect("CPU forward failed");
 
         // GPU computation
@@ -214,14 +218,20 @@ mod tests {
         let q_device = DeviceTensor::from_host_vec(&backend, q_host.clone(), q_shape.clone())
             .expect("Failed to create Q tensor");
 
-        let output_device = mqa.forward_device(&q_device, &k_device, &v_device, None, None)
+        let output_device = mqa
+            .forward_device(&q_device, &k_device, &v_device, None, None)
             .expect("GPU forward_device failed");
 
-        let gpu_output = output_device.to_host_vec()
+        let gpu_output = output_device
+            .to_host_vec()
             .expect("Failed to copy GPU output to host");
 
         // Compare with tolerance for floating point differences
-        assert_eq!(cpu_output.len(), gpu_output.len(), "Output lengths should match");
+        assert_eq!(
+            cpu_output.len(),
+            gpu_output.len(),
+            "Output lengths should match"
+        );
 
         let mut max_diff = 0.0f32;
         for (cpu_val, gpu_val) in cpu_output.iter().zip(gpu_output.iter()) {
@@ -231,8 +241,11 @@ mod tests {
 
         // Allow small tolerance for floating point arithmetic differences
         const TOLERANCE: f32 = 1e-3;
-        assert!(max_diff < TOLERANCE,
-            "GPU and CPU outputs differ significantly: max_diff={}", max_diff);
+        assert!(
+            max_diff < TOLERANCE,
+            "GPU and CPU outputs differ significantly: max_diff={}",
+            max_diff
+        );
 
         // Phase 20: Check for memory leaks
         drop(k_device);
@@ -280,7 +293,8 @@ mod tests {
             let q_device = DeviceTensor::from_host_vec(&backend, q_host, q_shape.clone())
                 .expect("Failed to create Q tensor");
 
-            let output_device = mqa.forward_device(&q_device, &k_device, &v_device, None, None)
+            let output_device = mqa
+                .forward_device(&q_device, &k_device, &v_device, None, None)
                 .expect("Single token forward_device failed");
 
             assert_eq!(output_device.shape().dims(), q_shape.dims());
@@ -319,15 +333,20 @@ mod tests {
             let q_device = DeviceTensor::from_host_vec(&backend, q_host, q_shape.clone())
                 .expect("Failed to create Q tensor");
 
-            let output_device = mqa.forward_device(&q_device, &k_device, &v_device, None, None)
+            let output_device = mqa
+                .forward_device(&q_device, &k_device, &v_device, None, None)
                 .expect("Long sequence forward_device failed");
 
             assert_eq!(output_device.shape().dims(), q_shape.dims());
 
-            let output_host = output_device.to_host_vec()
+            let output_host = output_device
+                .to_host_vec()
                 .expect("Failed to copy output to host");
             let non_zero_count = output_host.iter().filter(|&&x| x != 0.0).count();
-            assert!(non_zero_count > 0, "Long sequence output should not be all zeros");
+            assert!(
+                non_zero_count > 0,
+                "Long sequence output should not be all zeros"
+            );
         }
 
         // Phase 20: Check for memory leaks at end of test

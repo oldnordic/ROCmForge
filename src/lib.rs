@@ -22,6 +22,7 @@ pub mod attention;
 pub mod backend;
 pub mod engine;
 pub mod http;
+pub mod ggml;
 pub mod kv_cache;
 pub mod loader;
 pub mod mlp;

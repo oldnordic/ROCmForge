@@ -57,8 +57,10 @@ impl KVCache {
         head_dim: usize,
         max_seq_len: usize,
     ) -> KVCacheResult<Self> {
-        tracing::debug!("KVCache::new() called with layers={}, heads={}, head_dim={}, max_seq_len={}",
-                 num_layers, num_heads, head_dim, max_seq_len);
+        eprintln!(
+            "KVCache::new() called with layers={}, heads={}, head_dim={}, max_seq_len={}",
+            num_layers, num_heads, head_dim, max_seq_len
+        );
         // Preallocate keys and values for all layers
         let mut keys = Vec::with_capacity(num_layers);
         let mut values = Vec::with_capacity(num_layers);
@@ -66,7 +68,11 @@ impl KVCache {
 
         for layer in 0..num_layers {
             if layer % 8 == 0 || layer == num_layers - 1 {
-                tracing::debug!("KVCache::new() allocating layer {}/{}", layer + 1, num_layers);
+                eprintln!(
+                    "KVCache::new() allocating layer {}/{}",
+                    layer + 1,
+                    num_layers
+                );
             }
             // Key/Value tensor shape: [max_seq_len, num_heads, head_dim]
             let kv_shape = TensorShape::from_dims(&[max_seq_len, num_heads, head_dim]);
@@ -80,7 +86,10 @@ impl KVCache {
             values.push(value_tensor);
         }
 
-        tracing::debug!("KVCache::new() completed all {} layers, returning KVCache", num_layers);
+        tracing::debug!(
+            "KVCache::new() completed all {} layers, returning KVCache",
+            num_layers
+        );
         Ok(KVCache {
             backend: backend.clone(),
             num_layers,
@@ -228,6 +237,17 @@ impl KVCache {
         self.current_seq_len(layer)
     }
 
+    /// Get raw key/value tensors for a layer.
+    pub fn layer_tensors(&self, layer: usize) -> KVCacheResult<(&DeviceTensor, &DeviceTensor)> {
+        if layer >= self.num_layers {
+            return Err(KVCacheError::InvalidLayer {
+                layer,
+                max_layers: self.num_layers,
+            });
+        }
+        Ok((&self.keys[layer], &self.values[layer]))
+    }
+
     /// Get maximum sequence length
     pub fn max_seq_len(&self) -> usize {
         self.max_seq_len
@@ -253,6 +273,25 @@ impl KVCache {
         for len in &mut self.current_seq_len {
             *len = 0;
         }
+    }
+
+    /// Advance current sequence length without copying new tensors.
+    pub fn advance(&mut self, layer: usize, tokens: usize) -> KVCacheResult<()> {
+        if layer >= self.num_layers {
+            return Err(KVCacheError::InvalidLayer {
+                layer,
+                max_layers: self.num_layers,
+            });
+        }
+        let current = self.current_seq_len[layer];
+        if current + tokens > self.max_seq_len {
+            return Err(KVCacheError::CapacityExceeded {
+                seq_len: current + tokens,
+                max_seq_len: self.max_seq_len,
+            });
+        }
+        self.current_seq_len[layer] += tokens;
+        Ok(())
     }
 
     /// Get total memory usage in bytes

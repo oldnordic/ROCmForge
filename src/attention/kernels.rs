@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex};
 use crate::backend::hip_backend::{HipBackend, HipError, HipKernel, HipModule};
 
 // RDNA3 (wave32) tuning constants for AMD Radeon RX 7900 XT
-const BLOCK_SIZE: u32 = 256;  // 8 waves of 32 threads
-const WARP_SIZE: u32 = 32;     // RDNA3 wavefront size
+const BLOCK_SIZE: u32 = 256; // 8 waves of 32 threads
+const WARP_SIZE: u32 = 32; // RDNA3 wavefront size
 
 /// Cached kernel modules and functions
 #[derive(Debug)]
@@ -52,7 +52,8 @@ static GLOBAL_CACHE: Mutex<Option<KernelCache>> = Mutex::new(None);
 fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> {
     // First check if already initialized
     {
-        let cache = GLOBAL_CACHE.lock()
+        let cache = GLOBAL_CACHE
+            .lock()
             .map_err(|e| HipError::LockPoisoned(format!("GLOBAL_CACHE lock poisoned: {}", e)))?;
         if cache.is_some() {
             return Ok(&GLOBAL_CACHE);
@@ -60,7 +61,8 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
     }
 
     // Need to initialize - drop the read lock first
-    let mut cache = GLOBAL_CACHE.lock()
+    let mut cache = GLOBAL_CACHE
+        .lock()
         .map_err(|e| HipError::LockPoisoned(format!("GLOBAL_CACHE lock poisoned: {}", e)))?;
 
     // Double-check in case another thread initialized while we waited
@@ -69,8 +71,9 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
     }
 
     // Create backend (HipBackend::new() returns Arc<HipBackend>)
-    let backend = HipBackend::new()
-        .map_err(|e| HipError::InitializationFailed(format!("Failed to create HipBackend: {}", e)))?;
+    let backend = HipBackend::new().map_err(|e| {
+        HipError::InitializationFailed(format!("Failed to create HipBackend: {}", e))
+    })?;
 
     // Load HSACO paths from build.rs environment variables
     let scale_path = std::env::var("SCALE_HSACO")
@@ -78,7 +81,10 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
         .ok_or_else(|| HipError::KernelLoadFailed("SCALE_HSACO env var not set".to_string()))?;
 
     if !Path::new(&scale_path).exists() {
-        return Err(HipError::KernelLoadFailed(format!("HSACO not found: {}", scale_path)));
+        return Err(HipError::KernelLoadFailed(format!(
+            "HSACO not found: {}",
+            scale_path
+        )));
     }
 
     let scale_module = backend.load_module(&scale_path)?;
@@ -89,7 +95,10 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
         .ok_or_else(|| HipError::KernelLoadFailed("MASK_HSACO env var not set".to_string()))?;
 
     if !Path::new(&mask_path).exists() {
-        return Err(HipError::KernelLoadFailed(format!("HSACO not found: {}", mask_path)));
+        return Err(HipError::KernelLoadFailed(format!(
+            "HSACO not found: {}",
+            mask_path
+        )));
     }
 
     let mask_module = backend.load_module(&mask_path)?;
@@ -100,7 +109,10 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
         .ok_or_else(|| HipError::KernelLoadFailed("SOFTMAX_HSACO env var not set".to_string()))?;
 
     if !Path::new(&softmax_path).exists() {
-        return Err(HipError::KernelLoadFailed(format!("HSACO not found: {}", softmax_path)));
+        return Err(HipError::KernelLoadFailed(format!(
+            "HSACO not found: {}",
+            softmax_path
+        )));
     }
 
     let softmax_module = backend.load_module(&softmax_path)?;
@@ -112,107 +124,154 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
         .ok_or_else(|| HipError::KernelLoadFailed("ROPE_HSACO env var not set".to_string()))?;
 
     if !Path::new(&rope_path).exists() {
-        return Err(HipError::KernelLoadFailed(format!("HSACO not found: {}", rope_path)));
+        return Err(HipError::KernelLoadFailed(format!(
+            "HSACO not found: {}",
+            rope_path
+        )));
     }
 
     let rope_module = backend.load_module(&rope_path)?;
     let rope_kernel = backend.get_kernel_function(&rope_module, "rope_kernel")?;
 
     // Load position embeddings kernel
-    let position_embeddings_path = std::env::var("POSITION_EMBEDDINGS_HSACO")
-        .ok()
-        .ok_or_else(|| HipError::KernelLoadFailed("POSITION_EMBEDDINGS_HSACO env var not set".to_string()))?;
+    let position_embeddings_path =
+        std::env::var("POSITION_EMBEDDINGS_HSACO")
+            .ok()
+            .ok_or_else(|| {
+                HipError::KernelLoadFailed("POSITION_EMBEDDINGS_HSACO env var not set".to_string())
+            })?;
 
     if !Path::new(&position_embeddings_path).exists() {
-        return Err(HipError::KernelLoadFailed(format!("HSACO not found: {}", position_embeddings_path)));
+        return Err(HipError::KernelLoadFailed(format!(
+            "HSACO not found: {}",
+            position_embeddings_path
+        )));
     }
 
     let position_embeddings_module = backend.load_module(&position_embeddings_path)?;
-    let position_embeddings_kernel = backend.get_kernel_function(&position_embeddings_module, "position_embeddings_kernel")?;
+    let position_embeddings_kernel =
+        backend.get_kernel_function(&position_embeddings_module, "position_embeddings_kernel")?;
 
     // Load QK^T matmul kernel
-    let qkt_matmul_path = std::env::var("QKT_MATMUL_HSACO")
-        .ok()
-        .ok_or_else(|| HipError::KernelLoadFailed("QKT_MATMUL_HSACO env var not set".to_string()))?;
+    let qkt_matmul_path = std::env::var("QKT_MATMUL_HSACO").ok().ok_or_else(|| {
+        HipError::KernelLoadFailed("QKT_MATMUL_HSACO env var not set".to_string())
+    })?;
 
     if !Path::new(&qkt_matmul_path).exists() {
-        return Err(HipError::KernelLoadFailed(format!("HSACO not found: {}", qkt_matmul_path)));
+        return Err(HipError::KernelLoadFailed(format!(
+            "HSACO not found: {}",
+            qkt_matmul_path
+        )));
     }
 
     let qkt_matmul_module = backend.load_module(&qkt_matmul_path)?;
     let qkt_matmul_kernel = backend.get_kernel_function(&qkt_matmul_module, "qkt_matmul_kernel")?;
 
     // Load weighted matmul kernel
-    let weighted_matmul_path = std::env::var("WEIGHTED_MATMUL_HSACO")
-        .ok()
-        .ok_or_else(|| HipError::KernelLoadFailed("WEIGHTED_MATMUL_HSACO env var not set".to_string()))?;
+    let weighted_matmul_path = std::env::var("WEIGHTED_MATMUL_HSACO").ok().ok_or_else(|| {
+        HipError::KernelLoadFailed("WEIGHTED_MATMUL_HSACO env var not set".to_string())
+    })?;
 
     if !Path::new(&weighted_matmul_path).exists() {
-        return Err(HipError::KernelLoadFailed(format!("HSACO not found: {}", weighted_matmul_path)));
+        return Err(HipError::KernelLoadFailed(format!(
+            "HSACO not found: {}",
+            weighted_matmul_path
+        )));
     }
 
     let weighted_matmul_module = backend.load_module(&weighted_matmul_path)?;
-    let weighted_matmul_kernel = backend.get_kernel_function(&weighted_matmul_module, "weighted_matmul_kernel")?;
+    let weighted_matmul_kernel =
+        backend.get_kernel_function(&weighted_matmul_module, "weighted_matmul_kernel")?;
 
     // Load FlashAttention non-causal kernel
     let flash_attention_nocausal_path = std::env::var("FLASH_ATTENTION_NCAUSAL_HSACO")
         .ok()
-        .ok_or_else(|| HipError::KernelLoadFailed("FLASH_ATTENTION_NCAUSAL_HSACO env var not set".to_string()))?;
+        .ok_or_else(|| {
+            HipError::KernelLoadFailed("FLASH_ATTENTION_NCAUSAL_HSACO env var not set".to_string())
+        })?;
 
     if !Path::new(&flash_attention_nocausal_path).exists() {
-        return Err(HipError::KernelLoadFailed(format!("HSACO not found: {}", flash_attention_nocausal_path)));
+        return Err(HipError::KernelLoadFailed(format!(
+            "HSACO not found: {}",
+            flash_attention_nocausal_path
+        )));
     }
 
     let flash_attention_nocausal_module = backend.load_module(&flash_attention_nocausal_path)?;
-    let flash_attention_nocausal_kernel = backend.get_kernel_function(&flash_attention_nocausal_module, "flash_attention_nocausal_kernel")?;
+    let flash_attention_nocausal_kernel = backend.get_kernel_function(
+        &flash_attention_nocausal_module,
+        "flash_attention_nocausal_kernel",
+    )?;
 
     // Load causal mask kernel
-    let causal_mask_path = std::env::var("CAUSAL_MASK_HSACO")
-        .ok()
-        .ok_or_else(|| HipError::KernelLoadFailed("CAUSAL_MASK_HSACO env var not set".to_string()))?;
+    let causal_mask_path = std::env::var("CAUSAL_MASK_HSACO").ok().ok_or_else(|| {
+        HipError::KernelLoadFailed("CAUSAL_MASK_HSACO env var not set".to_string())
+    })?;
 
     if !Path::new(&causal_mask_path).exists() {
-        return Err(HipError::KernelLoadFailed(format!("HSACO not found: {}", causal_mask_path)));
+        return Err(HipError::KernelLoadFailed(format!(
+            "HSACO not found: {}",
+            causal_mask_path
+        )));
     }
 
     let causal_mask_module = backend.load_module(&causal_mask_path)?;
-    let causal_mask_kernel = backend.get_kernel_function(&causal_mask_module, "causal_mask_kernel")?;
+    let causal_mask_kernel =
+        backend.get_kernel_function(&causal_mask_module, "causal_mask_kernel")?;
 
     // Load FlashAttention causal kernel
     let flash_attention_causal_path = std::env::var("FLASH_ATTENTION_CAUSAL_HSACO")
         .ok()
-        .ok_or_else(|| HipError::KernelLoadFailed("FLASH_ATTENTION_CAUSAL_HSACO env var not set".to_string()))?;
+        .ok_or_else(|| {
+            HipError::KernelLoadFailed("FLASH_ATTENTION_CAUSAL_HSACO env var not set".to_string())
+        })?;
 
     if !Path::new(&flash_attention_causal_path).exists() {
-        return Err(HipError::KernelLoadFailed(format!("HSACO not found: {}", flash_attention_causal_path)));
+        return Err(HipError::KernelLoadFailed(format!(
+            "HSACO not found: {}",
+            flash_attention_causal_path
+        )));
     }
 
     let flash_attention_causal_module = backend.load_module(&flash_attention_causal_path)?;
-    let flash_attention_causal_kernel = backend.get_kernel_function(&flash_attention_causal_module, "flash_attention_causal_kernel")?;
+    let flash_attention_causal_kernel = backend.get_kernel_function(
+        &flash_attention_causal_module,
+        "flash_attention_causal_kernel",
+    )?;
 
     // Load FlashAttention kernel
-    let flash_attention_path = std::env::var("FLASH_ATTENTION_HSACO")
-        .ok()
-        .ok_or_else(|| HipError::KernelLoadFailed("FLASH_ATTENTION_HSACO env var not set".to_string()))?;
+    let flash_attention_path = std::env::var("FLASH_ATTENTION_HSACO").ok().ok_or_else(|| {
+        HipError::KernelLoadFailed("FLASH_ATTENTION_HSACO env var not set".to_string())
+    })?;
 
     if !Path::new(&flash_attention_path).exists() {
-        return Err(HipError::KernelLoadFailed(format!("HSACO not found: {}", flash_attention_path)));
+        return Err(HipError::KernelLoadFailed(format!(
+            "HSACO not found: {}",
+            flash_attention_path
+        )));
     }
 
     let flash_attention_module = backend.load_module(&flash_attention_path)?;
-    let flash_attention_kernel = backend.get_kernel_function(&flash_attention_module, "flash_attention_kernel")?;
+    let flash_attention_kernel =
+        backend.get_kernel_function(&flash_attention_module, "flash_attention_kernel")?;
 
     // Load MQA KV replication kernel
     let mqa_kv_replicate_path = std::env::var("MQA_KV_REPLICATE_HSACO")
         .ok()
-        .ok_or_else(|| HipError::KernelLoadFailed("MQA_KV_REPLICATE_HSACO env var not set".to_string()))?;
+        .ok_or_else(|| {
+            HipError::KernelLoadFailed("MQA_KV_REPLICATE_HSACO env var not set".to_string())
+        })?;
 
     if !Path::new(&mqa_kv_replicate_path).exists() {
-        return Err(HipError::KernelLoadFailed(format!("HSACO not found: {}", mqa_kv_replicate_path)));
+        return Err(HipError::KernelLoadFailed(format!(
+            "HSACO not found: {}",
+            mqa_kv_replicate_path
+        )));
     }
 
     let mqa_kv_replicate_module = backend.load_module(&mqa_kv_replicate_path)?;
-    let mqa_kv_replicate_kernel = backend.get_kernel_function(&mqa_kv_replicate_module, "mqa_kv_replicate_fused_kernel")?;
+    let mqa_kv_replicate_kernel =
+        backend.get_kernel_function(&mqa_kv_replicate_module, "mqa_kv_replicate_fused_kernel")?;
 
     *cache = Some(KernelCache {
         backend,
@@ -262,12 +321,16 @@ pub unsafe fn scale_gpu_kernel(
 ) -> i32 {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock()
+            let cache = cache_ref
+                .lock()
                 .expect("GLOBAL_CACHE lock poisoned in scale_gpu_kernel");
-            let cache_ref = cache.as_ref()
+            let cache_ref = cache
+                .as_ref()
                 .expect("KernelCache not initialized in scale_gpu_kernel");
 
-            let kernel = cache_ref.scale_kernel.as_ref()
+            let kernel = cache_ref
+                .scale_kernel
+                .as_ref()
                 .expect("scale_kernel not initialized");
             let backend = &cache_ref.backend;
 
@@ -314,12 +377,16 @@ pub unsafe fn mask_gpu_kernel(
 ) -> i32 {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock()
+            let cache = cache_ref
+                .lock()
                 .expect("GLOBAL_CACHE lock poisoned in mask_gpu_kernel");
-            let cache_ref = cache.as_ref()
+            let cache_ref = cache
+                .as_ref()
                 .expect("KernelCache not initialized in mask_gpu_kernel");
 
-            let kernel = cache_ref.mask_kernel.as_ref()
+            let kernel = cache_ref
+                .mask_kernel
+                .as_ref()
                 .expect("mask_kernel not initialized");
             let backend = &cache_ref.backend;
 
@@ -357,19 +424,19 @@ pub unsafe fn mask_gpu_kernel(
 /// - The dimensions are correct
 /// - No other threads are accessing the same memory concurrently
 #[cfg(feature = "rocm")]
-pub unsafe fn softmax_gpu_kernel(
-    mut scores: *mut f32,
-    batch_size: u32,
-    seq_len: u32,
-) -> i32 {
+pub unsafe fn softmax_gpu_kernel(mut scores: *mut f32, batch_size: u32, seq_len: u32) -> i32 {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock()
+            let cache = cache_ref
+                .lock()
                 .expect("GLOBAL_CACHE lock poisoned in softmax_gpu_kernel");
-            let cache_ref = cache.as_ref()
+            let cache_ref = cache
+                .as_ref()
                 .expect("KernelCache not initialized in softmax_gpu_kernel");
 
-            let kernel = cache_ref.softmax_kernel.as_ref()
+            let kernel = cache_ref
+                .softmax_kernel
+                .as_ref()
                 .expect("softmax_kernel not initialized");
             let backend = &cache_ref.backend;
 
@@ -391,7 +458,13 @@ pub unsafe fn softmax_gpu_kernel(
                 &mut seq_len_arg as *mut _ as *mut c_void,
             ];
 
-            match backend.launch_kernel_with_module_shared(kernel, grid_dim, block_dim, args, shared_mem_bytes) {
+            match backend.launch_kernel_with_module_shared(
+                kernel,
+                grid_dim,
+                block_dim,
+                args,
+                shared_mem_bytes,
+            ) {
                 Ok(()) => 0,
                 Err(_) => -1,
             }
@@ -420,12 +493,16 @@ pub unsafe fn rope_gpu_kernel(
 ) -> i32 {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock()
+            let cache = cache_ref
+                .lock()
                 .expect("GLOBAL_CACHE lock poisoned in rope_gpu_kernel");
-            let cache_ref = cache.as_ref()
+            let cache_ref = cache
+                .as_ref()
                 .expect("KernelCache not initialized in rope_gpu_kernel");
 
-            let kernel = cache_ref.rope_kernel.as_ref()
+            let kernel = cache_ref
+                .rope_kernel
+                .as_ref()
                 .expect("rope_kernel not initialized");
             let backend = &cache_ref.backend;
 
@@ -502,7 +579,9 @@ pub unsafe fn qkt_matmul_gpu_kernel(
     num_heads: u32,
     head_dim: u32,
 ) -> Result<(), String> {
-    qkt_matmul_gpu_kernel_scaled(q, k, output, batch_size, seq_q, seq_k, num_heads, head_dim, 1.0)
+    qkt_matmul_gpu_kernel_scaled(
+        q, k, output, batch_size, seq_q, seq_k, num_heads, head_dim, 1.0,
+    )
 }
 
 /// GPU kernel for QK^T matrix multiplication with explicit scale
@@ -526,12 +605,16 @@ pub unsafe fn qkt_matmul_gpu_kernel_scaled(
 ) -> Result<(), String> {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock()
+            let cache = cache_ref
+                .lock()
                 .map_err(|e| format!("GLOBAL_CACHE lock poisoned: {}", e))?;
-            let cache_ref = cache.as_ref()
+            let cache_ref = cache
+                .as_ref()
                 .ok_or_else(|| "KernelCache not initialized".to_string())?;
 
-            let kernel = cache_ref.qkt_matmul_kernel.as_ref()
+            let kernel = cache_ref
+                .qkt_matmul_kernel
+                .as_ref()
                 .ok_or_else(|| "qkt_matmul_kernel not loaded".to_string())?;
             let backend = &cache_ref.backend;
 
@@ -566,7 +649,14 @@ pub unsafe fn qkt_matmul_gpu_kernel_scaled(
                 &mut head_dim_arg as *mut _ as *mut c_void,
             ];
 
-            backend.launch_kernel_with_module_shared(kernel, grid_dim, block_dim, args, shared_mem_bytes)
+            backend
+                .launch_kernel_with_module_shared(
+                    kernel,
+                    grid_dim,
+                    block_dim,
+                    args,
+                    shared_mem_bytes,
+                )
                 .map_err(|e| format!("Kernel launch failed: {:?}", e))
         }
         Err(e) => Err(format!("Failed to get cache: {:?}", e)),
@@ -599,12 +689,16 @@ pub unsafe fn weighted_matmul_gpu_kernel(
 ) -> Result<(), String> {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock()
+            let cache = cache_ref
+                .lock()
                 .map_err(|e| format!("GLOBAL_CACHE lock poisoned: {}", e))?;
-            let cache_ref = cache.as_ref()
+            let cache_ref = cache
+                .as_ref()
                 .ok_or_else(|| "KernelCache not initialized".to_string())?;
 
-            let kernel = cache_ref.weighted_matmul_kernel.as_ref()
+            let kernel = cache_ref
+                .weighted_matmul_kernel
+                .as_ref()
                 .ok_or_else(|| "weighted_matmul_kernel not loaded".to_string())?;
             let backend = &cache_ref.backend;
 
@@ -637,7 +731,14 @@ pub unsafe fn weighted_matmul_gpu_kernel(
                 &mut head_dim_arg as *mut _ as *mut c_void,
             ];
 
-            backend.launch_kernel_with_module_shared(kernel, grid_dim, block_dim, args, shared_mem_bytes)
+            backend
+                .launch_kernel_with_module_shared(
+                    kernel,
+                    grid_dim,
+                    block_dim,
+                    args,
+                    shared_mem_bytes,
+                )
                 .map_err(|e| format!("Kernel launch failed: {:?}", e))
         }
         Err(e) => Err(format!("Failed to get cache: {:?}", e)),
@@ -672,12 +773,16 @@ pub unsafe fn flash_attention_nocausal_gpu_kernel(
 ) -> Result<(), String> {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock()
+            let cache = cache_ref
+                .lock()
                 .map_err(|e| format!("GLOBAL_CACHE lock poisoned: {}", e))?;
-            let cache_ref = cache.as_ref()
+            let cache_ref = cache
+                .as_ref()
                 .ok_or_else(|| "KernelCache not initialized".to_string())?;
 
-            let kernel = cache_ref.flash_attention_nocausal_kernel.as_ref()
+            let kernel = cache_ref
+                .flash_attention_nocausal_kernel
+                .as_ref()
                 .ok_or_else(|| "flash_attention_nocausal_kernel not loaded".to_string())?;
             let backend = &cache_ref.backend;
 
@@ -697,7 +802,7 @@ pub unsafe fn flash_attention_nocausal_gpu_kernel(
             let mut scale_arg = scale;
             let mut batch_size_arg = batch_size;
             let mut seq_q_arg = seq_len;
-            let mut seq_k_arg = seq_len;  // Square for self-attention
+            let mut seq_k_arg = seq_len; // Square for self-attention
             let mut num_heads_arg = num_heads;
             let mut head_dim_arg = head_dim;
 
@@ -714,7 +819,14 @@ pub unsafe fn flash_attention_nocausal_gpu_kernel(
                 &mut head_dim_arg as *mut _ as *mut c_void,
             ];
 
-            backend.launch_kernel_with_module_shared(kernel, grid_dim, block_dim, args, shared_mem_bytes)
+            backend
+                .launch_kernel_with_module_shared(
+                    kernel,
+                    grid_dim,
+                    block_dim,
+                    args,
+                    shared_mem_bytes,
+                )
                 .map_err(|e| format!("Kernel launch failed: {:?}", e))
         }
         Err(e) => Err(format!("Failed to get cache: {:?}", e)),
@@ -741,12 +853,16 @@ pub unsafe fn causal_mask_gpu_kernel(
 ) -> Result<(), String> {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock()
+            let cache = cache_ref
+                .lock()
                 .map_err(|e| format!("GLOBAL_CACHE lock poisoned: {}", e))?;
-            let cache_ref = cache.as_ref()
+            let cache_ref = cache
+                .as_ref()
                 .ok_or_else(|| "KernelCache not initialized".to_string())?;
 
-            let kernel = cache_ref.causal_mask_kernel.as_ref()
+            let kernel = cache_ref
+                .causal_mask_kernel
+                .as_ref()
                 .ok_or_else(|| "causal_mask_kernel not loaded".to_string())?;
             let backend = &cache_ref.backend;
 
@@ -771,7 +887,14 @@ pub unsafe fn causal_mask_gpu_kernel(
                 &mut num_heads_arg as *mut _ as *mut c_void,
             ];
 
-            backend.launch_kernel_with_module_shared(kernel, grid_dim, block_dim, args, shared_mem_bytes)
+            backend
+                .launch_kernel_with_module_shared(
+                    kernel,
+                    grid_dim,
+                    block_dim,
+                    args,
+                    shared_mem_bytes,
+                )
                 .map_err(|e| format!("Kernel launch failed: {:?}", e))
         }
         Err(e) => Err(format!("Failed to get cache: {:?}", e)),
@@ -804,12 +927,16 @@ pub unsafe fn flash_attention_causal_gpu_kernel(
 ) -> Result<(), String> {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock()
+            let cache = cache_ref
+                .lock()
                 .map_err(|e| format!("GLOBAL_CACHE lock poisoned: {}", e))?;
-            let cache_ref = cache.as_ref()
+            let cache_ref = cache
+                .as_ref()
                 .ok_or_else(|| "KernelCache not initialized".to_string())?;
 
-            let kernel = cache_ref.flash_attention_causal_kernel.as_ref()
+            let kernel = cache_ref
+                .flash_attention_causal_kernel
+                .as_ref()
                 .ok_or_else(|| "flash_attention_causal_kernel not loaded".to_string())?;
             let backend = &cache_ref.backend;
 
@@ -829,7 +956,7 @@ pub unsafe fn flash_attention_causal_gpu_kernel(
             let mut scale_arg = scale;
             let mut batch_size_arg = batch_size;
             let mut seq_q_arg = seq_len;
-            let mut seq_k_arg = seq_len;  // Square for self-attention
+            let mut seq_k_arg = seq_len; // Square for self-attention
             let mut num_heads_arg = num_heads;
             let mut head_dim_arg = head_dim;
 
@@ -846,7 +973,14 @@ pub unsafe fn flash_attention_causal_gpu_kernel(
                 &mut head_dim_arg as *mut _ as *mut c_void,
             ];
 
-            backend.launch_kernel_with_module_shared(kernel, grid_dim, block_dim, args, shared_mem_bytes)
+            backend
+                .launch_kernel_with_module_shared(
+                    kernel,
+                    grid_dim,
+                    block_dim,
+                    args,
+                    shared_mem_bytes,
+                )
                 .map_err(|e| format!("Kernel launch failed: {:?}", e))
         }
         Err(e) => Err(format!("Failed to get cache: {:?}", e)),
@@ -936,8 +1070,6 @@ pub unsafe fn flash_attention_gpu_kernel(
         Err(_) => -1,
     }
 }
-
-
 
 /// GPU kernel for applying position embeddings (RoPE) to Q and K tensors
 ///
@@ -1048,12 +1180,16 @@ pub unsafe fn mqa_kv_replicate_gpu_kernel(
 ) -> Result<(), String> {
     match get_or_init_cache() {
         Ok(cache_ref) => {
-            let cache = cache_ref.lock()
+            let cache = cache_ref
+                .lock()
                 .map_err(|e| format!("GLOBAL_CACHE lock poisoned: {}", e))?;
-            let cache_ref = cache.as_ref()
+            let cache_ref = cache
+                .as_ref()
                 .ok_or_else(|| "KernelCache not initialized".to_string())?;
 
-            let kernel = cache_ref.mqa_kv_replicate_kernel.as_ref()
+            let kernel = cache_ref
+                .mqa_kv_replicate_kernel
+                .as_ref()
                 .ok_or_else(|| "mqa_kv_replicate_kernel not loaded".to_string())?;
             let backend = &cache_ref.backend;
 
@@ -1085,10 +1221,10 @@ pub unsafe fn mqa_kv_replicate_gpu_kernel(
                 &mut head_dim_arg as *mut _ as *mut c_void,
             ];
 
-            backend.launch_kernel_with_module_shared(kernel, grid_dim, block_dim, args, 0)
+            backend
+                .launch_kernel_with_module_shared(kernel, grid_dim, block_dim, args, 0)
                 .map_err(|e| format!("Kernel launch failed: {:?}", e))
         }
         Err(e) => Err(format!("Failed to get cache: {:?}", e)),
     }
 }
-

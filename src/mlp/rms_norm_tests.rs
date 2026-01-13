@@ -69,8 +69,7 @@ mod rms_norm_tests {
 
         let cpu_result = rms_norm_cpu_reference(&input, &weight, seq_len, hidden_size, eps);
 
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let input_shape = TensorShape::from_dims(&[seq_len, hidden_size]);
         let weight_shape = TensorShape::from_dims(&[hidden_size]);
@@ -80,12 +79,12 @@ mod rms_norm_tests {
             .expect("Failed to create input tensor");
         let weight_gpu = DeviceTensor::from_host_vec(&backend, weight, weight_shape)
             .expect("Failed to create weight tensor");
-        let mut out_gpu = DeviceTensor::empty(&backend, out_shape)
-            .expect("Failed to create output tensor");
+        let mut out_gpu =
+            DeviceTensor::empty(&backend, out_shape).expect("Failed to create output tensor");
 
         let result = unsafe {
             crate::mlp::kernels::rms_norm_gpu_kernel(
-                &backend,  // Pass backend to ensure stream consistency
+                &backend, // Pass backend to ensure stream consistency
                 input_gpu.as_ptr() as *const f32,
                 weight_gpu.as_ptr() as *const f32,
                 out_gpu.buffer().as_mut_ptr() as *mut f32,
@@ -99,7 +98,8 @@ mod rms_norm_tests {
 
         backend.synchronize().expect("GPU synchronization failed");
 
-        let gpu_result = out_gpu.to_host_vec()
+        let gpu_result = out_gpu
+            .to_host_vec()
             .expect("Failed to copy output from GPU");
 
         assert_eq!(cpu_result.len(), gpu_result.len());
@@ -111,7 +111,10 @@ mod rms_norm_tests {
             assert!(
                 diff < TEST_TOLERANCE,
                 "RMSNorm mismatch at {}: CPU={}, GPU={}, diff={}",
-                i, cpu_val, gpu_val, diff
+                i,
+                cpu_val,
+                gpu_val,
+                diff
             );
         }
         println!("RMSNorm small max diff: {}", max_diff);
@@ -130,8 +133,7 @@ mod rms_norm_tests {
 
         let cpu_result = rms_norm_cpu_reference(&input, &weight, seq_len, hidden_size, eps);
 
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let input_shape = TensorShape::from_dims(&[seq_len, hidden_size]);
         let weight_shape = TensorShape::from_dims(&[hidden_size]);
@@ -141,12 +143,12 @@ mod rms_norm_tests {
             .expect("Failed to create input tensor");
         let weight_gpu = DeviceTensor::from_host_vec(&backend, weight, weight_shape)
             .expect("Failed to create weight tensor");
-        let mut out_gpu = DeviceTensor::empty(&backend, out_shape)
-            .expect("Failed to create output tensor");
+        let mut out_gpu =
+            DeviceTensor::empty(&backend, out_shape).expect("Failed to create output tensor");
 
         let result = unsafe {
             crate::mlp::kernels::rms_norm_gpu_kernel(
-                &backend,  // Pass backend to ensure stream consistency
+                &backend, // Pass backend to ensure stream consistency
                 input_gpu.as_ptr() as *const f32,
                 weight_gpu.as_ptr() as *const f32,
                 out_gpu.buffer().as_mut_ptr() as *mut f32,
@@ -160,7 +162,8 @@ mod rms_norm_tests {
 
         backend.synchronize().expect("GPU synchronization failed");
 
-        let gpu_result = out_gpu.to_host_vec()
+        let gpu_result = out_gpu
+            .to_host_vec()
             .expect("Failed to copy output from GPU");
 
         let mut max_diff = 0.0f32;
@@ -168,7 +171,11 @@ mod rms_norm_tests {
             max_diff = max_diff.max((cpu_val - gpu_val).abs());
         }
         println!("RMSNorm 32x128 max diff: {}", max_diff);
-        assert!(max_diff < TEST_TOLERANCE_LARGE, "Max diff {} exceeds tolerance", max_diff);
+        assert!(
+            max_diff < TEST_TOLERANCE_LARGE,
+            "Max diff {} exceeds tolerance",
+            max_diff
+        );
     }
 
     /// Test 3: RMSNorm properties
@@ -193,7 +200,8 @@ mod rms_norm_tests {
             assert!(
                 val.abs() < 1e-6,
                 "RMSNorm with zero input should give zero at {}, got {}",
-                i, val
+                i,
+                val
             );
         }
 
@@ -201,7 +209,8 @@ mod rms_norm_tests {
         let input_const = vec![2.0; hidden_size];
         let weight_const: Vec<f32> = vec![1.0; hidden_size];
 
-        let cpu_result_const = rms_norm_cpu_reference(&input_const, &weight_const, seq_len, hidden_size, eps);
+        let cpu_result_const =
+            rms_norm_cpu_reference(&input_const, &weight_const, seq_len, hidden_size, eps);
 
         // For constant input x, RMS = sqrt(x^2 + eps) ≈ |x|
         // So output ≈ x / |x| = sign(x) = 1 for x > 0
@@ -209,7 +218,8 @@ mod rms_norm_tests {
             assert!(
                 (val - 1.0).abs() < 0.01,
                 "RMSNorm with constant positive input should give ~1 at {}, got {}",
-                i, val
+                i,
+                val
             );
         }
 

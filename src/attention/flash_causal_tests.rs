@@ -119,11 +119,11 @@ mod flash_causal_tests {
         let v = create_v_tensor(batch, heads, seq_len, dim);
 
         // CPU reference
-        let cpu_result = flash_attention_causal_cpu_reference(&q, &k, &v, batch, heads, seq_len, dim, scale);
+        let cpu_result =
+            flash_attention_causal_cpu_reference(&q, &k, &v, batch, heads, seq_len, dim, scale);
 
         // GPU run
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let q_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
         let k_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
@@ -157,7 +157,8 @@ mod flash_causal_tests {
 
         backend.synchronize().expect("GPU synchronization failed");
 
-        let gpu_result = out_gpu.to_host_vec()
+        let gpu_result = out_gpu
+            .to_host_vec()
             .expect("Failed to copy output from GPU");
 
         assert_eq!(cpu_result.len(), gpu_result.len());
@@ -169,7 +170,10 @@ mod flash_causal_tests {
             assert!(
                 diff < TEST_TOLERANCE,
                 "Flash causal mismatch at {}: CPU={}, GPU={}, diff={}",
-                i, cpu_val, gpu_val, diff
+                i,
+                cpu_val,
+                gpu_val,
+                diff
             );
         }
         println!("Flash causal small max diff: {}", max_diff);
@@ -191,13 +195,17 @@ mod flash_causal_tests {
         let v = create_v_tensor(batch, heads, seq_len, dim);
 
         // CPU reference for causal
-        let causal_cpu = flash_attention_causal_cpu_reference(&q, &k, &v, batch, heads, seq_len, dim, scale);
+        let causal_cpu =
+            flash_attention_causal_cpu_reference(&q, &k, &v, batch, heads, seq_len, dim, scale);
 
         // For query position 0, causal and non-causal should be identical
         // (query 0 can attend to all keys)
         for d in 0..dim {
-            let idx = 0 * dim + d;  // First query position, dimension d
-            assert!(causal_cpu[idx].is_finite(), "Causal output at position 0 should be finite");
+            let idx = 0 * dim + d; // First query position, dimension d
+            assert!(
+                causal_cpu[idx].is_finite(),
+                "Causal output at position 0 should be finite"
+            );
         }
 
         println!("Flash causal first position check passed");
@@ -217,22 +225,21 @@ mod flash_causal_tests {
         let v = create_v_tensor(batch, heads, seq_len, dim);
 
         // GPU run
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let q_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
         let k_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
         let v_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
         let out_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
 
-        let q_gpu = DeviceTensor::from_host_vec(&backend, q, q_shape)
-            .expect("Failed to create Q tensor");
-        let k_gpu = DeviceTensor::from_host_vec(&backend, k, k_shape)
-            .expect("Failed to create K tensor");
-        let v_gpu = DeviceTensor::from_host_vec(&backend, v, v_shape)
-            .expect("Failed to create V tensor");
-        let mut out_gpu = DeviceTensor::empty(&backend, out_shape)
-            .expect("Failed to create output tensor");
+        let q_gpu =
+            DeviceTensor::from_host_vec(&backend, q, q_shape).expect("Failed to create Q tensor");
+        let k_gpu =
+            DeviceTensor::from_host_vec(&backend, k, k_shape).expect("Failed to create K tensor");
+        let v_gpu =
+            DeviceTensor::from_host_vec(&backend, v, v_shape).expect("Failed to create V tensor");
+        let mut out_gpu =
+            DeviceTensor::empty(&backend, out_shape).expect("Failed to create output tensor");
 
         let result = unsafe {
             crate::attention::kernels::flash_attention_causal_gpu_kernel(
@@ -252,7 +259,8 @@ mod flash_causal_tests {
 
         backend.synchronize().expect("GPU synchronization failed");
 
-        let gpu_result = out_gpu.to_host_vec()
+        let gpu_result = out_gpu
+            .to_host_vec()
             .expect("Failed to copy output from GPU");
 
         // Verify output is finite (no NaN or inf in results)
@@ -260,7 +268,8 @@ mod flash_causal_tests {
             assert!(
                 val.is_finite(),
                 "Flash causal output should be finite at index {}, got {}",
-                i, val
+                i,
+                val
             );
         }
 
@@ -280,24 +289,24 @@ mod flash_causal_tests {
         let k = create_k_tensor(batch, heads, seq_len, dim);
         let v = create_v_tensor(batch, heads, seq_len, dim);
 
-        let cpu_result = flash_attention_causal_cpu_reference(&q, &k, &v, batch, heads, seq_len, dim, scale);
+        let cpu_result =
+            flash_attention_causal_cpu_reference(&q, &k, &v, batch, heads, seq_len, dim, scale);
 
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let q_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
         let k_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
         let v_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
         let out_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
 
-        let q_gpu = DeviceTensor::from_host_vec(&backend, q, q_shape)
-            .expect("Failed to create Q tensor");
-        let k_gpu = DeviceTensor::from_host_vec(&backend, k, k_shape)
-            .expect("Failed to create K tensor");
-        let v_gpu = DeviceTensor::from_host_vec(&backend, v, v_shape)
-            .expect("Failed to create V tensor");
-        let mut out_gpu = DeviceTensor::empty(&backend, out_shape)
-            .expect("Failed to create output tensor");
+        let q_gpu =
+            DeviceTensor::from_host_vec(&backend, q, q_shape).expect("Failed to create Q tensor");
+        let k_gpu =
+            DeviceTensor::from_host_vec(&backend, k, k_shape).expect("Failed to create K tensor");
+        let v_gpu =
+            DeviceTensor::from_host_vec(&backend, v, v_shape).expect("Failed to create V tensor");
+        let mut out_gpu =
+            DeviceTensor::empty(&backend, out_shape).expect("Failed to create output tensor");
 
         let result = unsafe {
             crate::attention::kernels::flash_attention_causal_gpu_kernel(
@@ -317,7 +326,8 @@ mod flash_causal_tests {
 
         backend.synchronize().expect("GPU synchronization failed");
 
-        let gpu_result = out_gpu.to_host_vec()
+        let gpu_result = out_gpu
+            .to_host_vec()
             .expect("Failed to copy output from GPU");
 
         let mut max_diff = 0.0f32;
@@ -325,6 +335,10 @@ mod flash_causal_tests {
             max_diff = max_diff.max((cpu_val - gpu_val).abs());
         }
         println!("Flash causal 16x16 max diff: {}", max_diff);
-        assert!(max_diff < TEST_TOLERANCE_LARGE, "Max diff {} exceeds tolerance", max_diff);
+        assert!(
+            max_diff < TEST_TOLERANCE_LARGE,
+            "Max diff {} exceeds tolerance",
+            max_diff
+        );
     }
 }

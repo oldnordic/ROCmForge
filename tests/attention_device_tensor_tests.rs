@@ -1,13 +1,13 @@
 //! Tests for attention mechanism with DeviceTensor integration
 
 #[cfg(feature = "rocm")]
-use serial_test::serial;
-#[cfg(feature = "rocm")]
 use rocmforge::attention::{Attention, AttentionBackend};
 #[cfg(feature = "rocm")]
 use rocmforge::backend::{DeviceTensor, HipBackend};
 #[cfg(feature = "rocm")]
 use rocmforge::loader::mmap_loader::{open_mmap_weights, TensorShape};
+#[cfg(feature = "rocm")]
+use serial_test::serial;
 #[cfg(feature = "rocm")]
 use std::io::Write;
 
@@ -37,7 +37,8 @@ fn test_attention_device_tensor_basic() {
     ];
 
     // Create DeviceTensors from host data
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let q_shape = TensorShape::from_dims(&[batch_size, seq_len, dim]);
@@ -158,7 +159,8 @@ fn test_attention_device_tensor_with_mask() {
     let mask_data: Vec<f32> = vec![0.0, f32::NEG_INFINITY]; // Allow first, mask second
 
     // Create DeviceTensors
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let q_shape = TensorShape::from_dims(&[batch_size, seq_len, dim]);
@@ -223,7 +225,8 @@ fn test_attention_device_tensor_from_mmap() {
     let mmap_weights = open_mmap_weights(temp_file.path()).unwrap();
 
     // Create DeviceTensors from mmap
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     let q_shape = TensorShape::from_dims(&[batch_size, seq_len, dim]);
@@ -234,12 +237,10 @@ fn test_attention_device_tensor_from_mmap() {
     let q_device = DeviceTensor::from_mmap(backend, &mmap_weights, q_shape.clone(), 0).unwrap();
 
     // K from mmap (offset 4, length 4)
-    let k_device =
-        DeviceTensor::from_mmap(backend, &mmap_weights, k_shape.clone(), 4 * 4).unwrap();
+    let k_device = DeviceTensor::from_mmap(backend, &mmap_weights, k_shape.clone(), 4 * 4).unwrap();
 
     // V from mmap (offset 8, length 4)
-    let v_device =
-        DeviceTensor::from_mmap(backend, &mmap_weights, v_shape.clone(), 8 * 4).unwrap();
+    let v_device = DeviceTensor::from_mmap(backend, &mmap_weights, v_shape.clone(), 8 * 4).unwrap();
 
     // Create attention with GPU backend
     let attention = Attention::with_backend(dim, AttentionBackend::Gpu);
@@ -272,7 +273,8 @@ fn test_attention_device_tensor_from_mmap() {
 fn test_debug_device_tensor_sizes() {
     use rocmforge::backend::{DeviceTensor, HipBackend};
 
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 

@@ -5,8 +5,8 @@
 //!
 //! Run: cargo run --bin test_gguf_load -- <path-to.gguf>
 
-use std::env;
 use rocmforge::loader::gguf::{GgufLoader, GgufTensor, GgufTensorType};
+use std::env;
 
 fn print_tensor_summary(tensor: &GgufTensor) {
     println!("  Tensor: {}", tensor.name);
@@ -28,7 +28,10 @@ fn print_model_summary(loader: &GgufLoader) {
     println!("Hidden size: {}", metadata.hidden_size);
     println!("Intermediate size: {}", metadata.intermediate_size);
     println!("Head dim: {}", metadata.head_dim);
-    println!("Max position embeddings: {}", metadata.max_position_embeddings);
+    println!(
+        "Max position embeddings: {}",
+        metadata.max_position_embeddings
+    );
     println!("Vocab size: {}", metadata.vocab_size);
     println!("RMS norm eps: {}", metadata.rms_norm_eps);
 
@@ -64,10 +67,12 @@ fn print_model_summary(loader: &GgufLoader) {
     }
 
     // Calculate total model size
-    let total_bytes: usize = tensors.values()
-        .map(|t| t.data.len())
-        .sum();
-    println!("Total model size: {} bytes ({:.2} MB)", total_bytes, total_bytes as f64 / 1024.0 / 1024.0);
+    let total_bytes: usize = tensors.values().map(|t| t.data.len()).sum();
+    println!(
+        "Total model size: {} bytes ({:.2} MB)",
+        total_bytes,
+        total_bytes as f64 / 1024.0 / 1024.0
+    );
 
     // Find key tensors
     println!("\n=== Key Tensors ===");
@@ -94,7 +99,8 @@ fn print_model_summary(loader: &GgufLoader) {
 
     // Show first few layer names
     println!("=== Sample Layer Tensors ===");
-    let mut layer_names: Vec<&str> = tensors.values()
+    let mut layer_names: Vec<&str> = tensors
+        .values()
         .filter(|t| t.name.contains("layer"))
         .map(|t| t.name.as_str())
         .take(5)
@@ -129,7 +135,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Get file size
     let metadata = std::fs::metadata(gguf_path)?;
     let file_size = metadata.len();
-    println!("File size: {} bytes ({:.2} MB)", file_size, file_size as f64 / 1024.0 / 1024.0);
+    println!(
+        "File size: {} bytes ({:.2} MB)",
+        file_size,
+        file_size as f64 / 1024.0 / 1024.0
+    );
 
     // Load GGUF (CPU-only, no GPU involved)
     println!("\nLoading GGUF (CPU-only, no GPU init)...");

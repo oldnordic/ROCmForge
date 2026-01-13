@@ -125,10 +125,10 @@ fn test_model_runtime_memory_limits() {
     let mmap_weights = open_mmap_weights(temp_file.path()).unwrap();
 
     let config = ModelConfig {
-        vocab_size: 50000, // Large vocab
-        hidden_size: 4096, // Large hidden
-        num_hidden_layers: 32,    // Many layers
-        num_attention_heads: 32,     // Many heads
+        vocab_size: 50000,             // Large vocab
+        hidden_size: 4096,             // Large hidden
+        num_hidden_layers: 32,         // Many layers
+        num_attention_heads: 32,       // Many heads
         max_position_embeddings: 2048, // Long sequences
         intermediate_size: 11008,
         head_dim: 128,

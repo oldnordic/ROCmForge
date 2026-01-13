@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use futures::StreamExt;
 use reqwest::Client;
 use reqwest_eventsource::{Event, EventSource};
-use rocmforge::engine::{EngineConfig, InferenceEngine};
+use rocmforge::engine::InferenceEngine;
 use rocmforge::http::server::run_server;
 use rocmforge::models::discover_models;
 use rocmforge::tokenizer::{embedded_tokenizer_from_gguf, infer_tokenizer_path, TokenizerAdapter};
@@ -201,7 +201,9 @@ async fn run_http_generate(host: &str, body: GenerateRequest) -> anyhow::Result<
     let resp = client.post(url).json(&body).send().await?;
     if !resp.status().is_success() {
         let status = resp.status();
-        let text = resp.text().await
+        let text = resp
+            .text()
+            .await
             .unwrap_or_else(|e| format!("<failed to read error body: {}>", e));
         anyhow::bail!("Server returned error {}: {}", status, text);
     }
@@ -278,7 +280,9 @@ async fn fetch_status(host: &str, request_id: u32) -> anyhow::Result<()> {
     let resp = client.get(url).send().await?;
     if !resp.status().is_success() {
         let status = resp.status();
-        let text = resp.text().await
+        let text = resp
+            .text()
+            .await
             .unwrap_or_else(|e| format!("<failed to read error body: {}>", e));
         anyhow::bail!("Server returned error {}: {}", status, text);
     }
@@ -297,7 +301,9 @@ async fn cancel_http_request(host: &str, request_id: u32) -> anyhow::Result<()> 
     let resp = client.post(url).send().await?;
     if !resp.status().is_success() {
         let status = resp.status();
-        let text = resp.text().await
+        let text = resp
+            .text()
+            .await
             .unwrap_or_else(|e| format!("<failed to read error body: {}>", e));
         anyhow::bail!("Server returned error {}: {}", status, text);
     }
@@ -390,15 +396,14 @@ async fn run_local_generate(
         anyhow::bail!("Invalid top_p: {} must be in range (0.0, 1.0]", top_p);
     }
 
+    eprintln!(">>> run_local_generate: About to call submit_request...");
     let request_id = engine
-        .submit_request(
-            prompt_tokens,
-            max_tokens,
-            temperature,
-            top_k,
-            top_p,
-        )
+        .submit_request(prompt_tokens, max_tokens, temperature, top_k, top_p)
         .await?;
+    eprintln!(
+        ">>> run_local_generate: submit_request returned request_id={}",
+        request_id
+    );
 
     let mut completion = Box::pin(wait_for_completion(&engine, tokenizer, request_id));
     let ctrl_c = tokio::signal::ctrl_c();
@@ -470,13 +475,7 @@ async fn run_local_stream(
     }
 
     let request_id = engine
-        .submit_request(
-            prompt_tokens,
-            max_tokens,
-            temperature,
-            top_k,
-            top_p,
-        )
+        .submit_request(prompt_tokens, max_tokens, temperature, top_k, top_p)
         .await?;
 
     let mut stdout = io::stdout();
@@ -530,20 +529,30 @@ async fn run_local_stream(
 }
 
 async fn create_engine(gguf: &str) -> anyhow::Result<Arc<InferenceEngine>> {
-    let mut engine = InferenceEngine::new(EngineConfig::default())?;
-    engine.load_gguf_model(gguf).await?;
+    eprintln!("create_engine: Starting...");
+    eprintln!("create_engine: Calling InferenceEngine::from_gguf() (PHASE 24 - uses model-specific config)...");
+    // PHASE 24: Use from_gguf() instead of new(EngineConfig::default()) + load_gguf_model()
+    // This creates the paged KV cache with correct model dimensions instead of wrong defaults
+    let mut engine = InferenceEngine::from_gguf(gguf).await?;
+    eprintln!("create_engine: from_gguf() returned successfully");
     let engine = Arc::new(engine);
+    eprintln!("create_engine: Calling start()...");
     engine.start().await?;
+    eprintln!("create_engine: start() returned");
 
     // Start inference loop in background - don't block on it!
     // CRITICAL FIX: Use external tokio::spawn() like HTTP server does
     // This prevents race condition where requests are submitted before inference loop is ready
     // See: src/http/server.rs:551-557 for the stable pattern
+    eprintln!("create_engine: Spawning inference loop...");
     let engine_clone = engine.clone();
     tokio::spawn(async move {
+        eprintln!("Inference loop task: starting run_inference_loop()...");
         // Ignore errors on shutdown
         let _ = engine_clone.run_inference_loop().await;
+        eprintln!("Inference loop task: run_inference_loop() returned");
     });
+    eprintln!("create_engine: Inference loop spawned, returning...");
 
     Ok(engine)
 }

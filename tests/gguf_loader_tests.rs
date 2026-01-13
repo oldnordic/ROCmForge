@@ -172,7 +172,8 @@ mod tests {
         create_minimal_gguf_file(&gguf_path)?;
 
         // Load and upload to GPU
-        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        let fixture = rocmforge::GPU_FIXTURE
+            .as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
         let loader = GgufLoader::new(&gguf_path.to_string_lossy())?;

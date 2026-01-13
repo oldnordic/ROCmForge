@@ -97,8 +97,20 @@ impl LazyTensor {
     /// # Performance
     ///
     /// This is O(1) - no file I/O or memory allocation occurs.
-    pub fn unloaded(name: String, offset: u64, size: usize, shape: Vec<usize>, tensor_type: GgufTensorType) -> Self {
-        Self::Unloaded { name, offset, size, shape, tensor_type }
+    pub fn unloaded(
+        name: String,
+        offset: u64,
+        size: usize,
+        shape: Vec<usize>,
+        tensor_type: GgufTensorType,
+    ) -> Self {
+        Self::Unloaded {
+            name,
+            offset,
+            size,
+            shape,
+            tensor_type,
+        }
     }
 
     /// Create unloaded placeholder tensor handle (name only)

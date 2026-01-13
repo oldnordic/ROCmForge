@@ -229,8 +229,8 @@ impl Rope {
         position_ids: &[usize],
         num_heads: usize,
     ) -> AttentionResult<()> {
-        use crate::backend::hip_backend::HipBackend;
         use crate::attention::kernels::rope_gpu_kernel;
+        use crate::backend::hip_backend::HipBackend;
         use crate::loader::mmap_loader::TensorShape;
 
         let head_dim = self.config.head_dim;
@@ -284,14 +284,16 @@ impl Rope {
 
         // Create cos/sin device tensors
         let cos_shape = TensorShape::from_dims(&[seq_len, half_dim]);
-        let cos_device = DeviceTensor::from_host_vec(&backend, cos_gpu, cos_shape).map_err(|e| {
-            AttentionError::MemoryAllocation(format!("Failed to allocate cos tensor: {}", e))
-        })?;
+        let cos_device =
+            DeviceTensor::from_host_vec(&backend, cos_gpu, cos_shape).map_err(|e| {
+                AttentionError::MemoryAllocation(format!("Failed to allocate cos tensor: {}", e))
+            })?;
 
         let sin_shape = TensorShape::from_dims(&[seq_len, half_dim]);
-        let sin_device = DeviceTensor::from_host_vec(&backend, sin_gpu, sin_shape).map_err(|e| {
-            AttentionError::MemoryAllocation(format!("Failed to allocate sin tensor: {}", e))
-        })?;
+        let sin_device =
+            DeviceTensor::from_host_vec(&backend, sin_gpu, sin_shape).map_err(|e| {
+                AttentionError::MemoryAllocation(format!("Failed to allocate sin tensor: {}", e))
+            })?;
 
         // Get device pointers
         let input_ptr = x.buffer().as_mut_ptr() as *mut f32;
@@ -312,7 +314,7 @@ impl Rope {
 
         if result != 0 {
             return Err(AttentionError::GpuOperation(
-                "GPU kernel execution failed".to_string()
+                "GPU kernel execution failed".to_string(),
             ));
         }
 

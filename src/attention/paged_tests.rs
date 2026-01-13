@@ -5,8 +5,8 @@
 #[cfg(test)]
 #[cfg(feature = "rocm")]
 mod tests {
-    use super::super::paged_kernel::{PagedAttentionKernels, PagedAttentionConfig};
-    use crate::backend::{HipBackend, DeviceTensor, HipError};
+    use super::super::paged_kernel::{PagedAttentionConfig, PagedAttentionKernels};
+    use crate::backend::{DeviceTensor, HipBackend, HipError};
     use crate::loader::TensorShape;
     use std::sync::Arc;
 
@@ -80,8 +80,8 @@ mod tests {
             head_dim: 32,
         };
 
-        let kernels = PagedAttentionKernels::new(&backend, &config)
-            .expect("Failed to create kernels");
+        let kernels =
+            PagedAttentionKernels::new(&backend, &config).expect("Failed to create kernels");
 
         let seq_len = 8;
         let num_heads = 4;
@@ -95,8 +95,8 @@ mod tests {
         let block_offsets: Vec<usize> = (0..seq_len).collect();
 
         let output_shape = TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
-        let mut output = DeviceTensor::empty(&backend, output_shape)
-            .expect("Failed to create output tensor");
+        let mut output =
+            DeviceTensor::empty(&backend, output_shape).expect("Failed to create output tensor");
 
         let result = kernels.compute_paged_attention(
             &q,
@@ -114,14 +114,10 @@ mod tests {
         );
 
         // Verify output is not all zeros (kernel actually executed)
-        let output_host = output.to_host_vec()
-            .expect("Failed to copy output to host");
+        let output_host = output.to_host_vec().expect("Failed to copy output to host");
 
         let has_nonzero = output_host.iter().any(|&x| x.abs() > 1e-6);
-        assert!(
-            has_nonzero,
-            "Output should contain non-zero values"
-        );
+        assert!(has_nonzero, "Output should contain non-zero values");
     }
 
     // Test 3: Multiple non-contiguous blocks
@@ -134,8 +130,8 @@ mod tests {
             head_dim: 16,
         };
 
-        let kernels = PagedAttentionKernels::new(&backend, &config)
-            .expect("Failed to create kernels");
+        let kernels =
+            PagedAttentionKernels::new(&backend, &config).expect("Failed to create kernels");
 
         let seq_len = 12; // 3 blocks of size 4
         let num_heads = 2;
@@ -182,8 +178,8 @@ mod tests {
         }
 
         let output_shape = TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
-        let mut output = DeviceTensor::empty(&backend, output_shape)
-            .expect("Failed to create output tensor");
+        let mut output =
+            DeviceTensor::empty(&backend, output_shape).expect("Failed to create output tensor");
 
         let result = kernels.compute_paged_attention(
             &q,
@@ -201,14 +197,10 @@ mod tests {
         );
 
         // Verify output
-        let output_host = output.to_host_vec()
-            .expect("Failed to copy output to host");
+        let output_host = output.to_host_vec().expect("Failed to copy output to host");
 
         let has_nonzero = output_host.iter().any(|&x| x.abs() > 1e-6);
-        assert!(
-            has_nonzero,
-            "Output should contain non-zero values"
-        );
+        assert!(has_nonzero, "Output should contain non-zero values");
     }
 
     // Test 4: MQA (Multi-Query Attention) support
@@ -217,15 +209,15 @@ mod tests {
         let backend = create_test_backend();
         let config = PagedAttentionConfig {
             block_size: 8,
-            num_heads: 8,  // 8 query heads
+            num_heads: 8, // 8 query heads
             head_dim: 16,
         };
 
-        let kernels = PagedAttentionKernels::new(&backend, &config)
-            .expect("Failed to create kernels");
+        let kernels =
+            PagedAttentionKernels::new(&backend, &config).expect("Failed to create kernels");
 
         let seq_len = 8;
-        let num_q_heads = 8;  // 8 query heads
+        let num_q_heads = 8; // 8 query heads
         let num_kv_heads = 2; // 2 KV heads (MQA: 4 query heads per KV head)
         let head_dim = 16;
 
@@ -253,8 +245,8 @@ mod tests {
         let block_offsets: Vec<usize> = (0..seq_len).collect();
 
         let output_shape = TensorShape::from_dims(&[seq_len, num_q_heads, head_dim]);
-        let mut output = DeviceTensor::empty(&backend, output_shape)
-            .expect("Failed to create output tensor");
+        let mut output =
+            DeviceTensor::empty(&backend, output_shape).expect("Failed to create output tensor");
 
         let result = kernels.compute_paged_attention_mqa(
             &q,
@@ -273,14 +265,10 @@ mod tests {
         );
 
         // Verify output
-        let output_host = output.to_host_vec()
-            .expect("Failed to copy output to host");
+        let output_host = output.to_host_vec().expect("Failed to copy output to host");
 
         let has_nonzero = output_host.iter().any(|&x| x.abs() > 1e-6);
-        assert!(
-            has_nonzero,
-            "MQA output should contain non-zero values"
-        );
+        assert!(has_nonzero, "MQA output should contain non-zero values");
     }
 
     // Test 5: Block boundary crossing
@@ -293,8 +281,8 @@ mod tests {
             head_dim: 16,
         };
 
-        let kernels = PagedAttentionKernels::new(&backend, &config)
-            .expect("Failed to create kernels");
+        let kernels =
+            PagedAttentionKernels::new(&backend, &config).expect("Failed to create kernels");
 
         let seq_len = 8; // Exactly 2 blocks
         let num_heads = 2;
@@ -338,8 +326,8 @@ mod tests {
         let block_offsets: Vec<usize> = (0..seq_len).map(|i| i % 4).collect();
 
         let output_shape = TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
-        let mut output = DeviceTensor::empty(&backend, output_shape)
-            .expect("Failed to create output tensor");
+        let mut output =
+            DeviceTensor::empty(&backend, output_shape).expect("Failed to create output tensor");
 
         let result = kernels.compute_paged_attention(
             &q,
@@ -367,8 +355,8 @@ mod tests {
             head_dim: 32,
         };
 
-        let kernels = PagedAttentionKernels::new(&backend, &config)
-            .expect("Failed to create kernels");
+        let kernels =
+            PagedAttentionKernels::new(&backend, &config).expect("Failed to create kernels");
 
         let seq_len = 8;
         let num_heads = 4;
@@ -378,8 +366,8 @@ mod tests {
             .expect("Failed to create test tensors");
 
         let output_shape = TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
-        let mut output = DeviceTensor::empty(&backend, output_shape)
-            .expect("Failed to create output tensor");
+        let mut output =
+            DeviceTensor::empty(&backend, output_shape).expect("Failed to create output tensor");
 
         // Mismatched block_indices length (too short)
         let block_indices = vec![0u32; seq_len / 2];

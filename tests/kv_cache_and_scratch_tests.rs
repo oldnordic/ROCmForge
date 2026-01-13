@@ -2,8 +2,6 @@
 //! Tests must fail initially, then pass after implementation
 
 #[cfg(feature = "rocm")]
-use serial_test::serial;
-#[cfg(feature = "rocm")]
 use rocmforge::backend::scratch::ScratchBufferManager;
 #[cfg(feature = "rocm")]
 use rocmforge::backend::ScratchBufferManager;
@@ -15,13 +13,16 @@ use rocmforge::loader::mmap_loader::TensorShape;
 use rocmforge::model::KVCache;
 #[cfg(feature = "rocm")]
 use rocmforge::model::ModelConfig;
+#[cfg(feature = "rocm")]
+use serial_test::serial;
 
 #[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn scratch_buffer_reuse_invariant() {
     // Test that scratch buffers are reused without reallocation
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
@@ -103,7 +104,8 @@ fn scratch_buffer_reuse_invariant() {
 #[serial]
 fn kv_cache_append_and_retrieve_consistency() {
     // Test KV cache append and retrieve operations
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
@@ -187,7 +189,8 @@ fn kv_cache_append_and_retrieve_consistency() {
 #[serial]
 fn kv_cache_capacity_boundary() {
     // Test KV cache capacity limits
-    let fixture = rocmforge::GPU_FIXTURE.as_ref()
+    let fixture = rocmforge::GPU_FIXTURE
+        .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 

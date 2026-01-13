@@ -46,11 +46,8 @@ impl OnnxTensor {
         };
 
         let data_bytes = unsafe {
-            std::slice::from_raw_parts(
-                data.as_ptr() as *const u8,
-                std::mem::size_of_val(data),
-            )
-            .to_vec()
+            std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data))
+                .to_vec()
         };
 
         OnnxTensor {

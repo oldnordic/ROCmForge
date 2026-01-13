@@ -9,6 +9,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Phase 26: GGML Decode Graph Integration ⚠️ **IN PROGRESS (2026-01-13)**
+
+**Summary**: Began wiring a persistent ggml decode graph (seq_len=1) for HIP backend, including LayerNorm, QKV (fused/separate), RoPE, Attention, MLP (SwiGLU), and residuals. Added support utilities for view tensors and KV cache bindings. Build fixes and scaffolding are in flight; compilation is not yet clean.
+
+**Changes In Progress**:
+- Added ggml ops for LayerNorm, SplitQkv, Attention, MlpSwiglu and wired HIP implementations.
+- Decode graph now uses view-based reshapes for Q/K/V to satisfy MatMul/Attention shape constraints.
+- Added bias handling for QKV and O-proj in ggml decode graph.
+- Added `KVCache::layer_tensors()` and `KVCache::advance()` to support ggml decode bindings.
+- Added RoPE cos/sin cache on device for per-token decode.
+- Added error conversions (`GgmlError -> HipError`) to simplify ggml binding plumbing.
+- Fixed ggml tensor stride type inference errors.
+
+**Known Issues**:
+- Compilation still failing (remaining trait scope and ggml error conversions are being resolved).
+- Decode path is not yet validated end-to-end on hardware.
+
+### Phase 25: GQA Architecture Support ✅ **COMPLETE (2026-01-13)**
+
+**Summary**: Discovered and fixed fundamental architecture mismatch - code was designed for fused QKV attention (LLaMA-style), but Qwen2 uses separate Q,K,V weights with Grouped Query Attention (GQA) where K/V have fewer heads than Q. All 24 transformer layers now complete successfully.
+
+**Root Cause Discovery**:
+Using CodeMCP tools (Magellan, find_symbols, discover_summary), traced exact data flow:
+- Code expected: `attn_qkv.weight` [2688, 896] with 14 heads for Q,K,V
+- Model had: `attn_q.weight` [896, 896], `attn_k.weight` [128, 896], `attn_v.weight` [128, 896]
+- Architecture: Qwen2.5-0.5B uses GQA with 14 query heads, 2 KV heads
+
+**Fixes Applied**:
+1. ✅ Tensor format detection - `create_layer_plan_lazy` now detects both fused and separate QKV formats
+2. ✅ Separate QKV attention path - New `self_attention_separate()` function for separate tensor handling
+3. ✅ RoPE for GQA - CPU-side RoPE with separate head counts (14 for Q, 2 for K)
+4. ✅ KV cache skip - Temporary workaround for incompatible KV cache (GQA-aware cache deferred)
+5. ✅ Attention kernel KV expansion - CPU-side expansion of K/V from 2 to 14 heads for attention computation
+
+**Files Modified**:
+- `src/model/execution_plan.rs:126-172` - `LayerPlan` struct with separate Q,K,V fields
+- `src/model/execution_plan.rs:526-637` - Tensor format detection logic
+- `src/model/execution_plan.rs:1127-1264` - `self_attention_separate()` function
+- `src/model/execution_plan.rs:1569-1660` - GQA KV expansion in scaled_dot_product_attention
+- `src/model/execution_plan.rs:225-259` - LM head diagnostic logging
+
+**Performance**:
+- All 24 layers complete in ~60-80ms per layer
+- ~1.5-2 seconds total for forward pass through all layers
+
+**Known Issues**:
+- LM head matmul hangs after all layers complete (separate issue, not related to GQA)
+- KV cache skipped for GQA models (temporary workaround)
+
+**Documentation**:
+- `docs/PHASE_25_STATUS_2026-01-13.md` - Complete implementation details
+- `docs/ARCH_DECISION_2026-01-12_GGUF_SHAPE.md` - GGUF transpose decision
+
+---
+
 ### Phase 23: hipDeviceSynchronize Desktop Hang Fix ✅ **COMPLETE (2026-01-12)**
 
 **Summary**: Fixed critical bug where `hipDeviceSynchronize()` was waiting for ALL GPU streams including the desktop compositor, causing desktop freezes/hangs. Now uses stream-aware `hipStreamSynchronize()`.

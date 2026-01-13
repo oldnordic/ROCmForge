@@ -113,7 +113,10 @@ impl AttentionConfig {
         if self.head_dim != self.dim / self.num_heads {
             return Err(format!(
                 "head_dim ({}) must equal dim ({}) / num_heads ({}), got {}",
-                self.head_dim, self.dim, self.num_heads, self.dim / self.num_heads
+                self.head_dim,
+                self.dim,
+                self.num_heads,
+                self.dim / self.num_heads
             ));
         }
         Ok(())
@@ -145,9 +148,8 @@ pub struct AttentionBackendRegistry {
 
 impl AttentionBackendRegistry {
     pub fn new() -> Self {
-        let mut backends: Vec<Box<dyn BackendImplementation>> = vec![
-            Box::new(cpu_backend::CpuAttentionBackend::new()),
-        ];
+        let mut backends: Vec<Box<dyn BackendImplementation>> =
+            vec![Box::new(cpu_backend::CpuAttentionBackend::new())];
 
         #[cfg(feature = "rocm")]
         {
@@ -180,13 +182,15 @@ impl AttentionBackendRegistry {
                 if backend.supports(config) {
                     return Ok(backend.as_ref());
                 }
-                return Err(AttentionBackendError::NotSupported(
-                    format!("Default backend '{}' does not support this configuration", default_name)
-                ));
+                return Err(AttentionBackendError::NotSupported(format!(
+                    "Default backend '{}' does not support this configuration",
+                    default_name
+                )));
             }
-            return Err(AttentionBackendError::NotFound(
-                format!("Default backend '{}' not found", default_name)
-            ));
+            return Err(AttentionBackendError::NotFound(format!(
+                "Default backend '{}' not found",
+                default_name
+            )));
         }
 
         // Auto-select based on configuration
@@ -197,7 +201,7 @@ impl AttentionBackendRegistry {
         }
 
         Err(AttentionBackendError::NotFound(
-            "No suitable backend found for configuration".to_string()
+            "No suitable backend found for configuration".to_string(),
         ))
     }
 
@@ -272,18 +276,13 @@ pub mod cpu_backend {
             mask: Option<&[f32]>,
         ) -> AttentionBackendResult<Vec<f32>> {
             // Validate config
-            config.validate()
+            config
+                .validate()
                 .map_err(|e| AttentionBackendError::NotSupported(e))?;
 
             // Call existing CPU implementation
-            super::super::cpu::CpuBackend::forward(
-                config.dim,
-                q,
-                k,
-                v,
-                mask,
-                config.dropout,
-            ).map_err(|e| AttentionBackendError::OperationFailed(e.to_string()))
+            super::super::cpu::CpuBackend::forward(config.dim, q, k, v, mask, config.dropout)
+                .map_err(|e| AttentionBackendError::OperationFailed(e.to_string()))
         }
     }
 }
@@ -342,18 +341,13 @@ pub mod gpu_backend {
             mask: Option<&[f32]>,
         ) -> AttentionBackendResult<Vec<f32>> {
             // Validate config
-            config.validate()
+            config
+                .validate()
                 .map_err(|e| AttentionBackendError::NotSupported(e))?;
 
             // Call existing GPU implementation
-            super::super::gpu::GpuBackend::forward(
-                config.dim,
-                q,
-                k,
-                v,
-                mask,
-                config.dropout,
-            ).map_err(|e| AttentionBackendError::OperationFailed(e.to_string()))
+            super::super::gpu::GpuBackend::forward(config.dim, q, k, v, mask, config.dropout)
+                .map_err(|e| AttentionBackendError::OperationFailed(e.to_string()))
         }
     }
 }
@@ -478,7 +472,11 @@ mod tests {
         let v = vec![0.3f32; 256];
 
         let result = backend.forward(&config, &q, &k, &v, None);
-        assert!(result.is_ok(), "CPU backend forward failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "CPU backend forward failed: {:?}",
+            result.err()
+        );
 
         let output = result.unwrap();
         assert_eq!(output.len(), q.len());

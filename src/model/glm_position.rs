@@ -48,7 +48,10 @@ pub struct GlmPositionHandler {
 impl GlmPositionHandler {
     /// Create new GLM position handler
     pub fn new(config: GlmPositionConfig) -> AttentionResult<Self> {
-        let rope = config.rope_config.as_ref().map(|rope_config| Rope::new(rope_config.clone()));
+        let rope = config
+            .rope_config
+            .as_ref()
+            .map(|rope_config| Rope::new(rope_config.clone()));
 
         Ok(Self { config, rope })
     }
@@ -233,9 +236,9 @@ impl GlmPositionHandler {
         position_ids: &[usize],
         num_heads: usize,
     ) -> AttentionResult<(crate::backend::DeviceTensor, crate::backend::DeviceTensor)> {
-        use crate::backend::DeviceTensor;
-        use crate::backend::hip_backend::HipBackend;
         use crate::attention::kernels::position_embeddings_gpu_kernel;
+        use crate::backend::hip_backend::HipBackend;
+        use crate::backend::DeviceTensor;
         use crate::loader::mmap_loader::TensorShape;
 
         // Validate inputs
@@ -287,7 +290,8 @@ impl GlmPositionHandler {
                 if pos >= rope.config().max_seq_len {
                     return Err(AttentionError::DimensionError(format!(
                         "Position ID {} exceeds maximum sequence length {}",
-                        pos, rope.config().max_seq_len
+                        pos,
+                        rope.config().max_seq_len
                     )));
                 }
             }
@@ -304,14 +308,22 @@ impl GlmPositionHandler {
 
             // Create cos/sin device tensors
             let cos_shape = TensorShape::from_dims(&[seq_len, half_dim]);
-            let cos_device = DeviceTensor::from_host_vec(&backend, cos_gpu, cos_shape).map_err(|e| {
-                AttentionError::MemoryAllocation(format!("Failed to allocate cos tensor: {}", e))
-            })?;
+            let cos_device =
+                DeviceTensor::from_host_vec(&backend, cos_gpu, cos_shape).map_err(|e| {
+                    AttentionError::MemoryAllocation(format!(
+                        "Failed to allocate cos tensor: {}",
+                        e
+                    ))
+                })?;
 
             let sin_shape = TensorShape::from_dims(&[seq_len, half_dim]);
-            let sin_device = DeviceTensor::from_host_vec(&backend, sin_gpu, sin_shape).map_err(|e| {
-                AttentionError::MemoryAllocation(format!("Failed to allocate sin tensor: {}", e))
-            })?;
+            let sin_device =
+                DeviceTensor::from_host_vec(&backend, sin_gpu, sin_shape).map_err(|e| {
+                    AttentionError::MemoryAllocation(format!(
+                        "Failed to allocate sin tensor: {}",
+                        e
+                    ))
+                })?;
 
             // Get device pointers
             let q_ptr = q.buffer().as_mut_ptr() as *mut f32;
@@ -334,7 +346,7 @@ impl GlmPositionHandler {
 
             if result != 0 {
                 return Err(AttentionError::GpuOperation(
-                    "GPU kernel execution failed".to_string()
+                    "GPU kernel execution failed".to_string(),
                 ));
             }
 
@@ -458,8 +470,7 @@ impl GlmPositionHandler {
 }
 
 /// GLM attention patterns
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub enum GlmAttentionPattern {
     /// Standard causal attention (default for GLM)
     #[default]
@@ -476,7 +487,6 @@ pub enum GlmAttentionPattern {
     /// Custom pattern with user-defined function
     Custom(fn(usize) -> usize),
 }
-
 
 #[cfg(test)]
 mod tests {

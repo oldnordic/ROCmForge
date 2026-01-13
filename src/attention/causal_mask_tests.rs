@@ -32,10 +32,7 @@ mod causal_mask_tests {
             for h in 0..heads {
                 for q in 0..seq_q {
                     for k in 0..seq_k {
-                        let idx = b * heads * seq_q * seq_k
-                               + h * seq_q * seq_k
-                               + q * seq_k
-                               + k;
+                        let idx = b * heads * seq_q * seq_k + h * seq_q * seq_k + q * seq_k + k;
                         // Causal: mask out future positions
                         // In causal attention, query at position q can only attend to keys at positions <= q
                         if k > q {
@@ -67,31 +64,30 @@ mod causal_mask_tests {
         // query 1: [0,   0, -inf, -inf]
         // query 2: [0,   0,   0, -inf]
         // query 3: [0,   0,   0,   0]
-        assert_eq!(cpu_mask[0 * 4 + 0], 0.0f32);       // q=0, k=0
-        assert_eq!(cpu_mask[0 * 4 + 1], f32::NEG_INFINITY);  // q=0, k=1
-        assert_eq!(cpu_mask[0 * 4 + 2], f32::NEG_INFINITY);  // q=0, k=2
-        assert_eq!(cpu_mask[0 * 4 + 3], f32::NEG_INFINITY);  // q=0, k=3
+        assert_eq!(cpu_mask[0 * 4 + 0], 0.0f32); // q=0, k=0
+        assert_eq!(cpu_mask[0 * 4 + 1], f32::NEG_INFINITY); // q=0, k=1
+        assert_eq!(cpu_mask[0 * 4 + 2], f32::NEG_INFINITY); // q=0, k=2
+        assert_eq!(cpu_mask[0 * 4 + 3], f32::NEG_INFINITY); // q=0, k=3
 
-        assert_eq!(cpu_mask[1 * 4 + 0], 0.0f32);       // q=1, k=0
-        assert_eq!(cpu_mask[1 * 4 + 1], 0.0f32);       // q=1, k=1
-        assert_eq!(cpu_mask[1 * 4 + 2], f32::NEG_INFINITY);  // q=1, k=2
-        assert_eq!(cpu_mask[1 * 4 + 3], f32::NEG_INFINITY);  // q=1, k=3
+        assert_eq!(cpu_mask[1 * 4 + 0], 0.0f32); // q=1, k=0
+        assert_eq!(cpu_mask[1 * 4 + 1], 0.0f32); // q=1, k=1
+        assert_eq!(cpu_mask[1 * 4 + 2], f32::NEG_INFINITY); // q=1, k=2
+        assert_eq!(cpu_mask[1 * 4 + 3], f32::NEG_INFINITY); // q=1, k=3
 
-        assert_eq!(cpu_mask[2 * 4 + 0], 0.0f32);       // q=2, k=0
-        assert_eq!(cpu_mask[2 * 4 + 1], 0.0f32);       // q=2, k=1
-        assert_eq!(cpu_mask[2 * 4 + 2], 0.0f32);       // q=2, k=2
-        assert_eq!(cpu_mask[2 * 4 + 3], f32::NEG_INFINITY);  // q=2, k=3
+        assert_eq!(cpu_mask[2 * 4 + 0], 0.0f32); // q=2, k=0
+        assert_eq!(cpu_mask[2 * 4 + 1], 0.0f32); // q=2, k=1
+        assert_eq!(cpu_mask[2 * 4 + 2], 0.0f32); // q=2, k=2
+        assert_eq!(cpu_mask[2 * 4 + 3], f32::NEG_INFINITY); // q=2, k=3
 
-        assert_eq!(cpu_mask[3 * 4 + 0], 0.0f32);       // q=3, k=0
-        assert_eq!(cpu_mask[3 * 4 + 1], 0.0f32);       // q=3, k=1
-        assert_eq!(cpu_mask[3 * 4 + 2], 0.0f32);       // q=3, k=2
-        assert_eq!(cpu_mask[3 * 4 + 3], 0.0f32);       // q=3, k=3
+        assert_eq!(cpu_mask[3 * 4 + 0], 0.0f32); // q=3, k=0
+        assert_eq!(cpu_mask[3 * 4 + 1], 0.0f32); // q=3, k=1
+        assert_eq!(cpu_mask[3 * 4 + 2], 0.0f32); // q=3, k=2
+        assert_eq!(cpu_mask[3 * 4 + 3], 0.0f32); // q=3, k=3
 
         println!("CPU causal mask pattern verified for seq=4");
 
         // GPU run
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let mask_shape = TensorShape::from_dims(&[batch, heads, seq, seq]);
         let mut mask_gpu = DeviceTensor::empty(&backend, mask_shape.clone())
@@ -110,7 +106,8 @@ mod causal_mask_tests {
 
         backend.synchronize().expect("GPU synchronization failed");
 
-        let gpu_mask = mask_gpu.to_host_vec()
+        let gpu_mask = mask_gpu
+            .to_host_vec()
             .expect("Failed to copy mask from GPU");
 
         assert_eq!(cpu_mask.len(), gpu_mask.len());
@@ -123,13 +120,17 @@ mod causal_mask_tests {
                 assert!(
                     diff < TEST_TOLERANCE,
                     "Causal mask mismatch at {}: CPU={}, GPU={}, diff={}",
-                    i, cpu_val, gpu_val, diff
+                    i,
+                    cpu_val,
+                    gpu_val,
+                    diff
                 );
             } else {
                 assert!(
                     !gpu_val.is_finite() || *gpu_val < -1e30,
                     "Causal mask mismatch at {}: CPU=-inf, GPU={}",
-                    i, gpu_val
+                    i,
+                    gpu_val
                 );
             }
         }
@@ -148,8 +149,7 @@ mod causal_mask_tests {
         let cpu_mask = create_causal_mask_explicit(batch, heads, seq, seq);
 
         // GPU run
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let mask_shape = TensorShape::from_dims(&[batch, heads, seq, seq]);
         let mut mask_gpu = DeviceTensor::empty(&backend, mask_shape.clone())
@@ -168,7 +168,8 @@ mod causal_mask_tests {
 
         backend.synchronize().expect("GPU synchronization failed");
 
-        let gpu_mask = mask_gpu.to_host_vec()
+        let gpu_mask = mask_gpu
+            .to_host_vec()
             .expect("Failed to copy mask from GPU");
 
         assert_eq!(cpu_mask.len(), gpu_mask.len());
@@ -176,16 +177,21 @@ mod causal_mask_tests {
         // Sample some positions to verify
         // Check batch 0, head 0
         let base_idx = 0;
-        assert_eq!(cpu_mask[base_idx + 0 * 8 + 0], 0.0f32);       // q=0, k=0
-        assert!(!cpu_mask[base_idx + 0 * 8 + 1].is_finite());    // q=0, k=1 should be -inf
+        assert_eq!(cpu_mask[base_idx + 0 * 8 + 0], 0.0f32); // q=0, k=0
+        assert!(!cpu_mask[base_idx + 0 * 8 + 1].is_finite()); // q=0, k=1 should be -inf
 
         // Verify these match on GPU
-        assert!((cpu_mask[base_idx + 0 * 8 + 0] - gpu_mask[base_idx + 0 * 8 + 0]).abs() < TEST_TOLERANCE);
-        assert!(!gpu_mask[base_idx + 0 * 8 + 1].is_finite() || gpu_mask[base_idx + 0 * 8 + 1] < -1e30);
+        assert!(
+            (cpu_mask[base_idx + 0 * 8 + 0] - gpu_mask[base_idx + 0 * 8 + 0]).abs()
+                < TEST_TOLERANCE
+        );
+        assert!(
+            !gpu_mask[base_idx + 0 * 8 + 1].is_finite() || gpu_mask[base_idx + 0 * 8 + 1] < -1e30
+        );
 
         // Check batch 1, head 2
         let base_idx = 1 * heads * seq * seq + 2 * seq * seq;
-        assert_eq!(cpu_mask[base_idx + 7 * 8 + 7], 0.0f32);       // q=7, k=7 (last position, no mask)
+        assert_eq!(cpu_mask[base_idx + 7 * 8 + 7], 0.0f32); // q=7, k=7 (last position, no mask)
 
         println!("Causal mask multi-head batch verified");
     }
@@ -216,7 +222,10 @@ mod causal_mask_tests {
             expected_valid, valid_count
         );
 
-        println!("Causal mask preserves {} valid positions (triangular check)", valid_count);
+        println!(
+            "Causal mask preserves {} valid positions (triangular check)",
+            valid_count
+        );
     }
 
     /// Test 4: Explicit layout indexing verification
@@ -243,7 +252,8 @@ mod causal_mask_tests {
                     cpu_mask[explicit_idx].is_finite(),
                     mask_1d[flat_idx].is_finite(),
                     "Layout mismatch at q={}, k={}",
-                    q, k
+                    q,
+                    k
                 );
             }
         }

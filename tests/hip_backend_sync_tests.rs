@@ -37,7 +37,8 @@ mod tests {
     #[serial]
     fn test_synchronize_device_is_stream_aware() {
         // Get the GPU fixture - returns None if GPU unavailable
-        let fixture = GPU_FIXTURE.as_ref()
+        let fixture = GPU_FIXTURE
+            .as_ref()
             .expect("GPU not available - test skipped");
 
         // Get backend reference to ensure it's initialized
@@ -47,8 +48,10 @@ mod tests {
         // If this calls hipDeviceSynchronize(), desktop will freeze
         let result = rocmforge::backend::hip_backend::synchronize_device();
 
-        assert!(result.is_ok(),
-            "synchronize_device should succeed without hanging desktop");
+        assert!(
+            result.is_ok(),
+            "synchronize_device should succeed without hanging desktop"
+        );
 
         // Verify no memory leaks
         fixture.assert_no_leak(5);
@@ -61,7 +64,8 @@ mod tests {
     #[test]
     #[serial]
     fn test_backend_synchronize() {
-        let fixture = GPU_FIXTURE.as_ref()
+        let fixture = GPU_FIXTURE
+            .as_ref()
             .expect("GPU not available - test skipped");
 
         let backend = fixture.backend();
@@ -69,8 +73,7 @@ mod tests {
         // This should use hipStreamSynchronize (safe)
         let result = backend.synchronize();
 
-        assert!(result.is_ok(),
-            "backend.synchronize should succeed");
+        assert!(result.is_ok(), "backend.synchronize should succeed");
 
         fixture.assert_no_leak(5);
     }
@@ -82,7 +85,8 @@ mod tests {
     #[test]
     #[serial]
     fn test_multiple_synchronizations() {
-        let fixture = GPU_FIXTURE.as_ref()
+        let fixture = GPU_FIXTURE
+            .as_ref()
             .expect("GPU not available - test skipped");
 
         let backend = fixture.backend();
@@ -90,8 +94,7 @@ mod tests {
         // Call synchronize multiple times
         for _ in 0..5 {
             let result = backend.synchronize();
-            assert!(result.is_ok(),
-                "Multiple synchronize calls should succeed");
+            assert!(result.is_ok(), "Multiple synchronize calls should succeed");
         }
 
         fixture.assert_no_leak(5);
@@ -104,7 +107,8 @@ mod tests {
     #[test]
     #[serial]
     fn test_sync_methods_consistent() {
-        let fixture = GPU_FIXTURE.as_ref()
+        let fixture = GPU_FIXTURE
+            .as_ref()
             .expect("GPU not available - test skipped");
 
         let backend = fixture.backend();
@@ -113,8 +117,10 @@ mod tests {
         let result1 = backend.synchronize();
         let result2 = rocmforge::backend::hip_backend::synchronize_device();
 
-        assert!(result1.is_ok() && result2.is_ok(),
-            "Both sync methods should succeed");
+        assert!(
+            result1.is_ok() && result2.is_ok(),
+            "Both sync methods should succeed"
+        );
 
         fixture.assert_no_leak(5);
     }
@@ -125,18 +131,23 @@ mod tests {
     #[test]
     #[serial]
     fn test_synchronize_after_gpu_operations() {
-        let fixture = GPU_FIXTURE.as_ref()
+        let fixture = GPU_FIXTURE
+            .as_ref()
             .expect("GPU not available - test skipped");
 
         let backend = fixture.backend();
 
         // Perform some GPU operations
-        let buffer = backend.allocate_buffer_safe(1024).expect("Failed to allocate");
+        let buffer = backend
+            .allocate_buffer_safe(1024)
+            .expect("Failed to allocate");
 
         // Synchronize after operations
         let result = backend.synchronize();
-        assert!(result.is_ok(),
-            "Synchronize after GPU operations should succeed");
+        assert!(
+            result.is_ok(),
+            "Synchronize after GPU operations should succeed"
+        );
 
         fixture.assert_no_leak(5);
     }

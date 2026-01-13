@@ -7,7 +7,7 @@
 //!
 //! Reference: https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf
 
-use crate::loader::gguf::{E8M0, MxfpBlock};
+use crate::loader::gguf::{MxfpBlock, E8M0};
 
 /// Test E8M0 scale conversion (exponent-only format)
 ///
@@ -64,7 +64,9 @@ mod test_e8m0 {
             assert!(
                 error_pct < 0.1,
                 "Roundtrip error {:.3}% for value {} (got {})",
-                error_pct, value, recovered
+                error_pct,
+                value,
+                recovered
             );
         }
     }
@@ -129,7 +131,9 @@ mod test_mxfp4_block {
             assert!(
                 error_pct < 0.1,
                 "MXFP4 roundtrip error {:.3}%: original={}, recovered={}",
-                error_pct, original, recovered
+                error_pct,
+                original,
+                recovered
             );
         }
     }
@@ -231,7 +235,9 @@ mod test_mxfp6_block {
             assert!(
                 error_pct < 0.1,
                 "MXFP6 roundtrip error {:.3}%: original={}, recovered={}",
-                error_pct, original, recovered
+                error_pct,
+                original,
+                recovered
             );
         }
     }
@@ -335,7 +341,9 @@ mod test_dequantization_accuracy {
                 assert!(
                     (original - recovered_val).abs() < f32::EPSILON,
                     "Case {}: MXFP4 roundtrip error: original={}, recovered={}",
-                    case_idx, original, recovered_val
+                    case_idx,
+                    original,
+                    recovered_val
                 );
             }
         }
@@ -366,7 +374,9 @@ mod test_dequantization_accuracy {
                 assert!(
                     (original - recovered_val).abs() < f32::EPSILON,
                     "Case {}: MXFP6 roundtrip error: original={}, recovered={}",
-                    case_idx, original, recovered_val
+                    case_idx,
+                    original,
+                    recovered_val
                 );
             }
         }
@@ -383,12 +393,14 @@ mod test_dequantization_accuracy {
         let block_mxfp6 = MxfpBlock::pack_mxfp6(&values);
         let recovered_mxfp6 = block_mxfp6.unpack_mxfp6();
 
-        let mse4: f32 = values.iter()
+        let mse4: f32 = values
+            .iter()
             .zip(recovered_mxfp4.iter())
             .map(|(o, r)| (o - r).powi(2))
             .sum();
 
-        let mse6: f32 = values.iter()
+        let mse6: f32 = values
+            .iter()
             .zip(recovered_mxfp6.iter())
             .map(|(o, r)| (o - r).powi(2))
             .sum();
@@ -396,7 +408,8 @@ mod test_dequantization_accuracy {
         assert!(
             mse6 < mse4,
             "MXFP6 (MSE={}) should outperform MXFP4 (MSE={})",
-            mse6, mse4
+            mse6,
+            mse4
         );
     }
 }
@@ -427,10 +440,7 @@ mod test_gguf_tensor_types {
     #[test]
     fn test_gguf_tensor_type_from_u32() {
         // Test roundtrip conversion
-        assert_eq!(
-            GgufTensorType::from_u32(20).unwrap(),
-            GgufTensorType::Mxfp4
-        );
+        assert_eq!(GgufTensorType::from_u32(20).unwrap(), GgufTensorType::Mxfp4);
         assert_eq!(
             GgufTensorType::from_u32(21).unwrap(),
             GgufTensorType::Mxfp6E2m3

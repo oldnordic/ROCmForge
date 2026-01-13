@@ -69,9 +69,9 @@ impl HipAttentionKernels {
         //
         // See: https://github.com/ROCm/hip/issues/3370
         // See: https://rocm.docs.amd.com/projects/HIP/en/latest/how-to/hip_runtime_api/asynchronous.html
-        blas_handle.set_stream(backend.stream().as_ptr()).map_err(|e| {
-            HipError::GenericError(format!("Failed to set hipBLAS stream: {}", e))
-        })?;
+        blas_handle
+            .set_stream(backend.stream().as_ptr())
+            .map_err(|e| HipError::GenericError(format!("Failed to set hipBLAS stream: {}", e)))?;
 
         Ok(HipAttentionKernels {
             backend: backend.clone(),

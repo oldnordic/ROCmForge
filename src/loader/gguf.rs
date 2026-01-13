@@ -6,10 +6,10 @@
 //! - Tensor block reading and validation
 //! - GPU memory allocation via DeviceTensor
 
-use crate::backend::hip_backend::{DeviceTensor, HipBackend, HipBuffer, AsyncLoader};
-use crate::loader::TensorShape;
+use crate::backend::hip_backend::{AsyncLoader, DeviceTensor, HipBackend, HipBuffer};
 use crate::loader::lazy_tensor::LazyTensor;
 use crate::loader::mmap::MmapGguf;
+use crate::loader::TensorShape;
 use crate::model::config::ModelConfig;
 use anyhow::{anyhow, Result};
 use serde::Serialize;
@@ -180,15 +180,15 @@ impl MxfpBlock {
 
         // Encode values as E2M3 (6-bit)
         let packed = Self::pack_6bit_values(
-            &values.iter().take(32).map(|&v| {
-                // Normalize value by scale (should now be in range [0, 1])
-                let normalized = if scale_f32 > 0.0 {
-                    v / scale_f32
-                } else {
-                    v
-                };
-                Self::encode_e2m3(normalized)
-            }).collect::<Vec<u8>>()
+            &values
+                .iter()
+                .take(32)
+                .map(|&v| {
+                    // Normalize value by scale (should now be in range [0, 1])
+                    let normalized = if scale_f32 > 0.0 { v / scale_f32 } else { v };
+                    Self::encode_e2m3(normalized)
+                })
+                .collect::<Vec<u8>>(),
         );
 
         MxfpBlock {
@@ -202,12 +202,15 @@ impl MxfpBlock {
         let unpacked_bits = Self::unpack_6bit_values(&self.elements, 32);
         let scale_f32 = self.scale.to_f32();
 
-        unpacked_bits.iter().map(|&bits| {
-            let decoded = Self::decode_e2m3(bits);
-            let mut val = scale_f32 * decoded;
-            val = val.clamp(-7.5, 7.5); // MXFP6 range
-            val
-        }).collect()
+        unpacked_bits
+            .iter()
+            .map(|&bits| {
+                let decoded = Self::decode_e2m3(bits);
+                let mut val = scale_f32 * decoded;
+                val = val.clamp(-7.5, 7.5); // MXFP6 range
+                val
+            })
+            .collect()
     }
 
     /// Get packed size in bytes
@@ -358,7 +361,8 @@ impl MxfpBlock {
                     let bits_from_first_byte = 8 - bit_offset;
                     let bits_from_second_byte = 6 - bits_from_first_byte;
 
-                    let first_part = (packed[byte_idx] >> bit_offset) & ((1 << bits_from_first_byte) - 1);
+                    let first_part =
+                        (packed[byte_idx] >> bit_offset) & ((1 << bits_from_first_byte) - 1);
                     let second_part = if byte_idx + 1 < packed.len() {
                         packed[byte_idx + 1] & ((1 << bits_from_second_byte) - 1)
                     } else {
@@ -391,9 +395,9 @@ pub enum GgufTensorType {
 
     // MXFP types (OCP MX Specification v1.0)
     // Using enum values 20-22 to avoid conflicts with future ggml types
-    Mxfp4 = 20,      // OCP MXFP4-E2M1 (4-bit)
-    Mxfp6E2m3 = 21,  // OCP MXFP6-E2M3 (6-bit, recommended)
-    Mxfp6E3m2 = 22,  // OCP MXFP6-E3M2 (6-bit)
+    Mxfp4 = 20,     // OCP MXFP4-E2M1 (4-bit)
+    Mxfp6E2m3 = 21, // OCP MXFP6-E2M3 (6-bit, recommended)
+    Mxfp6E3m2 = 22, // OCP MXFP6-E3M2 (6-bit)
 }
 
 impl GgufTensorType {
@@ -549,16 +553,8 @@ impl GgufTensor {
     /// Calculate data size in bytes
     pub fn data_size(&self) -> usize {
         match self.tensor_type {
-            GgufTensorType::F32 => {
-                self.total_elements()
-                    .checked_mul(4)
-                    .unwrap_or(usize::MAX)
-            }
-            GgufTensorType::F16 => {
-                self.total_elements()
-                    .checked_mul(2)
-                    .unwrap_or(usize::MAX)
-            }
+            GgufTensorType::F32 => self.total_elements().checked_mul(4).unwrap_or(usize::MAX),
+            GgufTensorType::F16 => self.total_elements().checked_mul(2).unwrap_or(usize::MAX),
             GgufTensorType::Q4_0 => {
                 // Q4_0: block_size=32, each block has 1 scale (f32) + 32 quants (u8)
                 let blocks = self.total_elements().div_ceil(32);
@@ -584,8 +580,11 @@ impl GgufTensor {
                 let blocks = self.total_elements().div_ceil(32);
                 blocks.checked_mul(4 + 32).unwrap_or(usize::MAX)
             }
-            GgufTensorType::Q2_K | GgufTensorType::Q3_K | GgufTensorType::Q4_K |
-            GgufTensorType::Q5_K | GgufTensorType::Q6_K => {
+            GgufTensorType::Q2_K
+            | GgufTensorType::Q3_K
+            | GgufTensorType::Q4_K
+            | GgufTensorType::Q5_K
+            | GgufTensorType::Q6_K => {
                 // K-quants: block_size=256 bytes
                 let blocks = self.total_elements().div_ceil(256); // Approximate block count
                 blocks.checked_mul(256).unwrap_or(usize::MAX)
@@ -625,7 +624,7 @@ impl GgufTensor {
 pub struct GgufLoader {
     path: String,
     metadata: GgufMetadata,
-    tensors: HashMap<String, GgufTensor>,  // Legacy: kept for backward compatibility
+    tensors: HashMap<String, GgufTensor>, // Legacy: kept for backward compatibility
 
     // Phase 1: Lazy loading fields
     /// Memory-mapped GGUF file for zero-copy tensor data access
@@ -654,9 +653,9 @@ impl Clone for GgufLoader {
             path: self.path.clone(),
             metadata: self.metadata.clone(),
             tensors: self.tensors.clone(),
-            mmap: self.mmap.clone(),  // Arc<MmapGguf> clone is cheap
+            mmap: self.mmap.clone(), // Arc<MmapGguf> clone is cheap
             lazy_tensors: self.lazy_tensors.clone(),
-            gpu_cache: Arc::clone(&self.gpu_cache),  // Share GPU cache across clones
+            gpu_cache: Arc::clone(&self.gpu_cache), // Share GPU cache across clones
         }
     }
 }
@@ -761,9 +760,10 @@ impl GgufLoader {
     ) -> Result<Arc<DeviceTensor>> {
         // Check GPU cache first
         {
-            let cache = self.gpu_cache.read().map_err(|e| {
-                anyhow!("GPU cache read lock poisoned: {}", e)
-            })?;
+            let cache = self
+                .gpu_cache
+                .read()
+                .map_err(|e| anyhow!("GPU cache read lock poisoned: {}", e))?;
             if let Some(cached) = cache.get(name) {
                 tracing::debug!("GPU cache hit for tensor '{}'", name);
                 return Ok(cached.clone());
@@ -771,42 +771,58 @@ impl GgufLoader {
         }
 
         tracing::debug!("GPU cache miss for tensor '{}', loading from mmap", name);
+        eprintln!(">>> load_tensor_to_gpu: Loading tensor '{}'", name);
 
         // Get lazy tensor metadata
-        let lazy = self.lazy_tensors.get(name)
+        let lazy = self
+            .lazy_tensors
+            .get(name)
             .ok_or_else(|| anyhow!("Tensor not found: '{}'", name))?;
 
         let (offset, size, shape, tensor_type) = match lazy {
-            LazyTensor::Unloaded { offset, size, shape, tensor_type, .. } => {
+            LazyTensor::Unloaded {
+                offset,
+                size,
+                shape,
+                tensor_type,
+                ..
+            } => {
+                eprintln!(
+                    ">>> load_tensor_to_gpu: Tensor '{}' type={:?}, size={} bytes, shape={:?}",
+                    name, tensor_type, size, shape
+                );
                 (*offset, *size, TensorShape::from_dims(shape), *tensor_type)
             }
             LazyTensor::Gpu { .. } => {
-                return Err(anyhow!("Tensor '{}' already marked as GPU-loaded (should be in cache)", name));
+                return Err(anyhow!(
+                    "Tensor '{}' already marked as GPU-loaded (should be in cache)",
+                    name
+                ));
             }
         };
 
         // Read tensor data from memory-mapped file (zero-copy)
-        let mmap = self.mmap.as_ref()
-            .ok_or_else(|| anyhow!("Memory mapping not available - loader not initialized correctly"))?;
+        let mmap = self.mmap.as_ref().ok_or_else(|| {
+            anyhow!("Memory mapping not available - loader not initialized correctly")
+        })?;
 
-        let tensor_bytes = mmap.get_slice(offset, size)
+        let tensor_bytes = mmap
+            .get_slice(offset, size)
             .map_err(|e| anyhow!("Failed to read tensor '{}' from mmap: {}", name, e))?;
 
         // Dequantize based on tensor type
-        let f32_data: Vec<f32> = match tensor_type {
-            GgufTensorType::F32 => {
-                tensor_bytes.chunks_exact(4)
-                    .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-                    .collect()
-            }
-            GgufTensorType::F16 => {
-                tensor_bytes.chunks_exact(2)
-                    .map(|chunk| {
-                        let bits = u16::from_le_bytes([chunk[0], chunk[1]]);
-                        half::f16::from_bits(bits).to_f32()
-                    })
-                    .collect()
-            }
+        let mut f32_data: Vec<f32> = match tensor_type {
+            GgufTensorType::F32 => tensor_bytes
+                .chunks_exact(4)
+                .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                .collect(),
+            GgufTensorType::F16 => tensor_bytes
+                .chunks_exact(2)
+                .map(|chunk| {
+                    let bits = u16::from_le_bytes([chunk[0], chunk[1]]);
+                    half::f16::from_bits(bits).to_f32()
+                })
+                .collect(),
             GgufTensorType::Q8_0 => {
                 // Create temporary GgufTensor for dequantization
                 let temp_tensor = GgufTensor {
@@ -886,32 +902,99 @@ impl GgufLoader {
                 self.dequantize_q6_k(&temp_tensor)?
             }
             GgufTensorType::Q2_K | GgufTensorType::Q3_K | GgufTensorType::Q5_K => {
-                return Err(anyhow!("K-quant type {:?} not yet implemented for tensor '{}'", tensor_type, name));
+                return Err(anyhow!(
+                    "K-quant type {:?} not yet implemented for tensor '{}'",
+                    tensor_type,
+                    name
+                ));
             }
             GgufTensorType::Mxfp4 | GgufTensorType::Mxfp6E2m3 | GgufTensorType::Mxfp6E3m2 => {
-                return Err(anyhow!("MXFP dequantization not yet implemented for tensor '{}'", name));
+                return Err(anyhow!(
+                    "MXFP dequantization not yet implemented for tensor '{}'",
+                    name
+                ));
             }
         };
 
+        eprintln!(
+            ">>> load_tensor_to_gpu: '{}' dequantization complete, {} f32 values ({} MB)",
+            name,
+            f32_data.len(),
+            f32_data.len() * 4 / 1024 / 1024
+        );
+
+        let mut shape = shape;
+
+        // Embedding weights stay in GGUF layout; GetRows handles layout at execution time.
+
+        // Normalize fused QKV weight orientation: some models store [3*hidden, hidden]
+        // while the matmul path expects [hidden, 3*hidden].
+        if Self::is_fused_qkv_weight(name) {
+            let dims = shape.dims();
+            if dims.len() == 2 {
+                let (rows, cols) = (dims[0], dims[1]);
+                if rows == cols * 3 {
+                    eprintln!(
+                        ">>> load_tensor_to_gpu: Transposing fused QKV weight '{}' from [{}, {}] to [{}, {}]",
+                        name, rows, cols, cols, rows
+                    );
+                    f32_data = transpose_f32_matrix(&f32_data, rows, cols);
+                    shape = TensorShape::from_dims(&[cols, rows]);
+                } else if cols != rows * 3 {
+                    tracing::warn!(
+                        "Unexpected fused QKV shape [{} x {}] for '{}'; expected one dimension to be 3x the other",
+                        rows,
+                        cols,
+                        name
+                    );
+                }
+            }
+        }
+
         // Upload to GPU
-        let device_tensor = DeviceTensor::from_host_vec(
-            backend,
-            f32_data,
-            shape,
-        ).map_err(|e| anyhow!("Failed to upload tensor '{}' to GPU: {}", name, e))?;
+        let device_tensor = DeviceTensor::from_host_vec(backend, f32_data, shape)
+            .map_err(|e| anyhow!("Failed to upload tensor '{}' to GPU: {}", name, e))?;
 
         let device_tensor_arc = Arc::new(device_tensor);
 
+        eprintln!(
+            ">>> load_tensor_to_gpu: '{}' uploaded to GPU successfully",
+            name
+        );
+
         // Cache the result
         {
-            let mut cache = self.gpu_cache.write().map_err(|e| {
-                anyhow!("GPU cache write lock poisoned: {}", e)
-            })?;
+            let mut cache = self
+                .gpu_cache
+                .write()
+                .map_err(|e| anyhow!("GPU cache write lock poisoned: {}", e))?;
             cache.insert(name.to_string(), device_tensor_arc.clone());
         }
 
-        tracing::debug!("Loaded tensor '{}' to GPU and cached ({} bytes)", name, size);
+        tracing::debug!(
+            "Loaded tensor '{}' to GPU and cached ({} bytes)",
+            name,
+            size
+        );
         Ok(device_tensor_arc)
+    }
+
+    fn is_embedding_weight(name: &str) -> bool {
+        matches!(
+            name,
+            "token_embd.weight" | "lm_head.weight" | "output.weight"
+        )
+    }
+
+    fn is_fused_qkv_weight(name: &str) -> bool {
+        const PATTERNS: [&str; 5] = [
+            ".attn_qkv.weight",
+            ".attn.qkv.weight",
+            ".attention.qkv.weight",
+            ".attention.query_key_value.weight",
+            ".attention.wqkv.weight",
+        ];
+        PATTERNS.iter().any(|pattern| name.contains(pattern))
     }
 
     /// Load all tensors into memory
@@ -933,7 +1016,10 @@ impl GgufLoader {
     pub fn load_to_gpu(&self, backend: &HipBackend) -> Result<HashMap<String, DeviceTensor>> {
         let mut result = HashMap::new();
 
-        tracing::debug!("load_to_gpu: Loading {} tensors via lazy loading", self.lazy_tensors.len());
+        tracing::debug!(
+            "load_to_gpu: Loading {} tensors via lazy loading",
+            self.lazy_tensors.len()
+        );
 
         for name in self.lazy_tensors.keys() {
             let device_tensor_arc = self.load_tensor_to_gpu(name, backend)?;
@@ -963,14 +1049,17 @@ impl GgufLoader {
     /// let tensors = loader.load_to_gpu_async(&backend)?;
     /// ```
     pub fn load_to_gpu_async(&self, backend: &HipBackend) -> Result<HashMap<String, DeviceTensor>> {
-        use std::sync::Mutex;
         use std::collections::BTreeMap;
+        use std::sync::Mutex;
 
-        tracing::info!("load_to_gpu_async: Starting async load of {} tensors", self.lazy_tensors.len());
+        tracing::info!(
+            "load_to_gpu_async: Starting async load of {} tensors",
+            self.lazy_tensors.len()
+        );
 
         // Create AsyncLoader with 4 concurrent upload streams
-        let async_loader = AsyncLoader::new()
-            .map_err(|e| anyhow!("Failed to create AsyncLoader: {}", e))?;
+        let async_loader =
+            AsyncLoader::new().map_err(|e| anyhow!("Failed to create AsyncLoader: {}", e))?;
 
         // Get all tensor names in sorted order for predictable behavior
         let tensor_names: Vec<String> = self.lazy_tensors.keys().cloned().collect();
@@ -978,7 +1067,10 @@ impl GgufLoader {
 
         // Phase A: Parallel Dequantization (Rayon)
         // All tensors dequantized in parallel on CPU
-        tracing::info!("load_to_gpu_async: Phase A - Parallel dequantization of {} tensors", total_tensors);
+        tracing::info!(
+            "load_to_gpu_async: Phase A - Parallel dequantization of {} tensors",
+            total_tensors
+        );
 
         // Thread-safe storage for dequantized data
         let dequantized_data: Mutex<BTreeMap<String, Vec<f32>>> = Mutex::new(BTreeMap::new());
@@ -1005,9 +1097,13 @@ impl GgufLoader {
             };
 
             let (offset, size, shape, tensor_type) = match lazy {
-                LazyTensor::Unloaded { offset, size, shape, tensor_type, .. } => {
-                    (*offset, *size, shape.clone(), *tensor_type)
-                }
+                LazyTensor::Unloaded {
+                    offset,
+                    size,
+                    shape,
+                    tensor_type,
+                    ..
+                } => (*offset, *size, shape.clone(), *tensor_type),
                 LazyTensor::Gpu { .. } => return,
             };
 
@@ -1024,19 +1120,17 @@ impl GgufLoader {
 
             // Dequantize based on tensor type (using Rayon-parallelized methods)
             let f32_data: Vec<f32> = match tensor_type {
-                GgufTensorType::F32 => {
-                    tensor_bytes.chunks_exact(4)
-                        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-                        .collect()
-                }
-                GgufTensorType::F16 => {
-                    tensor_bytes.chunks_exact(2)
-                        .map(|chunk| {
-                            let bits = u16::from_le_bytes([chunk[0], chunk[1]]);
-                            half::f16::from_bits(bits).to_f32()
-                        })
-                        .collect()
-                }
+                GgufTensorType::F32 => tensor_bytes
+                    .chunks_exact(4)
+                    .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                    .collect(),
+                GgufTensorType::F16 => tensor_bytes
+                    .chunks_exact(2)
+                    .map(|chunk| {
+                        let bits = u16::from_le_bytes([chunk[0], chunk[1]]);
+                        half::f16::from_bits(bits).to_f32()
+                    })
+                    .collect(),
                 GgufTensorType::Q8_0 => {
                     let temp_tensor = GgufTensor {
                         name: name.clone(),
@@ -1076,7 +1170,10 @@ impl GgufLoader {
                 // Mutex poisoning is unlikely in parallel dequantization (no panics expected)
                 // but we handle it gracefully with context
                 let mut data_guard = dequantized_data.lock().unwrap_or_else(|e| {
-                    panic!("Failed to lock dequantized_data for tensor '{}': {}", name, e)
+                    panic!(
+                        "Failed to lock dequantized_data for tensor '{}': {}",
+                        name, e
+                    )
                 });
                 let mut shape_guard = tensor_shapes.lock().unwrap_or_else(|e| {
                     panic!("Failed to lock tensor_shapes for tensor '{}': {}", name, e)
@@ -1086,25 +1183,31 @@ impl GgufLoader {
             }
         });
 
-        tracing::info!("load_to_gpu_async: Phase A complete - {} tensors dequantized",
-            dequantized_data.lock()
+        tracing::info!(
+            "load_to_gpu_async: Phase A complete - {} tensors dequantized",
+            dequantized_data
+                .lock()
                 .map_err(|e| anyhow!("Failed to lock dequantized_data for logging: {}", e))?
-                .len());
+                .len()
+        );
 
         // Phase B: Concurrent GPU Uploads (AsyncLoader)
         // Upload all dequantized tensors to GPU in parallel using 4 streams
         tracing::info!("load_to_gpu_async: Phase B - Concurrent GPU uploads");
 
-        let dequantized = dequantized_data.lock()
+        let dequantized = dequantized_data
+            .lock()
             .map_err(|e| anyhow!("Failed to lock dequantized_data: {}", e))?;
-        let shapes = tensor_shapes.lock()
+        let shapes = tensor_shapes
+            .lock()
             .map_err(|e| anyhow!("Failed to lock tensor_shapes: {}", e))?;
         let gpu_buffers: Mutex<HashMap<String, Arc<DeviceTensor>>> = Mutex::new(HashMap::new());
 
         // Upload tensors concurrently using multiple streams
         let mut stream_idx = 0;
         for (name, data) in dequantized.iter() {
-            let shape = shapes.get(name)
+            let shape = shapes
+                .get(name)
                 .ok_or_else(|| anyhow!("Shape not found for tensor '{}'", name))?;
 
             // Allocate GPU buffer
@@ -1113,13 +1216,15 @@ impl GgufLoader {
                 .map_err(|e| anyhow!("Failed to allocate GPU buffer for '{}': {}", name, e))?;
 
             // Convert f32 data to bytes for upload
-            let data_bytes: Vec<u8> = data.iter()
+            let data_bytes: Vec<u8> = data
+                .iter()
                 .flat_map(|&f| f.to_le_bytes().to_vec())
                 .collect();
 
             // Upload using round-robin stream selection
             let selected_stream = stream_idx % 4;
-            async_loader.upload_to_buffer(&buffer, &data_bytes, selected_stream)
+            async_loader
+                .upload_to_buffer(&buffer, &data_bytes, selected_stream)
                 .map_err(|e| anyhow!("Failed to upload tensor '{}': {}", name, e))?;
 
             // Create DeviceTensor from buffer
@@ -1130,7 +1235,8 @@ impl GgufLoader {
             )?);
 
             // Store result
-            gpu_buffers.lock()
+            gpu_buffers
+                .lock()
                 .map_err(|e| anyhow!("Failed to lock gpu_buffers for insert: {}", e))?
                 .insert(name.clone(), device_tensor);
 
@@ -1138,32 +1244,43 @@ impl GgufLoader {
         }
 
         // Synchronize all uploads
-        async_loader.synchronize()
+        async_loader
+            .synchronize()
             .map_err(|e| anyhow!("Failed to synchronize async loader: {}", e))?;
 
-        tracing::info!("load_to_gpu_async: Phase B complete - {} tensors uploaded to GPU",
-            gpu_buffers.lock()
+        tracing::info!(
+            "load_to_gpu_async: Phase B complete - {} tensors uploaded to GPU",
+            gpu_buffers
+                .lock()
                 .map_err(|e| anyhow!("Failed to lock gpu_buffers for logging: {}", e))?
-                .len());
+                .len()
+        );
 
         // Phase C: Update GPU Cache
         tracing::info!("load_to_gpu_async: Phase C - Updating GPU cache");
 
-        let mut cache = self.gpu_cache.write()
+        let mut cache = self
+            .gpu_cache
+            .write()
             .map_err(|e| anyhow!("GPU cache write lock poisoned: {}", e))?;
 
-        let buffers = gpu_buffers.lock()
+        let buffers = gpu_buffers
+            .lock()
             .map_err(|e| anyhow!("Failed to lock gpu_buffers for cache update: {}", e))?;
         for (name, tensor) in buffers.iter() {
             cache.insert(name.clone(), tensor.clone());
         }
 
         // Convert Arc<DeviceTensor> to DeviceTensor for backward compatibility
-        let result: HashMap<String, DeviceTensor> = buffers.iter()
+        let result: HashMap<String, DeviceTensor> = buffers
+            .iter()
             .map(|(name, tensor)| (name.clone(), DeviceTensor::clone(tensor)))
             .collect();
 
-        tracing::info!("load_to_gpu_async: Complete - Loaded {} tensors", result.len());
+        tracing::info!(
+            "load_to_gpu_async: Complete - Loaded {} tensors",
+            result.len()
+        );
         Ok(result)
     }
 
@@ -1187,7 +1304,11 @@ impl GgufLoader {
                         "glm" => 151552,
                         _ => 32000,
                     };
-                    tracing::info!("GGUF: Using default vocab_size={} for '{}'", default, self.metadata.architecture);
+                    tracing::info!(
+                        "GGUF: Using default vocab_size={} for '{}'",
+                        default,
+                        self.metadata.architecture
+                    );
                     default
                 }
             }
@@ -1204,7 +1325,11 @@ impl GgufLoader {
                 None => {
                     // Last resort: use 4x hidden_size (common FFN expansion ratio)
                     let default = self.metadata.hidden_size * 4;
-                    tracing::info!("GGUF: Using default intermediate_size={} (4x hidden_size) for '{}'", default, self.metadata.architecture);
+                    tracing::info!(
+                        "GGUF: Using default intermediate_size={} (4x hidden_size) for '{}'",
+                        default,
+                        self.metadata.architecture
+                    );
                     default
                 }
             }
@@ -1338,7 +1463,11 @@ impl GgufLoader {
                     let value_len = u64::from_le_bytes(value_len_bytes) as usize;
 
                     if value_len > 100_000_000 {
-                        return Err(anyhow!("value_len too large: {} for key '{}'", value_len, key));
+                        return Err(anyhow!(
+                            "value_len too large: {} for key '{}'",
+                            value_len,
+                            key
+                        ));
                     }
 
                     let mut value_bytes = vec![0u8; value_len];
@@ -1419,7 +1548,10 @@ impl GgufLoader {
                             // Average string length ~10 bytes + 8 byte length = 18 bytes
                             let estimated_size = n_elements.saturating_mul(20);
                             if estimated_size > 100_000_000 {
-                                tracing::warn!("Very large STRING array '{}', stopping metadata parse", key);
+                                tracing::warn!(
+                                    "Very large STRING array '{}', stopping metadata parse",
+                                    key
+                                );
                                 return Ok(());
                             }
                             // Try to seek past the data
@@ -1428,7 +1560,11 @@ impl GgufLoader {
                                 file.read_exact(&mut len_bytes)?;
                                 let str_len = u64::from_le_bytes(len_bytes);
                                 if str_len > 10_000_000 {
-                                    return Err(anyhow!("String too large: {} bytes in array '{}'", str_len, key));
+                                    return Err(anyhow!(
+                                        "String too large: {} bytes in array '{}'",
+                                        str_len,
+                                        key
+                                    ));
                                 }
                                 file.seek(SeekFrom::Current(str_len as i64))?;
                             }
@@ -1439,7 +1575,11 @@ impl GgufLoader {
                                 file.read_exact(&mut len_bytes)?;
                                 let str_len = u64::from_le_bytes(len_bytes);
                                 if str_len > 10_000_000 {
-                                    return Err(anyhow!("String too large: {} bytes in array '{}'", str_len, key));
+                                    return Err(anyhow!(
+                                        "String too large: {} bytes in array '{}'",
+                                        str_len,
+                                        key
+                                    ));
                                 }
                                 let mut skip = vec![0u8; str_len as usize];
                                 file.read_exact(&mut skip)?;
@@ -1451,22 +1591,30 @@ impl GgufLoader {
 
                     // For fixed-size types, calculate and skip
                     let element_size = match array_type {
-                        0 | 1 | 7 => 1,  // UINT8, INT8, BOOL
-                        2 | 3 => 2,      // UINT16, INT16
-                        4..=6 => 4,  // UINT32, INT32, FLOAT32
-                        10..=12 => 8,  // UINT64, INT64, FLOAT64
+                        0 | 1 | 7 => 1, // UINT8, INT8, BOOL
+                        2 | 3 => 2,     // UINT16, INT16
+                        4..=6 => 4,     // UINT32, INT32, FLOAT32
+                        10..=12 => 8,   // UINT64, INT64, FLOAT64
                         _ => {
-                            tracing::warn!("Unknown array type {}, stopping metadata parse for key '{}'", array_type, key);
+                            tracing::warn!(
+                                "Unknown array type {}, stopping metadata parse for key '{}'",
+                                array_type,
+                                key
+                            );
                             return Ok(());
                         }
                     };
 
-                    let data_size = n_elements.checked_mul(element_size).ok_or_else(|| {
-                        anyhow!("Array data size overflow for key '{}'", key)
-                    })?;
+                    let data_size = n_elements
+                        .checked_mul(element_size)
+                        .ok_or_else(|| anyhow!("Array data size overflow for key '{}'", key))?;
 
                     if data_size > 1_000_000_000 {
-                        tracing::warn!("Large array ({} bytes) for key '{}', stopping metadata parse", data_size, key);
+                        tracing::warn!(
+                            "Large array ({} bytes) for key '{}', stopping metadata parse",
+                            data_size,
+                            key
+                        );
                         return Ok(());
                     }
 
@@ -1506,22 +1654,24 @@ impl GgufLoader {
             "qwen2.block_count" => self.metadata.num_layers = value.parse().unwrap_or(0),
             "qwen2.attention.head_count" => self.metadata.num_heads = value.parse().unwrap_or(0),
             "qwen2.embedding_length" => self.metadata.hidden_size = value.parse().unwrap_or(0),
-            "qwen2.intermediate_size" => self.metadata.intermediate_size = value.parse().unwrap_or(0),
+            "qwen2.intermediate_size" => {
+                self.metadata.intermediate_size = value.parse().unwrap_or(0)
+            }
             "qwen2.rope.dimension_count" => self.metadata.head_dim = value.parse().unwrap_or(0),
             "qwen2.max_position_embeddings" => {
                 self.metadata.max_position_embeddings = value.parse().unwrap_or(2048)
             }
             "qwen2.vocab_size" => self.metadata.vocab_size = value.parse().unwrap_or(0),
             // Llama-specific keys (also used by some Qwen models)
-            "llama.block_count" => {
-                self.metadata.num_layers = value.parse().unwrap_or(0)
-            }
+            "llama.block_count" => self.metadata.num_layers = value.parse().unwrap_or(0),
             "llama.attention.head_count" => self.metadata.num_heads = value.parse().unwrap_or(0),
             "llama.attention.head_count_kv" => {
                 self.metadata.num_kv_heads = Some(value.parse().unwrap_or(0))
             }
             "llama.embedding_length" => self.metadata.hidden_size = value.parse().unwrap_or(0),
-            "llama.feed_forward_length" => self.metadata.intermediate_size = value.parse().unwrap_or(0),
+            "llama.feed_forward_length" => {
+                self.metadata.intermediate_size = value.parse().unwrap_or(0)
+            }
             "llama.rope.dimension_count" => {
                 // Usually head_dim = hidden_size / num_heads, but this gives rope dimensions
                 self.metadata.head_dim = value.parse().unwrap_or(0)
@@ -1531,9 +1681,9 @@ impl GgufLoader {
             }
             "llama.vocab_size" => self.metadata.vocab_size = value.parse().unwrap_or(0),
             // Common RMS norm epsilon key names
-            "llama.attention.layer_norm_rms_epsilon" |
-            "qwen2.attention.layer_norm_rms_epsilon" |
-            "qwen2.attention_norm_epsilon" => {
+            "llama.attention.layer_norm_rms_epsilon"
+            | "qwen2.attention.layer_norm_rms_epsilon"
+            | "qwen2.attention_norm_epsilon" => {
                 self.metadata.rms_norm_eps = value.parse().unwrap_or(1e-6)
             }
             // Tokenizer JSON (embedded in some models)
@@ -1622,8 +1772,11 @@ impl GgufLoader {
                     let blocks = shape.total_elements().div_ceil(32);
                     blocks * (4 + 32)
                 }
-                GgufTensorType::Q2_K | GgufTensorType::Q3_K | GgufTensorType::Q4_K |
-                GgufTensorType::Q5_K | GgufTensorType::Q6_K => {
+                GgufTensorType::Q2_K
+                | GgufTensorType::Q3_K
+                | GgufTensorType::Q4_K
+                | GgufTensorType::Q5_K
+                | GgufTensorType::Q6_K => {
                     let blocks = shape.total_elements().div_ceil(256);
                     blocks * 256
                 }
@@ -1638,13 +1791,8 @@ impl GgufLoader {
             };
 
             // Create LazyTensor handle (Phase 1: metadata only, no data loaded)
-            let lazy_tensor = LazyTensor::unloaded(
-                name.clone(),
-                offset,
-                size,
-                dims.clone(),
-                tensor_type,
-            );
+            let lazy_tensor =
+                LazyTensor::unloaded(name.clone(), offset, size, dims.clone(), tensor_type);
             self.lazy_tensors.insert(name.clone(), lazy_tensor);
 
             // Store legacy GgufTensor for backward compatibility
@@ -1660,7 +1808,10 @@ impl GgufLoader {
             self.tensors.insert(name, tensor);
         }
 
-        tracing::debug!("Parsed {} tensor info entries (lazy handles created)", tensor_count);
+        tracing::debug!(
+            "Parsed {} tensor info entries (lazy handles created)",
+            tensor_count
+        );
         Ok(())
     }
 
@@ -1711,16 +1862,32 @@ impl GgufLoader {
                         // We know hidden_size, use it to disambiguate
                         // Shape is either [vocab_size, hidden_size] or [hidden_size, vocab_size]
                         if d0 == hidden && d1 != hidden {
-                            tracing::debug!("GGUF: Inferred vocab_size={} from {} shape [{}, {}]", d1, name, d0, d1);
+                            tracing::debug!(
+                                "GGUF: Inferred vocab_size={} from {} shape [{}, {}]",
+                                d1,
+                                name,
+                                d0,
+                                d1
+                            );
                             return Some(d1);
                         } else if d1 == hidden && d0 != hidden {
-                            tracing::debug!("GGUF: Inferred vocab_size={} from {} shape [{}, {}]", d0, name, d0, d1);
+                            tracing::debug!(
+                                "GGUF: Inferred vocab_size={} from {} shape [{}, {}]",
+                                d0,
+                                name,
+                                d0,
+                                d1
+                            );
                             return Some(d0);
                         }
                     } else {
                         // hidden_size unknown, use heuristic: larger dimension is likely vocab_size
                         let inferred = d0.max(d1);
-                        tracing::debug!("GGUF: Inferred vocab_size={} from {} (heuristic, hidden_size unknown)", inferred, name);
+                        tracing::debug!(
+                            "GGUF: Inferred vocab_size={} from {} (heuristic, hidden_size unknown)",
+                            inferred,
+                            name
+                        );
                         return Some(inferred);
                     }
                 }
@@ -1744,11 +1911,11 @@ impl GgufLoader {
     fn infer_intermediate_size_from_tensors(&self) -> Option<usize> {
         // Common tensor naming patterns for MLP gate weights
         let tensor_variants = [
-            "blk.0.ffn_gate.weight",      // Qwen2-style
-            "blk.0.ffn_up.weight",        // Qwen2-style (up projection has same shape)
-            "model.layers.0.mlp.gate_proj.weight",  // LLaMA/Mistral-style
-            "layers.0.mlp.gate_proj.weight",        // Alternative
-            "transformer.layers.0.mlp.gate_proj.weight",  // GPT-style
+            "blk.0.ffn_gate.weight",                     // Qwen2-style
+            "blk.0.ffn_up.weight", // Qwen2-style (up projection has same shape)
+            "model.layers.0.mlp.gate_proj.weight", // LLaMA/Mistral-style
+            "layers.0.mlp.gate_proj.weight", // Alternative
+            "transformer.layers.0.mlp.gate_proj.weight", // GPT-style
         ];
 
         for name in &tensor_variants {
@@ -1765,17 +1932,29 @@ impl GgufLoader {
                         // Gate weight shape is either [hidden_size, intermediate_size] or
                         // [intermediate_size, hidden_size]
                         if d0 == hidden && d1 != hidden {
-                            tracing::debug!("GGUF: Auto-detected intermediate_size={} from {} tensor shape", d1, name);
+                            tracing::debug!(
+                                "GGUF: Auto-detected intermediate_size={} from {} tensor shape",
+                                d1,
+                                name
+                            );
                             return Some(d1);
                         } else if d1 == hidden && d0 != hidden {
-                            tracing::debug!("GGUF: Auto-detected intermediate_size={} from {} tensor shape", d0, name);
+                            tracing::debug!(
+                                "GGUF: Auto-detected intermediate_size={} from {} tensor shape",
+                                d0,
+                                name
+                            );
                             return Some(d0);
                         }
                     } else {
                         // hidden_size unknown, use heuristic: larger dimension is likely intermediate_size
                         // (FFN expansion is typically 4x hidden_size)
                         let inferred = d0.max(d1);
-                        tracing::debug!("GGUF: Auto-detected intermediate_size={} from {} (heuristic)", inferred, name);
+                        tracing::debug!(
+                            "GGUF: Auto-detected intermediate_size={} from {} (heuristic)",
+                            inferred,
+                            name
+                        );
                         return Some(inferred);
                     }
                 }
@@ -1783,7 +1962,9 @@ impl GgufLoader {
         }
 
         // No suitable tensor found
-        tracing::warn!("GGUF: Warning - could not auto-detect intermediate_size from tensor shapes");
+        tracing::warn!(
+            "GGUF: Warning - could not auto-detect intermediate_size from tensor shapes"
+        );
         None
     }
 
@@ -1943,12 +2124,25 @@ impl GgufLoader {
     /// Phase 2: Rayon Integration - Uses parallel processing for ~4x speedup
     /// on multi-core CPUs. Q4_0 is the most common quantization format.
     fn dequantize_q4_0(&self, tensor: &GgufTensor) -> Result<Vec<f32>> {
+        eprintln!(
+            ">>> dequantize_q4_0: Starting for tensor '{}', size={} bytes",
+            tensor.name,
+            tensor.data.len()
+        );
+        let start = std::time::Instant::now();
+
         let total_elements = tensor.total_elements();
         let blocks = total_elements.div_ceil(32);
+        eprintln!(
+            ">>> dequantize_q4_0: total_elements={}, blocks={}",
+            total_elements, blocks
+        );
 
         // Pre-allocate result vector
         let result = vec![0.0f32; total_elements];
         let result_lock = Arc::new(RwLock::new(result));
+
+        let dequant_start = std::time::Instant::now();
 
         // Process blocks in parallel using Rayon
         (0..blocks).into_par_iter().for_each(|block_idx| {
@@ -1990,12 +2184,18 @@ impl GgufLoader {
             }
         });
 
+        eprintln!(
+            ">>> dequantize_q4_0: Dequantization took {:?}",
+            dequant_start.elapsed()
+        );
+
         // Extract result from Arc<RwLock>
         let result = Arc::try_unwrap(result_lock)
             .map_err(|e| anyhow!("Failed to extract result: Arc still has owners"))?
             .into_inner()
             .map_err(|e| anyhow!("Failed to get inner value: RwLock poisoned"))?;
 
+        eprintln!(">>> dequantize_q4_0: Total time {:?}", start.elapsed());
         Ok(result)
     }
 
@@ -2024,12 +2224,7 @@ impl GgufLoader {
 
             // Read min
             let min_bytes = &tensor.data[block_start + 4..block_start + 8];
-            let min = f32::from_le_bytes([
-                min_bytes[0],
-                min_bytes[1],
-                min_bytes[2],
-                min_bytes[3],
-            ]);
+            let min = f32::from_le_bytes([min_bytes[0], min_bytes[1], min_bytes[2], min_bytes[3]]);
 
             // Read quantized values (4-bit packed)
             let quant_start = block_start + 8;
@@ -2081,12 +2276,7 @@ impl GgufLoader {
 
             // Read high bits (qh)
             let qh_bytes = &tensor.data[block_start + 4..block_start + 8];
-            let qh = u32::from_le_bytes([
-                qh_bytes[0],
-                qh_bytes[1],
-                qh_bytes[2],
-                qh_bytes[3],
-            ]);
+            let qh = u32::from_le_bytes([qh_bytes[0], qh_bytes[1], qh_bytes[2], qh_bytes[3]]);
 
             // Read quantized values (4-bit packed)
             let quant_start = block_start + 8;
@@ -2104,11 +2294,7 @@ impl GgufLoader {
                         } else {
                             (packed >> 4) & 0x0F
                         };
-                        let high_bit = if bit_idx < 32 {
-                            (qh >> bit_idx) & 1
-                        } else {
-                            0
-                        };
+                        let high_bit = if bit_idx < 32 { (qh >> bit_idx) & 1 } else { 0 };
                         let quant = (low_bits as u32 | (high_bit << 4)) as u8;
                         result[element_idx] = (quant as f32 - 16.0) * scale;
                     }
@@ -2144,21 +2330,11 @@ impl GgufLoader {
 
             // Read min
             let min_bytes = &tensor.data[block_start + 4..block_start + 8];
-            let min = f32::from_le_bytes([
-                min_bytes[0],
-                min_bytes[1],
-                min_bytes[2],
-                min_bytes[3],
-            ]);
+            let min = f32::from_le_bytes([min_bytes[0], min_bytes[1], min_bytes[2], min_bytes[3]]);
 
             // Read high bits (qh)
             let qh_bytes = &tensor.data[block_start + 8..block_start + 12];
-            let qh = u32::from_le_bytes([
-                qh_bytes[0],
-                qh_bytes[1],
-                qh_bytes[2],
-                qh_bytes[3],
-            ]);
+            let qh = u32::from_le_bytes([qh_bytes[0], qh_bytes[1], qh_bytes[2], qh_bytes[3]]);
 
             // Read quantized values (4-bit packed)
             let quant_start = block_start + 12;
@@ -2176,11 +2352,7 @@ impl GgufLoader {
                         } else {
                             (packed >> 4) & 0x0F
                         };
-                        let high_bit = if bit_idx < 32 {
-                            (qh >> bit_idx) & 1
-                        } else {
-                            0
-                        };
+                        let high_bit = if bit_idx < 32 { (qh >> bit_idx) & 1 } else { 0 };
                         let quant = (low_bits as u32 | (high_bit << 4)) as u8;
                         result[element_idx] = min + (quant as f32) * scale;
                     }
@@ -2269,7 +2441,8 @@ impl GgufLoader {
                 let byte_idx = (i * 6) / 8;
 
                 if byte_idx + 1 < packed_data.len() {
-                    let combined = ((packed_data[byte_idx + 1] as u16) << 8) | (packed_data[byte_idx] as u16);
+                    let combined =
+                        ((packed_data[byte_idx + 1] as u16) << 8) | (packed_data[byte_idx] as u16);
                     let e2m3_bits = ((combined >> (10 - bit_offset)) & 0x3F) as u8;
 
                     // Decode E2M3
@@ -2303,6 +2476,17 @@ impl GgufLoader {
             tensor.name
         ))
     }
+}
+
+fn transpose_f32_matrix(data: &[f32], rows: usize, cols: usize) -> Vec<f32> {
+    let mut transposed = vec![0.0f32; data.len()];
+    for r in 0..rows {
+        let row_offset = r * cols;
+        for c in 0..cols {
+            transposed[c * rows + r] = data[row_offset + c];
+        }
+    }
+    transposed
 }
 
 /// Simple f16 implementation for conversion
@@ -2374,10 +2558,10 @@ mod gguf_spec_tests {
         // These assertions prevent accidental drift from the spec
         // If this test fails, the GGUF parser is reading corrupted metadata
         assert_eq!(0u32, 0, "GGUF_TYPE_UINT8");
-        assert_eq!(5u32, 5, "GGUF_TYPE_INT32");  // NOT BOOL!
-        assert_eq!(6u32, 6, "GGUF_TYPE_FLOAT32");  // NOT STRING!
-        assert_eq!(7u32, 7, "GGUF_TYPE_BOOL");  // NOT 5!
-        assert_eq!(8u32, 8, "GGUF_TYPE_STRING");  // NOT 6!
+        assert_eq!(5u32, 5, "GGUF_TYPE_INT32"); // NOT BOOL!
+        assert_eq!(6u32, 6, "GGUF_TYPE_FLOAT32"); // NOT STRING!
+        assert_eq!(7u32, 7, "GGUF_TYPE_BOOL"); // NOT 5!
+        assert_eq!(8u32, 8, "GGUF_TYPE_STRING"); // NOT 6!
         assert_eq!(9u32, 9, "GGUF_TYPE_ARRAY");
         assert_eq!(10u32, 10, "GGUF_TYPE_UINT64");
         assert_eq!(11u32, 11, "GGUF_TYPE_INT64");
@@ -2410,7 +2594,7 @@ mod gguf_spec_tests {
         assert_eq!(GgufTensorType::Q4_1 as u32, 3, "GGML_TYPE_Q4_1");
         assert_eq!(GgufTensorType::Q5_0 as u32, 6, "GGML_TYPE_Q5_0");
         assert_eq!(GgufTensorType::Q5_1 as u32, 7, "GGML_TYPE_Q5_1");
-        assert_eq!(GgufTensorType::Q8_0 as u32, 8, "GGML_TYPE_Q8_0");  // Was wrongly 3!
+        assert_eq!(GgufTensorType::Q8_0 as u32, 8, "GGML_TYPE_Q8_0"); // Was wrongly 3!
     }
 
     /// Array encoding format from gguf.h
@@ -2431,7 +2615,10 @@ mod gguf_spec_tests {
         // If array parsing fails, verify:
         // 1. array_type is read as plain u32, not (array_type << 16) | n_dims
         // 2. n_elements is read as plain u64
-        assert!(true, "Documented: array format is type(u32) + count(u64) + data");
+        assert!(
+            true,
+            "Documented: array format is type(u32) + count(u64) + data"
+        );
     }
 
     /// STRING array format from gguf.h
@@ -2447,7 +2634,10 @@ mod gguf_spec_tests {
         // Cannot skip as a block - must read each length prefix
 
         // This test documents the requirement for per-string iteration
-        assert!(true, "Documented: STRING arrays require per-string length iteration");
+        assert!(
+            true,
+            "Documented: STRING arrays require per-string length iteration"
+        );
     }
 
     /// Test that verifies Qwen2.5-0.5B model loads without errors
@@ -2473,8 +2663,7 @@ mod gguf_spec_tests {
             return;
         }
 
-        let loader = super::GgufLoader::new(&model_path)
-            .expect("Failed to load GGUF");
+        let loader = super::GgufLoader::new(&model_path).expect("Failed to load GGUF");
 
         let metadata = loader.metadata();
         assert_eq!(metadata.architecture, "qwen2");

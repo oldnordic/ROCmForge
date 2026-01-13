@@ -9,15 +9,13 @@ use std::sync::Arc;
 use tokenizers::Tokenizer;
 use tracing::warn;
 
-#[derive(Clone)]
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct TokenizerAdapter {
     inner: Option<Arc<Tokenizer>>,
 }
 
 static TOKENIZER_CACHE_HITS: AtomicU64 = AtomicU64::new(0);
 static TOKENIZER_CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
-
 
 impl TokenizerAdapter {
     /// Create adapter from optional tokenizer JSON path.

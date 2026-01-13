@@ -1,8 +1,7 @@
 //! Backend abstraction for attention computation
 
 /// Backend types for attention computation
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AttentionBackend {
     /// CPU backend using standard Rust computation
     #[default]
@@ -11,4 +10,3 @@ pub enum AttentionBackend {
     #[cfg(feature = "rocm")]
     Gpu,
 }
-

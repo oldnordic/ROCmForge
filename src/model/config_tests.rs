@@ -10,10 +10,7 @@ mod config_tests {
     use crate::model::config::{ModelConfig, ModelType};
 
     /// Helper to create a test config
-    fn create_test_config(
-        num_attention_heads: usize,
-        num_kv_heads: Option<usize>,
-    ) -> ModelConfig {
+    fn create_test_config(num_attention_heads: usize, num_kv_heads: Option<usize>) -> ModelConfig {
         ModelConfig {
             num_hidden_layers: 32,
             num_attention_heads,
@@ -37,7 +34,11 @@ mod config_tests {
         assert!(config.is_mqa(), "Should detect MQA when num_kv_heads = 1");
         assert!(!config.is_gqa(), "Should not detect GQA for MQA");
         assert!(!config.is_mha(), "Should not detect MHA for MQA");
-        assert_eq!(config.heads_per_kv(), 32, "MQA should have 32 query heads per KV head");
+        assert_eq!(
+            config.heads_per_kv(),
+            32,
+            "MQA should have 32 query heads per KV head"
+        );
     }
 
     #[test]
@@ -46,9 +47,16 @@ mod config_tests {
         let config = create_test_config(32, Some(8));
 
         assert!(!config.is_mqa(), "Should not detect MQA for GQA");
-        assert!(config.is_gqa(), "Should detect GQA when 1 < num_kv_heads < num_attention_heads");
+        assert!(
+            config.is_gqa(),
+            "Should detect GQA when 1 < num_kv_heads < num_attention_heads"
+        );
         assert!(!config.is_mha(), "Should not detect MHA for GQA");
-        assert_eq!(config.heads_per_kv(), 4, "GQA should have 4 query heads per KV head");
+        assert_eq!(
+            config.heads_per_kv(),
+            4,
+            "GQA should have 4 query heads per KV head"
+        );
     }
 
     #[test]
@@ -58,8 +66,15 @@ mod config_tests {
 
         assert!(!config.is_mqa(), "Should not detect MQA for MHA");
         assert!(!config.is_gqa(), "Should not detect GQA for MHA");
-        assert!(config.is_mha(), "Should detect MHA when num_kv_heads = num_attention_heads");
-        assert_eq!(config.heads_per_kv(), 1, "MHA should have 1 query head per KV head");
+        assert!(
+            config.is_mha(),
+            "Should detect MHA when num_kv_heads = num_attention_heads"
+        );
+        assert_eq!(
+            config.heads_per_kv(),
+            1,
+            "MHA should have 1 query head per KV head"
+        );
     }
 
     #[test]
@@ -69,28 +84,51 @@ mod config_tests {
 
         assert!(!config.is_mqa(), "Should not detect MQA for default MHA");
         assert!(!config.is_gqa(), "Should not detect GQA for default MHA");
-        assert!(config.is_mha(), "Should detect MHA when num_kv_heads is None");
-        assert_eq!(config.heads_per_kv(), 1, "Default MHA should have 1 query head per KV head");
+        assert!(
+            config.is_mha(),
+            "Should detect MHA when num_kv_heads is None"
+        );
+        assert_eq!(
+            config.heads_per_kv(),
+            1,
+            "Default MHA should have 1 query head per KV head"
+        );
     }
 
     #[test]
     fn test_heads_per_kv_mqa() {
         // Test various MQA configurations
         let config_16_1 = create_test_config(16, Some(1));
-        assert_eq!(config_16_1.heads_per_kv(), 16, "16:1 MQA should have 16 query heads per KV");
+        assert_eq!(
+            config_16_1.heads_per_kv(),
+            16,
+            "16:1 MQA should have 16 query heads per KV"
+        );
 
         let config_64_1 = create_test_config(64, Some(1));
-        assert_eq!(config_64_1.heads_per_kv(), 64, "64:1 MQA should have 64 query heads per KV");
+        assert_eq!(
+            config_64_1.heads_per_kv(),
+            64,
+            "64:1 MQA should have 64 query heads per KV"
+        );
     }
 
     #[test]
     fn test_heads_per_kv_gqa() {
         // Test various GQA configurations
         let config_32_4 = create_test_config(32, Some(4));
-        assert_eq!(config_32_4.heads_per_kv(), 8, "32:4 GQA should have 8 query heads per KV");
+        assert_eq!(
+            config_32_4.heads_per_kv(),
+            8,
+            "32:4 GQA should have 8 query heads per KV"
+        );
 
         let config_40_8 = create_test_config(40, Some(8));
-        assert_eq!(config_40_8.heads_per_kv(), 5, "40:8 GQA should have 5 query heads per KV");
+        assert_eq!(
+            config_40_8.heads_per_kv(),
+            5,
+            "40:8 GQA should have 5 query heads per KV"
+        );
     }
 
     #[test]
@@ -100,7 +138,11 @@ mod config_tests {
 
         assert!(!config.is_mqa(), "Should not be MQA");
         assert!(config.is_gqa(), "Should be GQA with 2 KV heads");
-        assert_eq!(config.heads_per_kv(), 16, "Should have 16 query heads per KV head");
+        assert_eq!(
+            config.heads_per_kv(),
+            16,
+            "Should have 16 query heads per KV head"
+        );
     }
 
     #[test]
@@ -111,7 +153,11 @@ mod config_tests {
         assert!(config.is_mha(), "LLaMA 2 7B should use MHA");
         assert!(!config.is_mqa(), "LLaMA 2 7B should not be MQA");
         assert!(!config.is_gqa(), "LLaMA 2 7B should not be GQA");
-        assert_eq!(config.heads_per_kv(), 1, "LLaMA 2 7B should have 1:1 head ratio");
+        assert_eq!(
+            config.heads_per_kv(),
+            1,
+            "LLaMA 2 7B should have 1:1 head ratio"
+        );
     }
 
     #[test]
@@ -120,7 +166,10 @@ mod config_tests {
         let config = create_test_config(8, Some(16)); // 8 query, 16 KV - INVALID!
 
         let result = config.validate();
-        assert!(result.is_err(), "Should reject num_kv_heads > num_attention_heads");
+        assert!(
+            result.is_err(),
+            "Should reject num_kv_heads > num_attention_heads"
+        );
     }
 
     #[test]

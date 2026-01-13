@@ -15,6 +15,8 @@ pub enum ScratchError {
 pub type ScratchResult<T> = Result<T, ScratchError>;
 
 /// Manages preallocated scratch buffers for efficient GPU memory usage
+const MAX_ATTENTION_SEQ_LEN: usize = 4096;
+
 #[derive(Debug)]
 pub struct ScratchBufferManager {
     backend: HipBackend,
@@ -25,6 +27,8 @@ pub struct ScratchBufferManager {
     mlp_intermediate: DeviceTensor,
     // Layernorm buffers
     layernorm_temp: DeviceTensor,
+    // Actual sequence capacity provisioned for attention buffers
+    max_seq_capacity: usize,
 }
 
 impl ScratchBufferManager {
@@ -36,24 +40,54 @@ impl ScratchBufferManager {
         _head_dim: usize,
         max_seq_len: usize,
     ) -> ScratchResult<Self> {
+        eprintln!(
+            ">>> ScratchBufferManager::new ENTRY: heads={}, hidden={}, seq_len={}",
+            num_heads, hidden_size, max_seq_len
+        );
+        eprintln!(">>> ScratchBufferManager::new: About to create attention_scores buffer...");
         // Calculate buffer sizes
-        let _attention_scores_size = num_heads * max_seq_len * max_seq_len;
-        let _softmax_temp_size = num_heads * max_seq_len;
+        let effective_seq_len = std::cmp::max(1, std::cmp::min(max_seq_len, MAX_ATTENTION_SEQ_LEN));
+        if effective_seq_len < max_seq_len {
+            tracing::warn!(
+                "Clamping scratch attention capacity from {} to {} tokens to avoid massive allocations",
+                max_seq_len,
+                effective_seq_len
+            );
+        }
+        let _attention_scores_size = num_heads * effective_seq_len * effective_seq_len;
+        let _softmax_temp_size = num_heads * effective_seq_len;
         let mlp_intermediate_size = hidden_size * 4; // SwiGLU intermediate
         let layernorm_temp_size = hidden_size;
 
         // Create attention scores buffer: [num_heads, max_seq_len, max_seq_len]
+        let expected_size = num_heads * effective_seq_len * effective_seq_len * 2; // f16 = 2 bytes
+        eprintln!(
+            "ScratchBufferManager::new: Expected attention_scores buffer size: {} bytes ({} MB)",
+            expected_size,
+            expected_size / 1024 / 1024
+        );
+        eprintln!(
+            "ScratchBufferManager::new: Creating attention_scores buffer [{}, {}, {}]...",
+            num_heads, effective_seq_len, effective_seq_len
+        );
         let attention_scores_shape = crate::loader::mmap_loader::TensorShape::from_dims(&[
             num_heads,
-            max_seq_len,
-            max_seq_len,
+            effective_seq_len,
+            effective_seq_len,
         ]);
         let attention_scores = DeviceTensor::empty(backend, attention_scores_shape)
             .map_err(ScratchError::AllocationFailed)?;
+        let actual_size = attention_scores.size();
+        eprintln!(
+            "ScratchBufferManager::new: Actual attention_scores buffer size: {} bytes ({} MB)",
+            actual_size,
+            actual_size / 1024 / 1024
+        );
+        eprintln!("ScratchBufferManager::new: attention_scores created");
 
         // Create softmax temp buffer: [num_heads, max_seq_len]
         let softmax_temp_shape =
-            crate::loader::mmap_loader::TensorShape::from_dims(&[num_heads, max_seq_len]);
+            crate::loader::mmap_loader::TensorShape::from_dims(&[num_heads, effective_seq_len]);
         let softmax_temp = DeviceTensor::empty(backend, softmax_temp_shape)
             .map_err(ScratchError::AllocationFailed)?;
 
@@ -75,6 +109,7 @@ impl ScratchBufferManager {
             softmax_temp,
             mlp_intermediate,
             layernorm_temp,
+            max_seq_capacity: effective_seq_len,
         })
     }
 
@@ -119,8 +154,9 @@ impl ScratchBufferManager {
         _head_dim: usize,
         max_seq_len: usize,
     ) -> ScratchResult<()> {
-        let expected_attention_size = num_heads * max_seq_len * max_seq_len;
-        let expected_softmax_size = num_heads * max_seq_len;
+        let seq_capacity = std::cmp::min(self.max_seq_capacity, max_seq_len);
+        let expected_attention_size = num_heads * seq_capacity * seq_capacity;
+        let expected_softmax_size = num_heads * seq_capacity;
         let expected_mlp_size = hidden_size * 4;
         let expected_layernorm_size = hidden_size;
 
@@ -157,5 +193,10 @@ impl ScratchBufferManager {
         }
 
         Ok(())
+    }
+
+    /// Return the provisioned maximum sequence length for attention buffers
+    pub fn seq_capacity(&self) -> usize {
+        self.max_seq_capacity
     }
 }

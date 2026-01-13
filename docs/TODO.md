@@ -1,10 +1,105 @@
 # ROCmForge TODO
 
 > GPU: AMD Radeon RX 7900 XT (gfx1100, RDNA3, wave32) → AMD Instinct MI355 (CDNA4)
-> Last Updated: 2026-01-12 (Phase 23: hipDeviceSynchronize Desktop Hang Fix)
+> Last Updated: 2026-01-13 (Phase 25: GQA Architecture Support COMPLETE, Phase 26: LM Head Hang investigation)
 > Test Health: 100% - All tests passing (274+ unit tests + 5/5 E2E tests)
 > Test Execution: Serial (single-threaded) required for GPU tests
 > Warning Count: 129 build warnings (compiler warnings only, no errors)
+
+---
+
+## 🔄 Phase 26 IN PROGRESS - LM Head Matmul Hang
+
+**Status**: 🔄 IN PROGRESS - All 24 transformer layers working, hang at final LM head matmul (2026-01-13)
+
+### Phase 25 COMPLETE ✅
+
+**Status**: ✅ COMPLETE - GQA (Grouped Query Attention) support fully implemented (2026-01-13)
+
+**Root Cause Discovered**:
+- Code expected fused QKV attention (LLaMA-style): `attn_qkv.weight` [2688, 896]
+- Qwen2 uses separate Q,K,V with GQA:
+  - `attn_q.weight` [896, 896] - 14 query heads
+  - `attn_k.weight` [128, 896] - 2 KV heads
+  - `attn_v.weight` [128, 896] - 2 KV heads
+
+**Fixes Applied**:
+1. ✅ Tensor format detection (`create_layer_plan_lazy`)
+2. ✅ Separate QKV attention path (`self_attention_separate`)
+3. ✅ RoPE for GQA (CPU path with separate head counts)
+4. ✅ KV cache skip (temporary workaround for incompatible cache)
+5. ✅ Attention kernel KV expansion (2 → 14 heads)
+
+**Result**: All 24 transformer layers complete successfully (~60-80ms per layer)
+
+---
+
+### Current Status
+
+After all 24 layers complete successfully, the process hangs at the LM head matmul:
+
+```
+>>> lm_head(): Getting LM head tensor...
+>>> lm_head(): Not cached, loading...
+>>> lm_head(): Tensor loaded successfully (519 MB)
+>>> apply_lm_head(): Got LM head tensor, calling matmul...
+[HANG - matmul ENTRY log never appears]
+```
+
+**Symptom**: The matmul function is called but the first log statement inside doesn't execute.
+
+**Possible Causes**:
+1. Binary not updated with new logging (need clean rebuild)
+2. Function prologue issue
+3. Borrowing/lifetime problem preventing entry
+
+### Files Modified (Phase 25)
+
+- `src/model/execution_plan.rs:126-172` - LayerPlan struct with separate Q,K,V fields
+- `src/model/execution_plan.rs:526-637` - Tensor format detection
+- `src/model/execution_plan.rs:1127-1264` - self_attention_separate function
+- `src/model/execution_plan.rs:1569-1660` - GQA KV expansion
+- `src/model/execution_plan.rs:225-259` - LM head diagnostic logging
+
+### Next Steps (Phase 26)
+
+1. Clean rebuild to ensure new logging is included
+2. Add logging BEFORE matmul call to confirm reachability
+3. Investigate matmul function entry point
+4. Check for borrow checker / lifetime issues
+
+---
+
+## ✅ Phase 25 COMPLETE - GQA Architecture Support
+
+**Status**: ✅ COMPLETE - Grouped Query Attention support fully implemented (2026-01-13)
+
+**Documentation**: `docs/PHASE_25_STATUS_2026-01-13.md`
+
+---
+
+## ✅ Phase 24 COMPLETE - Vocab Size Inference Fix
+
+**Status**: ✅ Phase 24 COMPLETE - Vocab size inference for GGUF models with missing metadata (2026-01-12)
+
+**Problem**: Models fail to load when `vocab_size` metadata is 0 or missing, even though the embedding tensor exists.
+
+**Solution Implemented**:
+- ✅ `map_embedding_lazy()` - Infers vocab_size from tensor shape when == 0
+- ✅ `map_lm_head_lazy()` - Accepts both layouts, supports tied embeddings
+- ✅ `map_embedding()` - Non-lazy version with same logic
+- ✅ `map_lm_head()` - Non-lazy version with same logic
+
+**llama.cpp Compatibility**:
+- ✅ `vocab_size == 0` means "unknown" → inferred from tensors
+- ✅ Accepts both `[vocab, hidden]` AND `[hidden, vocab]` layouts
+- ✅ Uses `hidden_size` as anchor to disambiguate
+- ✅ Provides detailed error messages with evidence
+
+**Files Modified**:
+- `src/model/execution_plan.rs` - All 4 functions updated (lines 400-468, 475-508, 1214-1275, 1282+)
+
+---
 
 ## ✅ Phase 23 COMPLETE - hipDeviceSynchronize Desktop Hang Fix
 

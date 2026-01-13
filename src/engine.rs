@@ -66,7 +66,7 @@ unsafe impl Sync for InferenceEngine {}
 #[derive(Debug)]
 pub struct InferenceEngine {
     config: EngineConfig,
-    backend: Arc<HipBackend>,  // Changed to Arc<HipBackend> for shared ownership
+    backend: Arc<HipBackend>, // Changed to Arc<HipBackend> for shared ownership
     kv_cache: Arc<RwLock<KvCache>>,
     scheduler: Arc<RwLock<Scheduler>>,
     sampler: Arc<RwLock<Sampler>>,
@@ -78,19 +78,26 @@ pub struct InferenceEngine {
     is_running: Arc<RwLock<bool>>,
 }
 
+/// PHASE 24 FIX: Request-scoped state only - NO GPU resources owned here.
+/// The ModelRuntime is shared at engine level (model_runtime: Arc<RwLock<ModelRuntime>>).
+/// Per-request state only tracks logical progress, not GPU buffers.
 #[derive(Debug)]
 struct RequestRuntimeState {
-    runtime: ModelRuntime,
     processed_tokens: usize,
 }
 
 impl InferenceEngine {
     pub fn new(config: EngineConfig) -> EngineResult<Self> {
         info!("Initializing ROCmForge inference engine");
+        eprintln!("InferenceEngine::new: Starting...");
         tracing::debug!("InferenceEngine::new: Starting engine initialization");
 
         // Initialize HIP backend
         tracing::debug!("InferenceEngine::new: Creating cache config");
+        eprintln!(
+            "InferenceEngine::new: cache pages={}, heads={}, head_dim={}, layers={}",
+            config.max_cache_pages, config.num_heads, config.head_dim, config.num_layers
+        );
         let cache_config = CacheConfig::new(
             config.cache_page_size,
             config.max_cache_pages,
@@ -103,8 +110,8 @@ impl InferenceEngine {
 
         tracing::debug!("InferenceEngine::new: Creating HIP backend");
         // HipBackend::new() returns HipResult<Arc<HipBackend>>
-        let backend_arc = HipBackend::new()
-            .map_err(|e| EngineError::BackendFailed(e.to_string()))?;
+        let backend_arc =
+            HipBackend::new().map_err(|e| EngineError::BackendFailed(e.to_string()))?;
         tracing::debug!("InferenceEngine::new: HIP backend Arc created successfully");
 
         let kv_cache = Arc::new(RwLock::new(
@@ -137,6 +144,57 @@ impl InferenceEngine {
             onnx_loader,
             is_running: Arc::new(RwLock::new(false)),
         })
+    }
+
+    /// PHASE 24: Load GGUF model and create engine with correct model-specific config.
+    ///
+    /// This is the RECOMMENDED way to create an InferenceEngine for GGUF models.
+    /// It avoids the problem where InferenceEngine::new(EngineConfig::default())
+    /// creates a paged KV cache with wrong default values (32 heads, 128 head_dim, 1000 pages).
+    ///
+    /// # Example
+    /// ```no_run
+    /// use rocmforge::engine::InferenceEngine;
+    /// # use tokio::runtime::Runtime;
+    /// # async fn example() -> anyhow::Result<()> {
+    /// let engine = InferenceEngine::from_gguf("models/qwen2.5-0.5b.gguf").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn from_gguf<P: AsRef<std::path::Path>>(path: P) -> EngineResult<Self> {
+        let path_ref = path.as_ref();
+        info!("Creating ROCmForge engine from GGUF: {:?}", path_ref);
+
+        // Load GGUF metadata first to get model config
+        let path_string = path_ref
+            .to_str()
+            .ok_or_else(|| EngineError::ModelLoadFailed("Invalid model path".to_string()))?
+            .to_string();
+
+        // Load just the config (not full weights)
+        let loader = GgufLoader::new(&path_string).map_err(|e| {
+            EngineError::ModelLoadFailed(format!("Failed to load GGUF metadata: {}", e))
+        })?;
+        let config = loader.to_model_config().map_err(|e| {
+            EngineError::ModelLoadFailed(format!("Failed to create model config: {}", e))
+        })?;
+
+        // Create engine with MODEL-SPECIFIC config instead of defaults
+        // This prevents creating wasteful paged KV cache with wrong dimensions
+        let engine_config = EngineConfig {
+            max_batch_size: 32,
+            max_sequence_length: config.max_position_embeddings,
+            cache_page_size: 16,
+            max_cache_pages: 100, // Reduced for smaller models
+            num_heads: config.num_attention_heads,
+            head_dim: config.head_dim,
+            num_layers: config.num_hidden_layers,
+            batch_timeout: Duration::from_millis(50),
+        };
+
+        let mut engine = Self::new(engine_config)?;
+        engine.load_gguf_model(path).await?;
+        Ok(engine)
     }
 
     pub async fn load_gguf_model<P: AsRef<std::path::Path>>(
@@ -194,15 +252,15 @@ impl InferenceEngine {
     }
 
     pub async fn run_inference_loop(&self) {
-        tracing::debug!("run_inference_loop() called");
+        eprintln!(">>> run_inference_loop() ENTRY");
         let is_running = {
             let flag = self.is_running.read().await;
-            tracing::debug!("run_inference_loop() is_running={}", *flag);
+            eprintln!(">>> run_inference_loop() is_running={}", *flag);
             *flag
         };
 
         if is_running {
-            tracing::debug!("run_inference_loop() spawning inference loop task");
+            eprintln!(">>> run_inference_loop() spawning inner inference loop task");
             // Start inference loop in background
             let config = self.config.clone();
             let backend = self.backend.clone();
@@ -217,7 +275,8 @@ impl InferenceEngine {
             let is_running = self.is_running.clone();
 
             tokio::spawn(async move {
-                tracing::debug!("Inference loop task started");
+                eprintln!(">>> INNER inference loop task STARTED");
+                eprintln!(">>> INNER: creating InferenceEngine clone...");
                 let engine_clone = InferenceEngine {
                     config,
                     backend,
@@ -231,11 +290,15 @@ impl InferenceEngine {
                     onnx_loader,
                     is_running,
                 };
+                eprintln!(">>> INNER: InferenceEngine clone created, calling inference_loop()...");
                 engine_clone.inference_loop().await;
+                eprintln!(">>> INNER inference loop task ENDED");
             });
+            eprintln!(">>> run_inference_loop() inner task spawned");
         } else {
-            tracing::debug!("run_inference_loop() NOT spawning because is_running=false");
+            eprintln!(">>> run_inference_loop() NOT spawning because is_running=false");
         }
+        eprintln!(">>> run_inference_loop() EXIT");
     }
 
     pub async fn stop(&self) -> EngineResult<()> {
@@ -315,7 +378,11 @@ impl InferenceEngine {
         Ok(())
     }
 
+    /// PHASE 24 FIX: Ensure request state exists WITHOUT creating duplicate GPU resources.
+    /// The ModelRuntime is shared at engine level; per-request state only tracks logical progress.
+    /// NO scratch buffers, NO KV cache allocation here - only processed_tokens counter.
     async fn ensure_request_state(&self, request_id: u32) -> EngineResult<()> {
+        // Check if state already exists
         {
             let states = self.request_states.read().await;
             if states.contains_key(&request_id) {
@@ -323,35 +390,15 @@ impl InferenceEngine {
             }
         }
 
-        let runtime_arc = self
+        // Verify model is loaded
+        let _runtime_arc = self
             .model_runtime
             .as_ref()
-            .ok_or_else(|| EngineError::InferenceFailed("No GGUF model loaded".to_string()))?
-            .clone();
+            .ok_or_else(|| EngineError::InferenceFailed("No GGUF model loaded".to_string()))?;
 
-        let base_runtime = runtime_arc.read().await;
-        let execution_plan = base_runtime
-            .execution_plan()
-            .cloned()
-            .ok_or_else(|| EngineError::InferenceFailed("Execution plan missing".to_string()))?;
-        drop(base_runtime);
-
-        // IMPORTANT: Wrap GPU operations in spawn_blocking to prevent tokio runtime starvation
-        // from_execution_plan creates a new backend, scratch buffers, and KV cache
-        let new_runtime = tokio::task::spawn_blocking(move || {
-            // Recreate a base runtime to call from_execution_plan
-            let temp_base = crate::backend::hip_backend::ModelRuntime::new()
-                .map_err(|e| EngineError::InferenceFailed(e.to_string()))?;
-            temp_base
-                .from_execution_plan(execution_plan)
-                .map_err(|e| EngineError::InferenceFailed(e.to_string()))
-        })
-        .await
-        .map_err(|e| EngineError::InferenceFailed(format!("Join error: {}", e)))??;
-
+        // Create per-request state WITHOUT any GPU resources
         let mut states = self.request_states.write().await;
         states.entry(request_id).or_insert(RequestRuntimeState {
-            runtime: new_runtime,
             processed_tokens: 0,
         });
         Ok(())
@@ -397,38 +444,73 @@ impl InferenceEngine {
     }
 
     async fn inference_loop(&self) {
+        eprintln!(">>> inference_loop() ENTRY - Starting inference loop");
         info!("Starting inference loop");
         tracing::debug!("inference_loop() started");
 
         let mut iteration = 0u64;
+        eprintln!(">>> inference_loop: entering while loop...");
         while *self.is_running.read().await {
             iteration += 1;
             if iteration % 100 == 0 {
                 tracing::debug!("inference_loop iteration {}", iteration);
             }
+            if iteration == 1 || iteration % 100 == 0 {
+                eprintln!(">>> inference_loop iteration {}", iteration);
+            }
 
             let start_time = Instant::now();
 
             // Check if we can create a batch
+            eprintln!(
+                ">>> inference_loop iter {}: about to read scheduler...",
+                iteration
+            );
             let (pending, can_create) = {
                 let scheduler = self.scheduler.read().await;
-                (scheduler.has_pending_requests(), scheduler.can_create_batch())
+                eprintln!(">>> inference_loop iter {}: scheduler read complete, checking pending/can_create...", iteration);
+                (
+                    scheduler.has_pending_requests(),
+                    scheduler.can_create_batch(),
+                )
             };
 
             if iteration % 100 == 0 || (pending && can_create) {
-                tracing::debug!("inference_loop iter={} has_pending={} can_create={}", iteration, pending, can_create);
+                tracing::debug!(
+                    "inference_loop iter={} has_pending={} can_create={}",
+                    iteration,
+                    pending,
+                    can_create
+                );
             }
+            eprintln!(
+                ">>> inference_loop iter {}: has_pending={} can_create={}",
+                iteration, pending, can_create
+            );
 
             if can_create {
+                eprintln!(
+                    ">>> inference_loop iter {}: calling process_batch()",
+                    iteration
+                );
                 tracing::debug!("inference_loop calling process_batch()");
                 if let Err(e) = self.process_batch().await {
                     error!("Error processing batch: {}", e);
                 }
+                eprintln!(
+                    ">>> inference_loop iter {}: process_batch returned",
+                    iteration
+                );
             }
 
             // Sleep to avoid busy waiting
             let elapsed = start_time.elapsed();
             if elapsed < self.config.batch_timeout {
+                eprintln!(
+                    ">>> inference_loop iter {}: sleeping for {:?}...",
+                    iteration,
+                    self.config.batch_timeout - elapsed
+                );
                 tokio::time::sleep(self.config.batch_timeout - elapsed).await;
             }
         }
@@ -438,25 +520,44 @@ impl InferenceEngine {
     }
 
     async fn process_batch(&self) -> EngineResult<()> {
+        eprintln!(">>> process_batch() ENTRY");
         // Get next iteration batch using continuous batching
+        eprintln!(">>> process_batch: about to acquire scheduler write lock...");
         let iteration_batch = {
             let mut scheduler = self.scheduler.write().await;
+            eprintln!(">>> process_batch: scheduler write lock acquired, calling get_next_iteration_batch...");
             scheduler
                 .get_next_iteration_batch()
                 .map_err(|e| EngineError::SchedulerError(e.to_string()))?
         };
+        eprintln!(
+            ">>> process_batch: iteration batch obtained, size={}",
+            iteration_batch.size()
+        );
 
         if iteration_batch.is_empty() {
+            eprintln!(">>> process_batch: batch is empty, returning early");
             return Ok(());
         }
 
+        eprintln!(">>> process_batch: about to log batch info...");
         info!(
             "Processing iteration batch with {} requests",
             iteration_batch.size()
         );
+        eprintln!(">>> process_batch: batch info logged, about to clone requests...");
+        eprintln!(
+            ">>> process_batch: iteration_batch.requests.len()={}",
+            iteration_batch.requests.len()
+        );
 
         // Process each request in the batch while keeping scheduler state in sync
+        eprintln!(">>> process_batch: starting clone of iteration_batch.requests...");
         let original_requests = iteration_batch.requests.clone();
+        eprintln!(
+            ">>> process_batch: clone complete, original_requests.len()={}",
+            original_requests.len()
+        );
         let mut refreshed_requests = Vec::with_capacity(original_requests.len());
 
         for request in &original_requests {
@@ -559,6 +660,8 @@ impl InferenceEngine {
         Ok(request_completed)
     }
 
+    /// PHASE 24 FIX: Use shared model_runtime instead of per-request runtime.
+    /// The ModelRuntime is shared at engine level; per-request state only tracks progress.
     async fn run_forward_pass(&self, request: &GenerationRequest) -> EngineResult<Vec<f32>> {
         let mut tokens = Vec::new();
         tokens.extend_from_slice(&request.prompt_tokens);
@@ -572,56 +675,111 @@ impl InferenceEngine {
 
         self.ensure_request_state(request.request_id).await?;
 
-        let mut states = self.request_states.write().await;
-        let state = states
-            .get_mut(&request.request_id)
-            .ok_or_else(|| EngineError::InferenceFailed(
-                format!("Request {} state disappeared during forward pass (may have been cancelled)", request.request_id)
-            ))?;
+        // Get shared model runtime from engine level (NOT per-request)
+        let runtime_arc = self
+            .model_runtime
+            .as_ref()
+            .ok_or_else(|| EngineError::InferenceFailed("No model runtime available".to_string()))?
+            .clone();
 
-        if tokens.len() < state.processed_tokens {
-            state
-                .runtime
+        // Get backend and execution plan from shared runtime
+        let backend = {
+            let runtime = runtime_arc.read().await;
+            let backend = runtime.backend().clone();
+            backend
+        };
+
+        // Check if we need to reset KV cache (read-only check)
+        let needs_reset = {
+            let states = self.request_states.read().await;
+            states
+                .get(&request.request_id)
+                .map(|s| tokens.len() < s.processed_tokens)
+                .unwrap_or(false)
+        };
+
+        if needs_reset {
+            let mut runtime = runtime_arc.write().await;
+            runtime
                 .reset_state()
                 .map_err(|e| EngineError::InferenceFailed(e.to_string()))?;
-            state.processed_tokens = 0;
+            // Reset processed_tokens counter
+            let mut states = self.request_states.write().await;
+            if let Some(state) = states.get_mut(&request.request_id) {
+                state.processed_tokens = 0;
+            }
         }
 
-        let start_idx = state.processed_tokens;
-        let tokens_to_process = tokens[start_idx..].to_vec();
+        // Get per-request state and tokens to process
+        let (start_idx, tokens_to_process) = {
+            let mut states = self.request_states.write().await;
+            let state = states.get_mut(&request.request_id).ok_or_else(|| {
+                EngineError::InferenceFailed(format!(
+                    "Request {} state disappeared during forward pass (may have been cancelled)",
+                    request.request_id
+                ))
+            })?;
+
+            let start_idx = state.processed_tokens;
+            let tokens_to_process = tokens[start_idx..].to_vec();
+            (start_idx, tokens_to_process)
+        };
+
         if tokens_to_process.is_empty() {
             return Err(EngineError::InferenceFailed(
                 "No new tokens to process for this request".to_string(),
             ));
         }
 
-        let backend = state.runtime.backend().clone();
-        let execution_plan =
-            state.runtime.execution_plan().cloned().ok_or_else(|| {
-                EngineError::InferenceFailed("Execution plan missing".to_string())
-            })?;
-        let runtime = &mut state.runtime;
+        // Get mutable access to shared runtime for decode_step
+        let mut runtime = runtime_arc.write().await;
+
+        eprintln!(
+            ">>> inference: Starting token processing loop, {} tokens to process",
+            tokens_to_process.len()
+        );
 
         let mut logits_tensor = None;
-        let mut processed = state.processed_tokens;
-        for token in tokens_to_process {
-            let token_slice = [token];
+        let mut processed = start_idx;
+        for (idx, token) in tokens_to_process.iter().enumerate() {
+            eprintln!(
+                ">>> inference: Processing token {}/{}, value={}",
+                idx + 1,
+                tokens_to_process.len(),
+                token
+            );
+            let token_slice = [*token];
+            let execution_plan = runtime.execution_plan().ok_or_else(|| {
+                EngineError::InferenceFailed("Execution plan missing".to_string())
+            })?;
             // Get embedding weights (now returns owned DeviceTensor due to lazy loading)
-            let embedding_weights = execution_plan.embedding_weights()
+            eprintln!(">>> inference: Fetching embedding weights...");
+            let embedding_weights = execution_plan
+                .embedding_weights()
                 .map_err(|e| EngineError::InferenceFailed(e.to_string()))?;
+            eprintln!(">>> inference: Embedding weights fetched, doing embedding_lookup...");
             let embeddings = execution_plan
                 .embedding_lookup(&backend, &token_slice, &embedding_weights)
                 .map_err(|e| EngineError::InferenceFailed(e.to_string()))?;
 
+            eprintln!(">>> inference: Calling decode_step...");
             let logits = runtime
                 .decode_step(&embeddings)
                 .map_err(|e| EngineError::InferenceFailed(e.to_string()))?;
+            eprintln!(">>> inference: decode_step complete");
             logits_tensor = Some(logits);
             processed += 1;
         }
 
-        state.processed_tokens = processed;
-        drop(states);
+        eprintln!(">>> inference: Token processing loop complete");
+
+        // Update per-request state
+        {
+            let mut states = self.request_states.write().await;
+            if let Some(state) = states.get_mut(&request.request_id) {
+                state.processed_tokens = processed;
+            }
+        }
 
         let logits_tensor = logits_tensor.ok_or_else(|| {
             EngineError::InferenceFailed("Failed to compute logits for request".to_string())
@@ -891,9 +1049,7 @@ mod tests {
             // We need to return a Result that can be checked
             let engine = engine.clone();
             let request = request.clone();
-            tokio::spawn(async move {
-                engine.run_forward_pass(&request).await
-            })
+            tokio::spawn(async move { engine.run_forward_pass(&request).await })
         }));
 
         // The spawn itself should not panic

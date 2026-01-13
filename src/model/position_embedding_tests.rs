@@ -6,9 +6,7 @@
 #[cfg(test)]
 mod gpu_position_embedding_tests {
     use crate::attention::rope::RopeConfig;
-    use crate::model::glm_position::{
-        GlmPositionConfig, GlmPositionHandler, GlmAttentionPattern,
-    };
+    use crate::model::glm_position::{GlmAttentionPattern, GlmPositionConfig, GlmPositionHandler};
 
     /// Helper to compare CPU and GPU results with tolerance
     fn compare_results(cpu: &[f32], gpu: &[f32], tolerance: f32) -> Result<(), String> {
@@ -56,14 +54,14 @@ mod gpu_position_embedding_tests {
 
         // GPU implementation (currently falls back to CPU)
         let backend = crate::backend::HipBackend::new().unwrap();
-        let q_shape = crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
-        let k_shape = crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
+        let q_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
+        let k_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
         let q_device =
-            crate::backend::DeviceTensor::from_host_vec(&backend, q.clone(), q_shape)
-                .unwrap();
+            crate::backend::DeviceTensor::from_host_vec(&backend, q.clone(), q_shape).unwrap();
         let k_device =
-            crate::backend::DeviceTensor::from_host_vec(&backend, k.clone(), k_shape)
-                .unwrap();
+            crate::backend::DeviceTensor::from_host_vec(&backend, k.clone(), k_shape).unwrap();
 
         let (q_gpu_device, k_gpu_device) = handler
             .apply_position_embeddings_device(q_device, k_device, &position_ids, num_heads)
@@ -101,14 +99,14 @@ mod gpu_position_embedding_tests {
 
         // GPU implementation
         let backend = crate::backend::HipBackend::new().unwrap();
-        let q_shape = crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
-        let k_shape = crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
+        let q_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
+        let k_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
         let q_device =
-            crate::backend::DeviceTensor::from_host_vec(&backend, q.clone(), q_shape)
-                .unwrap();
+            crate::backend::DeviceTensor::from_host_vec(&backend, q.clone(), q_shape).unwrap();
         let k_device =
-            crate::backend::DeviceTensor::from_host_vec(&backend, k.clone(), k_shape)
-                .unwrap();
+            crate::backend::DeviceTensor::from_host_vec(&backend, k.clone(), k_shape).unwrap();
 
         let (q_gpu_device, k_gpu_device) = handler
             .apply_position_embeddings_device(q_device, k_device, &position_ids, num_heads)
@@ -181,14 +179,14 @@ mod gpu_position_embedding_tests {
 
         // GPU implementation
         let backend = crate::backend::HipBackend::new().unwrap();
-        let q_shape = crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
-        let k_shape = crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
+        let q_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
+        let k_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
         let q_device =
-            crate::backend::DeviceTensor::from_host_vec(&backend, q.clone(), q_shape)
-                .unwrap();
+            crate::backend::DeviceTensor::from_host_vec(&backend, q.clone(), q_shape).unwrap();
         let k_device =
-            crate::backend::DeviceTensor::from_host_vec(&backend, k.clone(), k_shape)
-                .unwrap();
+            crate::backend::DeviceTensor::from_host_vec(&backend, k.clone(), k_shape).unwrap();
 
         let (q_gpu_device, k_gpu_device) = handler
             .apply_position_embeddings_device(q_device, k_device, &position_ids, num_heads)
@@ -225,14 +223,14 @@ mod gpu_position_embedding_tests {
 
         // GPU implementation
         let backend = crate::backend::HipBackend::new().unwrap();
-        let q_shape = crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
-        let k_shape = crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
+        let q_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
+        let k_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
         let q_device =
-            crate::backend::DeviceTensor::from_host_vec(&backend, q.clone(), q_shape)
-                .unwrap();
+            crate::backend::DeviceTensor::from_host_vec(&backend, q.clone(), q_shape).unwrap();
         let k_device =
-            crate::backend::DeviceTensor::from_host_vec(&backend, k.clone(), k_shape)
-                .unwrap();
+            crate::backend::DeviceTensor::from_host_vec(&backend, k.clone(), k_shape).unwrap();
 
         let (q_gpu_device, k_gpu_device) = handler
             .apply_position_embeddings_device(q_device, k_device, &position_ids, num_heads)
@@ -269,14 +267,14 @@ mod gpu_position_embedding_tests {
 
         // GPU implementation
         let backend = crate::backend::HipBackend::new().unwrap();
-        let q_shape = crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
-        let k_shape = crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
+        let q_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
+        let k_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
         let q_device =
-            crate::backend::DeviceTensor::from_host_vec(&backend, q.clone(), q_shape)
-                .unwrap();
+            crate::backend::DeviceTensor::from_host_vec(&backend, q.clone(), q_shape).unwrap();
         let k_device =
-            crate::backend::DeviceTensor::from_host_vec(&backend, k.clone(), k_shape)
-                .unwrap();
+            crate::backend::DeviceTensor::from_host_vec(&backend, k.clone(), k_shape).unwrap();
 
         let (q_gpu_device, k_gpu_device) = handler
             .apply_position_embeddings_device(q_device, k_device, &position_ids, num_heads)
@@ -319,14 +317,14 @@ mod gpu_position_embedding_tests {
 
         // GPU implementation
         let backend = crate::backend::HipBackend::new().unwrap();
-        let q_shape = crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
-        let k_shape = crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
+        let q_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
+        let k_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
         let q_device =
-            crate::backend::DeviceTensor::from_host_vec(&backend, q.clone(), q_shape)
-                .unwrap();
+            crate::backend::DeviceTensor::from_host_vec(&backend, q.clone(), q_shape).unwrap();
         let k_device =
-            crate::backend::DeviceTensor::from_host_vec(&backend, k.clone(), k_shape)
-                .unwrap();
+            crate::backend::DeviceTensor::from_host_vec(&backend, k.clone(), k_shape).unwrap();
 
         let (q_gpu_device, k_gpu_device) = handler
             .apply_position_embeddings_device(q_device, k_device, &position_ids, num_heads)
@@ -357,22 +355,18 @@ mod gpu_position_embedding_tests {
         let position_ids = vec![0, 1, 2, 3];
 
         let backend = crate::backend::HipBackend::new().unwrap();
-        let q_shape = crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
-        let k_shape = crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
+        let q_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
+        let k_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
         let q_device =
-            crate::backend::DeviceTensor::from_host_vec(&backend, q.clone(), q_shape)
-                .unwrap();
+            crate::backend::DeviceTensor::from_host_vec(&backend, q.clone(), q_shape).unwrap();
         let k_device =
-            crate::backend::DeviceTensor::from_host_vec(&backend, k.clone(), k_shape)
-                .unwrap();
+            crate::backend::DeviceTensor::from_host_vec(&backend, k.clone(), k_shape).unwrap();
 
         // This should use GPU path (currently falls back to CPU, but tests verify correctness)
-        let result = handler.apply_position_embeddings_device(
-            q_device,
-            k_device,
-            &position_ids,
-            num_heads,
-        );
+        let result =
+            handler.apply_position_embeddings_device(q_device, k_device, &position_ids, num_heads);
 
         assert!(result.is_ok(), "GPU path should execute successfully");
 

@@ -146,8 +146,10 @@ fn benchmark_traditional_vs_continuous_batching() {
     result_continuous.report();
 
     // Calculate speedup
-    let avg_traditional = result_traditional.durations.iter().sum::<Duration>() / result_traditional.iterations as u32;
-    let avg_continuous = result_continuous.durations.iter().sum::<Duration>() / result_continuous.iterations as u32;
+    let avg_traditional = result_traditional.durations.iter().sum::<Duration>()
+        / result_traditional.iterations as u32;
+    let avg_continuous =
+        result_continuous.durations.iter().sum::<Duration>() / result_continuous.iterations as u32;
 
     if avg_continuous < avg_traditional {
         let speedup = avg_traditional.as_nanos() as f64 / avg_continuous.as_nanos() as f64;
@@ -160,8 +162,8 @@ fn benchmark_traditional_vs_continuous_batching() {
 
 /// Benchmark 2: Block sharing overhead
 fn benchmark_block_sharing_overhead() {
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     println!("\n[2] Block Sharing Overhead");
     println!("-------------------------");
@@ -190,19 +192,24 @@ fn benchmark_block_sharing_overhead() {
     result_shared.report();
 
     // Calculate overhead
-    let avg_direct = result_direct.durations.iter().sum::<Duration>() / result_direct.iterations as u32;
-    let avg_shared = result_shared.durations.iter().sum::<Duration>() / result_shared.iterations as u32;
+    let avg_direct =
+        result_direct.durations.iter().sum::<Duration>() / result_direct.iterations as u32;
+    let avg_shared =
+        result_shared.durations.iter().sum::<Duration>() / result_shared.iterations as u32;
 
     let overhead_ns = avg_shared.as_nanos() - avg_direct.as_nanos();
     let overhead_pct = (overhead_ns as f64 / avg_direct.as_nanos() as f64) * 100.0;
 
-    println!("\n>>> Reference Counting Overhead: {} ns ({:.2}%)", overhead_ns, overhead_pct);
+    println!(
+        "\n>>> Reference Counting Overhead: {} ns ({:.2}%)",
+        overhead_ns, overhead_pct
+    );
 }
 
 /// Benchmark 3: Memory efficiency (theoretical)
 fn benchmark_ref_counting_overhead() {
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     println!("\n[3] Memory Efficiency (Block Sharing)");
     println!("-----------------------------------");
@@ -223,7 +230,10 @@ fn benchmark_ref_counting_overhead() {
     let memory_reduction = blocks_without_sharing - blocks_with_sharing;
     let memory_reduction_pct = (memory_reduction as f64 / blocks_without_sharing as f64) * 100.0;
 
-    println!("\n>>> Memory Reduction: {} blocks ({:.1}%)", memory_reduction, memory_reduction_pct);
+    println!(
+        "\n>>> Memory Reduction: {} blocks ({:.1}%)",
+        memory_reduction, memory_reduction_pct
+    );
 
     // Measure the actual overhead of ref_counting operations
     let bench_incr = Benchmark::new("AtomicUsize::fetch_add (ref increment)", 100000);

@@ -13,7 +13,7 @@ mod flash_nocausal_tests {
     use crate::loader::mmap_loader::TensorShape;
 
     const TEST_TOLERANCE: f32 = 1e-4;
-    const TEST_TOLERANCE_LARGE: f32 = 2e-3;  // Fused kernel has more FP operations
+    const TEST_TOLERANCE_LARGE: f32 = 2e-3; // Fused kernel has more FP operations
 
     /// Helper: Create Q tensor [batch, heads, seq, dim]
     fn create_q_tensor(batch: usize, heads: usize, seq: usize, dim: usize) -> Vec<f32> {
@@ -111,11 +111,11 @@ mod flash_nocausal_tests {
         let v = create_v_tensor(batch, heads, seq_len, dim);
 
         // CPU reference
-        let cpu_result = flash_attention_nocausal_cpu_reference(&q, &k, &v, batch, heads, seq_len, dim, scale);
+        let cpu_result =
+            flash_attention_nocausal_cpu_reference(&q, &k, &v, batch, heads, seq_len, dim, scale);
 
         // GPU run
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let q_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
         let k_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
@@ -149,7 +149,8 @@ mod flash_nocausal_tests {
 
         backend.synchronize().expect("GPU synchronization failed");
 
-        let gpu_result = out_gpu.to_host_vec()
+        let gpu_result = out_gpu
+            .to_host_vec()
             .expect("Failed to copy output from GPU");
 
         assert_eq!(cpu_result.len(), gpu_result.len());
@@ -161,7 +162,10 @@ mod flash_nocausal_tests {
             assert!(
                 diff < TEST_TOLERANCE,
                 "Flash non-causal mismatch at {}: CPU={}, GPU={}, diff={}",
-                i, cpu_val, gpu_val, diff
+                i,
+                cpu_val,
+                gpu_val,
+                diff
             );
         }
         println!("Flash non-causal small max diff: {}", max_diff);
@@ -180,10 +184,10 @@ mod flash_nocausal_tests {
         let k = create_k_tensor(batch, heads, seq_len, dim);
         let v = create_v_tensor(batch, heads, seq_len, dim);
 
-        let cpu_result = flash_attention_nocausal_cpu_reference(&q, &k, &v, batch, heads, seq_len, dim, scale);
+        let cpu_result =
+            flash_attention_nocausal_cpu_reference(&q, &k, &v, batch, heads, seq_len, dim, scale);
 
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let q_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
         let k_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
@@ -217,7 +221,8 @@ mod flash_nocausal_tests {
 
         backend.synchronize().expect("GPU synchronization failed");
 
-        let gpu_result = out_gpu.to_host_vec()
+        let gpu_result = out_gpu
+            .to_host_vec()
             .expect("Failed to copy output from GPU");
 
         let mut max_diff = 0.0f32;
@@ -225,7 +230,11 @@ mod flash_nocausal_tests {
             max_diff = max_diff.max((cpu_val - gpu_val).abs());
         }
         println!("Flash non-causal 16x16 max diff: {}", max_diff);
-        assert!(max_diff < TEST_TOLERANCE_LARGE, "Max diff {} exceeds tolerance", max_diff);
+        assert!(
+            max_diff < TEST_TOLERANCE_LARGE,
+            "Max diff {} exceeds tolerance",
+            max_diff
+        );
     }
 
     /// Test 3: Fused non-causal with 32×32 (correctness at scale)
@@ -241,10 +250,10 @@ mod flash_nocausal_tests {
         let k = create_k_tensor(batch, heads, seq_len, dim);
         let v = create_v_tensor(batch, heads, seq_len, dim);
 
-        let cpu_result = flash_attention_nocausal_cpu_reference(&q, &k, &v, batch, heads, seq_len, dim, scale);
+        let cpu_result =
+            flash_attention_nocausal_cpu_reference(&q, &k, &v, batch, heads, seq_len, dim, scale);
 
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let q_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
         let k_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
@@ -278,7 +287,8 @@ mod flash_nocausal_tests {
 
         backend.synchronize().expect("GPU synchronization failed");
 
-        let gpu_result = out_gpu.to_host_vec()
+        let gpu_result = out_gpu
+            .to_host_vec()
             .expect("Failed to copy output from GPU");
 
         let mut max_diff = 0.0f32;
@@ -286,7 +296,11 @@ mod flash_nocausal_tests {
             max_diff = max_diff.max((cpu_val - gpu_val).abs());
         }
         println!("Flash non-causal 32x32 max diff: {}", max_diff);
-        assert!(max_diff < TEST_TOLERANCE_LARGE, "Max diff {} exceeds tolerance", max_diff);
+        assert!(
+            max_diff < TEST_TOLERANCE_LARGE,
+            "Max diff {} exceeds tolerance",
+            max_diff
+        );
     }
 
     /// Test 4: Verify row-wise softmax properties (rows sum to ~1)
@@ -305,8 +319,7 @@ mod flash_nocausal_tests {
         // Create V with all ones - output will be sum of softmax weights
         let v_ones = vec![1.0f32; batch * heads * seq_len * dim];
 
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let q_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
         let k_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
@@ -340,7 +353,8 @@ mod flash_nocausal_tests {
 
         backend.synchronize().expect("GPU synchronization failed");
 
-        let gpu_result = out_gpu.to_host_vec()
+        let gpu_result = out_gpu
+            .to_host_vec()
             .expect("Failed to copy output from GPU");
 
         // With V=all ones, each output dimension should equal the softmax weight sum (~1.0)
@@ -351,7 +365,9 @@ mod flash_nocausal_tests {
                 assert!(
                     (val - 1.0).abs() < 1e-3,
                     "Softmax weights don't sum to 1.0: query_pos={}, dim={}, value={}",
-                    query_pos, d, val
+                    query_pos,
+                    d,
+                    val
                 );
             }
         }
@@ -372,8 +388,7 @@ mod flash_nocausal_tests {
         let k = create_k_tensor(batch, heads, seq_len, dim);
         let v = create_v_tensor(batch, heads, seq_len, dim);
 
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let q_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
         let k_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
@@ -401,7 +416,8 @@ mod flash_nocausal_tests {
                 heads as u32,
                 dim as u32,
                 scale,
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         // Softmax (in-place on scores_gpu)
@@ -416,7 +432,12 @@ mod flash_nocausal_tests {
         }
 
         // Copy scores to weights (same buffer after softmax)
-        weights_gpu = DeviceTensor::from_host_vec(&backend, scores_gpu.to_host_vec().unwrap(), scores_shape.clone()).unwrap();
+        weights_gpu = DeviceTensor::from_host_vec(
+            &backend,
+            scores_gpu.to_host_vec().unwrap(),
+            scores_shape.clone(),
+        )
+        .unwrap();
 
         // Weighted × V
         unsafe {
@@ -429,7 +450,8 @@ mod flash_nocausal_tests {
                 seq_len as u32,
                 heads as u32,
                 dim as u32,
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         backend.synchronize().unwrap();
@@ -452,7 +474,8 @@ mod flash_nocausal_tests {
                 seq_len as u32,
                 heads as u32,
                 dim as u32,
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         backend.synchronize().unwrap();
@@ -465,6 +488,10 @@ mod flash_nocausal_tests {
             max_diff = max_diff.max(diff);
         }
         println!("Flash fused vs separate max diff: {}", max_diff);
-        assert!(max_diff < TEST_TOLERANCE_LARGE, "Max diff {} exceeds tolerance", max_diff);
+        assert!(
+            max_diff < TEST_TOLERANCE_LARGE,
+            "Max diff {} exceeds tolerance",
+            max_diff
+        );
     }
 }

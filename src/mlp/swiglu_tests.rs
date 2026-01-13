@@ -63,8 +63,7 @@ mod swiglu_tests {
         let cpu_result = swiglu_cpu_reference(&gate, &up, seq_len, intermediate_size);
 
         // GPU run
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let gate_shape = TensorShape::from_dims(&[seq_len, intermediate_size]);
         let up_shape = TensorShape::from_dims(&[seq_len, intermediate_size]);
@@ -74,12 +73,12 @@ mod swiglu_tests {
             .expect("Failed to create gate tensor");
         let up_gpu = DeviceTensor::from_host_vec(&backend, up, up_shape)
             .expect("Failed to create up tensor");
-        let mut out_gpu = DeviceTensor::empty(&backend, out_shape)
-            .expect("Failed to create output tensor");
+        let mut out_gpu =
+            DeviceTensor::empty(&backend, out_shape).expect("Failed to create output tensor");
 
         let result = unsafe {
             crate::mlp::kernels::swiglu_gpu_kernel(
-                &backend,  // Pass backend to ensure stream consistency
+                &backend, // Pass backend to ensure stream consistency
                 gate_gpu.as_ptr() as *const f32,
                 up_gpu.as_ptr() as *const f32,
                 out_gpu.buffer().as_mut_ptr() as *mut f32,
@@ -92,7 +91,8 @@ mod swiglu_tests {
 
         backend.synchronize().expect("GPU synchronization failed");
 
-        let gpu_result = out_gpu.to_host_vec()
+        let gpu_result = out_gpu
+            .to_host_vec()
             .expect("Failed to copy output from GPU");
 
         assert_eq!(cpu_result.len(), gpu_result.len());
@@ -104,7 +104,10 @@ mod swiglu_tests {
             assert!(
                 diff < TEST_TOLERANCE,
                 "SwiGLU mismatch at {}: CPU={}, GPU={}, diff={}",
-                i, cpu_val, gpu_val, diff
+                i,
+                cpu_val,
+                gpu_val,
+                diff
             );
         }
         println!("SwiGLU small max diff: {}", max_diff);
@@ -122,8 +125,7 @@ mod swiglu_tests {
 
         let cpu_result = swiglu_cpu_reference(&gate, &up, seq_len, intermediate_size);
 
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let gate_shape = TensorShape::from_dims(&[seq_len, intermediate_size]);
         let up_shape = TensorShape::from_dims(&[seq_len, intermediate_size]);
@@ -133,12 +135,12 @@ mod swiglu_tests {
             .expect("Failed to create gate tensor");
         let up_gpu = DeviceTensor::from_host_vec(&backend, up, up_shape)
             .expect("Failed to create up tensor");
-        let mut out_gpu = DeviceTensor::empty(&backend, out_shape)
-            .expect("Failed to create output tensor");
+        let mut out_gpu =
+            DeviceTensor::empty(&backend, out_shape).expect("Failed to create output tensor");
 
         let result = unsafe {
             crate::mlp::kernels::swiglu_gpu_kernel(
-                &backend,  // Pass backend to ensure stream consistency
+                &backend, // Pass backend to ensure stream consistency
                 gate_gpu.as_ptr() as *const f32,
                 up_gpu.as_ptr() as *const f32,
                 out_gpu.buffer().as_mut_ptr() as *mut f32,
@@ -151,7 +153,8 @@ mod swiglu_tests {
 
         backend.synchronize().expect("GPU synchronization failed");
 
-        let gpu_result = out_gpu.to_host_vec()
+        let gpu_result = out_gpu
+            .to_host_vec()
             .expect("Failed to copy output from GPU");
 
         let mut max_diff = 0.0f32;
@@ -159,7 +162,11 @@ mod swiglu_tests {
             max_diff = max_diff.max((cpu_val - gpu_val).abs());
         }
         println!("SwiGLU 32x32 max diff: {}", max_diff);
-        assert!(max_diff < TEST_TOLERANCE_LARGE, "Max diff {} exceeds tolerance", max_diff);
+        assert!(
+            max_diff < TEST_TOLERANCE_LARGE,
+            "Max diff {} exceeds tolerance",
+            max_diff
+        );
     }
 
     /// Test 3: SwiGLU with non-square dimensions
@@ -174,8 +181,7 @@ mod swiglu_tests {
 
         let cpu_result = swiglu_cpu_reference(&gate, &up, seq_len, intermediate_size);
 
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let gate_shape = TensorShape::from_dims(&[seq_len, intermediate_size]);
         let up_shape = TensorShape::from_dims(&[seq_len, intermediate_size]);
@@ -185,12 +191,12 @@ mod swiglu_tests {
             .expect("Failed to create gate tensor");
         let up_gpu = DeviceTensor::from_host_vec(&backend, up, up_shape)
             .expect("Failed to create up tensor");
-        let mut out_gpu = DeviceTensor::empty(&backend, out_shape)
-            .expect("Failed to create output tensor");
+        let mut out_gpu =
+            DeviceTensor::empty(&backend, out_shape).expect("Failed to create output tensor");
 
         let result = unsafe {
             crate::mlp::kernels::swiglu_gpu_kernel(
-                &backend,  // Pass backend to ensure stream consistency
+                &backend, // Pass backend to ensure stream consistency
                 gate_gpu.as_ptr() as *const f32,
                 up_gpu.as_ptr() as *const f32,
                 out_gpu.buffer().as_mut_ptr() as *mut f32,
@@ -203,7 +209,8 @@ mod swiglu_tests {
 
         backend.synchronize().expect("GPU synchronization failed");
 
-        let gpu_result = out_gpu.to_host_vec()
+        let gpu_result = out_gpu
+            .to_host_vec()
             .expect("Failed to copy output from GPU");
 
         let mut max_diff = 0.0f32;
@@ -211,7 +218,11 @@ mod swiglu_tests {
             max_diff = max_diff.max((cpu_val - gpu_val).abs());
         }
         println!("SwiGLU non-square max diff: {}", max_diff);
-        assert!(max_diff < TEST_TOLERANCE_LARGE, "Max diff {} exceeds tolerance", max_diff);
+        assert!(
+            max_diff < TEST_TOLERANCE_LARGE,
+            "Max diff {} exceeds tolerance",
+            max_diff
+        );
     }
 
     /// Test 4: Verify output is finite (no NaN/inf)
@@ -225,8 +236,7 @@ mod swiglu_tests {
         let gate: Vec<f32> = (0..total).map(|i| (i as f32) * 100.0 - 50.0).collect();
         let up: Vec<f32> = (0..total).map(|i| (i as f32) * 50.0 - 25.0).collect();
 
-        let backend = HipBackend::new()
-            .expect("Failed to create HIP backend");
+        let backend = HipBackend::new().expect("Failed to create HIP backend");
 
         let gate_shape = TensorShape::from_dims(&[seq_len, intermediate_size]);
         let up_shape = TensorShape::from_dims(&[seq_len, intermediate_size]);
@@ -236,12 +246,12 @@ mod swiglu_tests {
             .expect("Failed to create gate tensor");
         let up_gpu = DeviceTensor::from_host_vec(&backend, up, up_shape)
             .expect("Failed to create up tensor");
-        let mut out_gpu = DeviceTensor::empty(&backend, out_shape)
-            .expect("Failed to create output tensor");
+        let mut out_gpu =
+            DeviceTensor::empty(&backend, out_shape).expect("Failed to create output tensor");
 
         let result = unsafe {
             crate::mlp::kernels::swiglu_gpu_kernel(
-                &backend,  // Pass backend to ensure stream consistency
+                &backend, // Pass backend to ensure stream consistency
                 gate_gpu.as_ptr() as *const f32,
                 up_gpu.as_ptr() as *const f32,
                 out_gpu.buffer().as_mut_ptr() as *mut f32,
@@ -254,7 +264,8 @@ mod swiglu_tests {
 
         backend.synchronize().expect("GPU synchronization failed");
 
-        let gpu_result = out_gpu.to_host_vec()
+        let gpu_result = out_gpu
+            .to_host_vec()
             .expect("Failed to copy output from GPU");
 
         // Verify all values are finite
@@ -262,7 +273,8 @@ mod swiglu_tests {
             assert!(
                 val.is_finite(),
                 "SwiGLU output should be finite at index {}, got {}",
-                i, val
+                i,
+                val
             );
         }
 
@@ -292,7 +304,8 @@ mod swiglu_tests {
             assert!(
                 val.abs() < 1e-6,
                 "SwiGLU with up=0 should give ~0 at {}, got {}",
-                i, val
+                i,
+                val
             );
         }
 
@@ -308,9 +321,11 @@ mod swiglu_tests {
             let expected = gate2[i] * up_large[i];
             let diff = (cpu_result2[i] - expected).abs();
             assert!(
-                diff < 0.1,  // Allow some tolerance since swish isn't exactly identity
+                diff < 0.1, // Allow some tolerance since swish isn't exactly identity
                 "SwiGLU with large up should approximate gate*up at {}: expected ~{}, got {}",
-                i, expected, cpu_result2[i]
+                i,
+                expected,
+                cpu_result2[i]
             );
         }
 
