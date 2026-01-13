@@ -6,7 +6,6 @@ use crate::loader::{GgufLoader, OnnxLoader};
 use crate::sampler::{Sampler, SamplingConfig};
 use crate::scheduler::{GenerationRequest, RequestState, Scheduler, SchedulerConfig};
 use std::collections::HashMap;
-use std::io::Write;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;

@@ -8,6 +8,7 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
+use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
 use rocmforge::backend::hip_backend::{DeviceTensor, HipBackend};
 use rocmforge::loader::gguf::{GgufLoader, GgufMetadata, GgufTensor};
 use rocmforge::loader::TensorShape;

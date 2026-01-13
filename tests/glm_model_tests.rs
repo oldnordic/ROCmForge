@@ -7,6 +7,7 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
+use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
 use rocmforge::backend::hip_backend::{DeviceTensor, HipBackend, ModelRuntime};
 use rocmforge::loader::gguf::GgufLoader;
 use rocmforge::model::config::ModelConfig;
@@ -174,15 +175,15 @@ mod tests {
             let layer_plan = execution_plan.layers().get(layer_idx).unwrap();
 
             // Check QKV projection
-            assert_eq!(layer_plan.qkv_weight().shape().dims(), &[1536, 512]);
+            assert_eq!(layer_plan.qkv_weight.shape().unwrap(), &[1536, 512]);
 
             // Check MLP projections
-            assert_eq!(layer_plan.mlp_fc1().shape().dims(), &[2048, 512]);
-            assert_eq!(layer_plan.mlp_fc2().shape().dims(), &[512, 2048]);
+            assert_eq!(layer_plan.mlp_gate_proj.shape().unwrap(), &[2048, 512]);
+            assert_eq!(layer_plan.mlp_down_proj.shape().unwrap(), &[512, 2048]);
 
             // Check layer norms
-            assert_eq!(layer_plan.norm1_weight().shape().dims(), &[512]);
-            assert_eq!(layer_plan.norm2_weight().shape().dims(), &[512]);
+            assert_eq!(layer_plan.norm1_weight.shape().unwrap(), &[512]);
+            assert_eq!(layer_plan.norm2_weight.shape().unwrap(), &[512]);
         }
 
         Ok(())
@@ -253,16 +254,16 @@ mod tests {
             let layer_plan = execution_plan.layers().get(layer_idx).unwrap();
 
             // Should have attention norms (attention_norm, ffn_norm in GLM)
-            assert!(layer_plan.norm1_weight().size() > 0);
-            assert!(layer_plan.norm2_weight().size() > 0);
+            assert!(layer_plan.norm1_weight.shape().unwrap().iter().product::<usize>() > 0);
+            assert!(layer_plan.norm2_weight.shape().unwrap().iter().product::<usize>() > 0);
 
             // Should have QKV and output projections
-            assert!(layer_plan.qkv_weight().size() > 0);
-            assert!(layer_plan.o_proj().size() > 0);
+            assert!(layer_plan.qkv_weight.shape().unwrap().iter().product::<usize>() > 0);
+            assert!(layer_plan.o_proj.shape().unwrap().iter().product::<usize>() > 0);
 
             // Should have MLP projections (gate, up, down in GLM)
-            assert!(layer_plan.mlp_fc1().size() > 0); // gate_proj
-            assert!(layer_plan.mlp_fc2().size() > 0); // down_proj
+            assert!(layer_plan.mlp_gate_proj.shape().unwrap().iter().product::<usize>() > 0); // gate_proj
+            assert!(layer_plan.mlp_down_proj.shape().unwrap().iter().product::<usize>() > 0); // down_proj
         }
 
         Ok(())
@@ -314,7 +315,7 @@ mod tests {
         // Verify QKV projection structure supports multi-query attention
         for layer_idx in 0..2 {
             let layer_plan = execution_plan.layers().get(layer_idx).unwrap();
-            let qkv_shape = layer_plan.qkv_weight().shape().dims();
+            let qkv_shape = layer_plan.qkv_weight.shape().unwrap();
 
             // QKV should be [3 * hidden_size, hidden_size] for standard attention
             // or [hidden_size + 2 * head_dim, hidden_size] for multi-query

@@ -9,7 +9,7 @@
 //! - Block sharing between sequences
 //! - Better memory management
 
-use crate::backend::{DeviceTensor, HipBackend, HipError};
+use crate::backend::{DeviceTensor, HipBackend, HipError, HipBuffer};
 use crate::loader::mmap_loader::TensorShape;
 use thiserror::Error;
 
@@ -40,16 +40,20 @@ pub struct KVCache {
     num_heads: usize,
     head_dim: usize,
     max_seq_len: usize,
-    // Preallocated GPU memory for keys and values
-    // Shape: [num_layers][num_heads][max_seq_len][head_dim]
-    keys: Vec<DeviceTensor>,
-    values: Vec<DeviceTensor>,
+    // Single large preallocated GPU memory buffers for all keys and values
+    // This reduces fragmentation by using fewer hipMalloc calls
+    keys_buffer: HipBuffer,
+    values_buffer: HipBuffer,
     // Track current sequence length for each layer
     current_seq_len: Vec<usize>,
+    // Pre-calculated sizes for sub-allocation
+    layer_size_bytes: usize,
+    head_size_bytes: usize,
 }
 
 impl KVCache {
     /// Create new KV cache with specified configuration
+    /// Uses single large buffer allocation to reduce fragmentation
     pub fn new(
         backend: &HipBackend,
         num_layers: usize,
@@ -57,48 +61,39 @@ impl KVCache {
         head_dim: usize,
         max_seq_len: usize,
     ) -> KVCacheResult<Self> {
-        eprintln!(
-            "KVCache::new() called with layers={}, heads={}, head_dim={}, max_seq_len={}",
-            num_layers, num_heads, head_dim, max_seq_len
-        );
-        // Preallocate keys and values for all layers
-        let mut keys = Vec::with_capacity(num_layers);
-        let mut values = Vec::with_capacity(num_layers);
+        eprintln!("KVCache::new() called with layers={}, heads={}, head_dim={}, max_seq_len={}",
+                 num_layers, num_heads, head_dim, max_seq_len);
+
+        // Calculate sizes for sub-allocation
+        let elements_per_layer = max_seq_len * num_heads * head_dim;
+        let bytes_per_layer = elements_per_layer * std::mem::size_of::<f32>();
+        let total_keys_bytes = bytes_per_layer * num_layers;
+        let total_values_bytes = bytes_per_layer * num_layers;
+
+        eprintln!("KVCache::new() allocating {} bytes for keys, {} bytes for values",
+                 total_keys_bytes, total_values_bytes);
+
+        // Allocate single large buffers for all keys and values
+        // This reduces hipMalloc calls from 2*num_layers to 2, reducing fragmentation
+        let keys_buffer = backend.allocate_buffer_safe(total_keys_bytes)
+            .map_err(KVCacheError::AllocationFailed)?;
+        let values_buffer = backend.allocate_buffer_safe(total_values_bytes)
+            .map_err(KVCacheError::AllocationFailed)?;
+
         let current_seq_len = vec![0; num_layers];
 
-        for layer in 0..num_layers {
-            if layer % 8 == 0 || layer == num_layers - 1 {
-                eprintln!(
-                    "KVCache::new() allocating layer {}/{}",
-                    layer + 1,
-                    num_layers
-                );
-            }
-            // Key/Value tensor shape: [max_seq_len, num_heads, head_dim]
-            let kv_shape = TensorShape::from_dims(&[max_seq_len, num_heads, head_dim]);
-
-            let key_tensor = DeviceTensor::empty(backend, kv_shape.clone())
-                .map_err(KVCacheError::AllocationFailed)?;
-            let value_tensor =
-                DeviceTensor::empty(backend, kv_shape).map_err(KVCacheError::AllocationFailed)?;
-
-            keys.push(key_tensor);
-            values.push(value_tensor);
-        }
-
-        tracing::debug!(
-            "KVCache::new() completed all {} layers, returning KVCache",
-            num_layers
-        );
+        eprintln!("KVCache::new() completed allocation, returning KVCache");
         Ok(KVCache {
             backend: backend.clone(),
             num_layers,
             num_heads,
             head_dim,
             max_seq_len,
-            keys,
-            values,
+            keys_buffer,
+            values_buffer,
             current_seq_len,
+            layer_size_bytes: bytes_per_layer,
+            head_size_bytes: max_seq_len * head_dim * std::mem::size_of::<f32>(),
         })
     }
 
@@ -152,57 +147,47 @@ impl KVCache {
         }
 
         let chunk_elements = seq_chunk * self.num_heads * self.head_dim;
-        let dst_offset = current_len * self.num_heads * self.head_dim;
+        let dst_offset_elements = current_len * self.num_heads * self.head_dim;
+        let dst_offset_bytes = dst_offset_elements * std::mem::size_of::<f32>();
+        let layer_offset_bytes = layer * self.layer_size_bytes;
 
-        self.keys[layer].copy_from_device_region(dst_offset, key, 0, chunk_elements)?;
-        self.values[layer].copy_from_device_region(dst_offset, value, 0, chunk_elements)?;
+        // Copy to the appropriate layer in the large buffers
+        let key_dst_offset = layer_offset_bytes + dst_offset_bytes;
+        let value_dst_offset = layer_offset_bytes + dst_offset_bytes;
+        let chunk_bytes = chunk_elements * std::mem::size_of::<f32>();
+
+        // Validate offsets before creating sub-buffer views
+        if key_dst_offset + chunk_bytes > self.keys_buffer.size() {
+            return Err(KVCacheError::CapacityExceeded {
+                seq_len: current_len + seq_chunk,
+                max_seq_len: self.max_seq_len,
+            });
+        }
+        if value_dst_offset + chunk_bytes > self.values_buffer.size() {
+            return Err(KVCacheError::CapacityExceeded {
+                seq_len: current_len + seq_chunk,
+                max_seq_len: self.max_seq_len,
+            });
+        }
+
+        // Create sub-buffer views and copy to avoid pointer arithmetic issues
+        let key_dst_view = self.keys_buffer.sub_buffer_view(key_dst_offset, chunk_bytes)?;
+        key_dst_view.copy_from_buffer(key.buffer())?;
+
+        let value_dst_view = self.values_buffer.sub_buffer_view(value_dst_offset, chunk_bytes)?;
+        value_dst_view.copy_from_buffer(value.buffer())?;
 
         self.current_seq_len[layer] += seq_chunk;
         Ok(())
     }
 
-    /// Get key and value tensors for specified layer, head, and sequence index
+    /// Get key and value tensors for specified layer
+    /// Returns views into the cached data for the current sequence length
     pub fn get(
         &self,
         layer: usize,
-        head: usize,
-        seq_index: usize,
-    ) -> KVCacheResult<(&DeviceTensor, &DeviceTensor)> {
-        // Validate indices
-        if layer >= self.num_layers {
-            return Err(KVCacheError::InvalidLayer {
-                layer,
-                max_layers: self.num_layers,
-            });
-        }
-
-        if head >= self.num_heads {
-            return Err(KVCacheError::InvalidHead {
-                head,
-                max_heads: self.num_heads,
-            });
-        }
-
-        if seq_index >= self.current_seq_len[layer] {
-            return Err(KVCacheError::InvalidSequence {
-                seq_idx: seq_index,
-                max_seq: self.current_seq_len[layer],
-            });
-        }
-
-        // Return references to the cached tensors
-        // Note: This returns the entire layer's KV cache
-        // A more sophisticated implementation would return views into specific positions
-        Ok((&self.keys[layer], &self.values[layer]))
-    }
-
-    /// Retrieve K and V tensors for attention computation
-    /// Returns the full cached tensors for the layer
-    pub fn retrieve(
-        &self,
-        layer: usize,
-        _seq_len: usize,
     ) -> KVCacheResult<(DeviceTensor, DeviceTensor)> {
+        // Validate layer index
         if layer >= self.num_layers {
             return Err(KVCacheError::InvalidLayer {
                 layer,
@@ -211,13 +196,38 @@ impl KVCache {
         }
 
         let current_len = self.current_seq_len[layer];
+        let layer_offset_bytes = layer * self.layer_size_bytes;
+
+        // Create views for the current sequence data in this layer
         let key_shape = TensorShape::from_dims(&[current_len, self.num_heads, self.head_dim]);
         let value_shape = TensorShape::from_dims(&[current_len, self.num_heads, self.head_dim]);
-        let mut key_copy = DeviceTensor::empty(&self.backend, key_shape)?;
-        let mut value_copy = DeviceTensor::empty(&self.backend, value_shape)?;
-        let elements = current_len * self.num_heads * self.head_dim;
-        key_copy.copy_from_device_region(0, &self.keys[layer], 0, elements)?;
-        value_copy.copy_from_device_region(0, &self.values[layer], 0, elements)?;
+
+        let key_view = self.keys_buffer.sub_buffer_view(layer_offset_bytes, current_len * self.num_heads * self.head_dim * std::mem::size_of::<f32>())?;
+        let value_view = self.values_buffer.sub_buffer_view(layer_offset_bytes, current_len * self.num_heads * self.head_dim * std::mem::size_of::<f32>())?;
+
+        let key_tensor = DeviceTensor::from_buffer(&self.backend, key_view, key_shape)?;
+        let value_tensor = DeviceTensor::from_buffer(&self.backend, value_view, value_shape)?;
+
+        Ok((key_tensor, value_tensor))
+    }
+
+    /// Retrieve K and V tensors for attention computation
+    /// Returns copies of the cached tensors for the layer
+    pub fn retrieve(
+        &self,
+        layer: usize,
+        _seq_len: usize,
+    ) -> KVCacheResult<(DeviceTensor, DeviceTensor)> {
+        // Use get() to create views, then copy them to new tensors
+        let (key_view, value_view) = self.get(layer)?;
+
+        // Create new tensors and copy the data
+        let mut key_copy = DeviceTensor::empty(&self.backend, key_view.shape().clone())?;
+        let mut value_copy = DeviceTensor::empty(&self.backend, value_view.shape().clone())?;
+
+        key_copy.copy_from_device_buffer(key_view.buffer())?;
+        value_copy.copy_from_device_buffer(value_view.buffer())?;
+
         Ok((key_copy, value_copy))
     }
 
@@ -235,17 +245,6 @@ impl KVCache {
     /// Get current sequence length for a layer (alias for current_seq_len)
     pub fn get_current_length(&self, layer: usize) -> KVCacheResult<usize> {
         self.current_seq_len(layer)
-    }
-
-    /// Get raw key/value tensors for a layer.
-    pub fn layer_tensors(&self, layer: usize) -> KVCacheResult<(&DeviceTensor, &DeviceTensor)> {
-        if layer >= self.num_layers {
-            return Err(KVCacheError::InvalidLayer {
-                layer,
-                max_layers: self.num_layers,
-            });
-        }
-        Ok((&self.keys[layer], &self.values[layer]))
     }
 
     /// Get maximum sequence length
@@ -296,9 +295,7 @@ impl KVCache {
 
     /// Get total memory usage in bytes
     pub fn total_memory_usage(&self) -> usize {
-        let key_memory = self.keys.iter().map(|k| k.size()).sum::<usize>();
-        let value_memory = self.values.iter().map(|v| v.size()).sum::<usize>();
-        key_memory + value_memory
+        self.keys_buffer.size() + self.values_buffer.size()
     }
 
     /// Validate cache invariants
@@ -313,21 +310,22 @@ impl KVCache {
             }
         }
 
-        // Check that all tensors have correct sizes
-        let expected_tensor_size = self.num_heads * self.max_seq_len * self.head_dim;
-        for layer in 0..self.num_layers {
-            if self.keys[layer].len() != expected_tensor_size {
-                return Err(KVCacheError::InvalidLayer {
-                    layer,
-                    max_layers: self.num_layers,
-                });
-            }
-            if self.values[layer].len() != expected_tensor_size {
-                return Err(KVCacheError::InvalidLayer {
-                    layer,
-                    max_layers: self.num_layers,
-                });
-            }
+        // Check that buffers have correct total sizes
+        let expected_total_elements = self.num_layers * self.max_seq_len * self.num_heads * self.head_dim;
+        let expected_total_bytes = expected_total_elements * std::mem::size_of::<f32>();
+
+        if self.keys_buffer.size() != expected_total_bytes {
+            return Err(KVCacheError::InvalidLayer {
+                layer: 0,
+                max_layers: self.num_layers,
+            });
+        }
+
+        if self.values_buffer.size() != expected_total_bytes {
+            return Err(KVCacheError::InvalidLayer {
+                layer: 0,
+                max_layers: self.num_layers,
+            });
         }
 
         Ok(())

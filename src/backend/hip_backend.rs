@@ -474,18 +474,31 @@ struct HipBufferInner {
 
 impl HipBuffer {
     pub fn new(size: usize) -> HipResult<Self> {
-        eprintln!(
-            ">>> HipBuffer::new: allocating {} bytes ({} MB)",
-            size,
-            size / 1024 / 1024
-        );
+        // Capture stack trace for debugging segfaults
+        #[cfg(feature = "std")]
+        let backtrace = std::backtrace::Backtrace::capture();
+
+        tracing::trace!("HipBuffer::new: Allocating {} bytes of GPU memory", size);
+        #[cfg(feature = "std")]
+        tracing::trace!("HipBuffer::new: Call stack:\n{}", backtrace);
+
+        // Validate allocation size to prevent segfaults
+        if size == 0 {
+            tracing::warn!("HipBuffer::new: Zero-size allocation requested - this may cause issues");
+        }
+        if size > 1024 * 1024 * 1024 { // 1GB warning
+            tracing::warn!("HipBuffer::new: Large allocation requested: {} MB", size / (1024 * 1024));
+        }
+
         let mut ptr: *mut c_void = ptr::null_mut();
 
         // Use hipMalloc to allocate device memory
+        tracing::trace!("HipBuffer::new: Calling hipMalloc for {} bytes", size);
         let result = unsafe { hipMalloc(&mut ptr, size) };
-        eprintln!(">>> HipBuffer::new: hipMalloc returned for {} bytes", size);
+        tracing::trace!("HipBuffer::new: hipMalloc returned result={}, ptr={:?}", result, ptr);
 
         if result != HIP_SUCCESS {
+            tracing::error!("HipBuffer::new: hipMalloc failed with code {} for {} bytes", result, size);
             return Err(HipError::MemoryAllocationFailed(format!(
                 "hipMalloc failed with code {} for {} bytes",
                 result, size
@@ -493,12 +506,14 @@ impl HipBuffer {
         }
 
         if ptr.is_null() {
+            tracing::error!("HipBuffer::new: hipMalloc returned null pointer for {} bytes", size);
             return Err(HipError::MemoryAllocationFailed(format!(
                 "hipMalloc returned null pointer for {} bytes",
                 size
             )));
         }
 
+        tracing::debug!("HipBuffer::new: Successfully allocated {} bytes at {:?}", size, ptr);
         Ok(HipBuffer {
             inner: Arc::new(HipBufferInner {
                 ptr,
@@ -1819,6 +1834,26 @@ impl HipBackend {
         args: &[*mut c_void],
         shared_mem_bytes: u32,
     ) -> HipResult<()> {
+        tracing::trace!("launch_kernel_with_module_shared: Launching kernel with grid={:?}, block={:?}, shared_mem={}, args_len={}",
+                       grid_dim, block_dim, shared_mem_bytes, args.len());
+
+        // Validate kernel parameters to prevent segfaults
+        if grid_dim.0 == 0 || grid_dim.1 == 0 || grid_dim.2 == 0 {
+            tracing::error!("launch_kernel_with_module_shared: Invalid grid dimensions: {:?}", grid_dim);
+            return Err(HipError::KernelLaunchFailed("Grid dimensions cannot be zero".to_string()));
+        }
+        if block_dim.0 == 0 || block_dim.1 == 0 || block_dim.2 == 0 {
+            tracing::error!("launch_kernel_with_module_shared: Invalid block dimensions: {:?}", block_dim);
+            return Err(HipError::KernelLaunchFailed("Block dimensions cannot be zero".to_string()));
+        }
+
+        // Check for potentially problematic parameter combinations
+        let total_threads = (grid_dim.0 * grid_dim.1 * grid_dim.2 * block_dim.0 * block_dim.1 * block_dim.2) as u64;
+        if total_threads > 1_000_000_000 { // 1 billion threads
+            tracing::warn!("launch_kernel_with_module_shared: Very large kernel launch: {} total threads", total_threads);
+        }
+
+        tracing::trace!("launch_kernel_with_module_shared: Calling hipModuleLaunchKernel");
         let result = unsafe {
             hipModuleLaunchKernel(
                 kernel.as_ptr(),
@@ -1834,6 +1869,7 @@ impl HipBackend {
                 ptr::null_mut(), // extra
             )
         };
+        tracing::trace!("launch_kernel_with_module_shared: hipModuleLaunchKernel returned {}", result);
 
         if result != HIP_SUCCESS {
             let error_msg = unsafe {
@@ -1846,12 +1882,14 @@ impl HipBackend {
                         .into_owned()
                 }
             };
+            tracing::error!("launch_kernel_with_module_shared: Kernel launch failed with code {}: {}", result, error_msg);
             return Err(HipError::KernelLaunchFailed(format!(
                 "Kernel launch failed: {}",
                 error_msg
             )));
         }
 
+        tracing::trace!("launch_kernel_with_module_shared: Kernel launched successfully");
         Ok(())
     }
 
@@ -2321,14 +2359,15 @@ impl HipBackend {
         // hipBLAS uses default stream, while our kernel uses custom stream
         self.synchronize()?;
 
-        // Step 3: Apply SwiGLU activation using GPU kernel
+        // Step 3: Apply SwiGLU activation using GPU kernel (no CPU fallback for ROCm)
         // SwiGLU = gate_output ⊙ Swish(up_output)
         // where Swish(x) = x ⊙ σ(x)
         #[cfg(feature = "rocm")]
         {
+            // For ROCm builds, require GPU kernel to work - no CPU fallback
             // Allocate device buffer for SwiGLU output
-            let swiglu_buffer =
-                HipBuffer::new((seq_len * intermediate_size) * std::mem::size_of::<f32>())?;
+            let swiglu_buffer = HipBuffer::new((seq_len * intermediate_size) * std::mem::size_of::<f32>())
+                .map_err(|e| HipError::GenericError(format!("Failed to allocate SwiGLU buffer: {}", e)))?;
 
             // Launch GPU kernel for SwiGLU activation
             unsafe {
@@ -2344,7 +2383,8 @@ impl HipBackend {
             }
 
             // Synchronize to ensure kernel completes before down projection
-            self.synchronize()?;
+            self.synchronize()
+                .map_err(|e| HipError::GenericError(format!("GPU synchronization failed: {}", e)))?;
 
             // Step 4: Compute down projection: swiglu_output @ down_weight -> final_output
             let final_buffer = matmul_f32(
@@ -2357,8 +2397,9 @@ impl HipBackend {
             )
             .map_err(|e| HipError::GenericError(format!("Down projection failed: {}", e)))?;
 
-            // Copy result to output tensor (GPU to GPU)
-            output.buffer().copy_from_buffer(&final_buffer)?;
+            // Copy result to output tensor
+            output.buffer().copy_from_buffer(&final_buffer)
+                .map_err(|e| HipError::GenericError(format!("Final copy failed: {}", e)))?;
         }
 
         #[cfg(not(feature = "rocm"))]
@@ -2601,13 +2642,18 @@ impl ModelRuntime {
     /// Load model directly from GGUF file without creating an intermediate runtime
     /// This avoids creating a wasteful default KV cache (32 layers) that would be discarded.
     pub fn load_from_gguf(path: &str) -> HipResult<Self> {
+        Self::load_from_gguf_with_config(path, None)
+    }
+
+    /// Load model directly from GGUF file with optional custom config override
+    pub fn load_from_gguf_with_config(path: &str, custom_config: Option<crate::model::config::ModelConfig>) -> HipResult<Self> {
         tracing::debug!("load_from_gguf: Loading GGUF from path: {}", path);
 
         let loader = crate::loader::gguf::GgufLoader::new(path)
             .map_err(|e| HipError::GenericError(format!("Failed to load GGUF: {}", e)))?;
         tracing::debug!("load_from_gguf: GgufLoader created successfully");
 
-        let config = loader
+        let mut config = loader
             .to_model_config()
             .map_err(|e| HipError::GenericError(format!("Failed to create config: {}", e)))?;
         tracing::debug!(
@@ -2616,6 +2662,12 @@ impl ModelRuntime {
             config.num_attention_heads,
             config.hidden_size
         );
+
+        // Override config if provided
+        if let Some(custom) = custom_config {
+            config.max_position_embeddings = custom.max_position_embeddings;
+            tracing::debug!("load_from_gguf: Overriding context size to {}", config.max_position_embeddings);
+        }
 
         // Create backend
         let backend = HipBackend::new()?;
@@ -2982,6 +3034,41 @@ impl ModelRuntime {
         self.kv_cache.reset();
         Ok(())
     }
+
+    /// Recreate KV cache with new parameters (useful for overriding config)
+    pub fn recreate_kv_cache(&mut self, max_seq_len: usize) -> HipResult<()> {
+        let config = self.execution_plan.as_ref()
+            .ok_or_else(|| HipError::GenericError("No execution plan".to_string()))?
+            .config();
+
+        self.kv_cache = crate::model::kv_cache::KVCache::new(
+            &self.backend,
+            config.num_hidden_layers,
+            config.num_attention_heads,
+            config.head_dim,
+            max_seq_len,
+        )
+        .map_err(|e| HipError::GenericError(format!("KV cache recreation failed: {}", e)))?;
+
+        Ok(())
+    }
+}
+
+/// Helper function to copy buffer to host vector
+fn vec_from_buffer(buffer: &HipBuffer, len: usize) -> HipResult<Vec<f32>> {
+    let mut host_data = vec![0.0f32; len];
+    // SAFETY: We check that the buffer size matches our expectation
+    let expected_byte_size = len * std::mem::size_of::<f32>();
+    if buffer.size() != expected_byte_size {
+        return Err(HipError::GenericError(format!(
+            "Buffer size mismatch: buffer has {} bytes, expected {} bytes for {} f32 elements",
+            buffer.size(), expected_byte_size, len
+        )));
+    }
+
+    // Use safe copy method instead of unsafe raw pointer manipulation
+    buffer.copy_to_host(&mut host_data)?;
+    Ok(host_data)
 }
 
 /// Synchronize device globally using STREAM-AWARE synchronization

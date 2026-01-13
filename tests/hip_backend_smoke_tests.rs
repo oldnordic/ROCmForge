@@ -5,6 +5,7 @@ use std::ffi::CString;
 use std::path::Path;
 use std::ptr;
 
+use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
 use rocmforge::backend::{HipBackend, HipError, HipResult};
 
 #[cfg(test)]

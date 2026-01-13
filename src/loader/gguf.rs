@@ -1650,6 +1650,22 @@ impl GgufLoader {
             }
             "glm.vocab_size" => self.metadata.vocab_size = value.parse().unwrap_or(0),
             "glm.rms_norm_eps" => self.metadata.rms_norm_eps = value.parse().unwrap_or(1e-6),
+            // Gemma 3-specific keys (actual keys from GGUF file)
+            "gemma3.embedding_length" => self.metadata.hidden_size = value.parse().unwrap_or(0),
+            "gemma3.block_count" => self.metadata.num_layers = value.parse().unwrap_or(0),
+            "gemma3.feed_forward_length" => self.metadata.intermediate_size = value.parse().unwrap_or(0),
+            "gemma3.attention.head_count" => self.metadata.num_heads = value.parse().unwrap_or(0),
+            "gemma3.attention.head_count_kv" => {
+                self.metadata.num_kv_heads = Some(value.parse().unwrap_or(0))
+            }
+            "gemma3.attention.key_length" => self.metadata.head_dim = value.parse().unwrap_or(0),
+            "gemma3.attention.value_length" => self.metadata.head_dim = value.parse().unwrap_or(0), // Same as key_length
+            "gemma3.context_length" => {
+                self.metadata.max_position_embeddings = value.parse().unwrap_or(2048)
+            }
+            "gemma3.attention.layer_norm_rms_epsilon" => {
+                self.metadata.rms_norm_eps = value.parse().unwrap_or(1e-6)
+            }
             // Qwen2-specific keys
             "qwen2.block_count" => self.metadata.num_layers = value.parse().unwrap_or(0),
             "qwen2.attention.head_count" => self.metadata.num_heads = value.parse().unwrap_or(0),
@@ -1697,7 +1713,8 @@ impl GgufLoader {
                     self.metadata.embedded_tokenizer_json = Some(value.to_string());
                 }
             }
-            _ => {} // Ignore unknown keys
+            // Ignore unknown keys
+            _ => {}
         }
     }
 
@@ -2112,9 +2129,9 @@ impl GgufLoader {
 
         // Extract result from Arc<RwLock>
         let result = Arc::try_unwrap(result_lock)
-            .map_err(|e| anyhow!("Failed to extract result: Arc still has owners"))?
+            .map_err(|_e| anyhow!("Failed to extract result: Arc still has owners"))?
             .into_inner()
-            .map_err(|e| anyhow!("Failed to get inner value: RwLock poisoned"))?;
+            .map_err(|_e| anyhow!("Failed to get inner value: RwLock poisoned"))?;
 
         Ok(result)
     }
@@ -2191,9 +2208,9 @@ impl GgufLoader {
 
         // Extract result from Arc<RwLock>
         let result = Arc::try_unwrap(result_lock)
-            .map_err(|e| anyhow!("Failed to extract result: Arc still has owners"))?
+            .map_err(|_e| anyhow!("Failed to extract result: Arc still has owners"))?
             .into_inner()
-            .map_err(|e| anyhow!("Failed to get inner value: RwLock poisoned"))?;
+            .map_err(|_e| anyhow!("Failed to get inner value: RwLock poisoned"))?;
 
         eprintln!(">>> dequantize_q4_0: Total time {:?}", start.elapsed());
         Ok(result)
@@ -2457,24 +2474,154 @@ impl GgufLoader {
         Ok(result)
     }
 
-    /// Stub: Q4_K dequantization (not yet implemented)
-    /// Q4_K uses complex super-block structure with 256-byte blocks
+    /// Dequantize Q4_K tensor to FP32
+    /// Q4_K uses super-block structure with 256-byte blocks containing 8 sub-blocks
+    /// Each sub-block has its own scale and 4-bit quantized values
     fn dequantize_q4_k(&self, tensor: &GgufTensor) -> Result<Vec<f32>> {
-        Err(anyhow!(
-            "Q4_K dequantization not yet implemented. Tensor '{}' uses Q4_K quantization which requires super-block dequantization. \
-             For now, please use a model with Q4_0/Q4_1/Q5_0/Q5_1/Q8_0 quantization instead.",
-            tensor.name
-        ))
+        let total_elements = tensor.total_elements();
+        let mut result = vec![0.0f32; total_elements];
+        let blocks = total_elements.div_ceil(256);
+
+        for block_idx in 0..blocks {
+            let block_start = block_idx * 256;
+
+            if block_start + 256 > tensor.data.len() {
+                break;
+            }
+
+            // Q4_K super-block structure:
+            // - 16 bytes: 8 half-precision scales (2 bytes each) for 8 sub-blocks
+            // - 16 bytes: 8 int8 mins (1 byte each) for 8 sub-blocks
+            // - 160 bytes: 8 sub-blocks of 4-bit quantized values (20 bytes each, packed)
+            // - 64 bytes: additional data (likely for QK format)
+
+            let scales_start = block_start;
+            let mins_start = block_start + 16;
+            let quants_start = block_start + 32;
+
+            // Process each of the 8 sub-blocks (32 elements each)
+            for sub_block_idx in 0..8 {
+                let sub_block_start = block_idx * 256 + sub_block_idx * 32;
+                let scale_idx = sub_block_idx;
+                let min_idx = sub_block_idx;
+
+                // Get scale for this sub-block
+                let scale_offset = scales_start + scale_idx * 2;
+                let scale = if scale_offset + 2 <= tensor.data.len() {
+                    let scale_bits = u16::from_le_bytes([
+                        tensor.data[scale_offset],
+                        tensor.data[scale_offset + 1],
+                    ]);
+                    half::f16::from_bits(scale_bits).to_f32()
+                } else {
+                    1.0
+                };
+
+                // Get min for this sub-block
+                let min_offset = mins_start + min_idx;
+                let min = if min_offset < tensor.data.len() {
+                    tensor.data[min_offset] as i8 as f32
+                } else {
+                    0.0
+                };
+
+                // Extract 4-bit quantized values for this sub-block (32 values)
+                for i in 0..32 {
+                    let element_idx = sub_block_start + i;
+                    if element_idx >= total_elements {
+                        break;
+                    }
+
+                    let bit_pos = i * 4;
+                    let byte_idx = bit_pos / 8;
+                    let bit_offset = bit_pos % 8;
+
+                    let quant_offset = quants_start + sub_block_idx * 20 + byte_idx;
+
+                    let quant = if quant_offset + 1 < tensor.data.len() {
+                        let combined = ((tensor.data[quant_offset + 1] as u16) << 8) |
+                                       (tensor.data[quant_offset] as u16);
+
+                        ((combined >> bit_offset) & 0xF) as u8
+                    } else {
+                        0
+                    };
+
+                    result[element_idx] = min + (quant as f32) * scale;
+                }
+            }
+        }
+
+        Ok(result)
     }
 
-    /// Stub: Q6_K dequantization (not yet implemented)
-    /// Q6_K uses complex block structure with 256-byte blocks
+    /// Dequantize Q6_K tensor to FP32
+    /// Q6_K uses 256-byte blocks encoding 256 elements
+    /// Format: scales (16 bytes) + quantized values (240 bytes for 256*6/8 = 192 bytes + padding)
     fn dequantize_q6_k(&self, tensor: &GgufTensor) -> Result<Vec<f32>> {
-        Err(anyhow!(
-            "Q6_K dequantization not yet implemented. Tensor '{}' uses Q6_K quantization which requires complex block dequantization. \
-             For now, please use a model with Q4_0/Q4_1/Q5_0/Q5_1/Q8_0 quantization instead.",
-            tensor.name
-        ))
+        let total_elements = tensor.total_elements();
+        let mut result = vec![0.0f32; total_elements];
+        let blocks = total_elements.div_ceil(256);
+
+        for block_idx in 0..blocks {
+            let block_start = block_idx * 256;
+
+            if block_start + 256 > tensor.data.len() {
+                break;
+            }
+
+            // Read scales (16 half-precision floats = 32 bytes)
+            // Q6_K uses half-precision scales for each group of 16 elements
+            let scales_start = block_start;
+
+            // Read quantized values (6-bit packed, 256*6/8 = 192 bytes)
+            let quants_start = block_start + 32;
+            let quants_end = block_start + 224;
+
+            // Dequantize block
+            for i in 0..256 {
+                let element_idx = block_idx * 256 + i;
+                if element_idx >= total_elements {
+                    break;
+                }
+
+                // Get scale for this group (every 16 elements share a scale)
+                let scale_idx = i / 16;
+                let scale_offset = scales_start + scale_idx * 2;
+
+                let scale = if scale_offset + 2 <= tensor.data.len() {
+                    let scale_bits = u16::from_le_bytes([
+                        tensor.data[scale_offset],
+                        tensor.data[scale_offset + 1],
+                    ]);
+                    half::f16::from_bits(scale_bits).to_f32()
+                } else {
+                    1.0 // fallback scale
+                };
+
+                // Extract 6-bit quantized value
+                let bit_offset = (i * 6) % 8;
+                let byte_idx = (i * 6) / 8;
+
+                if quants_start + byte_idx + 1 < quants_end {
+                    let combined = ((tensor.data[quants_start + byte_idx + 1] as u16) << 8) |
+                                   (tensor.data[quants_start + byte_idx] as u16);
+
+                    let quant_val = ((combined >> bit_offset) & 0x3F) as u8;
+
+                    // Convert to signed range and scale
+                    let signed_val = if quant_val >= 32 {
+                        (quant_val as i8 - 64) as f32
+                    } else {
+                        quant_val as f32
+                    };
+
+                    result[element_idx] = signed_val * scale;
+                }
+            }
+        }
+
+        Ok(result)
     }
 }
 

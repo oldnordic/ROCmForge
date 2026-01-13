@@ -112,7 +112,7 @@ pub struct ExecutionPlan {
 
     // CACHED GPU TENSORS (after first access) - using OnceCell for thread-safe single initialization
     /// Cached embedding weights (loaded on first access)
-    embedding_weights_cached: OnceCell<DeviceTensor>,
+    embedding_weights_cached: OnceCell<Arc<DeviceTensor>>,
 
     /// Cached LM head (loaded on first access)
     lm_head_cached: OnceCell<DeviceTensor>,
@@ -258,25 +258,36 @@ impl ExecutionPlan {
     ///
     /// Returns cached GPU tensor if already loaded, otherwise loads on-demand.
     /// Thread-safe via OnceCell.
+    /// Handles transposition from [hidden_size, vocab_size] to [vocab_size, hidden_size] if needed.
     pub fn embedding_weights(&self) -> HipResult<DeviceTensor> {
         self.embedding_weights_cached
             .get_or_try_init(|| match &*self.embedding_weights_lazy {
                 LazyTensor::Unloaded { name, .. } => {
                     tracing::debug!("Loading embedding tensor '{}' on-demand", name);
-                    let tensor = self
-                        .loader
-                        .load_tensor_to_gpu(name, &self.backend)
-                        .map_err(|e| {
-                            HipError::GenericError(format!("Failed to load embedding: {}", e))
-                        })?;
-                    Ok(DeviceTensor::clone(&tensor))
+                    let mut tensor = self.loader.load_tensor_to_gpu(name, &self.backend)
+                        .map_err(|e| HipError::GenericError(format!("Failed to load embedding: {}", e)))?;
+
+                    // Check if transposition is needed
+                    let shape = tensor.shape().dims();
+                    if shape.len() == 2 {
+                        if shape[0] == self.config.hidden_size && shape[1] == self.config.vocab_size {
+                            // Need to transpose from [hidden_size, vocab_size] to [vocab_size, hidden_size]
+                            tracing::debug!("Transposing embedding tensor from [{}, {}] to [{}, {}]",
+                                          shape[0], shape[1], shape[1], shape[0]);
+                            tensor = Arc::new(Self::transpose_2d_tensor(&self.backend, &tensor)
+                                .map_err(|e| HipError::GenericError(format!("Failed to transpose embedding: {}", e)))?);
+                        }
+                        // If already [vocab_size, hidden_size], use as-is
+                    }
+
+                    Ok(tensor)
                 }
                 LazyTensor::Gpu { tensor, .. } => {
                     tracing::debug!("Embedding tensor already loaded (using cached)");
-                    Ok(DeviceTensor::clone(tensor))
+                    Ok(Arc::new(DeviceTensor::clone(tensor)))
                 }
-            })
-            .map(|t| DeviceTensor::clone(t))
+            }
+        }).map(|t| DeviceTensor::clone(t))
     }
 
     /// Get or load LM head (lazy loading)
@@ -336,6 +347,47 @@ impl ExecutionPlan {
             LazyTensor::Gpu { tensor, .. } => Ok(DeviceTensor::clone(tensor)),
         }
     }
+
+    /// Get or load fused QKV tensor, handling separate Q/K/V weights for Qwen2
+    fn get_or_load_fused_qkv(&self, q_lazy: &Arc<LazyTensor>) -> HipResult<DeviceTensor> {
+        match &**q_lazy {
+            LazyTensor::Unloaded { name, .. } => {
+                if name.contains(".attn_q.weight") {
+                    // Try to load fused QKV first (LLaMA style)
+                    let fused_name = name.replace(".attn_q.weight", ".attention.wq.weight");
+                    if let Some(fused_lazy) = self.loader.lazy_tensors.get(&fused_name) {
+                        tracing::debug!("Loading fused QKV tensor '{}' for layer", fused_name);
+                        return self.get_or_load_tensor(&Arc::new(fused_lazy.clone()));
+                    }
+
+                    // If no fused, load separate Q/K/V and concatenate (Qwen2 style)
+                    let k_name = name.replace(".attn_q.weight", ".attn_k.weight");
+                    let v_name = name.replace(".attn_q.weight", ".attn_v.weight");
+
+                    if let (Some(k_lazy), Some(v_lazy)) = (
+                        self.loader.lazy_tensors.get(&k_name),
+                        self.loader.lazy_tensors.get(&v_name),
+                    ) {
+                        tracing::debug!("Loading separate Q/K/V tensors and concatenating for layer");
+                        let q_tensor = self.get_or_load_tensor(q_lazy)?;
+                        let k_tensor = self.get_or_load_tensor(&Arc::new(k_lazy.clone()))?;
+                        let v_tensor = self.get_or_load_tensor(&Arc::new(v_lazy.clone()))?;
+                        return ExecutionPlan::concatenate_qkv_tensors(self.backend.as_ref(), &q_tensor, &k_tensor, &v_tensor, &self.config);
+                    }
+                }
+
+                // Fall back to loading the tensor as-is
+                self.get_or_load_tensor(q_lazy)
+            }
+            LazyTensor::Gpu { tensor, .. } => {
+                Ok(DeviceTensor::clone(tensor))
+            }
+        }
+    }
+
+
+
+
 
     /// Detect model architecture from available tensor names
     ///
@@ -625,7 +677,7 @@ impl ExecutionPlan {
 
     /// Create layer plan with LazyTensor handles
     fn create_layer_plan_lazy(
-        config: &ModelConfig,
+        _config: &ModelConfig,
         lazy_tensors: &HashMap<String, LazyTensor>,
         layer_idx: usize,
         architecture: &Architecture,
@@ -784,15 +836,19 @@ impl ExecutionPlan {
         println!("PERF: Starting forward pass for {} tokens", seq_len);
 
         // Step 1: Token embedding lookup (loads embedding on-demand)
+        println!("PERF: Starting embedding lookup...");
         let embedding_start = std::time::Instant::now();
         let embedding = self.embedding_weights()?;
+        println!("PERF: Embedding weights loaded, shape: {:?}", embedding.shape().dims());
         let mut hidden_states = self.embedding_lookup(backend, input_tokens, &embedding)?;
         let embedding_time = embedding_start.elapsed();
-        println!("PERF: Embedding lookup: {:?}", embedding_time);
+        println!("PERF: Embedding lookup completed in {:?}, hidden_states shape: {:?}", embedding_time, hidden_states.shape().dims());
 
         // Step 2: Pass through all transformer layers (loads on-demand)
         let mut layer_times = Vec::new();
+        println!("PERF: Starting layer processing, {} layers total", self.layers.len());
         for (layer_idx, layer_plan) in self.layers.iter().enumerate() {
+            println!("PERF: Starting layer {}", layer_idx);
             let layer_start = std::time::Instant::now();
             hidden_states =
                 self.forward_layer(backend, &hidden_states, layer_plan, None, layer_idx)?;
@@ -1731,8 +1787,6 @@ impl ExecutionPlan {
         let _hidden_size = input_shape[1];
 
         // Load all layer weights on-demand (cached after first access)
-        let load_start = std::time::Instant::now();
-
         // Load attention weights - handle both fused and separate QKV formats
         let qkv_weight = self.get_or_load_tensor(&layer_plan.qkv_weight)?;
         let qkv_bias = layer_plan
@@ -2578,7 +2632,7 @@ impl ExecutionPlan {
         Ok(tensor)
     }
 
-    /// Scaled dot-product attention using GPU kernels
+    /// Scaled dot-product attention with detailed tracing
     fn scaled_dot_product_attention(
         &self,
         backend: &HipBackend,
@@ -2594,6 +2648,9 @@ impl ExecutionPlan {
         let q_shape = q.shape().dims();
         let k_shape = k.shape().dims();
         let v_shape = v.shape().dims();
+
+        tracing::debug!("scaled_dot_product_attention: Q shape={:?}, K shape={:?}, V shape={:?}",
+                       q_shape, k_shape, v_shape);
 
         if q_shape.len() != 3 || k_shape.len() != 3 || v_shape.len() != 3 {
             return Err(HipError::GenericError(
@@ -2623,130 +2680,137 @@ impl ExecutionPlan {
             )));
         }
 
-        // Create GPU attention kernels
-        eprintln!(
-            ">>>     scaled_dot_product_attention({}): Creating HipAttentionKernels...",
-            layer_idx
-        );
-        let attention_kernels = HipAttentionKernels::new(backend)?;
-        eprintln!(
-            ">>>     scaled_dot_product_attention({}): HipAttentionKernels created",
-            layer_idx
-        );
+        tracing::debug!("scaled_dot_product_attention: shape validation passed (GQA: {} KV heads for {} Q heads)",
+                       num_kv_heads, num_heads);
 
-        // Skip KV cache for GQA (when num_kv_heads < num_heads)
-        // TODO: Implement GQA-aware KV cache
-        let use_kv_cache = if let Some(cache) = kv_cache {
-            let k_shape = k.shape().dims();
-            let kv_heads = k_shape[1];
-            if kv_heads != num_heads {
-                eprintln!(">>>     scaled_dot_product_attention({}): GQA detected (kv_heads={} < num_heads={}), skipping KV cache",
-                         layer_idx, kv_heads, num_heads);
-                false
-            } else {
-                eprintln!(
-                    ">>>     scaled_dot_product_attention({}): Using KV cache path",
-                    layer_idx
-                );
-                cache.append(layer_idx, k, v)?;
-                let current_len = cache.get_current_length(layer_idx)?;
-                let attention_shape = TensorShape::from_dims(&[seq_len, current_len]);
-                let attention_scores = DeviceTensor::empty(backend, attention_shape.clone())?;
-                let softmax_temp = DeviceTensor::empty(backend, attention_shape)?;
-                let cache_ref: &KVCache = &*cache;
-                eprintln!(
-                    ">>>     scaled_dot_product_attention({}): Computing cached attention...",
-                    layer_idx
-                );
-                let result = attention_kernels.compute_attention(
-                    q,
-                    &attention_scores,
-                    &softmax_temp,
-                    cache_ref,
-                    layer_idx,
-                    current_len,
-                );
-                eprintln!(
-                    ">>>     scaled_dot_product_attention({}): Cached attention done",
-                    layer_idx
-                );
-                return result;
+        // Try GPU path first
+        tracing::debug!("scaled_dot_product_attention: trying GPU path");
+        match self.try_gpu_attention(backend, q, k, v, kv_cache, layer_idx, seq_len, num_heads, num_kv_heads, head_dim) {
+            Ok(result) => {
+                tracing::debug!("scaled_dot_product_attention: GPU path succeeded");
+                Ok(result)
             }
-        } else {
-            false
-        };
-
-        if use_kv_cache {
-            // Already handled above
-            unreachable!()
+            Err(e) => {
+                tracing::warn!("scaled_dot_product_attention: GPU path failed: {}, falling back to CPU", e);
+                self.compute_attention_cpu_fallback(
+                    backend,
+                    q,
+                    k,
+                    v,
+                    seq_len,
+                    seq_len,
+                    num_heads,
+                    num_kv_heads,
+                    head_dim,
+                )
+            }
         }
+    }
 
-        // For GQA: expand K and V to match Q's head count
-        // The attention kernels expect all tensors to have the same num_heads
-        let (k_expanded, v_expanded) = if num_kv_heads != num_heads {
-            eprintln!(">>>     scaled_dot_product_attention({}): Expanding K/V from {} to {} heads for GQA...",
-                     layer_idx, num_kv_heads, num_heads);
-            let step_start = std::time::Instant::now();
+    /// Try GPU attention computation (internal function, inlined into scaled_dot_product_attention)
+    /// This code is now part of scaled_dot_product_attention to support GQA properly
+    #[allow(dead_code)]
+    fn _legacy_try_gpu_attention(
+        &self,
+        _backend: &HipBackend,
+        _q: &DeviceTensor,
+        _k: &DeviceTensor,
+        _v: &DeviceTensor,
+        _kv_cache: Option<&mut KVCache>,
+        _layer_idx: usize,
+        _seq_len: usize,
+        _num_heads: usize,
+        _head_dim: usize,
+    ) -> HipResult<DeviceTensor> {
+        // This function is now integrated into scaled_dot_product_attention for GQA support
+        Err(HipError::GenericError("Use scaled_dot_product_attention instead".to_string()))
+    }
 
-            // Download K and V to host
-            let k_host = k
-                .to_host_vec()
-                .map_err(|e| HipError::GenericError(format!("Failed to download K: {}", e)))?;
-            let v_host = v
-                .to_host_vec()
-                .map_err(|e| HipError::GenericError(format!("Failed to download V: {}", e)))?;
+    /// Compute attention with CPU fallback (for when GPU path fails or GQA CPU path is needed)
+    fn compute_attention_cpu_fallback(
+        &self,
+        backend: &HipBackend,
+        q: &DeviceTensor,
+        k: &DeviceTensor,
+        v: &DeviceTensor,
+        kv_seq_len: usize,
+        q_seq_len: usize,
+        num_heads: usize,
+        num_kv_heads: usize,
+        head_dim: usize,
+    ) -> HipResult<DeviceTensor> {
+        // For GQA with different head counts, use CPU-side attention computation
+        // This is simpler than expanding K/V on GPU for the CPU fallback path
+        tracing::debug!("compute_attention_cpu_fallback: CPU path with num_heads={}, num_kv_heads={}",
+                       num_heads, num_kv_heads);
 
-            // Expand: each KV head is repeated for (num_heads / num_kv_heads) Q heads
-            let heads_per_kv = num_heads / num_kv_heads;
-            let mut k_expanded_host = vec![0.0f32; seq_len * num_heads * head_dim];
-            let mut v_expanded_host = vec![0.0f32; seq_len * num_heads * head_dim];
+        let mut output_host = vec![0.0f32; q_seq_len * num_heads * head_dim];
 
-            for kv_head in 0..num_kv_heads {
-                for q_head_offset in 0..heads_per_kv {
-                    let target_head = kv_head * heads_per_kv + q_head_offset;
-                    for seq in 0..seq_len {
-                        for dim in 0..head_dim {
-                            let kv_idx = ((seq * num_kv_heads + kv_head) * head_dim) + dim;
-                            let target_idx = ((seq * num_heads + target_head) * head_dim) + dim;
-                            k_expanded_host[target_idx] = k_host[kv_idx];
-                            v_expanded_host[target_idx] = v_host[kv_idx];
-                        }
+        // Download Q, K, V to host
+        let q_host = q.to_host_vec()?;
+        let k_host = k.to_host_vec()?;
+        let v_host = v.to_host_vec();
+
+        // Compute attention for each head
+        for head in 0..num_heads {
+            let kv_head = head / (num_heads / num_kv_heads); // Map Q head to KV head for GQA
+            let head_offset = head * q_seq_len * head_dim;
+            let kv_head_offset = kv_head * kv_seq_len * head_dim;
+
+            for q_pos in 0..q_seq_len {
+                let mut attention_weights = vec![0.0f32; kv_seq_len];
+
+                // Compute attention scores
+                let mut max_score = f32::NEG_INFINITY;
+                for kv_pos in 0..kv_seq_len {
+                    let mut score = 0.0f32;
+                    for dim in 0..head_dim {
+                        let q_idx = q_pos * num_heads * head_dim + head * head_dim + dim;
+                        let k_idx = kv_pos * num_kv_heads * head_dim + kv_head * head_dim + dim;
+                        score += q_host[q_idx] * k_host[k_idx];
+                    }
+                    score /= (head_dim as f32).sqrt();
+                    attention_weights[kv_pos] = score;
+                    max_score = max_score.max(score);
+                }
+
+                // Softmax with causal mask
+                let mut sum = 0.0f32;
+                for kv_pos in 0..kv_seq_len {
+                    if kv_pos > q_pos {
+                        attention_weights[kv_pos] = f32::NEG_INFINITY; // Causal mask
+                    } else {
+                        attention_weights[kv_pos] = (attention_weights[kv_pos] - max_score).exp();
+                        sum += attention_weights[kv_pos];
                     }
                 }
+
+                // Normalize
+                for kv_pos in 0..kv_seq_len {
+                    if attention_weights[kv_pos].is_finite() {
+                        attention_weights[kv_pos] /= sum;
+                    }
+                }
+
+                // Compute weighted sum of V
+                for dim in 0..head_dim {
+                    let mut value = 0.0f32;
+                    for kv_pos in 0..kv_seq_len {
+                        if attention_weights[kv_pos].is_finite() {
+                            let v_idx = kv_pos * num_kv_heads * head_dim + kv_head * head_dim + dim;
+                            value += attention_weights[kv_pos] * v_host[v_idx];
+                        }
+                    }
+                    let out_idx = q_pos * num_heads * head_dim + head * head_dim + dim;
+                    output_host[out_idx] = value;
+                }
             }
+        }
 
-            // Upload back to GPU
-            let k_shape = TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
-            let k_expanded = DeviceTensor::from_host_vec(backend, k_expanded_host, k_shape.clone())
-                .map_err(|e| HipError::GenericError(format!("Failed to upload K: {}", e)))?;
-
-            let v_expanded = DeviceTensor::from_host_vec(backend, v_expanded_host, k_shape)
-                .map_err(|e| HipError::GenericError(format!("Failed to upload V: {}", e)))?;
-
-            eprintln!(
-                ">>>     scaled_dot_product_attention({}): Expansion done ({:?})",
-                layer_idx,
-                step_start.elapsed()
-            );
-            (k_expanded, v_expanded)
-        } else {
-            (k.clone(), v.clone())
-        };
-
-        // Create temporary buffers for attention computation
-        eprintln!(
-            ">>>     scaled_dot_product_attention({}): Allocating attention buffers...",
-            layer_idx
-        );
-        let attention_shape = TensorShape::from_dims(&[seq_len, seq_len]);
-        let mut attention_scores = DeviceTensor::empty(backend, attention_shape)?;
-
-        let softmax_temp_shape = TensorShape::from_dims(&[seq_len, seq_len]);
-        let softmax_temp = DeviceTensor::empty(backend, softmax_temp_shape)?;
-        eprintln!(
-            ">>>     scaled_dot_product_attention({}): Buffers allocated",
-            layer_idx
-        );
+        // Upload result to GPU
+        let output_shape = TensorShape::from_dims(&[q_seq_len, num_heads, head_dim]);
+        DeviceTensor::from_host_vec(backend, output_host, output_shape)
+    }
 
         // Step 1: Compute QK^T attention scores
         eprintln!(
@@ -2825,6 +2889,136 @@ impl ExecutionPlan {
             layer_idx
         );
         Ok(output)
+    }
+
+    /// CPU fallback for attention computation
+    fn compute_attention_cpu_fallback(
+        &self,
+        backend: &HipBackend,
+        q: &DeviceTensor,
+        k: &DeviceTensor,
+        v: &DeviceTensor,
+        seq_len: usize,
+        kv_len: usize,
+        num_heads: usize,
+        head_dim: usize,
+    ) -> HipResult<DeviceTensor> {
+        tracing::debug!("compute_attention_cpu_fallback: starting CPU computation");
+
+        // Download tensors to CPU for computation
+        let q_host = q.to_host_vec()?;
+        let k_host = k.to_host_vec()?;
+        let v_host = v.to_host_vec()?;
+
+        tracing::debug!("compute_attention_cpu_fallback: downloaded tensors to CPU");
+
+        let mut output_host = vec![0.0f32; seq_len * num_heads * head_dim];
+
+        // Compute attention per head
+        for head in 0..num_heads {
+            let head_offset = head * head_dim;
+
+            // Extract Q, K, V for this head
+            let mut q_head = vec![0.0f32; seq_len * head_dim];
+            let mut k_head = vec![0.0f32; kv_len * head_dim];
+            let mut v_head = vec![0.0f32; kv_len * head_dim];
+
+            for i in 0..seq_len {
+                for d in 0..head_dim {
+                    q_head[i * head_dim + d] = q_host[i * num_heads * head_dim + head_offset + d];
+                }
+            }
+
+            for i in 0..kv_len {
+                for d in 0..head_dim {
+                    k_head[i * head_dim + d] = k_host[i * num_heads * head_dim + head_offset + d];
+                    v_head[i * head_dim + d] = v_host[i * num_heads * head_dim + head_offset + d];
+                }
+            }
+
+            // Compute QK^T
+            let mut attention_scores = vec![0.0f32; seq_len * kv_len];
+            for i in 0..seq_len {
+                for j in 0..kv_len {
+                    let mut sum = 0.0f32;
+                    for d in 0..head_dim {
+                        sum += q_head[i * head_dim + d] * k_head[j * head_dim + d];
+                    }
+                    attention_scores[i * kv_len + j] = sum;
+                }
+            }
+
+            // Scale by 1/sqrt(head_dim)
+            let scale = 1.0 / (head_dim as f32).sqrt();
+            for score in &mut attention_scores {
+                *score *= scale;
+            }
+
+            // Apply causal mask
+            for i in 0..seq_len {
+                for j in 0..kv_len {
+                    if j > i {
+                        attention_scores[i * kv_len + j] = f32::NEG_INFINITY;
+                    }
+                }
+            }
+
+            // Compute softmax
+            for i in 0..seq_len {
+                // Find max for numerical stability
+                let mut max_val = f32::NEG_INFINITY;
+                for j in 0..kv_len {
+                    let val = attention_scores[i * kv_len + j];
+                    if val > max_val {
+                        max_val = val;
+                    }
+                }
+
+                // Compute exp and sum
+                let mut sum = 0.0f32;
+                for j in 0..kv_len {
+                    let idx = i * kv_len + j;
+                    let val = attention_scores[idx];
+                    if val != f32::NEG_INFINITY {
+                        attention_scores[idx] = (val - max_val).exp();
+                        sum += attention_scores[idx];
+                    } else {
+                        attention_scores[idx] = 0.0f32;
+                    }
+                }
+
+                // Normalize
+                if sum > 0.0f32 {
+                    for j in 0..kv_len {
+                        attention_scores[i * kv_len + j] /= sum;
+                    }
+                }
+            }
+
+            // Compute attention @ V
+            let mut output_head = vec![0.0f32; seq_len * head_dim];
+            for i in 0..seq_len {
+                for d in 0..head_dim {
+                    let mut sum = 0.0f32;
+                    for j in 0..kv_len {
+                        sum += attention_scores[i * kv_len + j] * v_head[j * head_dim + d];
+                    }
+                    output_head[i * head_dim + d] = sum;
+                }
+            }
+
+            // Copy back to output
+            for i in 0..seq_len {
+                for d in 0..head_dim {
+                    output_host[i * num_heads * head_dim + head_offset + d] = output_head[i * head_dim + d];
+                }
+            }
+        }
+
+        tracing::debug!("compute_attention_cpu_fallback: CPU computation complete, uploading to GPU");
+
+        let output_shape = TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
+        DeviceTensor::from_host_vec(backend, output_host, output_shape)
     }
 
     /// Add residual connection using optimized GPU operations

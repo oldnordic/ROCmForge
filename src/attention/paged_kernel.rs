@@ -414,11 +414,11 @@ impl PagedAttentionKernels {
 
         for i in 0..seq_len {
             let block_idx = block_indices[i] as usize;
-            let offset = block_offsets[i];
+            let _offset = block_offsets[i];
 
             // Get K/V for this position from the correct block
-            let k_block = &k_blocks_host[block_idx];
-            let v_block = &v_blocks_host[block_idx];
+            let _k_block = &k_blocks_host[block_idx];
+            let _v_block = &v_blocks_host[block_idx];
 
             for h in 0..num_heads {
                 for d in 0..head_dim {
@@ -491,11 +491,11 @@ impl PagedAttentionKernels {
 
         for i in 0..seq_len {
             let block_idx = block_indices[i] as usize;
-            let offset = block_offsets[i];
+            let _offset = block_offsets[i];
 
             // Get K/V for this position from the correct block
-            let k_block = &k_blocks_host[block_idx];
-            let v_block = &v_blocks_host[block_idx];
+            let _k_block = &k_blocks_host[block_idx];
+            let _v_block = &v_blocks_host[block_idx];
 
             for qh in 0..num_q_heads {
                 // Map query head to KV head (for MQA)

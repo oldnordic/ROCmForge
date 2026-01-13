@@ -1,7 +1,6 @@
 //! Attention backend registry with pluggable implementations
 //! Supports CPU and GPU (ROCm) backends with runtime selection
 
-use super::AttentionError;
 use thiserror::Error;
 
 /// Error type for attention backend operations

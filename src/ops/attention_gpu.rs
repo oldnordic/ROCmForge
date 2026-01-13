@@ -9,6 +9,7 @@
 //!
 //! Uses scratch buffers and integrates with KV cache.
 
+use std::ffi::c_void;
 use crate::backend::{
     hip_blas::{self, HipBlasHandle, HIPBLAS_OP_N, HIPBLAS_OP_T},
     DeviceTensor, HipBackend, HipError, HipResult,
@@ -20,7 +21,6 @@ use crate::model::kv_cache::KVCache;
 use crate::tensor::matmul::matmul_f32;
 #[cfg(feature = "rocm")]
 use once_cell::sync::OnceCell;
-use std::ffi::c_void;
 
 /// GPU Attention Kernels for Phase E
 ///

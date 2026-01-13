@@ -61,7 +61,7 @@ fn test_layer_weight_shapes() {
     for (layer_idx, layer_plan) in execution_plan.layers().iter().enumerate() {
         // Check attention weights - using actual field names
         // QKV is fused in current implementation
-        let qkv_shape = layer_plan.qkv_weight.shape().dims();
+        let qkv_shape = layer_plan.qkv_weight.shape().unwrap();
         assert_eq!(
             qkv_shape.len(),
             2,
@@ -81,7 +81,7 @@ fn test_layer_weight_shapes() {
         );
 
         // Check MLP weights using actual field names
-        let gate_shape = layer_plan.mlp_gate_proj.shape().dims();
+        let gate_shape = layer_plan.mlp_gate_proj.shape().unwrap();
         assert_eq!(
             gate_shape.len(),
             2,
@@ -100,7 +100,7 @@ fn test_layer_weight_shapes() {
         );
 
         // Check LayerNorm weights using actual field names
-        let ln1_shape = layer_plan.norm1_weight.shape().dims();
+        let ln1_shape = layer_plan.norm1_weight.shape().unwrap();
         assert_eq!(
             ln1_shape.len(),
             1,
@@ -139,37 +139,37 @@ fn test_all_required_tensors_present() {
     for (layer_idx, layer_plan) in execution_plan.layers().iter().enumerate() {
         // Check that all required fields are present (non-empty tensors)
         assert!(
-            layer_plan.qkv_weight.shape().total_elements() > 0,
+            layer_plan.qkv_weight.shape().unwrap().iter().product::<usize>() > 0,
             "Layer {}: QKV weight should be present",
             layer_idx
         );
         assert!(
-            layer_plan.o_proj.shape().total_elements() > 0,
+            layer_plan.o_proj.shape().unwrap().iter().product::<usize>() > 0,
             "Layer {}: O projection should be present",
             layer_idx
         );
         assert!(
-            layer_plan.mlp_gate_proj.shape().total_elements() > 0,
+            layer_plan.mlp_gate_proj.shape().unwrap().iter().product::<usize>() > 0,
             "Layer {}: MLP gate should be present",
             layer_idx
         );
         assert!(
-            layer_plan.mlp_up_proj.shape().total_elements() > 0,
+            layer_plan.mlp_up_proj.shape().unwrap().iter().product::<usize>() > 0,
             "Layer {}: MLP up should be present",
             layer_idx
         );
         assert!(
-            layer_plan.mlp_down_proj.shape().total_elements() > 0,
+            layer_plan.mlp_down_proj.shape().unwrap().iter().product::<usize>() > 0,
             "Layer {}: MLP down should be present",
             layer_idx
         );
         assert!(
-            layer_plan.norm1_weight.shape().total_elements() > 0,
+            layer_plan.norm1_weight.shape().unwrap().iter().product::<usize>() > 0,
             "Layer {}: Norm1 weight should be present",
             layer_idx
         );
         assert!(
-            layer_plan.norm2_weight.shape().total_elements() > 0,
+            layer_plan.norm2_weight.shape().unwrap().iter().product::<usize>() > 0,
             "Layer {}: Norm2 weight should be present",
             layer_idx
         );

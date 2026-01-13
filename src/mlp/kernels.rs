@@ -60,7 +60,7 @@
 
 use std::ffi::c_void;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use crate::backend::hip_backend::{HipBackend, HipError, HipKernel, HipModule};
 
@@ -117,8 +117,7 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
     })?;
 
     let swiglu_path = std::env::var("SWIGLU_HSACO")
-        .ok()
-        .ok_or_else(|| HipError::KernelLoadFailed("SWIGLU_HSACO env var not set".to_string()))?;
+        .map_err(|_| HipError::KernelLoadFailed("SWIGLU_HSACO env var not set".to_string()))?;
 
     if !Path::new(&swiglu_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
@@ -132,8 +131,7 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
 
     // Load RMSNorm kernel module and function
     let rms_norm_path = std::env::var("RMS_NORM_HSACO")
-        .ok()
-        .ok_or_else(|| HipError::KernelLoadFailed("RMS_NORM_HSACO env var not set".to_string()))?;
+        .map_err(|_| HipError::KernelLoadFailed("RMS_NORM_HSACO env var not set".to_string()))?;
 
     if !Path::new(&rms_norm_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
@@ -199,10 +197,15 @@ pub unsafe fn swiglu_gpu_kernel(
                 .as_ref()
                 .ok_or_else(|| "swiglu_kernel not loaded".to_string())?;
 
-            let total_elements = seq_len * intermediate_size;
-            let grid_dim = (total_elements.div_ceil(BLOCK_SIZE), 1, 1);
-            let block_dim = (BLOCK_SIZE, 1, 1);
-            let shared_mem_bytes = 0u32;
+            // Calculate grid/block dimensions
+            let total_elements = (seq_len * intermediate_size) as usize;
+            let block_dim = (256, 1, 1);
+            let grid_dim = (
+                ((total_elements as u32) + block_dim.0 - 1) / block_dim.0,
+                1,
+                1,
+            );
+            let shared_mem_bytes = 0;
 
             // Prepare kernel arguments - ALL args must be copied to mut locals first
             let mut gate_arg = gate as *mut f32;
@@ -280,11 +283,16 @@ pub unsafe fn rms_norm_gpu_kernel(
                 .as_ref()
                 .ok_or_else(|| "rms_norm_kernel not loaded".to_string())?;
 
-            let grid_dim = (seq_len, 1, 1);
-            let block_dim = (BLOCK_SIZE, 1, 1);
-            let shared_mem_bytes = BLOCK_SIZE * std::mem::size_of::<f32>() as u32;
+            // Calculate grid/block dimensions
+            let block_dim = (256, 1, 1);
+            let grid_dim = (
+                ((hidden_size + block_dim.0 - 1) / block_dim.0, seq_len, 1),
+                1,
+                1,
+            );
+            let shared_mem_bytes = 0;
 
-            // Prepare kernel arguments - ALL args must be copied to mut locals first
+            // Prepare kernel arguments
             let mut input_arg = input as *mut f32;
             let mut weight_arg = weight as *mut f32;
             let mut output_arg = output;

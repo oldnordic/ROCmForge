@@ -194,7 +194,7 @@ impl LazyTensor {
             Self::Unloaded { shape, .. } => Some(shape.as_slice()),
             Self::Gpu { tensor, .. } => {
                 // Get shape from DeviceTensor
-                use crate::loader::TensorShape;
+                
                 Some(tensor.shape().dims())
             }
         }

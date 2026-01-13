@@ -6,6 +6,7 @@
 //! - Multi-layer transformer pipeline
 //! - Complete decode_step() integration
 
+use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
 use rocmforge::backend::{DeviceTensor, HipBackend, HipError};
 use rocmforge::loader::TensorShape;
 use rocmforge::model::{config::ModelConfig, execution_plan::ExecutionPlan, kv_cache::KVCache};

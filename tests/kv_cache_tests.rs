@@ -367,7 +367,7 @@ proptest! {
         tokens in prop::collection::vec(0u32..1000, 1..20),
         page_size in 1usize..10
     ) {
-        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        let fixture = GPU_FIXTURE.as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
         // FIX-10: With LRU eviction, max_pages=1 allows unlimited tokens via eviction
@@ -401,7 +401,7 @@ proptest! {
         seq2_tokens in prop::collection::vec(101u32..200, 1..10),
         page_size in 5usize..15
     ) {
-        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        let fixture = GPU_FIXTURE.as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
         let config = CacheConfig::new(page_size, 20, 32, 128, 24).unwrap();
@@ -457,7 +457,7 @@ proptest! {
         ),
         page_size in 3usize..8
     ) {
-        let fixture = rocmforge::GPU_FIXTURE.as_ref()
+        let fixture = GPU_FIXTURE.as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
         let config = CacheConfig::new(page_size, 20, 32, 128, 24).unwrap();

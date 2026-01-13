@@ -4,11 +4,12 @@
 //! They verify ExecutionPlan construction, fused QKV correctness, attention correctness,
 //! KV cache operations, and full decode_step() functionality.
 
-use rocmforge::backend::{DeviceTensor, HipBackend, HipError, HipResult};
+use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
+use rocmforge::backend::{DeviceTensor, HipBackend, HipError};
+use serial_test::serial;
 use rocmforge::loader::TensorShape;
 use rocmforge::model::{
     config::{ModelConfig, ModelType},
-    execution_plan::{ExecutionPlan, LayerPlan},
     kv_cache::KVCache,
 };
 use serial_test::serial;
@@ -74,8 +75,7 @@ fn test_fused_qkv_correctness() {
     }
 
     // Test with actual implementation (this will fail until implemented)
-    let fixture = rocmforge::GPU_FIXTURE
-        .as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
 
@@ -154,20 +154,22 @@ fn test_attention_correctness() {
     let hidden_size = num_heads * head_dim;
 
     // Create backend and config
-    let fixture = rocmforge::GPU_FIXTURE
-        .as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
-    let config = ModelConfig::new(
-        1, // num_hidden_layers
-        num_heads,
-        head_dim,
-        128, // max_position_embeddings
+    let config = ModelConfig {
         hidden_size,
-        32,    // intermediate_size (tiny)
-        32000, // vocab_size
-        ModelType::Llama,
-    );
+        intermediate_size: 32,
+        num_hidden_layers: 1,
+        num_attention_heads: num_heads,
+        num_kv_heads: Some(num_heads),
+        head_dim,
+        max_position_embeddings: 128,
+        vocab_size: 32000,
+        model_type: ModelType::Llama,
+        rms_norm_eps: 1e-6,
+        use_rotary_embeddings: true,
+    };
 
     // Create scratch buffers and KV cache
     let mut scratch = backend
@@ -257,20 +259,22 @@ fn test_kv_cache_update_and_retrieval() {
     let head_dim = 4;
     let hidden_size = num_heads * head_dim;
 
-    let fixture = rocmforge::GPU_FIXTURE
-        .as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
-    let config = ModelConfig::new(
-        num_layers,
-        num_heads,
-        head_dim,
-        128, // max_position_embeddings
+    let config = ModelConfig {
         hidden_size,
-        32,    // intermediate_size
-        32000, // vocab_size
-        ModelType::Llama,
-    );
+        intermediate_size: 32,
+        num_hidden_layers: num_layers,
+        num_attention_heads: num_heads,
+        num_kv_heads: Some(num_heads),
+        head_dim,
+        max_position_embeddings: 128,
+        vocab_size: 32000,
+        model_type: ModelType::Llama,
+        rms_norm_eps: 1e-6,
+        use_rotary_embeddings: true,
+    };
 
     // Create ModelRuntime
     let mut runtime = backend
@@ -350,20 +354,22 @@ fn test_full_decode_step_micro_model() {
     let intermediate_size = 8;
     let vocab_size = 100;
 
-    let fixture = rocmforge::GPU_FIXTURE
-        .as_ref()
+    let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
-    let config = ModelConfig::new(
-        num_layers,
-        num_heads,
-        head_dim,
-        64, // max_position_embeddings
+    let config = ModelConfig {
         hidden_size,
         intermediate_size,
+        num_hidden_layers: num_layers,
+        num_attention_heads: num_heads,
+        num_kv_heads: Some(num_heads),
+        head_dim,
+        max_position_embeddings: 64,
         vocab_size,
-        ModelType::Llama,
-    );
+        model_type: ModelType::Llama,
+        rms_norm_eps: 1e-6,
+        use_rotary_embeddings: true,
+    };
 
     // Create ModelRuntime with synthetic weights
     let mut runtime = create_micro_model_runtime(&backend, &config, vocab_size)
