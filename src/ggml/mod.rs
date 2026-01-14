@@ -14,6 +14,8 @@ pub mod validate;
 
 pub mod hip_backend;
 
+pub use optimizer::{GraphOptimizer, OptimizerStats};
+
 #[derive(Debug, Clone)]
 pub enum GgmlError {
     InvalidShape(String),
