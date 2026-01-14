@@ -234,34 +234,47 @@ curl -X POST http://localhost:8080/v1/completions \
 
 ## Roadmap
 
-| Phase | Description | Status |
-|-------|-------------|--------|
-| Phase 1 | Basic kernels (scale, mask, softmax) | ✅ Complete |
-| Phase 2 | RoPE + KV Append | ✅ Complete |
-| Phase 3 | FlashAttention (causal + non-causal) | ✅ Complete |
-| Phase 4 | MLP Ops (SwiGLU, RMSNorm) | ✅ Complete |
-| Phase 4.5 | GGUF Loader Fixes | ✅ Complete |
-| Phase 4.6 | Qwen2 Tensor Mapping | ✅ Complete |
-| Phase 5 | MXFP Quantization (MXFP4/MXFP6) | ✅ Complete |
-| Phase 7 | GPU Attention Path (2-5x speedup) | ✅ Complete |
-| Phase 8 | Q4_1/Q5_0/Q5_1 Support | ✅ Complete |
-| Phase 9 | Code Quality (100% test health) | ✅ Complete |
-| Phase 10 | Memory Pooling (ROCm workaround) | ✅ Complete |
-| Phase 11 | P0/P1 Bug Fixes | ✅ Complete |
-| Phase 15 | P1/P2 Code Quality Fixes | ✅ Complete |
-| Phase 17 | Async GPU Loading (~5x speedup) | ✅ Complete |
-| Phase 18 | Lazy ExecutionPlan (~12x more speedup) | ✅ Complete |
-| Phase 20 | GPU Testing Safety | ✅ Complete |
-| Phase 21 | CLI Stability Fixes | ✅ Complete |
-| Phase 6 | GPU Sampler (top-k/top-p on device) | ❌ Pending |
-| Future | FP16 Compute Support | ❌ Planned |
-| Future | End-to-End Integration Tests | ❌ Planned |
+| Phase | Description | Status | Notes |
+|-------|-------------|--------|-------|
+| Phase 1 | Basic kernels (scale, mask, softmax) | ✅ Complete | - |
+| Phase 2 | RoPE + KV Append | ✅ Complete | - |
+| Phase 3 | FlashAttention (causal + non-causal) | ✅ Complete | - |
+| Phase 4 | MLP Ops (SwiGLU, RMSNorm) | ✅ Complete | - |
+| Phase 4.5 | GGUF Loader Fixes | ✅ Complete | - |
+| Phase 4.6 | Qwen2 Tensor Mapping | ✅ Complete | - |
+| Phase 5 | MXFP Quantization (MXFP4/MXFP6) | ✅ Complete | OCP MX Spec v1.0 |
+| Phase 7 | GPU Attention Path | ✅ Complete | - |
+| Phase 10 | Memory Pooling (ROCm workaround) | ✅ Complete | - |
+| Phase 11 | P0/P1 Bug Fixes | ✅ Complete | - |
+| Phase 15 | P1/P2 Code Quality Fixes | ✅ Complete | Logging, naming cleanup |
+| Phase 17 | Async GPU Loading | ✅ Complete | Multi-stream uploads |
+| Phase 20 | GPU Testing Safety | ✅ Complete | - |
+| Phase 21 | CLI Stability Fixes | ✅ Complete | Untested end-to-end |
+| Phase 26 | GQA Support Scaffolding | ⚠️ Incomplete | Has compilation errors |
+| Phase 6 | GPU Sampler (top-k/top-p on device) | ❌ Pending | - |
+| Phase 8 | Q4_1/Q5_0/Q5_1 Support | ❌ Not Verified | Claims unverified |
+| Phase 9 | Code Quality (100% test health) | ❌ False Claim | 6 test files have errors |
+| Phase 12-14 | - | ⚪ Skipped | Not documented |
+| Phase 16 | - | ⚪ Skipped | Not documented |
+| Phase 18 | Lazy ExecutionPlan | ⚠️ Claimed | "12x speedup" unverified |
+| Phase 19 | - | ⚪ Skipped | Not documented |
+| Phase 22-25 | - | ⚪ Skipped | Not documented |
+| Future | End-to-End Integration Tests | ❌ Planned | Critical gap |
+| Future | FP16 Compute Support | ❌ Planned | - |
 
 ### Future Work
 
-- [ ] Test CLI end-to-end with real models (Phase 21 fixes applied)
-- [ ] GPU-based MXFP dequantization kernels
+**High Priority:**
+- [ ] Fix 6 test files with compilation errors
 - [ ] End-to-end integration tests with real models
+- [ ] Remove unverified performance claims ("12x speedup", etc.)
+
+**Medium Priority:**
+- [ ] Test CLI end-to-end with real models
+- [ ] GPU-based MXFP dequantization kernels
+- [ ] Verify or remove Phase 18 (Lazy ExecutionPlan) claims
+
+**Low Priority:**
 - [ ] Multi-GPU tensor parallelism
 - [ ] Performance benchmarks vs llama.cpp, vLLM
 - [ ] Deployment guide
