@@ -694,7 +694,106 @@ GPU testing is now safe and will not crash your desktop.
 
 ---
 
+## Unit Testing with DummyBackend (llama.cpp Pattern)
+
+**Date**: 2026-01-14
+**Status**: ✅ IMPLEMENTED
+
+### Overview
+
+Following llama.cpp's `dummy_backend` pattern from `tests/test-alloc.cpp`, ROCmForge now provides a `DummyBackend` for unit testing that:
+
+- **No GPU allocation**: Uses fake memory pointers (usize instead of actual GPU memory)
+- **No actual execution**: All operations are no-ops (return `Ok(())`)
+- **Test-friendly**: Tracks allocations for testing purposes
+- **Safe to run**: Does not interact with GPU hardware at all
+
+### When to Use DummyBackend
+
+| Test Type | Backend | Reason |
+|-----------|---------|--------|
+| Logic/graph tests | `DummyBackend` | Testing IR, optimizer, executor logic |
+| Kernel correctness | `GPU_FIXTURE` | Actual GPU execution needed |
+| Memory safety | `DummyBackend` | Testing allocation patterns |
+| Integration | `GPU_FIXTURE` | End-to-end GPU workflows |
+
+### Usage Example
+
+```rust
+use rocmforge::ggml::{DummyBackend, DType, Graph, Layout, TensorDesc, executor};
+
+#[test]
+fn test_graph_optimization() {
+    // Dummy backend - no GPU required
+    let mut backend = DummyBackend::new();
+    let mut graph = Graph::new();
+
+    // Build graph...
+    let input = graph.add_tensor(TensorDesc {
+        id: TensorId(0),
+        dtype: DType::F32,
+        shape: vec![4],
+        layout: Layout::RowMajor,
+        strides: vec![1],
+        byte_offset: 0,
+        view_of: None,
+    });
+    let output = graph.add_tensor(/* ... */);
+    graph.add_node(Op::Add, vec![input], vec![output]);
+
+    // Execute with dummy backend (no GPU)
+    let result = executor::execute_graph_with_config(
+        &mut backend,
+        &mut graph,
+        executor::ExecuteConfig::with_optimization(),
+    );
+
+    assert!(result.is_ok());
+    assert_eq!(backend.stats().alloc_count, 2);
+    assert_eq!(backend.stats().execute_op_count, 1);
+}
+```
+
+### Key Features
+
+1. **Fake Memory Tracking**:
+   - `stats()` - Returns allocation/execution statistics
+   - `allocated_total()` - Total "allocated" bytes (fake)
+   - `has_buffer(id)` - Check if tensor has a buffer
+
+2. **Configuration**:
+   - `DummyBackend::new()` - Default (64 bytes max, 8-byte alignment)
+   - `DummyBackend::with_config(max_size, alignment)` - Custom limits
+
+3. **Reset for Reuse**:
+   - `reset()` - Clear all buffers and statistics
+
+### llama.cpp Pattern Reference
+
+From `llama.cpp/tests/test-alloc.cpp`:
+
+```cpp
+// llama.cpp uses a host-only dummy backend
+struct dummy_backend {
+    bool is_host = true;
+    uint8_t* alloc_base = (uint8_t *) 16;  // Fake memory pointer
+    size_t max_buffer_size = 64;
+    size_t alignment = 8;
+};
+```
+
+Our `DummyBackend` follows the same pattern:
+- `is_host = true` equivalent: No GPU interaction
+- Fake memory: Uses `usize` offsets instead of actual pointers
+- `no_alloc = true` equivalent: Tracks but doesn't allocate
+
+### File Location
+
+`src/ggml/dummy_backend.rs` - 7 unit tests included
+
+---
+
 **Document Author**: Research Agent (Multi-Agent Research)
-**Date**: 2026-01-11 (Updated 2026-01-12)
-**Status**: ✅ ALL PHASES COMPLETE
+**Date**: 2026-01-11 (Updated 2026-01-14)
+**Status**: ✅ ALL PHASES COMPLETE + DummyBackend Added
 **Implementation**: See `docs/PHASE_23_HIP_DEVICE_SYNC_FIX.md` for final fix details

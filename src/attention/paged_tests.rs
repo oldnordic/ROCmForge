@@ -10,9 +10,20 @@ mod tests {
     use crate::loader::TensorShape;
     use std::sync::Arc;
 
-    /// Helper function to create a test backend
-    fn create_test_backend() -> Arc<HipBackend> {
-        HipBackend::new().expect("Failed to create HIP backend")
+    /// Helper: Get GPU backend or skip test if not available (llama.cpp pattern)
+    fn get_backend_or_skip() -> Arc<HipBackend> {
+        match HipBackend::new_checked() {
+            Ok(backend) => backend,
+            Err(e) => {
+                eprintln!("\n⚠️  GPU not available for paged_tests: {}", e);
+                eprintln!("To enable these tests, ensure:");
+                eprintln!("  1. AMD GPU is present");
+                eprintln!("  2. ROCm is installed (check with rocm-smi)");
+                eprintln!("  3. amdhip64 library is in LD_LIBRARY_PATH");
+                eprintln!("\nSkipping test gracefully (llama.cpp pattern).\n");
+                panic!("GPU_SKIP");
+            }
+        }
     }
 
     /// Helper function to create test tensors
@@ -49,7 +60,7 @@ mod tests {
     // Test 1: Kernel compilation test
     #[test]
     fn test_paged_attention_kernel_compilation() {
-        let backend = create_test_backend();
+        let backend = get_backend_or_skip();
         let config = PagedAttentionConfig {
             block_size: 16,
             num_heads: 4,
@@ -73,7 +84,7 @@ mod tests {
     // Test 2: Single block paged attention
     #[test]
     fn test_paged_attention_single_block() {
-        let backend = create_test_backend();
+        let backend = get_backend_or_skip();
         let config = PagedAttentionConfig {
             block_size: 16,
             num_heads: 4,
@@ -123,7 +134,7 @@ mod tests {
     // Test 3: Multiple non-contiguous blocks
     #[test]
     fn test_paged_attention_multiple_blocks() {
-        let backend = create_test_backend();
+        let backend = get_backend_or_skip();
         let config = PagedAttentionConfig {
             block_size: 4, // Small block size for testing
             num_heads: 2,
@@ -206,7 +217,7 @@ mod tests {
     // Test 4: MQA (Multi-Query Attention) support
     #[test]
     fn test_paged_attention_mqa() {
-        let backend = create_test_backend();
+        let backend = get_backend_or_skip();
         let config = PagedAttentionConfig {
             block_size: 8,
             num_heads: 8, // 8 query heads
@@ -274,7 +285,7 @@ mod tests {
     // Test 5: Block boundary crossing
     #[test]
     fn test_paged_attention_block_boundary() {
-        let backend = create_test_backend();
+        let backend = get_backend_or_skip();
         let config = PagedAttentionConfig {
             block_size: 4,
             num_heads: 2,
@@ -348,7 +359,7 @@ mod tests {
     // Test 6: Invalid input handling
     #[test]
     fn test_paged_attention_invalid_input() {
-        let backend = create_test_backend();
+        let backend = get_backend_or_skip();
         let config = PagedAttentionConfig {
             block_size: 16,
             num_heads: 4,

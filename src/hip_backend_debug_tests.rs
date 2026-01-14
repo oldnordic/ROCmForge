@@ -1,13 +1,30 @@
 #[cfg(test)]
 mod hip_backend_debug_tests {
     use crate::backend::hip_backend::*;
+    use std::sync::Arc;
+
+    /// Helper: Get GPU backend or skip test if not available (llama.cpp pattern)
+    fn get_backend_or_skip() -> Arc<HipBackend> {
+        match HipBackend::new_checked() {
+            Ok(backend) => backend,
+            Err(e) => {
+                eprintln!("\n⚠️  GPU not available for hip_backend_debug_tests: {}", e);
+                eprintln!("To enable these tests, ensure:");
+                eprintln!("  1. AMD GPU is present");
+                eprintln!("  2. ROCm is installed (check with rocm-smi)");
+                eprintln!("  3. amdhip64 library is in LD_LIBRARY_PATH");
+                eprintln!("\nSkipping test gracefully (llama.cpp pattern).\n");
+                panic!("GPU_SKIP");
+            }
+        }
+    }
 
     #[test]
     fn test_detect_amd_gpu_step_by_step() {
         println!("Testing detect_amd_gpu step by step...");
 
         // First initialize HIP
-        HipBackend::new().expect("HIP initialization should succeed");
+        let _backend = get_backend_or_skip();
 
         // Step 1: Get device count
         let mut count: i32 = 0;

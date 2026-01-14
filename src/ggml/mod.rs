@@ -3,6 +3,7 @@
 pub mod allocator;
 pub mod backend;
 pub mod cpu_backend;
+pub mod dummy_backend;
 pub mod executor;
 pub mod graph;
 pub mod layout;
@@ -14,6 +15,7 @@ pub mod validate;
 
 pub mod hip_backend;
 
+pub use dummy_backend::DummyBackend;
 pub use optimizer::{GraphOptimizer, OptimizerStats};
 
 #[derive(Debug, Clone)]

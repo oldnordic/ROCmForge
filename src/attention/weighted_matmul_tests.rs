@@ -14,6 +14,26 @@ mod weighted_matmul_tests {
     const TEST_TOLERANCE: f32 = 1e-4;
     const TEST_TOLERANCE_LARGE: f32 = 1e-3; // For larger inputs due to FP reduction order
 
+    /// Helper: Get GPU backend or skip test if not available (llama.cpp pattern)
+    ///
+    /// This follows llama.cpp's approach of checking GPU availability before
+    /// running tests. If GPU is not available, the test is skipped gracefully
+    /// rather than crashing or failing.
+    fn get_backend_or_skip() -> std::sync::Arc<HipBackend> {
+        match HipBackend::new_checked() {
+            Ok(backend) => backend,
+            Err(e) => {
+                eprintln!("\n⚠️  GPU not available for weighted_matmul_tests: {}", e);
+                eprintln!("To enable these tests, ensure:");
+                eprintln!("  1. AMD GPU is present");
+                eprintln!("  2. ROCm is installed (check with rocm-smi)");
+                eprintln!("  3. amdhip64 library is in LD_LIBRARY_PATH");
+                eprintln!("\nSkipping test gracefully (llama.cpp pattern).\n");
+                panic!("GPU_SKIP"); // Special panic to indicate skip
+            }
+        }
+    }
+
     /// Helper: Create softmax weights [batch, heads, seq_q, seq_k]
     fn create_weights_tensor(batch: usize, heads: usize, seq_q: usize, seq_k: usize) -> Vec<f32> {
         let total = batch * heads * seq_q * seq_k;
@@ -98,8 +118,8 @@ mod weighted_matmul_tests {
         let cpu_result =
             weighted_matmul_cpu_reference(&weights, &v, batch, heads, seq_q, seq_k, dim);
 
-        // GPU run
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        // GPU run (llama.cpp pattern: skip if GPU not available)
+        let backend = get_backend_or_skip();
 
         let weights_shape = TensorShape::from_dims(&[batch, heads, seq_q, seq_k]);
         let v_shape = TensorShape::from_dims(&[batch, heads, seq_k, dim]);
@@ -166,7 +186,7 @@ mod weighted_matmul_tests {
         let cpu_result =
             weighted_matmul_cpu_reference(&weights, &v, batch, heads, seq_q, seq_k, dim);
 
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let weights_shape = TensorShape::from_dims(&[batch, heads, seq_q, seq_k]);
         let v_shape = TensorShape::from_dims(&[batch, heads, seq_k, dim]);
@@ -227,7 +247,7 @@ mod weighted_matmul_tests {
         let cpu_result =
             weighted_matmul_cpu_reference(&weights, &v, batch, heads, seq_q, seq_k, dim);
 
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let weights_shape = TensorShape::from_dims(&[batch, heads, seq_q, seq_k]);
         let v_shape = TensorShape::from_dims(&[batch, heads, seq_k, dim]);

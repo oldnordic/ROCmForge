@@ -12,8 +12,25 @@
 mod causal_mask_tests {
     use crate::backend::{DeviceTensor, HipBackend};
     use crate::loader::mmap_loader::TensorShape;
+    use std::sync::Arc;
 
     const TEST_TOLERANCE: f32 = 1e-5;
+
+    /// Helper: Get GPU backend or skip test if not available (llama.cpp pattern)
+    fn get_backend_or_skip() -> Arc<HipBackend> {
+        match HipBackend::new_checked() {
+            Ok(backend) => backend,
+            Err(e) => {
+                eprintln!("\n⚠️  GPU not available for causal_mask_tests: {}", e);
+                eprintln!("To enable these tests, ensure:");
+                eprintln!("  1. AMD GPU is present");
+                eprintln!("  2. ROCm is installed (check with rocm-smi)");
+                eprintln!("  3. amdhip64 library is in LD_LIBRARY_PATH");
+                eprintln!("\nSkipping test gracefully (llama.cpp pattern).\n");
+                panic!("GPU_SKIP");
+            }
+        }
+    }
 
     /// CPU reference: create causal mask with explicit layout
     ///
@@ -87,7 +104,7 @@ mod causal_mask_tests {
         println!("CPU causal mask pattern verified for seq=4");
 
         // GPU run
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let mask_shape = TensorShape::from_dims(&[batch, heads, seq, seq]);
         let mut mask_gpu = DeviceTensor::empty(&backend, mask_shape.clone())
@@ -149,7 +166,7 @@ mod causal_mask_tests {
         let cpu_mask = create_causal_mask_explicit(batch, heads, seq, seq);
 
         // GPU run
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let mask_shape = TensorShape::from_dims(&[batch, heads, seq, seq]);
         let mut mask_gpu = DeviceTensor::empty(&backend, mask_shape.clone())

@@ -7,6 +7,23 @@
 mod gpu_position_embedding_tests {
     use crate::attention::rope::RopeConfig;
     use crate::model::glm_position::{GlmAttentionPattern, GlmPositionConfig, GlmPositionHandler};
+    use std::sync::Arc;
+
+    /// Helper: Get GPU backend or skip test if not available (llama.cpp pattern)
+    fn get_backend_or_skip() -> Arc<crate::backend::HipBackend> {
+        match crate::backend::HipBackend::new_checked() {
+            Ok(backend) => backend,
+            Err(e) => {
+                eprintln!("\n⚠️  GPU not available for position_embedding_tests: {}", e);
+                eprintln!("To enable these tests, ensure:");
+                eprintln!("  1. AMD GPU is present");
+                eprintln!("  2. ROCm is installed (check with rocm-smi)");
+                eprintln!("  3. amdhip64 library is in LD_LIBRARY_PATH");
+                eprintln!("\nSkipping test gracefully (llama.cpp pattern).\n");
+                panic!("GPU_SKIP");
+            }
+        }
+    }
 
     /// Helper to compare CPU and GPU results with tolerance
     fn compare_results(cpu: &[f32], gpu: &[f32], tolerance: f32) -> Result<(), String> {
@@ -53,7 +70,7 @@ mod gpu_position_embedding_tests {
             .unwrap();
 
         // GPU implementation (currently falls back to CPU)
-        let backend = crate::backend::HipBackend::new().unwrap();
+        let backend = get_backend_or_skip();
         let q_shape =
             crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
         let k_shape =
@@ -98,7 +115,7 @@ mod gpu_position_embedding_tests {
             .unwrap();
 
         // GPU implementation
-        let backend = crate::backend::HipBackend::new().unwrap();
+        let backend = get_backend_or_skip();
         let q_shape =
             crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
         let k_shape =
@@ -178,7 +195,7 @@ mod gpu_position_embedding_tests {
             .unwrap();
 
         // GPU implementation
-        let backend = crate::backend::HipBackend::new().unwrap();
+        let backend = get_backend_or_skip();
         let q_shape =
             crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
         let k_shape =
@@ -222,7 +239,7 @@ mod gpu_position_embedding_tests {
             .unwrap();
 
         // GPU implementation
-        let backend = crate::backend::HipBackend::new().unwrap();
+        let backend = get_backend_or_skip();
         let q_shape =
             crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
         let k_shape =
@@ -266,7 +283,7 @@ mod gpu_position_embedding_tests {
             .unwrap();
 
         // GPU implementation
-        let backend = crate::backend::HipBackend::new().unwrap();
+        let backend = get_backend_or_skip();
         let q_shape =
             crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
         let k_shape =
@@ -316,7 +333,7 @@ mod gpu_position_embedding_tests {
             .unwrap();
 
         // GPU implementation
-        let backend = crate::backend::HipBackend::new().unwrap();
+        let backend = get_backend_or_skip();
         let q_shape =
             crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
         let k_shape =
@@ -354,7 +371,7 @@ mod gpu_position_embedding_tests {
         let k = vec![0.5; seq_len * num_heads * head_dim];
         let position_ids = vec![0, 1, 2, 3];
 
-        let backend = crate::backend::HipBackend::new().unwrap();
+        let backend = get_backend_or_skip();
         let q_shape =
             crate::loader::mmap_loader::TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
         let k_shape =

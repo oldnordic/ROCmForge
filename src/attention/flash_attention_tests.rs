@@ -9,8 +9,25 @@ mod phase3_flash_attention_tests {
     use crate::attention::kernels::flash_attention_gpu_kernel;
     use crate::backend::{DeviceTensor, HipBackend};
     use crate::loader::mmap_loader::TensorShape;
+    use std::sync::Arc;
 
     const TEST_TOLERANCE: f32 = 1e-3; // Tolerance for GPU floating point
+
+    /// Helper: Get GPU backend or skip test if not available (llama.cpp pattern)
+    fn get_backend_or_skip() -> Arc<HipBackend> {
+        match HipBackend::new_checked() {
+            Ok(backend) => backend,
+            Err(e) => {
+                eprintln!("\n⚠️  GPU not available for flash_attention_tests: {}", e);
+                eprintln!("To enable these tests, ensure:");
+                eprintln!("  1. AMD GPU is present");
+                eprintln!("  2. ROCm is installed (check with rocm-smi)");
+                eprintln!("  3. amdhip64 library is in LD_LIBRARY_PATH");
+                eprintln!("\nSkipping test gracefully (llama.cpp pattern).\n");
+                panic!("GPU_SKIP");
+            }
+        }
+    }
 
     /// Helper: Create test Q, K, V tensors
     fn create_qkv_tensors(
@@ -39,7 +56,7 @@ mod phase3_flash_attention_tests {
             CpuBackend::forward(head_dim, &q, &k, &v, None, None).expect("CPU attention failed");
 
         // GPU run with FlashAttention
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let scale = 1.0 / (head_dim as f32).sqrt();
 
@@ -130,7 +147,7 @@ mod phase3_flash_attention_tests {
             .expect("CPU attention with mask failed");
 
         // GPU run with FlashAttention
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let scale = 1.0 / (head_dim as f32).sqrt();
 
@@ -214,7 +231,7 @@ mod phase3_flash_attention_tests {
             CpuBackend::forward(head_dim, &q, &k, &v, None, None).expect("CPU attention failed");
 
         // GPU run with FlashAttention
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let scale = 1.0 / (head_dim as f32).sqrt();
 
@@ -294,7 +311,7 @@ mod phase3_flash_attention_tests {
             CpuBackend::forward(head_dim, &q, &k, &v, None, None).expect("CPU attention failed");
 
         // GPU run with FlashAttention
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let scale = 1.0 / (head_dim as f32).sqrt();
 
@@ -370,7 +387,7 @@ mod phase3_flash_attention_tests {
         let (q, k, v) = create_qkv_tensors(batch_size, seq_len, head_dim);
 
         // GPU run with FlashAttention
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let scale = 1.0 / (head_dim as f32).sqrt();
 
@@ -444,7 +461,7 @@ mod phase3_flash_attention_tests {
         use crate::loader::mmap_loader::TensorShape;
         use std::time::Instant;
 
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         // Larger test for meaningful timing
         let batch_size = 2;

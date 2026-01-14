@@ -16,6 +16,22 @@ mod rms_norm_tests {
     const TEST_TOLERANCE: f32 = 1e-4;
     const TEST_TOLERANCE_LARGE: f32 = 2e-3;
 
+    /// Helper: Get GPU backend or skip test if not available (llama.cpp pattern)
+    fn get_backend_or_skip() -> std::sync::Arc<HipBackend> {
+        match HipBackend::new_checked() {
+            Ok(backend) => backend,
+            Err(e) => {
+                eprintln!("\n⚠️  GPU not available for rms_norm_tests: {}", e);
+                eprintln!("To enable these tests, ensure:");
+                eprintln!("  1. AMD GPU is present");
+                eprintln!("  2. ROCm is installed (check with rocm-smi)");
+                eprintln!("  3. amdhip64 library is in LD_LIBRARY_PATH");
+                eprintln!("\nSkipping test gracefully (llama.cpp pattern).\n");
+                panic!("GPU_SKIP");
+            }
+        }
+    }
+
     /// CPU reference for RMSNorm
     ///
     /// RMSNorm(x) = x / sqrt(mean(x^2) + eps) * weight
@@ -69,7 +85,7 @@ mod rms_norm_tests {
 
         let cpu_result = rms_norm_cpu_reference(&input, &weight, seq_len, hidden_size, eps);
 
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let input_shape = TensorShape::from_dims(&[seq_len, hidden_size]);
         let weight_shape = TensorShape::from_dims(&[hidden_size]);
@@ -133,7 +149,7 @@ mod rms_norm_tests {
 
         let cpu_result = rms_norm_cpu_reference(&input, &weight, seq_len, hidden_size, eps);
 
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let input_shape = TensorShape::from_dims(&[seq_len, hidden_size]);
         let weight_shape = TensorShape::from_dims(&[hidden_size]);

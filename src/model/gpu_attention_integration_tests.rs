@@ -10,6 +10,23 @@ mod gpu_attention_integration_tests {
     use crate::loader::TensorShape;
     use crate::model::config::{ModelConfig, ModelType};
     use crate::model::execution_plan::ExecutionPlan;
+    use std::sync::Arc;
+
+    /// Helper: Get GPU backend or skip test if not available (llama.cpp pattern)
+    fn get_backend_or_skip() -> Arc<HipBackend> {
+        match HipBackend::new_checked() {
+            Ok(backend) => backend,
+            Err(e) => {
+                eprintln!("\n⚠️  GPU not available for gpu_attention_integration_tests: {}", e);
+                eprintln!("To enable these tests, ensure:");
+                eprintln!("  1. AMD GPU is present");
+                eprintln!("  2. ROCm is installed (check with rocm-smi)");
+                eprintln!("  3. amdhip64 library is in LD_LIBRARY_PATH");
+                eprintln!("\nSkipping test gracefully (llama.cpp pattern).\n");
+                panic!("GPU_SKIP");
+            }
+        }
+    }
 
     /// Helper: Create a simple test configuration
     fn create_test_config() -> ModelConfig {
@@ -97,7 +114,7 @@ mod gpu_attention_integration_tests {
     /// Test 1: QKV → RoPE → Causal Mask → Attention → Output (Single Token)
     #[test]
     fn test_gpu_attention_single_token() {
-        let backend = HipBackend::new().unwrap();
+        let backend = get_backend_or_skip();
         let config = create_test_config();
         let plan = ExecutionPlan::new(&backend, &config).unwrap();
 
@@ -129,7 +146,7 @@ mod gpu_attention_integration_tests {
     /// Test 2: Multi-token sequence attention
     #[test]
     fn test_gpu_attention_multi_token() {
-        let backend = HipBackend::new().unwrap();
+        let backend = get_backend_or_skip();
         let config = create_test_config();
         let plan = ExecutionPlan::new(&backend, &config).unwrap();
 
@@ -160,7 +177,7 @@ mod gpu_attention_integration_tests {
     /// Test 3: Causal mask correctness
     #[test]
     fn test_gpu_attention_causal_mask() {
-        let backend = HipBackend::new().unwrap();
+        let backend = get_backend_or_skip();
         let config = create_test_config();
         let plan = ExecutionPlan::new(&backend, &config).unwrap();
 
@@ -194,7 +211,7 @@ mod gpu_attention_integration_tests {
     /// Test 4: GPU results match CPU within tolerance
     #[test]
     fn test_gpu_cpu_consistency() {
-        let backend = HipBackend::new().unwrap();
+        let backend = get_backend_or_skip();
         let config = create_test_config();
         let plan = ExecutionPlan::new(&backend, &config).unwrap();
 
@@ -236,7 +253,7 @@ mod gpu_attention_integration_tests {
     /// Test 5: Attention with varying sequence lengths
     #[test]
     fn test_gpu_attention_varying_lengths() {
-        let backend = HipBackend::new().unwrap();
+        let backend = get_backend_or_skip();
         let config = create_test_config();
         let plan = ExecutionPlan::new(&backend, &config).unwrap();
 
@@ -272,7 +289,7 @@ mod gpu_attention_integration_tests {
     /// Test 6: Numerical stability (avoid NaN/Inf)
     #[test]
     fn test_gpu_attention_numerical_stability() {
-        let backend = HipBackend::new().unwrap();
+        let backend = get_backend_or_skip();
         let config = create_test_config();
         let plan = ExecutionPlan::new(&backend, &config).unwrap();
 
@@ -336,7 +353,7 @@ mod gpu_attention_integration_tests {
     fn test_gpu_attention_performance_baseline() {
         use std::time::Instant;
 
-        let backend = HipBackend::new().unwrap();
+        let backend = get_backend_or_skip();
         let config = create_test_config();
         let plan = ExecutionPlan::new(&backend, &config).unwrap();
 

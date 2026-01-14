@@ -10,6 +10,22 @@ mod phase2_rope_tests {
 
     const TEST_TOLERANCE: f32 = 1e-5;
 
+    /// Helper: Get GPU backend or skip test if not available (llama.cpp pattern)
+    fn get_backend_or_skip() -> std::sync::Arc<crate::backend::HipBackend> {
+        match crate::backend::HipBackend::new_checked() {
+            Ok(backend) => backend,
+            Err(e) => {
+                eprintln!("\n⚠️  GPU not available for rope_gpu_tests: {}", e);
+                eprintln!("To enable these tests, ensure:");
+                eprintln!("  1. AMD GPU is present");
+                eprintln!("  2. ROCm is installed (check with rocm-smi)");
+                eprintln!("  3. amdhip64 library is in LD_LIBRARY_PATH");
+                eprintln!("\nSkipping test gracefully (llama.cpp pattern).\n");
+                panic!("GPU_SKIP");
+            }
+        }
+    }
+
     /// Test RoPE GPU matches CPU - small dimensions
     #[test]
     fn test_rope_gpu_matches_cpu_small() {
@@ -31,7 +47,7 @@ mod phase2_rope_tests {
             .expect("CPU RoPE failed");
 
         // GPU run
-        let backend = crate::backend::HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let shape = crate::loader::TensorShape::from_dims(&[2, 1, 4]); // [seq_len, num_heads, head_dim]
         let mut gpu_tensor = DeviceTensor::from_host_vec(&backend, input.clone(), shape)
@@ -75,7 +91,7 @@ mod phase2_rope_tests {
             .expect("CPU RoPE failed");
 
         // GPU run
-        let backend = crate::backend::HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let shape = crate::loader::TensorShape::from_dims(&[2, 2, 8]); // [seq_len, num_heads, head_dim]
         let mut gpu_tensor = DeviceTensor::from_host_vec(&backend, input.clone(), shape)
@@ -118,7 +134,7 @@ mod phase2_rope_tests {
             .expect("CPU RoPE failed");
 
         // GPU run
-        let backend = crate::backend::HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let shape = crate::loader::TensorShape::from_dims(&[1, 1, 4]);
         let mut gpu_tensor = DeviceTensor::from_host_vec(&backend, input.clone(), shape)
@@ -154,7 +170,7 @@ mod phase2_rope_tests {
         let num_heads = 1;
 
         // GPU run
-        let backend = crate::backend::HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let shape = crate::loader::TensorShape::from_dims(&[1, 1, 8]);
         let mut gpu_tensor = DeviceTensor::from_host_vec(&backend, input.clone(), shape)
@@ -193,7 +209,7 @@ mod phase2_rope_tests {
             .expect("CPU RoPE failed");
 
         // GPU run
-        let backend = crate::backend::HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let shape = crate::loader::TensorShape::from_dims(&[8, 1, 4]);
         let mut gpu_tensor = DeviceTensor::from_host_vec(&backend, input.clone(), shape)

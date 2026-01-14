@@ -23,6 +23,22 @@ mod gpu_path_regression_tests {
     use crate::backend::DeviceTensor;
     use crate::loader::mmap_loader::TensorShape;
 
+    /// Helper: Get GPU backend or skip test if not available (llama.cpp pattern)
+    fn get_backend_or_skip() -> std::sync::Arc<HipBackend> {
+        match HipBackend::new_checked() {
+            Ok(backend) => backend,
+            Err(e) => {
+                eprintln!("\n⚠️  GPU not available for gpu_path_regression_tests: {}", e);
+                eprintln!("To enable these tests, ensure:");
+                eprintln!("  1. AMD GPU is present");
+                eprintln!("  2. ROCm is installed (check with rocm-smi)");
+                eprintln!("  3. amdhip64 library is in LD_LIBRARY_PATH");
+                eprintln!("\nSkipping test gracefully (llama.cpp pattern).\n");
+                panic!("GPU_SKIP");
+            }
+        }
+    }
+
     /// Test that MLP SwiGLU activation stays on GPU.
     ///
     /// This is a regression test to ensure the CPU fallback is NOT used.
@@ -43,7 +59,7 @@ mod gpu_path_regression_tests {
     /// ```
     #[test]
     fn test_mlp_swiglu_gpu_only_path() {
-        let backend = HipBackend::new().expect("Failed to create HipBackend");
+        let backend = get_backend_or_skip();
 
         // Small test data: seq_len=4, hidden_size=8, intermediate_size=16
         let seq_len = 4;
@@ -106,7 +122,7 @@ mod gpu_path_regression_tests {
     /// and not GPU→CPU→GPU (which would be slower).
     #[test]
     fn test_gpu_to_gpu_copy() {
-        let backend = HipBackend::new().expect("Failed to create HipBackend");
+        let backend = get_backend_or_skip();
 
         let data: Vec<f32> = (0..256).map(|i| i as f32).collect();
         let size = data.len() * std::mem::size_of::<f32>();

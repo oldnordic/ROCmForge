@@ -11,14 +11,25 @@ mod tests {
     use crate::loader::TensorShape;
     use std::sync::Arc;
 
-    /// Helper function to create a test backend
-    fn create_test_backend() -> Arc<HipBackend> {
-        HipBackend::new().expect("Failed to create HIP backend")
+    /// Helper: Get GPU backend or skip test if not available (llama.cpp pattern)
+    fn get_backend_or_skip() -> Arc<HipBackend> {
+        match HipBackend::new_checked() {
+            Ok(backend) => backend,
+            Err(e) => {
+                eprintln!("\n⚠️  GPU not available for phase5_paged_tests: {}", e);
+                eprintln!("To enable these tests, ensure:");
+                eprintln!("  1. AMD GPU is present");
+                eprintln!("  2. ROCm is installed (check with rocm-smi)");
+                eprintln!("  3. amdhip64 library is in LD_LIBRARY_PATH");
+                eprintln!("\nSkipping test gracefully (llama.cpp pattern).\n");
+                panic!("GPU_SKIP");
+            }
+        }
     }
 
     /// Helper function to create a test KV cache with paged blocks
     fn create_paged_kv_cache() -> (Arc<HipBackend>, KvCache, u32) {
-        let backend = create_test_backend();
+        let backend = get_backend_or_skip();
         let config = CacheConfig::new(16, 10, 32, 128, 24).expect("Invalid config");
         let mut cache = KvCache::new(config, Arc::clone(&backend)).expect("Failed to create cache");
 
@@ -127,7 +138,7 @@ mod tests {
     // Test 4: Verify multiple blocks are allocated for long sequences
     #[test]
     fn test_multiple_blocks_for_long_sequence() {
-        let backend = create_test_backend();
+        let backend = get_backend_or_skip();
         let config = CacheConfig::new(4, 10, 32, 128, 24).expect("Invalid config");
         let mut cache = KvCache::new(config, Arc::clone(&backend)).expect("Failed to create cache");
 
@@ -175,7 +186,7 @@ mod tests {
     // Test 6: Verify fallback when PageTable is empty
     #[test]
     fn test_fallback_when_page_table_empty() {
-        let backend = create_test_backend();
+        let backend = get_backend_or_skip();
         let config = CacheConfig::new(16, 10, 32, 128, 24).expect("Invalid config");
         let cache = KvCache::new(config, Arc::clone(&backend)).expect("Failed to create cache");
 
@@ -197,7 +208,7 @@ mod tests {
     // Test 7: Verify block reference counting works
     #[test]
     fn test_block_reference_counting() {
-        let backend = create_test_backend();
+        let backend = get_backend_or_skip();
         let config = CacheConfig::new(16, 10, 32, 128, 24).expect("Invalid config");
         let mut cache = KvCache::new(config, Arc::clone(&backend)).expect("Failed to create cache");
 

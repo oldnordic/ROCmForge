@@ -23,6 +23,22 @@ mod softmax_explicit_tests {
     const TEST_TOLERANCE: f32 = 1e-4;
     const TEST_TOLERANCE_LARGE: f32 = 1e-3; // For larger inputs due to FP reduction order
 
+    /// Helper: Get GPU backend or skip test if not available (llama.cpp pattern)
+    fn get_backend_or_skip() -> std::sync::Arc<HipBackend> {
+        match HipBackend::new_checked() {
+            Ok(backend) => backend,
+            Err(e) => {
+                eprintln!("\n⚠️  GPU not available for softmax_explicit_tests: {}", e);
+                eprintln!("To enable these tests, ensure:");
+                eprintln!("  1. AMD GPU is present");
+                eprintln!("  2. ROCm is installed (check with rocm-smi)");
+                eprintln!("  3. amdhip64 library is in LD_LIBRARY_PATH");
+                eprintln!("\nSkipping test gracefully (llama.cpp pattern).\n");
+                panic!("GPU_SKIP");
+            }
+        }
+    }
+
     /// CPU reference: softmax over last dimension (seq_k)
     ///
     /// Input:  scores [batch, heads, seq_q, seq_k]
@@ -83,7 +99,7 @@ mod softmax_explicit_tests {
         let cpu_result = softmax_cpu_explicit(&scores, batch, heads, seq_q, seq_k);
 
         // GPU run
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let scores_shape = TensorShape::from_dims(&[batch, heads, seq_q, seq_k]);
 
@@ -169,7 +185,7 @@ mod softmax_explicit_tests {
 
         let cpu_result = softmax_cpu_explicit(&scores, batch, heads, seq_q, seq_k);
 
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let scores_shape = TensorShape::from_dims(&[batch, heads, seq_q, seq_k]);
         let mut scores_gpu = DeviceTensor::from_host_vec(&backend, scores, scores_shape)
@@ -236,7 +252,7 @@ mod softmax_explicit_tests {
 
         let cpu_result = softmax_cpu_explicit(&scores, batch, heads, seq_q, seq_k);
 
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let scores_shape = TensorShape::from_dims(&[batch, heads, seq_q, seq_k]);
         let mut scores_gpu = DeviceTensor::from_host_vec(&backend, scores, scores_shape)
@@ -300,7 +316,7 @@ mod softmax_explicit_tests {
         // Large values that would overflow exp() without max normalization
         let scores: Vec<f32> = (0..total).map(|i| 1000.0 + (i as f32) * 0.1).collect();
 
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let scores_shape = TensorShape::from_dims(&[batch, heads, seq_q, seq_k]);
         let mut scores_gpu = DeviceTensor::from_host_vec(&backend, scores, scores_shape)

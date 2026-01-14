@@ -15,6 +15,22 @@ mod flash_nocausal_tests {
     const TEST_TOLERANCE: f32 = 1e-4;
     const TEST_TOLERANCE_LARGE: f32 = 2e-3; // Fused kernel has more FP operations
 
+    /// Helper: Get GPU backend or skip test if not available (llama.cpp pattern)
+    fn get_backend_or_skip() -> std::sync::Arc<HipBackend> {
+        match HipBackend::new_checked() {
+            Ok(backend) => backend,
+            Err(e) => {
+                eprintln!("\n⚠️  GPU not available for flash_nocausal_tests: {}", e);
+                eprintln!("To enable these tests, ensure:");
+                eprintln!("  1. AMD GPU is present");
+                eprintln!("  2. ROCm is installed (check with rocm-smi)");
+                eprintln!("  3. amdhip64 library is in LD_LIBRARY_PATH");
+                eprintln!("\nSkipping test gracefully (llama.cpp pattern).\n");
+                panic!("GPU_SKIP");
+            }
+        }
+    }
+
     /// Helper: Create Q tensor [batch, heads, seq, dim]
     fn create_q_tensor(batch: usize, heads: usize, seq: usize, dim: usize) -> Vec<f32> {
         let total = batch * heads * seq * dim;
@@ -115,7 +131,7 @@ mod flash_nocausal_tests {
             flash_attention_nocausal_cpu_reference(&q, &k, &v, batch, heads, seq_len, dim, scale);
 
         // GPU run
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let q_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
         let k_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
@@ -187,7 +203,7 @@ mod flash_nocausal_tests {
         let cpu_result =
             flash_attention_nocausal_cpu_reference(&q, &k, &v, batch, heads, seq_len, dim, scale);
 
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let q_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
         let k_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
@@ -253,7 +269,7 @@ mod flash_nocausal_tests {
         let cpu_result =
             flash_attention_nocausal_cpu_reference(&q, &k, &v, batch, heads, seq_len, dim, scale);
 
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let q_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
         let k_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
@@ -319,7 +335,7 @@ mod flash_nocausal_tests {
         // Create V with all ones - output will be sum of softmax weights
         let v_ones = vec![1.0f32; batch * heads * seq_len * dim];
 
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let q_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
         let k_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
@@ -388,7 +404,7 @@ mod flash_nocausal_tests {
         let k = create_k_tensor(batch, heads, seq_len, dim);
         let v = create_v_tensor(batch, heads, seq_len, dim);
 
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let q_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);
         let k_shape = TensorShape::from_dims(&[batch, heads, seq_len, dim]);

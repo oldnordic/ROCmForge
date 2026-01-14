@@ -17,6 +17,22 @@ mod swiglu_tests {
     const TEST_TOLERANCE: f32 = 1e-4;
     const TEST_TOLERANCE_LARGE: f32 = 2e-3;
 
+    /// Helper: Get GPU backend or skip test if not available (llama.cpp pattern)
+    fn get_backend_or_skip() -> std::sync::Arc<HipBackend> {
+        match HipBackend::new_checked() {
+            Ok(backend) => backend,
+            Err(e) => {
+                eprintln!("\n⚠️  GPU not available for swiglu_tests: {}", e);
+                eprintln!("To enable these tests, ensure:");
+                eprintln!("  1. AMD GPU is present");
+                eprintln!("  2. ROCm is installed (check with rocm-smi)");
+                eprintln!("  3. amdhip64 library is in LD_LIBRARY_PATH");
+                eprintln!("\nSkipping test gracefully (llama.cpp pattern).\n");
+                panic!("GPU_SKIP");
+            }
+        }
+    }
+
     /// CPU reference for SwiGLU activation
     ///
     /// SwiGLU(x) = gate(x) * swish(up(x))
@@ -63,7 +79,7 @@ mod swiglu_tests {
         let cpu_result = swiglu_cpu_reference(&gate, &up, seq_len, intermediate_size);
 
         // GPU run
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let gate_shape = TensorShape::from_dims(&[seq_len, intermediate_size]);
         let up_shape = TensorShape::from_dims(&[seq_len, intermediate_size]);
@@ -125,7 +141,7 @@ mod swiglu_tests {
 
         let cpu_result = swiglu_cpu_reference(&gate, &up, seq_len, intermediate_size);
 
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let gate_shape = TensorShape::from_dims(&[seq_len, intermediate_size]);
         let up_shape = TensorShape::from_dims(&[seq_len, intermediate_size]);
@@ -181,7 +197,7 @@ mod swiglu_tests {
 
         let cpu_result = swiglu_cpu_reference(&gate, &up, seq_len, intermediate_size);
 
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let gate_shape = TensorShape::from_dims(&[seq_len, intermediate_size]);
         let up_shape = TensorShape::from_dims(&[seq_len, intermediate_size]);
@@ -236,7 +252,7 @@ mod swiglu_tests {
         let gate: Vec<f32> = (0..total).map(|i| (i as f32) * 100.0 - 50.0).collect();
         let up: Vec<f32> = (0..total).map(|i| (i as f32) * 50.0 - 25.0).collect();
 
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let gate_shape = TensorShape::from_dims(&[seq_len, intermediate_size]);
         let up_shape = TensorShape::from_dims(&[seq_len, intermediate_size]);

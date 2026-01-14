@@ -13,6 +13,23 @@ mod tests {
     use crate::loader::gguf::GgufLoader;
     use crate::model::execution_plan::ExecutionPlan;
     use std::path::Path;
+    use std::sync::Arc;
+
+    /// Helper: Get GPU backend or skip test if not available (llama.cpp pattern)
+    fn get_backend_or_skip() -> Arc<HipBackend> {
+        match HipBackend::new_checked() {
+            Ok(backend) => backend,
+            Err(e) => {
+                eprintln!("\n⚠️  GPU not available for lazy_tests: {}", e);
+                eprintln!("To enable these tests, ensure:");
+                eprintln!("  1. AMD GPU is present");
+                eprintln!("  2. ROCm is installed (check with rocm-smi)");
+                eprintln!("  3. amdhip64 library is in LD_LIBRARY_PATH");
+                eprintln!("\nSkipping test gracefully (llama.cpp pattern).\n");
+                panic!("GPU_SKIP");
+            }
+        }
+    }
 
     /// Helper function to get test model path
     fn get_test_model_path() -> String {
@@ -36,7 +53,7 @@ mod tests {
     #[test]
     fn test_embedding_lazy_load_on_first_access() {
         // Verify first call to embedding_weights() loads tensor
-        let backend = HipBackend::new().expect("Failed to create HipBackend");
+        let backend = get_backend_or_skip();
         let model_path = get_test_model_path();
 
         if !Path::new(&model_path).exists() {
@@ -62,7 +79,7 @@ mod tests {
     #[test]
     fn test_embedding_cached_on_second_access() {
         // Verify second call returns cached tensor (no reload)
-        let backend = HipBackend::new().expect("Failed to create HipBackend");
+        let backend = get_backend_or_skip();
         let model_path = get_test_model_path();
 
         if !Path::new(&model_path).exists() {
@@ -92,7 +109,7 @@ mod tests {
     #[test]
     fn test_preload_layers() {
         // Verify preload_layers() loads specific layers
-        let backend = HipBackend::new().expect("Failed to create HipBackend");
+        let backend = get_backend_or_skip();
         let model_path = get_test_model_path();
 
         if !Path::new(&model_path).exists() {
@@ -122,7 +139,7 @@ mod tests {
     #[test]
     fn test_preload_all() {
         // Verify preload_all() loads all layers
-        let backend = HipBackend::new().expect("Failed to create HipBackend");
+        let backend = get_backend_or_skip();
         let model_path = get_test_model_path();
 
         if !Path::new(&model_path).exists() {
@@ -153,7 +170,7 @@ mod tests {
     #[test]
     fn test_loading_stats() {
         // Verify loading_stats() returns accurate counts
-        let backend = HipBackend::new().expect("Failed to create HipBackend");
+        let backend = get_backend_or_skip();
         let model_path = get_test_model_path();
 
         if !Path::new(&model_path).exists() {

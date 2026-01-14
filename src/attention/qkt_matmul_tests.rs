@@ -18,6 +18,22 @@ mod qkt_matmul_tests {
 
     const TEST_TOLERANCE: f32 = 1e-3;
 
+    /// Helper: Get GPU backend or skip test if not available (llama.cpp pattern)
+    fn get_backend_or_skip() -> std::sync::Arc<HipBackend> {
+        match HipBackend::new_checked() {
+            Ok(backend) => backend,
+            Err(e) => {
+                eprintln!("\n⚠️  GPU not available for qkt_matmul_tests: {}", e);
+                eprintln!("To enable these tests, ensure:");
+                eprintln!("  1. AMD GPU is present");
+                eprintln!("  2. ROCm is installed (check with rocm-smi)");
+                eprintln!("  3. amdhip64 library is in LD_LIBRARY_PATH");
+                eprintln!("\nSkipping test gracefully (llama.cpp pattern).\n");
+                panic!("GPU_SKIP");
+            }
+        }
+    }
+
     /// Helper: Create explicit layout Q tensor [batch, heads, seq, dim]
     ///
     /// Layout is row-major with dimensions ordered [batch, heads, seq, dim]
@@ -107,7 +123,7 @@ mod qkt_matmul_tests {
         let cpu_result = qkt_matmul_cpu_reference(&q, &k, batch, heads, seq_q, seq_k, dim);
 
         // GPU computation
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        let backend = get_backend_or_skip();
 
         let q_shape = TensorShape::from_dims(&[batch, heads, seq_q, dim]);
         let k_shape = TensorShape::from_dims(&[batch, heads, seq_k, dim]);

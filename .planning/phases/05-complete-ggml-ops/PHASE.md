@@ -106,7 +106,28 @@ Integrated optimizer into graph executor.
 
 ## Remaining Work
 
-### 5. Performance Measurement (TODO)
+### 6. GPU-Safe Testing (2026-01-14) ✅
+
+Added `DummyBackend` for unit testing following llama.cpp's `dummy_backend` pattern:
+
+**Implementation Details:**
+- `src/ggml/dummy_backend.rs` - Host-only, no-op backend for unit tests
+  - Fake memory tracking (usize offsets instead of GPU memory)
+  - All operations are no-ops (return `Ok(())`)
+  - Statistics tracking for testing (`alloc_count`, `execute_op_count`, etc.)
+  - 7 unit tests included
+
+**llama.cpp Pattern:**
+- `is_host = true` equivalent: No GPU interaction
+- `alloc_base = (uint8_t *) 16` equivalent: Fake memory pointer
+- `no_alloc = true` equivalent: Tracks allocations without actual GPU memory
+- Configurable `max_buffer_size` and `alignment` (64 bytes, 8-byte default)
+
+**Documentation:**
+- Updated `docs/GPU_TESTING_SAFETY_GUIDE.md` with DummyBackend section
+- Guidance on when to use `DummyBackend` vs `GPU_FIXTURE`
+
+### 7. Performance Measurement (TODO)
 Measure allocator impact on real workloads:
 - Run inference with and without allocator
 - Compare allocation counts/reuse ratios
@@ -121,6 +142,7 @@ Better suited for integration testing/benchmarking phase.
 | File | Purpose |
 |------|---------|
 | `src/ggml/allocator.rs` | Tensor pool/allocator ✅ |
+| `src/ggml/dummy_backend.rs` | Dummy backend for unit testing ✅ |
 | `src/ggml/hip_backend/ops/accumulate.rs` | Accumulate op ✅ |
 | `src/ggml/optimizer.rs` | Graph optimization passes ✅ |
 
@@ -153,8 +175,9 @@ Better suited for integration testing/benchmarking phase.
 - [ ] Real-world workload measurement completed (better suited for benchmarking phase)
 
 ### Test Coverage
-- [x] All 231 tests passing
+- [x] All 238 tests passing
   - 21 optimizer tests (8 original + 13 new)
+  - 7 dummy_backend tests (NEW - llama.cpp pattern)
   - 5 graph tests
   - 3 executor tests
   - 4 allocator tests
