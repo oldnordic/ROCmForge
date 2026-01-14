@@ -286,8 +286,8 @@ pub unsafe fn rms_norm_gpu_kernel(
             // Calculate grid/block dimensions
             let block_dim = (256, 1, 1);
             let grid_dim = (
-                ((hidden_size + block_dim.0 - 1) / block_dim.0, seq_len, 1),
-                1,
+                (hidden_size + block_dim.0 - 1) / block_dim.0,
+                seq_len,
                 1,
             );
             let shared_mem_bytes = 0;
