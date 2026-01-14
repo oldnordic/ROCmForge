@@ -2716,6 +2716,79 @@ impl ModelRuntime {
         })
     }
 
+    /// PHASE 1: Load model from pre-parsed GGUF loader (single-pass loading)
+    ///
+    /// This avoids re-parsing the GGUF file when the loader is already available.
+    /// Use this from `InferenceEngine::from_gguf()` for single-pass GGUF loading.
+    pub fn load_from_gguf_with_loader(
+        loader: Arc<crate::loader::gguf::GgufLoader>,
+        custom_config: Option<crate::model::config::ModelConfig>,
+    ) -> HipResult<Self> {
+        tracing::debug!("load_from_gguf_with_loader: Using pre-parsed GGUF loader");
+
+        let mut config = loader
+            .to_model_config()
+            .map_err(|e| HipError::GenericError(format!("Failed to create config: {}", e)))?;
+        tracing::debug!(
+            "load_from_gguf: Config created - layers={}, heads={}, hidden={}",
+            config.num_hidden_layers,
+            config.num_attention_heads,
+            config.hidden_size
+        );
+
+        // Override config if provided
+        if let Some(custom) = custom_config {
+            config.max_position_embeddings = custom.max_position_embeddings;
+            tracing::debug!("load_from_gguf: Overriding context size to {}", config.max_position_embeddings);
+        }
+
+        // Create backend
+        let backend = HipBackend::new()?;
+
+        tracing::debug!("load_from_gguf: Creating scratch buffer manager...");
+        // PHASE 24 FIX: Correct parameter order
+        let scratch = crate::backend::scratch::ScratchBufferManager::new(
+            &backend,
+            config.num_attention_heads,
+            config.hidden_size, // ← CORRECT: 3rd param
+            config.head_dim,
+            config.max_position_embeddings, // ← CORRECT: 5th param
+        )
+        .map_err(|e| HipError::GenericError(format!("Scratch buffer creation failed: {}", e)))?;
+        tracing::debug!("load_from_gguf: Scratch buffer manager created");
+        eprintln!("load_from_gguf: Scratch buffer manager created");
+
+        tracing::debug!("load_from_gguf: Creating KV cache...");
+        eprintln!("load_from_gguf: Creating KV cache...");
+        let kv_cache = crate::model::kv_cache::KVCache::new(
+            &backend,
+            config.num_hidden_layers,
+            config.num_attention_heads,
+            config.head_dim,
+            config.max_position_embeddings,
+        )
+        .map_err(|e| HipError::GenericError(format!("KV cache creation failed: {}", e)))?;
+        tracing::debug!("load_from_gguf: KV cache created");
+        eprintln!("load_from_gguf: KV cache created");
+
+        tracing::debug!("load_from_gguf: Creating execution plan from GGUF...");
+        eprintln!("load_from_gguf: Creating execution plan from GGUF...");
+        let execution_plan =
+            crate::model::execution_plan::ExecutionPlan::from_gguf(&backend, &loader)?;
+        tracing::debug!("load_from_gguf: Execution plan created successfully");
+        eprintln!("load_from_gguf: Execution plan created successfully");
+
+        tracing::debug!("load_from_gguf: ModelRuntime created successfully");
+        eprintln!("load_from_gguf: ModelRuntime created successfully, returning...");
+        Ok(ModelRuntime {
+            backend,
+            execution_plan: Some(execution_plan),
+            weight_buffers: Vec::new(),
+            scratch,
+            kv_cache,
+        })
+    }
+
     /// Create new model runtime with config
     pub fn new_with_config(config: crate::model::config::ModelConfig) -> HipResult<Self> {
         // HipBackend::new() returns Arc<HipBackend>

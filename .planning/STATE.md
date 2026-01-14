@@ -5,7 +5,13 @@
 
 ## Current Phase
 
-None - Ready to start Phase 1
+Phase 2: Fixed-Shape Tensors with Offset Views
+
+## Completed Work
+
+### Phase 1: Single-Pass GGUF Loading (2026-01-14) ✅
+
+Eliminated redundant GGUF parsing. Added `ModelRuntime::load_from_gguf_with_loader()` and `InferenceEngine::load_gguf_model_with_loader()` to parse GGUF once and reuse loader.
 
 ## Active WIP
 
