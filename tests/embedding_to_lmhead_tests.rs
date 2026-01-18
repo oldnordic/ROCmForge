@@ -14,147 +14,14 @@ use rocmforge::loader::{
 };
 use rocmforge::tensor::matmul::{cpu_matmul_f32, matmul_f32};
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{Seek, Write};
 use std::path::Path;
-use tempfile::NamedTempFile;
+
+// Use common fixtures
+use crate::common::{create_temp_file, create_embedding_gguf, NamedTempFile};
 
 // ============================================================================
 // Test Infrastructure
 // ============================================================================
-
-/// Create a minimal GGUF file with token embeddings and LM head weights
-///
-/// # Arguments
-/// * `path` - Where to write the GGUF file
-/// * `vocab_size` - Size of vocabulary (e.g., 32000, 128000)
-/// * `hidden_size` - Hidden dimension (e.g., 4096, 5120)
-///
-/// # Creates
-/// - `token_embd.weight`: [vocab_size, hidden_size] FP32 tensor
-/// - `output.weight`: [vocab_size, hidden_size] FP32 tensor (tied embeddings)
-/// - Metadata: n_embd, vocab_size
-fn create_embedding_gguf(
-    path: &Path,
-    vocab_size: usize,
-    hidden_size: usize,
-) -> anyhow::Result<()> {
-    let mut file = File::create(path)?;
-
-    // GGUF magic (little-endian)
-    file.write_all(b"GGUF")?;
-
-    // Version (3 = latest)
-    file.write_all(&3u32.to_le_bytes())?;
-
-    // Tensor count (2: token_embd.weight and output.weight)
-    file.write_all(&2u64.to_le_bytes())?;
-
-    // KV count (2: n_embd and vocab_size)
-    file.write_all(&2u64.to_le_bytes())?;
-
-    // Write metadata KV pairs
-    // n_embd (hidden_size)
-    write_kv_string(&mut file, "n_embd", hidden_size as u32)?;
-
-    // vocab_size
-    write_kv_string(&mut file, "vocab_size", vocab_size as u32)?;
-
-    // Calculate tensor data offset
-    // Current position after header and KVs
-    let current_pos = file.stream_position()?;
-    let tensor_data_offset = current_pos + (2 * 16) + (4 * 8); // 2 tensors + tensor info section
-
-    // Write tensor info section
-    // token_embd.weight
-    write_tensor_info(
-        &mut file,
-        "token_embd.weight",
-        vocab_size,
-        hidden_size,
-        GgufTensorType::F32,
-        tensor_data_offset,
-    )?;
-
-    // output.weight (offset after token_embd.weight)
-    let token_embd_bytes = vocab_size * hidden_size * 4; // 4 bytes per f32
-    write_tensor_info(
-        &mut file,
-        "output.weight",
-        vocab_size,
-        hidden_size,
-        GgufTensorType::F32,
-        tensor_data_offset + token_embd_bytes as u64,
-    )?;
-
-    // Write tensor padding
-    let padding_size = 32 - (tensor_data_offset % 32) as usize;
-    file.write_all(&vec![0u8; padding_size])?;
-
-    // Write token_embd.weight data (sequential values for testing)
-    let mut token_embd_data = vec![0.0f32; vocab_size * hidden_size];
-    for i in 0..vocab_size * hidden_size {
-        token_embd_data[i] = i as f32 * 0.001; // Small sequential values
-    }
-    write_tensor_data_f32(&mut file, &token_embd_data)?;
-
-    // Write output.weight data (same as token_embd for tied embeddings)
-    write_tensor_data_f32(&mut file, &token_embd_data)?;
-
-    Ok(())
-}
-
-/// Write a GGUF key-value pair with string key and u32 value
-fn write_kv_string(file: &mut File, key: &str, value: u32) -> anyhow::Result<()> {
-    // Key length and key
-    file.write_all(&(key.len() as u64).to_le_bytes())?;
-    file.write_all(key.as_bytes())?;
-
-    // Type: U32 = 4
-    file.write_all(&4u32.to_le_bytes())?;
-
-    // Value
-    file.write_all(&value.to_le_bytes())?;
-
-    Ok(())
-}
-
-/// Write GGUF tensor info
-fn write_tensor_info(
-    file: &mut File,
-    name: &str,
-    dim1: usize,
-    dim2: usize,
-    tensor_type: GgufTensorType,
-    offset: u64,
-) -> anyhow::Result<()> {
-    // Tensor name length and name
-    file.write_all(&(name.len() as u64).to_le_bytes())?;
-    file.write_all(name.as_bytes())?;
-
-    // Number of dimensions (2)
-    file.write_all(&2u32.to_le_bytes())?;
-
-    // Dimensions [dim1, dim2]
-    file.write_all(&(dim1 as u64).to_le_bytes())?;
-    file.write_all(&(dim2 as u64).to_le_bytes())?;
-
-    // Tensor type (as u32)
-    file.write_all(&(tensor_type as u32).to_le_bytes())?;
-
-    // Offset to tensor data
-    file.write_all(&offset.to_le_bytes())?;
-
-    Ok(())
-}
-
-/// Write FP32 tensor data to file
-fn write_tensor_data_f32(file: &mut File, data: &[f32]) -> anyhow::Result<()> {
-    for &val in data {
-        file.write_all(&val.to_le_bytes())?;
-    }
-    Ok(())
-}
 
 /// Verify embedding lookup produces correct vectors
 ///
@@ -215,7 +82,7 @@ fn verify_embedding_lookup(
 #[test]
 fn test_token_embedding_lookup_f32() -> anyhow::Result<()> {
     // Create test GGUF with FP32 embeddings
-    let temp_file = NamedTempFile::new()?;
+    let temp_file = create_temp_file()?;
     let vocab_size = 1000;
     let hidden_size = 128;
 
@@ -256,7 +123,7 @@ fn test_token_embedding_shape_validation() -> anyhow::Result<()> {
     let test_cases = vec![(1000, 128), (32000, 4096), (128000, 5120)];
 
     for (vocab_size, hidden_size) in test_cases {
-        let temp_file = NamedTempFile::new()?;
+        let temp_file = create_temp_file()?;
         create_embedding_gguf(temp_file.path(), vocab_size, hidden_size)?;
 
         let loader = GgufLoader::new(temp_file.path().to_str().unwrap())?;
@@ -278,7 +145,7 @@ fn test_token_embedding_shape_validation() -> anyhow::Result<()> {
 #[test]
 fn test_token_embedding_gpu_upload() -> anyhow::Result<()> {
     // Create test GGUF with embeddings
-    let temp_file = NamedTempFile::new()?;
+    let temp_file = create_temp_file()?;
     let vocab_size = 1000;
     let hidden_size = 128;
 
@@ -310,7 +177,7 @@ fn test_token_embedding_gpu_upload() -> anyhow::Result<()> {
 #[test]
 fn test_lm_head_weights_match_embeddings() -> anyhow::Result<()> {
     // Create GGUF with tied embeddings
-    let temp_file = NamedTempFile::new()?;
+    let temp_file = create_temp_file()?;
     let vocab_size = 1000;
     let hidden_size = 128;
 
@@ -443,7 +310,7 @@ fn test_embedding_to_lmhead_pipeline() -> anyhow::Result<()> {
     // 4. Compute LM head logits
     // 5. Verify argmax matches expected tokens
 
-    let temp_file = NamedTempFile::new()?;
+    let temp_file = create_temp_file()?;
     let vocab_size = 100;
     let hidden_size = 16;
 
@@ -526,7 +393,7 @@ fn test_batch_embedding_lookup() -> anyhow::Result<()> {
     // Input: [[1, 2, 3], [4, 5, 6]]
     // Verify output shape: [2, 3, hidden_size]
 
-    let temp_file = NamedTempFile::new()?;
+    let temp_file = create_temp_file()?;
     let vocab_size = 100;
     let hidden_size = 16;
 
@@ -604,7 +471,7 @@ fn test_large_vocabulary() -> anyhow::Result<()> {
     let test_vocab = 1000; // Use smaller vocab for test
     let test_hidden = 64;
 
-    let temp_file = NamedTempFile::new()?;
+    let temp_file = create_temp_file()?;
     create_embedding_gguf(temp_file.path(), test_vocab, test_hidden)?;
 
     // Verify no overflow or allocation issues
