@@ -24,6 +24,28 @@ pub enum OpType {
     // Add more as needed
 }
 
+impl OpType {
+    /// Map from Op to OpType for capability checking
+    ///
+    /// Returns None for metadata-only operations (Constant, View, Permute, etc.)
+    /// that don't require backend execution or capability checking.
+    pub fn from_op(op: &Op) -> Option<Self> {
+        match op {
+            Op::MatMul => Some(OpType::MatMul),
+            Op::MatMulQ4_0 | Op::MatMulQ8_0 => Some(OpType::QuantizedMatMul),
+            Op::Add => Some(OpType::Add),
+            Op::Scale { .. } => Some(OpType::Scale),
+            Op::Softmax => Some(OpType::Softmax),
+            Op::Attention => Some(OpType::Attention),
+            // Metadata ops don't need backend selection
+            Op::View | Op::Reshape | Op::Copy | Op::GetRows | Op::Mask
+            | Op::LayerNorm { .. } | Op::RmsNorm { .. } | Op::Rope
+            | Op::SwiGlu | Op::MlpSwiglu | Op::SplitQkv
+            | Op::Accumulate { .. } => None,
+        }
+    }
+}
+
 /// Capability query trait - independent of GgmlBackend to allow dynamic dispatch
 pub trait CapabilityProvider {
     /// Get all operations this backend can execute
@@ -306,22 +328,11 @@ mod tests {
         }
 
         fn op_capability(&self, op: &Op) -> Option<OpCapability> {
-            match op {
-                Op::MatMul => {
-                    if self.supported_ops.contains(&OpType::MatMul) {
-                        Some(OpCapability::new(OpType::MatMul))
-                    } else {
-                        None
-                    }
-                }
-                Op::Softmax => {
-                    if self.supported_ops.contains(&OpType::Softmax) {
-                        Some(OpCapability::new(OpType::Softmax))
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
+            let op_type = OpType::from_op(op)?;
+            if self.supported_ops.contains(&op_type) {
+                Some(OpCapability::new(op_type))
+            } else {
+                None
             }
         }
 
