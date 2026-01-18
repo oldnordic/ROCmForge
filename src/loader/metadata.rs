@@ -122,12 +122,55 @@ impl GgufMetadata {
                 self.max_position_embeddings = value.parse().unwrap_or(2048)
             }
             "mistral.vocab_size" => self.vocab_size = value.parse().unwrap_or(0),
+            // Yi-specific keys (Yi is similar to Mistral/LLaMA)
+            "yi.n_layers" | "yi.block_count" => self.num_layers = value.parse().unwrap_or(0),
+            "yi.n_heads" | "yi.attention.head_count" => self.num_heads = value.parse().unwrap_or(0),
+            "yi.n_heads_kv" | "yi.attention.head_count_kv" => {
+                self.num_kv_heads = Some(value.parse().unwrap_or(0))
+            }
+            "yi.n_embd" | "yi.hidden_size" => self.hidden_size = value.parse().unwrap_or(0),
+            "yi.intermediate_size" => self.intermediate_size = value.parse().unwrap_or(0),
+            "yi.head_dim" => self.head_dim = value.parse().unwrap_or(0),
+            "yi.max_position_embeddings" => {
+                self.max_position_embeddings = value.parse().unwrap_or(2048)
+            }
+            "yi.vocab_size" => self.vocab_size = value.parse().unwrap_or(0),
+            "yi.rms_norm_eps" => self.rms_norm_eps = value.parse().unwrap_or(1e-6),
+            // Mixtral-specific keys (MoE architecture)
+            "mixtral.n_layers" | "mixtral.block_count" => self.num_layers = value.parse().unwrap_or(0),
+            "mixtral.n_heads" | "mixtral.attention.head_count" => self.num_heads = value.parse().unwrap_or(0),
+            "mixtral.n_heads_kv" | "mixtral.attention.head_count_kv" => {
+                self.num_kv_heads = Some(value.parse().unwrap_or(0))
+            }
+            "mixtral.n_embd" | "mixtral.hidden_size" => self.hidden_size = value.parse().unwrap_or(0),
+            "mixtral.ffn_dim" | "mixtral.intermediate_size" => {
+                self.intermediate_size = value.parse().unwrap_or(0)
+            }
+            "mixtral.head_dim" => self.head_dim = value.parse().unwrap_or(0),
+            "mixtral.max_position_embeddings" => {
+                self.max_position_embeddings = value.parse().unwrap_or(2048)
+            }
+            "mixtral.vocab_size" => self.vocab_size = value.parse().unwrap_or(0),
+            "mixtral.n_experts" | "mixtral.n_expert" => {
+                // MoE-specific: stored in a separate field, not in GgufMetadata
+                // This is parsed here but not stored in the metadata struct
+                // TODO: Add num_local_experts field to GgufMetadata
+            }
+            "mixtral.n_experts_per_tok" => {
+                // MoE-specific: stored in a separate field
+                // TODO: Add experts_per_token field to GgufMetadata
+            }
+            "mixtral.attention.layer_norm_rms_epsilon" | "mixtral.norm_eps" => {
+                self.rms_norm_eps = value.parse().unwrap_or(1e-6)
+            }
             // Common RMS norm epsilon key names
             "llama.attention.layer_norm_rms_epsilon"
             | "qwen2.attention.layer_norm_rms_epsilon"
             | "qwen2.attention_norm_epsilon"
             | "mistral.attention.layer_norm_rms_epsilon"
-            | "mistral.norm_eps" => {
+            | "mistral.norm_eps"
+            | "yi.attention.layer_norm_rms_epsilon"
+            | "yi.rms_norm_eps" => {
                 self.rms_norm_eps = value.parse().unwrap_or(1e-6)
             }
             // Tokenizer JSON (embedded in some models)
@@ -221,5 +264,49 @@ mod tests {
 
         meta2.update_from_kv("mistral.n_heads", "20");
         assert_eq!(meta2.num_heads, 20);
+    }
+
+    #[test]
+    fn test_yi_metadata_parsing() {
+        let mut meta = GgufMetadata::default();
+
+        // Test all Yi key variants
+        meta.update_from_kv("yi.n_layers", "24");
+        assert_eq!(meta.num_layers, 24);
+
+        meta.update_from_kv("yi.n_heads", "20");
+        assert_eq!(meta.num_heads, 20);
+
+        meta.update_from_kv("yi.n_heads_kv", "4");
+        assert_eq!(meta.num_kv_heads, Some(4));
+
+        meta.update_from_kv("yi.n_embd", "2048");
+        assert_eq!(meta.hidden_size, 2048);
+
+        meta.update_from_kv("yi.intermediate_size", "5632");
+        assert_eq!(meta.intermediate_size, 5632);
+
+        meta.update_from_kv("yi.head_dim", "128");
+        assert_eq!(meta.head_dim, 128);
+
+        meta.update_from_kv("yi.max_position_embeddings", "4096");
+        assert_eq!(meta.max_position_embeddings, 4096);
+
+        meta.update_from_kv("yi.vocab_size", "64000");
+        assert_eq!(meta.vocab_size, 64000);
+
+        meta.update_from_kv("yi.rms_norm_eps", "0.00001");
+        assert_eq!(meta.rms_norm_eps, 0.00001);
+
+        // Test alternative key names
+        let mut meta2 = GgufMetadata::default();
+        meta2.update_from_kv("yi.block_count", "32");
+        assert_eq!(meta2.num_layers, 32);
+
+        meta2.update_from_kv("yi.hidden_size", "4096");
+        assert_eq!(meta2.hidden_size, 4096);
+
+        meta2.update_from_kv("yi.attention.head_count", "32");
+        assert_eq!(meta2.num_heads, 32);
     }
 }
