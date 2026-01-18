@@ -14,8 +14,8 @@ pub mod page_table;
 
 // Re-export from kv_cache
 pub use kv_cache::{
-    BlockTable, CacheConfig, CachePage, CacheStats, KvCache, KvCacheError, KvCacheResult,
-    PagedCacheStats, PhysicalBlockPool, SequenceCache,
+    AllocationStats, BlockTable, CacheConfig, CachePreset, CachePage, CacheStats, KvCache,
+    KvCacheError, KvCacheResult, MemoryProfile, PagedCacheStats, PhysicalBlockPool, SequenceCache,
 };
 
 // Re-export from page_table

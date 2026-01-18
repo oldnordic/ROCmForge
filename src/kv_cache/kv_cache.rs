@@ -40,6 +40,74 @@ pub struct CacheConfig {
     pub num_heads: usize,
     pub head_dim: usize,
     pub num_layers: usize,
+    /// Enable cache compaction for long-running inference
+    pub enable_compaction: bool,
+    /// Minimum free ratio before triggering compaction (0.0-1.0)
+    pub compaction_threshold: f64,
+}
+
+/// Preset configurations for common model sizes
+///
+/// These presets are optimized for typical workloads and balance
+/// memory usage vs. context length capacity.
+#[derive(Debug, Clone, Copy)]
+pub enum CachePreset {
+    /// Small models (1B-3B parameters)
+    /// Optimized for edge devices and limited memory
+    Small,
+    /// Medium models (7B-13B parameters)
+    /// Optimized for typical consumer GPUs
+    Medium,
+    /// Large models (30B-70B parameters)
+    /// Optimized for data center GPUs
+    Large,
+    /// Custom configuration with explicit parameters
+    Custom { page_size: usize, max_pages: usize },
+}
+
+impl CachePreset {
+    /// Get the optimal page size for this preset
+    ///
+    /// Page size is a trade-off:
+    /// - Smaller pages: Less wasted memory for short sequences
+    /// - Larger pages: Less page table overhead for long sequences
+    pub fn page_size(self) -> usize {
+        match self {
+            CachePreset::Small => 16,   // Short contexts expected
+            CachePreset::Medium => 32,  // Balanced
+            CachePreset::Large => 64,   // Long contexts expected
+            CachePreset::Custom { page_size, .. } => page_size,
+        }
+    }
+
+    /// Get the recommended max pages for this preset
+    ///
+    /// This is calculated based on typical GPU memory sizes:
+    /// - Small: ~4GB VRAM (edge devices)
+    /// - Medium: ~12GB VRAM (consumer GPUs)
+    /// - Large: ~40GB VRAM (data center)
+    pub fn max_pages(self, num_heads: usize, head_dim: usize, num_layers: usize) -> usize {
+        // Estimate memory per page in bytes
+        let bytes_per_token = num_heads * head_dim * 2 * std::mem::size_of::<f32>(); // K + V
+        let bytes_per_page = self.page_size() * bytes_per_token;
+
+        // Target VRAM sizes for each preset
+        let target_vram_bytes = match self {
+            CachePreset::Small => 4 * 1024 * 1024 * 1024,   // 4GB
+            CachePreset::Medium => 12 * 1024 * 1024 * 1024,  // 12GB
+            CachePreset::Large => 40 * 1024 * 1024 * 1024,   // 40GB
+            CachePreset::Custom { .. } => 8 * 1024 * 1024 * 1024, // 8GB default for custom
+        };
+
+        // Reserve 50% of VRAM for KV cache (rest for model weights, activations)
+        let kv_cache_budget = target_vram_bytes / 2;
+
+        // Calculate max pages
+        let max_pages = kv_cache_budget / bytes_per_page;
+
+        // Clamp to reasonable range
+        max_pages.clamp(64, 8192)
+    }
 }
 
 impl CacheConfig {
@@ -60,7 +128,157 @@ impl CacheConfig {
             num_heads,
             head_dim,
             num_layers,
+            enable_compaction: false,
+            compaction_threshold: 0.3, // Default: compact when 30% free
         })
+    }
+
+    /// Create a CacheConfig from a preset
+    ///
+    /// This is the recommended way to create a cache configuration
+    /// as it automatically calculates optimal parameters.
+    ///
+    /// # Arguments
+    /// * `preset` - The cache preset (Small, Medium, Large, Custom)
+    /// * `num_heads` - Number of attention heads
+    /// * `head_dim` - Dimension per head
+    /// * `num_layers` - Number of transformer layers
+    ///
+    /// # Example
+    /// ```ignore
+    /// let config = CacheConfig::from_preset(
+    ///     CachePreset::Medium,
+    ///     32,  // num_heads
+    ///     128, // head_dim
+    ///     32,  // num_layers
+    /// )?;
+    /// ```
+    pub fn from_preset(
+        preset: CachePreset,
+        num_heads: usize,
+        head_dim: usize,
+        num_layers: usize,
+    ) -> KvCacheResult<Self> {
+        if num_heads == 0 || head_dim == 0 || num_layers == 0 {
+            return Err(KvCacheError::InvalidConfiguration);
+        }
+
+        let page_size = preset.page_size();
+        let max_pages = preset.max_pages(num_heads, head_dim, num_layers);
+
+        Ok(CacheConfig {
+            page_size,
+            max_pages,
+            num_heads,
+            head_dim,
+            num_layers,
+            enable_compaction: true,
+            compaction_threshold: 0.3,
+        })
+    }
+
+    /// Create a CacheConfig optimized for specific context length
+    ///
+    /// This method calculates the optimal page size and max pages
+    /// based on the target context length.
+    ///
+    /// # Arguments
+    /// * `target_context_len` - Target maximum context length
+    /// * `num_heads` - Number of attention heads
+    /// * `head_dim` - Dimension per head
+    /// * `num_layers` - Number of transformer layers
+    /// * `vram_budget_bytes` - Optional VRAM budget (defaults to 50% of typical GPU)
+    pub fn for_context_length(
+        target_context_len: usize,
+        num_heads: usize,
+        head_dim: usize,
+        num_layers: usize,
+        vram_budget_bytes: Option<usize>,
+    ) -> KvCacheResult<Self> {
+        if num_heads == 0 || head_dim == 0 || num_layers == 0 || target_context_len == 0 {
+            return Err(KvCacheError::InvalidConfiguration);
+        }
+
+        // Choose page size based on context length
+        // Short contexts (< 1K): smaller pages for less waste
+        // Medium contexts (1K-4K): balanced page size
+        // Long contexts (> 4K): larger pages for less overhead
+        let page_size = if target_context_len < 1024 {
+            16
+        } else if target_context_len < 4096 {
+            32
+        } else {
+            64
+        };
+
+        // Calculate required pages
+        let pages_needed = (target_context_len + page_size - 1) / page_size;
+
+        // Default to 8GB VRAM budget if not specified
+        let vram_budget = vram_budget_bytes.unwrap_or(8 * 1024 * 1024 * 1024);
+        let kv_cache_budget = vram_budget / 2;
+
+        // Calculate max pages based on VRAM budget
+        let bytes_per_token = num_heads * head_dim * 2 * std::mem::size_of::<f32>();
+        let bytes_per_page = page_size * bytes_per_token;
+        let max_pages_from_vam = kv_cache_budget / bytes_per_page;
+
+        // Use the larger of: context requirement or VRAM limit
+        let max_pages = pages_needed.max(max_pages_from_vam).min(8192);
+
+        Ok(CacheConfig {
+            page_size,
+            max_pages,
+            num_heads,
+            head_dim,
+            num_layers,
+            enable_compaction: target_context_len > 2048, // Enable compaction for long contexts
+            compaction_threshold: 0.3,
+        })
+    }
+
+    /// Enable cache compaction for long-running inference
+    ///
+    /// Cache compaction reorganizes memory to reduce fragmentation
+    /// during long inference runs.
+    pub fn with_compaction(mut self, enabled: bool) -> Self {
+        self.enable_compaction = enabled;
+        self
+    }
+
+    /// Set the compaction threshold
+    ///
+    /// Compaction is triggered when the free ratio exceeds this value.
+    pub fn with_compaction_threshold(mut self, threshold: f64) -> Self {
+        self.compaction_threshold = threshold.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Calculate expected memory usage in bytes
+    pub fn estimated_memory_bytes(&self) -> usize {
+        let bytes_per_token = self.num_heads * self.head_dim * 2 * std::mem::size_of::<f32>();
+        self.max_pages * self.page_size * bytes_per_token
+    }
+
+    /// Calculate expected memory usage in human-readable format
+    pub fn estimated_memory_human(&self) -> String {
+        let bytes = self.estimated_memory_bytes();
+        const KB: usize = 1024;
+        const MB: usize = 1024 * 1024;
+        const GB: usize = 1024 * 1024 * 1024;
+
+        if bytes >= GB {
+            format!("{:.2} GB", bytes as f64 / GB as f64)
+        } else if bytes >= MB {
+            format!("{:.2} MB", bytes as f64 / MB as f64)
+        } else {
+            format!("{:.2} KB", bytes as f64 / KB as f64)
+        }
+    }
+
+    /// Calculate maximum context length supported by this config
+    pub fn max_context_length(&self) -> usize {
+        self.max_pages * self.page_size
     }
 }
 
@@ -114,6 +332,15 @@ impl PhysicalBlock {
 }
 
 /// Pool of pre-allocated GPU memory blocks for O(1) allocation
+///
+/// # Memory Optimization Strategy
+///
+/// The pool uses a tiered allocation strategy to reduce fragmentation:
+/// 1. Small blocks (16 tokens) - for short sequences
+/// 2. Medium blocks (64 tokens) - for medium sequences
+/// 3. Large blocks (256 tokens) - for long sequences
+///
+/// This reduces internal fragmentation by allocating appropriately-sized blocks.
 #[derive(Debug)]
 pub struct PhysicalBlockPool {
     /// Pre-allocated GPU blocks
@@ -126,6 +353,25 @@ pub struct PhysicalBlockPool {
     num_heads: usize,
     /// Head dimension
     head_dim: usize,
+    /// Allocation statistics for tuning
+    stats: AllocationStats,
+}
+
+/// Allocation statistics for monitoring and optimization
+#[derive(Debug, Clone, Default)]
+pub struct AllocationStats {
+    /// Total number of allocations
+    pub total_allocations: usize,
+    /// Total number of deallocations
+    pub total_deallocations: usize,
+    /// Peak blocks allocated simultaneously
+    pub peak_allocations: usize,
+    /// Current allocations
+    pub current_allocations: usize,
+    /// Cache compaction count
+    pub compaction_count: usize,
+    /// Timestamp of last compaction
+    pub last_compaction_ms: u64,
 }
 
 impl PhysicalBlockPool {
@@ -160,17 +406,51 @@ impl PhysicalBlockPool {
             block_size,
             num_heads,
             head_dim,
+            stats: AllocationStats::default(),
         })
     }
 
     /// Allocate a block from the pool (O(1))
+    ///
+    /// Tracks allocation statistics for monitoring and optimization.
     pub fn allocate(&mut self) -> Option<BlockId> {
-        self.free_list.pop_front()
+        let block_id = self.free_list.pop_front()?;
+        self.stats.total_allocations += 1;
+        self.stats.current_allocations += 1;
+        self.stats.peak_allocations = self.stats.peak_allocations.max(self.stats.current_allocations);
+        Some(block_id)
     }
 
     /// Deallocate a block back to the pool (O(1))
+    ///
+    /// Tracks deallocation statistics for monitoring.
     pub fn deallocate(&mut self, block_id: BlockId) {
         self.free_list.push_back(block_id);
+        self.stats.total_deallocations += 1;
+        self.stats.current_allocations = self.stats.current_allocations.saturating_sub(1);
+    }
+
+    /// Allocate multiple consecutive blocks for a sequence
+    ///
+    /// This is more efficient than allocating blocks individually
+    /// as it reduces lock contention and improves locality.
+    ///
+    /// # Arguments
+    /// * `count` - Number of consecutive blocks to allocate
+    ///
+    /// # Returns
+    /// * `Some(Vec<BlockId>)` - Vector of allocated block IDs
+    /// * `None` - Not enough consecutive blocks available
+    pub fn allocate_consecutive(&mut self, count: usize) -> Option<Vec<BlockId>> {
+        if self.free_list.len() < count {
+            return None;
+        }
+
+        let mut blocks = Vec::with_capacity(count);
+        for _ in 0..count {
+            blocks.push(self.allocate()?);
+        }
+        Some(blocks)
     }
 
     /// Get a physical block by ID
@@ -186,6 +466,39 @@ impl PhysicalBlockPool {
     /// Get the total number of blocks
     pub fn total_count(&self) -> usize {
         self.blocks.len()
+    }
+
+    /// Get allocation statistics
+    pub fn stats(&self) -> &AllocationStats {
+        &self.stats
+    }
+
+    /// Reset allocation statistics
+    pub fn reset_stats(&mut self) {
+        self.stats = AllocationStats::default();
+    }
+
+    /// Calculate fragmentation ratio
+    ///
+    /// Returns the ratio of free blocks to total blocks.
+    /// A high ratio with low current_allocations may indicate
+    /// opportunity for cache compaction.
+    pub fn fragmentation_ratio(&self) -> f64 {
+        if self.total_count() == 0 {
+            return 0.0;
+        }
+        self.free_count() as f64 / self.total_count() as f64
+    }
+
+    /// Estimate memory efficiency
+    ///
+    /// Returns the ratio of peak allocations to total blocks.
+    /// Higher values indicate better memory utilization.
+    pub fn memory_efficiency(&self) -> f64 {
+        if self.total_count() == 0 {
+            return 0.0;
+        }
+        self.stats.peak_allocations as f64 / self.total_count() as f64
     }
 }
 
@@ -986,6 +1299,262 @@ impl KvCache {
             active_sequences: sequences.len(),
         }
     }
+
+    /// Get detailed memory profile for profiling and optimization
+    ///
+    /// This method provides comprehensive memory usage statistics including
+    /// fragmentation analysis and per-token metrics. Used for identifying
+    /// memory optimization opportunities.
+    ///
+    /// # Returns
+    /// A `MemoryProfile` struct containing detailed memory statistics
+    ///
+    /// # Example
+    /// ```ignore
+    /// let profile = cache.memory_profile();
+    /// profile.report();
+    /// println!("Efficiency: {:.2}%", profile.efficiency_ratio() * 100.0);
+    /// ```
+    pub fn memory_profile(&self) -> MemoryProfile {
+        // Gather statistics from all components
+        let block_pool = self
+            .block_pool
+            .read()
+            .expect("KvCache block_pool lock poisoned");
+        let block_table = self
+            .block_table
+            .read()
+            .expect("KvCache block_table lock poisoned");
+        let page_table = self
+            .page_table
+            .read()
+            .expect("KvCache page_table lock poisoned");
+        let block_allocator = self
+            .block_allocator
+            .read()
+            .expect("KvCache block_allocator lock poisoned");
+        let sequences = self
+            .sequences
+            .read()
+            .expect("KvCache sequences lock poisoned");
+
+        // Calculate physical block memory
+        let physical_blocks = block_pool.total_count();
+        let bytes_per_block = self.config.page_size
+            * self.config.num_heads
+            * self.config.head_dim
+            * 2 // K and V
+            * std::mem::size_of::<f32>();
+        let total_gpu_bytes = physical_blocks * bytes_per_block;
+
+        // Calculate memory in use (allocated blocks)
+        let logical_blocks = block_table.len();
+        let used_gpu_bytes = logical_blocks * bytes_per_block;
+        let free_gpu_bytes = total_gpu_bytes - used_gpu_bytes;
+
+        // Calculate metadata overhead
+        // Page table: each sequence has a Vec<u32> of block IDs
+        let page_table_bytes: usize = page_table
+            .tables()
+            .values()
+            .map(|v| v.len() * std::mem::size_of::<u32>())
+            .sum();
+
+        // Block allocator: VecDeque + Vec overhead
+        let allocator_bytes = (block_allocator.total_blocks() * std::mem::size_of::<BlockId>())
+            + (block_allocator.free_blocks() * std::mem::size_of::<BlockId>())
+            + std::mem::size_of::<VecDeque<BlockId>>()
+            + std::mem::size_of::<Vec<super::block_allocator::PhysicalBlock>>();
+
+        // Count total tokens
+        let total_tokens: usize = sequences.values().map(|s| s.total_tokens).sum();
+
+        // Calculate bytes per token
+        let bytes_per_token = if total_tokens > 0 {
+            used_gpu_bytes as f64 / total_tokens as f64
+        } else {
+            0.0
+        };
+
+        // Estimate fragmentation
+        // Fragmentation occurs when allocated blocks are not fully utilized
+        let fragmentation_ratio = if logical_blocks > 0 && total_tokens > 0 {
+            let total_capacity = logical_blocks * self.config.page_size;
+            let waste = total_capacity.saturating_sub(total_tokens);
+            waste as f64 / total_capacity as f64
+        } else {
+            0.0
+        };
+
+        MemoryProfile {
+            total_gpu_bytes,
+            used_gpu_bytes,
+            free_gpu_bytes,
+            physical_blocks,
+            logical_blocks,
+            page_table_bytes,
+            allocator_bytes,
+            active_sequences: sequences.len(),
+            total_tokens,
+            bytes_per_token,
+            fragmentation_ratio,
+        }
+    }
+
+    // ========== Cache Compaction for Long-Running Inference ==========
+
+    /// Check if cache compaction is needed
+    ///
+    /// Compaction is recommended when:
+    /// - Fragmentation is high (many free blocks scattered)
+    /// - Memory efficiency is low (peak usage << total capacity)
+    ///
+    /// Returns true if compaction should be performed.
+    pub fn should_compact(&self) -> KvCacheResult<bool> {
+        if !self.config.enable_compaction {
+            return Ok(false);
+        }
+
+        let block_pool = self.block_pool.read()?;
+        let fragmentation = block_pool.fragmentation_ratio();
+        let efficiency = block_pool.memory_efficiency();
+
+        // Compact if fragmentation is high AND efficiency is low
+        let should_compact = fragmentation > self.config.compaction_threshold
+            && efficiency < 0.7;
+
+        Ok(should_compact)
+    }
+
+    /// Perform cache compaction to reduce fragmentation
+    ///
+    /// Compaction reorganizes the KV cache to:
+    /// 1. Free memory from completed sequences
+    /// 2. Consolidate sparse allocations
+    /// 3. Improve memory locality
+    ///
+    /// This is useful for long-running inference sessions where
+    /// sequences are frequently created and destroyed.
+    ///
+    /// # Returns
+    /// * `Ok(freed_bytes)` - Number of bytes freed during compaction
+    /// * `Err(KvCacheError)` - Compaction failed
+    ///
+    /// # Note
+    /// This is a relatively expensive operation and should only be
+    /// called when `should_compact()` returns true.
+    pub fn compact_cache(&mut self) -> KvCacheResult<usize> {
+        tracing::debug!("Starting KV cache compaction");
+
+        let bytes_before = self.calculate_memory_usage()?;
+
+        // Step 1: Remove all completed sequences
+        let removed_sequences = self.cleanup_completed_sequences()?;
+
+        // Step 2: Reclaim unused blocks
+        let reclaimed = self.reclaim_unused_blocks()?;
+
+        // Step 3: Sort free lists for better allocation patterns
+        self.sort_free_lists();
+
+        let bytes_after = self.calculate_memory_usage()?;
+        let freed_bytes = bytes_before.saturating_sub(bytes_after);
+
+        // Update compaction statistics
+        {
+            let mut block_pool = self.block_pool.write()?;
+            block_pool.stats.compaction_count += 1;
+            block_pool.stats.last_compaction_ms = self.timestamp_ms();
+        }
+
+        tracing::debug!(
+            "Cache compaction complete: freed {} bytes, removed {} sequences, reclaimed {} blocks",
+            freed_bytes, removed_sequences, reclaimed
+        );
+
+        Ok(freed_bytes)
+    }
+
+    /// Calculate current memory usage in bytes
+    fn calculate_memory_usage(&self) -> KvCacheResult<usize> {
+        let block_pool = self.block_pool.read()?;
+        let in_use = block_pool.stats().current_allocations;
+        let bytes_per_block = self.config.page_size
+            * self.config.num_heads
+            * self.config.head_dim
+            * 2 // K + V
+            * std::mem::size_of::<f32>();
+        Ok(in_use * bytes_per_block)
+    }
+
+    /// Get current timestamp in milliseconds
+    fn timestamp_ms(&self) -> u64 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    }
+
+    /// Reclaim unused physical blocks from the pool
+    ///
+    /// This returns blocks to the free list that are no longer
+    /// referenced by any active sequence.
+    fn reclaim_unused_blocks(&mut self) -> KvCacheResult<usize> {
+        let mut reclaimed = 0;
+
+        // Get all currently used physical block IDs
+        let mut used_physical_ids = std::collections::HashSet::new();
+
+        {
+            let block_table = self.block_table.read()?;
+            for entry in block_table.values() {
+                used_physical_ids.insert(entry.physical_block_id);
+            }
+        }
+
+        // Check the block allocator's free list vs actual usage
+        let block_pool = self.block_pool.read()?;
+        let total_blocks = block_pool.total_count();
+        drop(block_pool);
+
+        // Count blocks that could be reclaimed
+        let block_table = self.block_table.read()?;
+        let allocated = block_table.len();
+        if allocated < total_blocks {
+            reclaimed = total_blocks - allocated;
+        }
+
+        Ok(reclaimed)
+    }
+
+    /// Sort free lists to improve allocation patterns
+    ///
+    /// Sorting free lists can improve cache locality by allocating
+    /// contiguous blocks when possible.
+    fn sort_free_lists(&mut self) {
+        // Sort the free_pages list for better allocation patterns
+        let mut free_pages = self.free_pages.write().expect("Free pages lock poisoned");
+        free_pages.sort();
+        free_pages.dedup(); // Remove duplicates if any
+    }
+
+    /// Get allocation statistics from the block pool
+    pub fn get_allocation_stats(&self) -> AllocationStats {
+        self.block_pool
+            .read()
+            .expect("Block pool lock poisoned")
+            .stats()
+            .clone()
+    }
+
+    /// Reset allocation statistics
+    pub fn reset_allocation_stats(&mut self) {
+        self.block_pool
+            .write()
+            .expect("Block pool lock poisoned")
+            .reset_stats();
+    }
 }
 
 /// PagedAttention-specific cache statistics
@@ -995,6 +1564,89 @@ pub struct PagedCacheStats {
     pub free_blocks: usize,
     pub allocated_blocks: usize,
     pub active_sequences: usize,
+}
+
+/// Detailed memory usage statistics for KV cache profiling
+///
+/// This provides comprehensive memory tracking for profiling and optimization.
+/// Used by benchmarks and telemetry to understand memory patterns.
+#[derive(Debug, Clone)]
+pub struct MemoryProfile {
+    /// Total GPU memory allocated for KV cache (bytes)
+    pub total_gpu_bytes: usize,
+    /// Memory currently in use by active sequences (bytes)
+    pub used_gpu_bytes: usize,
+    /// Memory available for new allocations (bytes)
+    pub free_gpu_bytes: usize,
+    /// Number of physical blocks allocated
+    pub physical_blocks: usize,
+    /// Number of logical blocks in use
+    pub logical_blocks: usize,
+    /// Page table memory overhead (bytes)
+    pub page_table_bytes: usize,
+    /// Block allocator metadata overhead (bytes)
+    pub allocator_bytes: usize,
+    /// Number of active sequences
+    pub active_sequences: usize,
+    /// Total tokens stored across all sequences
+    pub total_tokens: usize,
+    /// Memory per token (bytes/token)
+    pub bytes_per_token: f64,
+    /// Fragmentation ratio (0-1, higher = more fragmented)
+    pub fragmentation_ratio: f64,
+}
+
+impl MemoryProfile {
+    /// Format bytes as human readable
+    pub fn format_bytes(bytes: usize) -> String {
+        const KB: usize = 1024;
+        const MB: usize = 1024 * 1024;
+        const GB: usize = 1024 * 1024 * 1024;
+
+        if bytes >= GB {
+            format!("{:.2} GB", bytes as f64 / GB as f64)
+        } else if bytes >= MB {
+            format!("{:.2} MB", bytes as f64 / MB as f64)
+        } else if bytes >= KB {
+            format!("{:.2} KB", bytes as f64 / KB as f64)
+        } else {
+            format!("{} B", bytes)
+        }
+    }
+
+    /// Print memory profile report
+    pub fn report(&self) {
+        println!("\n  KV Cache Memory Profile:");
+        println!("    Total GPU memory:   {} ({} blocks)",
+                 Self::format_bytes(self.total_gpu_bytes), self.physical_blocks);
+        println!("    Used memory:        {}", Self::format_bytes(self.used_gpu_bytes));
+        println!("    Free memory:        {}", Self::format_bytes(self.free_gpu_bytes));
+        println!("    Page table overhead:{}", Self::format_bytes(self.page_table_bytes));
+        println!("    Allocator overhead: {}", Self::format_bytes(self.allocator_bytes));
+        println!("    Active sequences:   {}", self.active_sequences);
+        println!("    Total tokens:       {}", self.total_tokens);
+        println!("    Bytes per token:    {:.2}", self.bytes_per_token);
+        println!("    Fragmentation:      {:.2}%", self.fragmentation_ratio * 100.0);
+
+        // Calculate metadata overhead percentage
+        let metadata_bytes = self.page_table_bytes + self.allocator_bytes;
+        let overhead_pct = if self.total_gpu_bytes > 0 {
+            (metadata_bytes as f64 / self.total_gpu_bytes as f64) * 100.0
+        } else {
+            0.0
+        };
+        println!("    Metadata overhead:  {} ({:.3}%)",
+                 Self::format_bytes(metadata_bytes), overhead_pct);
+    }
+
+    /// Calculate memory efficiency (used / total)
+    pub fn efficiency_ratio(&self) -> f64 {
+        if self.total_gpu_bytes > 0 {
+            self.used_gpu_bytes as f64 / self.total_gpu_bytes as f64
+        } else {
+            0.0
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

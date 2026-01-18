@@ -153,6 +153,15 @@ impl PageTable {
     pub fn num_sequences(&self) -> usize {
         self.tables.len()
     }
+
+    /// Get reference to internal tables (for profiling)
+    ///
+    /// # Returns
+    /// Reference to the internal HashMap mapping sequence IDs to block lists
+    #[must_use]
+    pub fn tables(&self) -> &HashMap<u32, Vec<u32>> {
+        &self.tables
+    }
 }
 
 impl Default for PageTable {

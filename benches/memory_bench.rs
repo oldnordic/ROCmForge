@@ -737,6 +737,185 @@ fn benchmark_gpu_memory_allocation() {
 }
 
 // ============================================================================
+// KV Cache Profiling Benchmarks
+// ============================================================================
+
+/// Profile KV cache memory patterns for different sequence lengths
+///
+/// This benchmark analyzes:
+/// - Memory growth per token
+/// - Fragmentation at different sequence lengths
+/// - Page table overhead
+/// - Block allocation efficiency
+fn benchmark_kv_cache_profiling() {
+    println!("\n[KV Cache Memory Profiling]");
+    println!("============================");
+    println!("Analyzing KV cache memory patterns for different sequence lengths\n");
+
+    // Model configurations to profile
+    let configs = vec![
+        (32, 32, 128, 32, "7B model"),  // num_layers, num_heads, head_dim, page_size
+        (40, 40, 128, 32, "13B model"),
+        (80, 64, 128, 16, "70B model"),
+    ];
+
+    let sequence_lengths = vec![256, 512, 1024, 2048, 4096];
+
+    for (num_layers, num_heads, head_dim, page_size, model_name) in configs {
+        println!("--- {} Profile ---", model_name);
+        println!("  Config: {} layers, {} heads, {} head_dim, {} tokens/page",
+                 num_layers, num_heads, head_dim, page_size);
+
+        for seq_len in sequence_lengths {
+            // Calculate theoretical memory requirements
+            let elements_per_token_per_layer = num_heads * head_dim * 2; // K + V
+            let elements_per_token = elements_per_token_per_layer * num_layers;
+            let bytes_per_token = elements_per_token * std::mem::size_of::<f32>();
+
+            // Paged allocation
+            let num_pages = (seq_len + page_size - 1) / page_size;
+            let allocated_tokens = num_pages * page_size;
+
+            let total_kv_bytes = allocated_tokens * bytes_per_token;
+            let used_kv_bytes = seq_len * bytes_per_token;
+            let wasted_bytes = total_kv_bytes - used_kv_bytes;
+
+            // Page table overhead
+            let page_table_entries = num_pages;
+            let page_table_bytes = page_table_entries * std::mem::size_of::<u32>();
+
+            // Block allocator overhead (approximate)
+            let allocator_bytes = num_pages * std::mem::size_of::<u32>() * 3;
+
+            let total_overhead = page_table_bytes + allocator_bytes;
+            let overhead_ratio = total_overhead as f64 / total_kv_bytes as f64;
+            let fragmentation = wasted_bytes as f64 / total_kv_bytes as f64;
+
+            println!("\n  Sequence Length: {} tokens", seq_len);
+            println!("    Pages allocated:    {}", num_pages);
+            println!("    KV cache size:      {}", MemoryStats::format_bytes(total_kv_bytes));
+            println!("    KV cache used:      {}", MemoryStats::format_bytes(used_kv_bytes));
+            println!("    Wasted memory:      {} ({:.1}%)",
+                     MemoryStats::format_bytes(wasted_bytes),
+                     fragmentation * 100.0);
+            println!("    Page table size:    {}", MemoryStats::format_bytes(page_table_bytes));
+            println!("    Allocator overhead: {}", MemoryStats::format_bytes(allocator_bytes));
+            println!("    Total metadata:     {} ({:.4}%)",
+                     MemoryStats::format_bytes(total_overhead),
+                     overhead_ratio * 100.0);
+            println!("    Bytes per token:    {:.2}", bytes_per_token as f64);
+
+            // Memory efficiency calculation
+            let efficiency = if total_kv_bytes > 0 {
+                used_kv_bytes as f64 / total_kv_bytes as f64
+            } else {
+                0.0
+            };
+            println!("    Memory efficiency:  {:.1}%", efficiency * 100.0);
+        }
+        println!();
+    }
+}
+
+/// Profile block allocation efficiency across different usage patterns
+fn benchmark_block_allocation_patterns() {
+    println!("\n[Block Allocation Pattern Analysis]");
+    println!("====================================");
+    println!("Analyzing allocation efficiency for different access patterns\n");
+
+    let page_size = 16;
+    let patterns = vec![
+        ("Sequential single-token appends", 1, 512),    // (name, tokens_per_append, total_tokens)
+        ("Batch appends (16 tokens)", 16, 512),
+        ("Batch appends (64 tokens)", 64, 512),
+        ("Batch appends (256 tokens)", 256, 512),
+    ];
+
+    for (pattern_name, tokens_per_append, total_tokens) in patterns {
+        println!("--- Pattern: {} ---", pattern_name);
+        println!("  Tokens per append: {}", tokens_per_append);
+        println!("  Total tokens:      {}", total_tokens);
+
+        let num_appends = (total_tokens + tokens_per_append - 1) / tokens_per_append;
+
+        // Calculate block allocations needed
+        let mut current_tokens = 0;
+        let mut block_allocations = 0;
+
+        for _ in 0..num_appends {
+            let tokens_after_append = current_tokens + tokens_per_append;
+            let blocks_before = (current_tokens + page_size - 1) / page_size;
+            let blocks_after = (tokens_after_append + page_size - 1) / page_size;
+
+            if blocks_after > blocks_before {
+                block_allocations += blocks_after - blocks_before;
+            }
+
+            current_tokens = tokens_after_append;
+        }
+
+        let total_blocks = (total_tokens + page_size - 1) / page_size;
+        let final_capacity = total_blocks * page_size;
+        let waste = final_capacity - total_tokens;
+        let fragmentation = waste as f64 / final_capacity as f64;
+
+        println!("  Total appends:      {}", num_appends);
+        println!("  Block allocations:  {}", block_allocations);
+        println!("  Total blocks:       {}", total_blocks);
+        println!("  Final capacity:     {} tokens", final_capacity);
+        println!("  Wasted capacity:    {} tokens ({:.1}%)",
+                 waste, fragmentation * 100.0);
+        println!("  Alloc efficiency:   {:.1}%",
+                 if block_allocations > 0 {
+                     total_blocks as f64 / block_allocations as f64 * 100.0
+                 } else {
+                     0.0
+                 });
+        println!();
+    }
+}
+
+/// Profile memory usage by model configuration
+fn benchmark_model_memory_profile() {
+    println!("\n[Model Configuration Memory Profile]");
+    println!("======================================");
+    println!("Memory requirements for different model sizes and sequence lengths\n");
+
+    // Model configs: (name, params_B, layers, heads, head_dim)
+    let models = vec![
+        ("TinyLlama (1B)", 1, 22, 32, 64),
+        ("Llama-2-7B", 7, 32, 32, 128),
+        ("Llama-2-13B", 13, 40, 40, 128),
+        ("Llama-2-70B", 70, 80, 64, 128),
+    ];
+
+    let seq_lengths = vec![512, 1024, 2048, 4096, 8192, 16384];
+
+    println!("| Model         | Seq | KV Cache  | Per Token | Overhead  |");
+    println!("|---------------|-----|-----------|-----------|-----------|");
+
+    for (model_name, _params, layers, heads, head_dim) in models {
+        for seq_len in seq_lengths {
+            let elements_per_token = layers * heads * head_dim * 2; // K + V
+            let bytes_per_token = elements_per_token * std::mem::size_of::<f32>();
+            let total_kv_bytes = seq_len * bytes_per_token;
+
+            // Assume 16-token pages
+            let page_size = 16;
+            let num_pages = (seq_len + page_size - 1) / page_size;
+            let overhead_bytes = num_pages * std::mem::size_of::<u32>() * 4;
+
+            println!("| {:13} | {:4} | {:9} | {:9} | {:9} |",
+                     model_name,
+                     seq_len,
+                     MemoryStats::format_bytes(total_kv_bytes),
+                     MemoryStats::format_bytes(bytes_per_token),
+                     MemoryStats::format_bytes(overhead_bytes));
+        }
+    }
+}
+
+// ============================================================================
 // Summary Report
 // ============================================================================
 
@@ -748,11 +927,15 @@ fn print_summary() {
     println!("2. Scratch buffer reuse significantly reduces allocation overhead");
     println!("3. Paged cache adds ~0.01-0.1% overhead for metadata");
     println!("4. Chunked allocations have higher overhead than single large allocation");
+    println!("5. Page fragmentation increases with smaller page sizes");
+    println!("6. Batch appends reduce block allocation overhead");
     println!("\nRecommendations:");
     println!("- Pre-allocate KV cache when max sequence length is known");
     println!("- Reuse scratch buffers across operations");
-    println!("- Use larger page sizes to reduce page table overhead");
+    println!("- Use larger page sizes (32-64 tokens) to reduce page table overhead");
     println!("- Batch small allocations into larger ones when possible");
+    println!("- Monitor memory profile during long-running inference sessions");
+    println!("- Use cache.compact_cache() when fragmentation is high");
 }
 
 // ============================================================================
@@ -768,6 +951,7 @@ fn main() {
     println!("- Scratch buffer allocation/reuse patterns");
     println!("- Memory bandwidth for large tensor operations");
     println!("- Peak memory, allocation rate, fragmentation");
+    println!("- KV cache profiling for different model sizes");
 
     // CPU memory benchmarks
     benchmark_kv_cache_allocation();
@@ -779,6 +963,11 @@ fn main() {
     benchmark_memory_access_patterns();
     benchmark_paged_cache_overhead();
     benchmark_allocation_strategy_comparison();
+
+    // KV cache profiling benchmarks
+    benchmark_kv_cache_profiling();
+    benchmark_block_allocation_patterns();
+    benchmark_model_memory_profile();
 
     // GPU benchmarks (if ROCm feature is enabled)
     benchmark_gpu_memory_allocation();
