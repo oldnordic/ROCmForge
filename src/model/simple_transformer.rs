@@ -19,6 +19,8 @@ pub enum ModelBackend {
 pub enum ModelError {
     #[error("Shape mismatch: {0}")]
     ShapeMismatch(String),
+    #[error("Dimension error: {0}")]
+    DimensionError(String),
     #[error("Attention error: {0}")]
     AttentionError(#[from] crate::attention::AttentionError),
     #[cfg(feature = "rocm")]
@@ -180,15 +182,29 @@ impl Linear {
 
         // Device: Perform GPU matrix multiplication
         let handle = hip_blas::HipBlasHandle::new().map_err(|e| ModelError::GpuError(e.into()))?;
+
+        // Convert dimensions to i32 for BLAS API
+        // Model dimensions should fit in i32 (>4B dimensions not supported)
+        let n: i32 = self.out_features.try_into().map_err(|_| {
+            ModelError::DimensionError(format!(
+                "out_features {} exceeds i32::MAX, unsupported for BLAS",
+                self.out_features
+            ))
+        })?;
+        let k: i32 = self.in_features.try_into().map_err(|_| {
+            ModelError::DimensionError(format!(
+                "in_features {} exceeds i32::MAX, unsupported for BLAS",
+                self.in_features
+            ))
+        })?;
+
         let _result = matmul_f32(
             &handle,
             &input_buffer,
             weight_buffer,
             1, // m (rows of input)
-            // UNWRAP: Model dimensions should fit in i32 (> 4B tokens not supported)
-            self.out_features.try_into().unwrap(), // n (cols of weight^T)
-            // UNWRAP: Model dimensions should fit in i32 (> 4B tokens not supported)
-            self.in_features.try_into().unwrap(), // k (cols of input/rows of weight)
+            n, // n (cols of weight^T)
+            k, // k (cols of input/rows of weight)
         );
 
         // Device → Host: Copy result back to CPU

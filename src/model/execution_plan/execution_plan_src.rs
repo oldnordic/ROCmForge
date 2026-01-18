@@ -701,9 +701,15 @@ impl ExecutionPlan {
 
         if !layer_times.is_empty() {
             let avg_layer_time = total_layer_time / layer_times.len() as u32;
-            // UNWRAP: Safe because is_empty() check ensures non-empty collection
-            let min_layer_time = layer_times.iter().min().unwrap();
-            let max_layer_time = layer_times.iter().max().unwrap();
+            // Safe to use expect here because is_empty() check ensures non-empty collection
+            let min_layer_time = layer_times
+                .iter()
+                .min()
+                .expect("layer_times is non-empty after is_empty() check");
+            let max_layer_time = layer_times
+                .iter()
+                .max()
+                .expect("layer_times is non-empty after is_empty() check");
             println!(
                 "PERF: Layer timing - avg: {:?}, min: {:?}, max: {:?}",
                 avg_layer_time, min_layer_time, max_layer_time
@@ -988,18 +994,23 @@ impl ExecutionPlan {
             let mut o_proj_bias_id = None;
 
             let (q_src_id, k_src_id, v_src_id) = if use_separate_qkv {
+                // Safe to use expect here because use_separate_qkv check ensures all weights are Some
+                let q_ref = q_weight.as_ref().expect("q_weight is Some when use_separate_qkv is true");
+                let k_ref = k_weight.as_ref().expect("k_weight is Some when use_separate_qkv is true");
+                let v_ref = v_weight.as_ref().expect("v_weight is Some when use_separate_qkv is true");
+
                 let q_id_local = graph.add_tensor(TensorDesc::new(
-                    q_weight.as_ref().unwrap().shape().dims().to_vec(),
+                    q_ref.shape().dims().to_vec(),
                     DType::F32,
                     Layout::RowMajor,
                 ));
                 let k_id_local = graph.add_tensor(TensorDesc::new(
-                    k_weight.as_ref().unwrap().shape().dims().to_vec(),
+                    k_ref.shape().dims().to_vec(),
                     DType::F32,
                     Layout::RowMajor,
                 ));
                 let v_id_local = graph.add_tensor(TensorDesc::new(
-                    v_weight.as_ref().unwrap().shape().dims().to_vec(),
+                    v_ref.shape().dims().to_vec(),
                     DType::F32,
                     Layout::RowMajor,
                 ));
@@ -1305,23 +1316,28 @@ impl ExecutionPlan {
             ggml_backend.bind(&graph.tensors[mlp_down_id.0], mlp_down_proj.buffer().clone())?;
 
             if use_separate_qkv {
+                // Safe to use expect here because use_separate_qkv ensures all weights are Some
+                let q_buf = q_weight.as_ref().expect("q_weight is Some when use_separate_qkv is true");
+                let k_buf = k_weight.as_ref().expect("k_weight is Some when use_separate_qkv is true");
+                let v_buf = v_weight.as_ref().expect("v_weight is Some when use_separate_qkv is true");
+
                 ggml_backend.bind(
                     &graph.tensors[q_w_id.ok_or_else(|| {
                         HipError::GenericError("Missing Q weight id".to_string())
                     })?.0],
-                    q_weight.as_ref().unwrap().buffer().clone(),
+                    q_buf.buffer().clone(),
                 )?;
                 ggml_backend.bind(
                     &graph.tensors[k_w_id.ok_or_else(|| {
                         HipError::GenericError("Missing K weight id".to_string())
                     })?.0],
-                    k_weight.as_ref().unwrap().buffer().clone(),
+                    k_buf.buffer().clone(),
                 )?;
                 ggml_backend.bind(
                     &graph.tensors[v_w_id.ok_or_else(|| {
                         HipError::GenericError("Missing V weight id".to_string())
                     })?.0],
-                    v_weight.as_ref().unwrap().buffer().clone(),
+                    v_buf.buffer().clone(),
                 )?;
                 if let (Some(bias), Some(bias_id)) = (q_bias.as_ref(), q_bias_id) {
                     ggml_backend.bind(&graph.tensors[bias_id.0], bias.buffer().clone())?;
@@ -1728,12 +1744,17 @@ impl ExecutionPlan {
 
         let attention_output = if use_separate_qkv {
             // Model uses separate Q, K, V projections (e.g., Qwen2)
+            // Safe to use expect here because use_separate_qkv check ensures all weights are Some
+            let q_w = q_weight.as_ref().expect("q_weight is Some when use_separate_qkv is true");
+            let k_w = k_weight.as_ref().expect("k_weight is Some when use_separate_qkv is true");
+            let v_w = v_weight.as_ref().expect("v_weight is Some when use_separate_qkv is true");
+
             self.self_attention_separate(
                 backend,
                 &normed_hidden,
-                &q_weight.unwrap(),
-                &k_weight.unwrap(),
-                &v_weight.unwrap(),
+                q_w,
+                k_w,
+                v_w,
                 q_bias.as_ref(),
                 k_bias.as_ref(),
                 v_bias.as_ref(),
@@ -3765,19 +3786,26 @@ impl ExecutionPlan {
             format!("{}.post_attention_layernorm.bias", prefix),
         ];
 
-        let attn_norm_bias = attn_norm_bias_variants
+        // Handle optional bias tensors with fallback to zero bias
+        let attn_norm_bias = match attn_norm_bias_variants
             .iter()
             .find_map(|name| gpu_tensors.get(name))
             .cloned()
-            // UNWRAP: create_zero_bias only allocates a zero tensor, should never fail
-            .unwrap_or_else(|| create_zero_bias().unwrap());
+        {
+            Some(bias) => bias,
+            None => create_zero_bias()
+                .map_err(|e| HipError::GenericError(format!("Failed to create zero bias for attention norm: {}", e)))?,
+        };
 
-        let ffn_norm_bias = ffn_norm_bias_variants
+        let ffn_norm_bias = match ffn_norm_bias_variants
             .iter()
             .find_map(|name| gpu_tensors.get(name))
             .cloned()
-            // UNWRAP: create_zero_bias only allocates a zero tensor, should never fail
-            .unwrap_or_else(|| create_zero_bias().unwrap());
+        {
+            Some(bias) => bias,
+            None => create_zero_bias()
+                .map_err(|e| HipError::GenericError(format!("Failed to create zero bias for FFN norm: {}", e)))?,
+        };
 
         Ok((
             attn_norm_weight.clone(),
