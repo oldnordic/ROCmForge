@@ -92,6 +92,11 @@ fn compile_hip_kernels() {
             "MQA_KV_REPLICATE_HSACO",
             "mqa_kv_replicate_kernel",
         ),
+        (
+            "kernels/q4_0_dequant.hip",
+            "Q4_0_DEQUANT_HSACO",
+            "q4_0_to_fp32_kernel",
+        ),
     ];
 
     for (src_file, env_name, kernel_name) in &kernels {
