@@ -23,6 +23,7 @@
 pub mod attention;
 pub mod backend;
 pub mod engine;
+pub mod error;
 pub mod http;
 pub mod ggml;
 pub mod kv_cache;
@@ -46,6 +47,7 @@ mod hip_isolation_test;
 pub use attention::Attention;
 pub use backend::HipBackend;
 pub use engine::InferenceEngine;
+pub use error::{ErrorCategory, ForgeResult, RocmForgeError};
 pub use kv_cache::KvCache;
 pub use profiling::{KernelTimer, ScopedTimer};
 pub use sampler::Sampler;
