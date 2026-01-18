@@ -10,23 +10,23 @@ See: .planning/PROJECT.md (updated 2026-01-18)
 ## Current Position
 
 Phase: 7 of 10 (Hybrid Execution)
-Plan: 2 of 4
-Status: 07-02 complete, Plan 2 complete
-Last activity: 2026-01-18 — Completed 07-02 (Backend capability implementation)
+Plan: 3 of 4
+Status: 07-03 complete, Plan 3 complete
+Last activity: 2026-01-18 — Completed 07-03 (Cost modeling for backend selection)
 
-Progress: ██████████ 84.5% (Phases 1-6 complete, Phase 7 plan 2/4 complete)
+Progress: ██████████ 86% (Phases 1-6 complete, Phase 7 plan 3/4 complete)
+
+**Phase 7 Status:** 🔄 In Progress (3/4 plans complete)
+- 07-01: Complete - Hybrid scheduler architecture (CapabilityProvider trait, HybridScheduler with 4 strategies, telemetry system)
+- 07-02: Complete - Backend capability implementation (CpuBackend and HipGgmlBackend implement CapabilityProvider)
+- 07-03: Complete - Cost modeling for backend selection (Enhanced cost estimation, automatic selection, HybridExecutor)
+- 07-04: Pending - Integration and testing
 
 **Phase 6 Status:** ✅ Complete
 - 06-01: Complete - Flash attention research (RESEARCH.md with kernel documentation and integration strategy)
 - 06-02: Complete - Flash attention backend registration (FlashAttentionBackend with BackendImplementation trait)
 - 06-03: Complete - Flash attention kernel integration (GPU kernel calls with buffer management)
 - 06-04: Complete - Benchmark and optimize attention (Benchmark suite with CPU baselines)
-
-**Phase 7 Status:** 🔄 In Progress (2/4 plans complete)
-- 07-01: Complete - Hybrid scheduler architecture (CapabilityProvider trait, HybridScheduler with 4 strategies, telemetry system)
-- 07-02: Complete - Backend capability implementation (CpuBackend and HipGgmlBackend implement CapabilityProvider)
-- 07-03: Pending - Cost modeling for backend selection
-- 07-04: Pending - Integration and testing
 
 **Phase 5 Status:** ✅ Complete
 - 05-01: Complete - Quantization research (RESEARCH.md with format specifications and implementation strategy)
@@ -188,6 +188,43 @@ Resume file: None
 - **Total tests**: 31 passing (8 hybrid_scheduler + 17 cpu_backend + 6 hip_backend)
 - **CPU capability tests**: Verify CPU supports all basic operations, correct backend ID
 - **GPU capability tests**: Verify GPU capability structure, size limits, feature requirements
+
+## Phase 7 Plan 3 Summary
+
+**Completed:** 2026-01-18
+**Duration:** 30 min
+
+### Accomplishments
+
+1. **Enhanced Cost Estimation** - Operation-aware cost model with base latency per operation type (MatMul: 10us, Attention: 20us, Add/Scale: 1us)
+2. **Cost-Based Automatic Selection** - 2x threshold prevents oscillation, SelectionReason::CostModel records both costs
+3. **HybridExecutor** - GgmlBackend implementation that wraps CPU/GPU backends with Box<dyn Any> buffer type erasure
+4. **14/14 Tests Passing** - 8 original + 6 new automatic selection tests
+
+### Commits
+
+- `97f884e`: feat(07-03): implement enhanced cost estimation in HybridScheduler
+- `73f009f`: feat(07-03): implement cost-based automatic backend selection
+- `2d352b6`: feat(07-03): create HybridExecutor that wraps backends
+- `73a8d1a`: test(07-03): add automatic selection tests
+
+### Decisions Made
+
+- **Logarithmic scaling** - Use log2 of tensor size for cost estimation (reflects parallel hardware scaling)
+- **2x threshold** - CPU must be 2x faster than GPU to be preferred (prevents oscillation)
+- **Transfer cost** - 10% overhead for CPU backends simulates PCIe transfer
+- **Buffer type erasure** - Use Box<dyn Any> for HybridExecutor since CpuBackend and HipGgmlBackend have different Buffer types
+
+### Files Modified
+
+- `src/ggml/hybrid_scheduler.rs` - Enhanced cost model, automatic selection, HybridExecutor (830 LOC total, +190 LOC)
+- `src/ggml/mod.rs` - Added HybridExecutor export
+
+### Test Coverage
+
+- **Total tests**: 317 passing (14 hybrid_scheduler + 17 cpu_backend + 6 hip_backend + 280 others)
+- **New tests**: 6 automatic selection tests
+- **All tests**: 315 passing
 
 ## Phase 2 Plan 2 Summary
 
