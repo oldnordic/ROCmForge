@@ -11,8 +11,7 @@
 //! - Single kernel launch vs 5+ separate operations
 
 use crate::attention::{
-    backend_registry::{BackendImplementation, AttentionConfig, AttentionBackendResult, KvCacheLayout},
-    cpu,
+    backend_registry::{BackendImplementation, AttentionConfig, AttentionBackendError, AttentionBackendResult, KvCacheLayout},
 };
 
 #[cfg(feature = "rocm")]
@@ -118,28 +117,36 @@ impl BackendImplementation for FlashAttentionBackend {
     ) -> AttentionBackendResult<Vec<f32>> {
         // Validate config
         config.validate()
-            .map_err(|e| crate::attention::backend_registry::AttentionBackendError::NotSupported(e))?;
+            .map_err(|e| AttentionBackendError::NotSupported(e))?;
 
-        // For now, we use the CPU implementation with a note that
-        // GPU kernel integration will happen in 06-03
-        // This allows the backend to be registered and tested first
         #[cfg(feature = "rocm")]
         {
-            // TODO: In 06-03, replace this with actual GPU kernel calls
-            // For now, use CPU as reference implementation
-            let result = cpu::CpuBackend::forward(config.dim, q, k, v, mask, config.dropout)
-                .map_err(|e| crate::attention::backend_registry::AttentionBackendError::OperationFailed(
-                    format!("CPU fallback failed: {}", e)
-                ))?;
+            // Use GPU flash attention kernels
+            // Layout: [batch, heads, seq, dim] but BackendImplementation uses [batch, seq, heads*dim]
+            // We need to handle the layout conversion
+            let batch_size = 1; // BackendImplementation uses batch=1
+            let seq_len = config.dim;
+            let num_heads = config.num_heads;
+            let head_dim = config.head_dim;
 
-            // Note: This is a placeholder. The actual flash kernels will be
-            // integrated in phase 06-03 (Flash attention kernel integration)
-            Ok(result)
+            // Check if we have a custom mask (not supported by flash kernels yet)
+            if mask.is_some() && !config.is_causal {
+                return Err(AttentionBackendError::NotSupported(
+                    "FlashAttention does not support custom masks yet, only causal or no mask".to_string()
+                ));
+            }
+
+            // Select kernel based on causal masking
+            if config.is_causal {
+                self.forward_causal_gpu(q, k, v, batch_size, seq_len, num_heads, head_dim)
+            } else {
+                self.forward_nocausal_gpu(q, k, v, batch_size, seq_len, num_heads, head_dim)
+            }
         }
 
         #[cfg(not(feature = "rocm"))]
         {
-            Err(crate::attention::backend_registry::AttentionBackendError::NotSupported(
+            Err(AttentionBackendError::NotSupported(
                 "FlashAttention requires 'rocm' feature".to_string()
             ))
         }
@@ -150,36 +157,142 @@ impl BackendImplementation for FlashAttentionBackend {
 impl FlashAttentionBackend {
     /// Forward pass using flash attention causal kernel
     ///
-    /// This will be implemented in phase 06-03 with actual kernel calls.
-    fn forward_causal(
+    /// Calls flash_attention_causal_gpu_kernel from kernels.rs
+    fn forward_causal_gpu(
         &self,
-        config: &AttentionConfig,
         q: &[f32],
         k: &[f32],
         v: &[f32],
-        _mask: Option<&[f32]>,
+        batch_size: usize,
+        seq_len: usize,
+        num_heads: usize,
+        head_dim: usize,
     ) -> AttentionBackendResult<Vec<f32>> {
-        // Placeholder for 06-03 implementation
-        // Will call flash_attention_causal_gpu_kernel from kernels.rs
-        cpu::CpuBackend::forward(config.dim, q, k, v, None, config.dropout)
-            .map_err(|e| crate::attention::backend_registry::AttentionBackendError::OperationFailed(e.to_string()))
+        // Validate input sizes
+        let expected_size = batch_size * seq_len * num_heads * head_dim;
+        if q.len() != expected_size || k.len() != expected_size || v.len() != expected_size {
+            return Err(AttentionBackendError::NotSupported(format!(
+                "Input size mismatch: expected {}, got q={}, k={}, v={}",
+                expected_size, q.len(), k.len(), v.len()
+            )));
+        }
+
+        // Allocate GPU buffers
+        let q_gpu = HipBuffer::new(q.len() * std::mem::size_of::<f32>())
+            .map_err(|e| AttentionBackendError::OperationFailed(format!("Failed to allocate Q buffer: {}", e)))?;
+        let k_gpu = HipBuffer::new(k.len() * std::mem::size_of::<f32>())
+            .map_err(|e| AttentionBackendError::OperationFailed(format!("Failed to allocate K buffer: {}", e)))?;
+        let v_gpu = HipBuffer::new(v.len() * std::mem::size_of::<f32>())
+            .map_err(|e| AttentionBackendError::OperationFailed(format!("Failed to allocate V buffer: {}", e)))?;
+        let output_gpu = HipBuffer::new(q.len() * std::mem::size_of::<f32>())
+            .map_err(|e| AttentionBackendError::OperationFailed(format!("Failed to allocate output buffer: {}", e)))?;
+
+        // Copy data to GPU
+        q_gpu.copy_from_host(q)
+            .map_err(|e| AttentionBackendError::OperationFailed(format!("Failed to copy Q to GPU: {}", e)))?;
+        k_gpu.copy_from_host(k)
+            .map_err(|e| AttentionBackendError::OperationFailed(format!("Failed to copy K to GPU: {}", e)))?;
+        v_gpu.copy_from_host(v)
+            .map_err(|e| AttentionBackendError::OperationFailed(format!("Failed to copy V to GPU: {}", e)))?;
+
+        // Scale factor for attention
+        let scale = 1.0 / (head_dim as f32).sqrt();
+
+        // Launch flash attention causal kernel
+        unsafe {
+            crate::attention::kernels::flash_attention_causal_gpu_kernel(
+                q_gpu.as_ptr() as *const f32,
+                k_gpu.as_ptr() as *const f32,
+                v_gpu.as_ptr() as *const f32,
+                output_gpu.as_ptr() as *mut f32,
+                scale,
+                batch_size as u32,
+                seq_len as u32,
+                num_heads as u32,
+                head_dim as u32,
+            ).map_err(|e| AttentionBackendError::OperationFailed(format!("Flash attention causal kernel failed: {}", e)))?;
+        }
+
+        // Synchronize to ensure kernel completes
+        synchronize_device()
+            .map_err(|e| AttentionBackendError::OperationFailed(format!("GPU synchronization failed: {}", e)))?;
+
+        // Copy output back to host
+        let mut output = vec![0.0f32; q.len()];
+        output_gpu.copy_to_host(&mut output)
+            .map_err(|e| AttentionBackendError::OperationFailed(format!("Failed to copy output to host: {}", e)))?;
+
+        Ok(output)
     }
 
     /// Forward pass using flash attention non-causal kernel
     ///
-    /// This will be implemented in phase 06-03 with actual kernel calls.
-    fn forward_nocausal(
+    /// Calls flash_attention_nocausal_gpu_kernel from kernels.rs
+    fn forward_nocausal_gpu(
         &self,
-        config: &AttentionConfig,
         q: &[f32],
         k: &[f32],
         v: &[f32],
-        _mask: Option<&[f32]>,
+        batch_size: usize,
+        seq_len: usize,
+        num_heads: usize,
+        head_dim: usize,
     ) -> AttentionBackendResult<Vec<f32>> {
-        // Placeholder for 06-03 implementation
-        // Will call flash_attention_nocausal_gpu_kernel from kernels.rs
-        cpu::CpuBackend::forward(config.dim, q, k, v, None, config.dropout)
-            .map_err(|e| crate::attention::backend_registry::AttentionBackendError::OperationFailed(e.to_string()))
+        // Validate input sizes
+        let expected_size = batch_size * seq_len * num_heads * head_dim;
+        if q.len() != expected_size || k.len() != expected_size || v.len() != expected_size {
+            return Err(AttentionBackendError::NotSupported(format!(
+                "Input size mismatch: expected {}, got q={}, k={}, v={}",
+                expected_size, q.len(), k.len(), v.len()
+            )));
+        }
+
+        // Allocate GPU buffers
+        let q_gpu = HipBuffer::new(q.len() * std::mem::size_of::<f32>())
+            .map_err(|e| AttentionBackendError::OperationFailed(format!("Failed to allocate Q buffer: {}", e)))?;
+        let k_gpu = HipBuffer::new(k.len() * std::mem::size_of::<f32>())
+            .map_err(|e| AttentionBackendError::OperationFailed(format!("Failed to allocate K buffer: {}", e)))?;
+        let v_gpu = HipBuffer::new(v.len() * std::mem::size_of::<f32>())
+            .map_err(|e| AttentionBackendError::OperationFailed(format!("Failed to allocate V buffer: {}", e)))?;
+        let output_gpu = HipBuffer::new(q.len() * std::mem::size_of::<f32>())
+            .map_err(|e| AttentionBackendError::OperationFailed(format!("Failed to allocate output buffer: {}", e)))?;
+
+        // Copy data to GPU
+        q_gpu.copy_from_host(q)
+            .map_err(|e| AttentionBackendError::OperationFailed(format!("Failed to copy Q to GPU: {}", e)))?;
+        k_gpu.copy_from_host(k)
+            .map_err(|e| AttentionBackendError::OperationFailed(format!("Failed to copy K to GPU: {}", e)))?;
+        v_gpu.copy_from_host(v)
+            .map_err(|e| AttentionBackendError::OperationFailed(format!("Failed to copy V to GPU: {}", e)))?;
+
+        // Scale factor for attention
+        let scale = 1.0 / (head_dim as f32).sqrt();
+
+        // Launch flash attention non-causal kernel
+        unsafe {
+            crate::attention::kernels::flash_attention_nocausal_gpu_kernel(
+                q_gpu.as_ptr() as *const f32,
+                k_gpu.as_ptr() as *const f32,
+                v_gpu.as_ptr() as *const f32,
+                output_gpu.as_ptr() as *mut f32,
+                scale,
+                batch_size as u32,
+                seq_len as u32,
+                num_heads as u32,
+                head_dim as u32,
+            ).map_err(|e| AttentionBackendError::OperationFailed(format!("Flash attention nocausal kernel failed: {}", e)))?;
+        }
+
+        // Synchronize to ensure kernel completes
+        synchronize_device()
+            .map_err(|e| AttentionBackendError::OperationFailed(format!("GPU synchronization failed: {}", e)))?;
+
+        // Copy output back to host
+        let mut output = vec![0.0f32; q.len()];
+        output_gpu.copy_to_host(&mut output)
+            .map_err(|e| AttentionBackendError::OperationFailed(format!("Failed to copy output to host: {}", e)))?;
+
+        Ok(output)
     }
 }
 
