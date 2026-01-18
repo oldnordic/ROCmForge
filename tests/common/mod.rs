@@ -157,6 +157,21 @@ impl GpuTestFixture {
     }
 }
 
+/// Path to a test GGUF model for E2E inference tests
+///
+/// Users can override via ROCFORGE_TEST_MODEL environment variable.
+/// Default path: /models/tiny-llama.gguf (or similar small model)
+pub fn test_model_path() -> std::path::PathBuf {
+    std::env::var("ROCFORGE_TEST_MODEL")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("/models/tiny-llama.gguf"))
+}
+
+/// Check if test model is available (skip tests if not)
+pub fn has_test_model() -> bool {
+    test_model_path().exists()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,5 +209,21 @@ mod tests {
                 safe_mb, free_mb
             );
         }
+    }
+
+    #[test]
+    fn test_test_model_path_default() {
+        // Clear env var to test default
+        std::env::remove_var("ROCFORGE_TEST_MODEL");
+        let path = test_model_path();
+        assert_eq!(path, std::path::PathBuf::from("/models/tiny-llama.gguf"));
+    }
+
+    #[test]
+    fn test_test_model_path_from_env() {
+        std::env::set_var("ROCFORGE_TEST_MODEL", "/custom/path/model.gguf");
+        let path = test_model_path();
+        assert_eq!(path, std::path::PathBuf::from("/custom/path/model.gguf"));
+        std::env::remove_var("ROCFORGE_TEST_MODEL");
     }
 }
