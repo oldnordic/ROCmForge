@@ -82,6 +82,18 @@ harness = false
 name = "attention_bench"
 harness = false
 
+[[bench]]
+name = "matmul_bench"
+harness = false
+
+[[bench]]
+name = "dequant_bench"
+harness = false
+
+[[bench]]
+name = "inference_bench"
+harness = false
+
 # Binaries
 [[bin]]
 name = "inspect_gguf"
