@@ -815,6 +815,70 @@ mod tests {
         // Second block first element should be ~31 * 2.0
         assert!((result[256] - 62.0).abs() < 1.0, "Block 2 first: {}", result[256]);
     }
+
+    #[test]
+    fn test_dequant_q3_k_zeros() {
+        // Test Q3_K with all zeros
+        let mut data = vec![0u8; 256];
+
+        // Set scale = 1.0 in half precision
+        data[0] = 0x00;
+        data[1] = 0x3C;
+
+        let tensor = create_test_tensor(GgufTensorType::Q3_K, data, vec![256]);
+        let result = dequant_q3_k(&tensor).unwrap();
+
+        assert_eq!(result.len(), 256);
+        // With zeros, quant=0, so result = (0 - 4) * 1.0 = -4.0
+        for val in &result[..16] {
+            assert!((val - (-4.0)).abs() < 0.1, "Expected -4.0, got {}", val);
+        }
+    }
+
+    #[test]
+    fn test_dequant_q3_k_positive() {
+        // Test Q3_K with known values
+        let mut data = vec![0u8; 256];
+
+        // Set scale = 1.0
+        data[0] = 0x00;
+        data[1] = 0x3C;
+
+        // Set first quant to 1 (bit 0-2)
+        data[36] = 0x01; // First 3 bits = 1
+
+        let tensor = create_test_tensor(GgufTensorType::Q3_K, data, vec![256]);
+        let result = dequant_q3_k(&tensor).unwrap();
+
+        assert_eq!(result.len(), 256);
+        // First element: quant=1, result = (1 - 4) = -3
+        assert!((result[0] - (-3.0)).abs() < 0.1, "First element: {}", result[0]);
+        // Rest of first sub-block should be -4 (quant=0)
+        for i in 1..16 {
+            assert!((result[i] - (-4.0)).abs() < 0.1, "Element at {}: {}", i, result[i]);
+        }
+    }
+
+    #[test]
+    fn test_dequant_q3_k_partial_block() {
+        // Test Q3_K with partial block (less than 256 elements)
+        let mut data = vec![0u8; 256];
+
+        data[0] = 0x00;
+        data[1] = 0x3C;
+
+        let tensor = create_test_tensor(GgufTensorType::Q3_K, data, vec![100]);
+        let result = dequant_q3_k(&tensor).unwrap();
+
+        assert_eq!(result.len(), 100);
+        // First 100 elements should be -4 (quant=0, offset=-4)
+        // Only check first sub-block (16 elements) since that's where our test data is
+        for i in 0..16usize {
+            if i < 100 {
+                assert!((result[i] - (-4.0)).abs() < 0.1, "Element at {}: {}", i, result[i]);
+            }
+        }
+    }
 }
 
 /// Generic dequantization dispatcher
@@ -842,10 +906,11 @@ pub fn dequantize(tensor: &GgufTensor) -> Result<Vec<f32>> {
         GgufTensorType::Q5_1 => dequant_q5_1(tensor),
         GgufTensorType::Mxfp4 => dequant_mxfp4(tensor),
         GgufTensorType::Mxfp6E2m3 | GgufTensorType::Mxfp6E3m2 => dequant_mxfp6(tensor),
+        GgufTensorType::Q3_K => dequant_q3_k(tensor),
         GgufTensorType::Q4_K => dequant_q4_k(tensor),
         GgufTensorType::Q5_K => dequant_q5_k(tensor),
         GgufTensorType::Q6_K => dequant_q6_k(tensor),
-        GgufTensorType::Q2_K | GgufTensorType::Q3_K => {
+        GgufTensorType::Q2_K => {
             Err(anyhow::anyhow!(
                 "K-quant type {:?} not yet implemented for tensor '{}'",
                 tensor.tensor_type,
