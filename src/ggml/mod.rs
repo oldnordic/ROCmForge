@@ -14,6 +14,7 @@ pub mod tensor;
 pub mod validate;
 
 pub mod hip_backend;
+pub mod hybrid_scheduler;
 
 pub use dummy_backend::DummyBackend;
 pub use optimizer::{GraphOptimizer, OptimizerStats};
