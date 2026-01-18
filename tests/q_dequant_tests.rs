@@ -5,19 +5,9 @@
 // TDD: Tests written FIRST, then implementation
 
 use rocmforge::loader::gguf::{GgufTensor, GgufTensorType};
-use rocmforge::loader::TensorShape;
 
-/// Helper to create a test tensor
-fn create_test_tensor(tensor_type: GgufTensorType, data: Vec<u8>, shape: Vec<usize>) -> GgufTensor {
-    GgufTensor {
-        name: "test".to_string(),
-        tensor_type,
-        shape: TensorShape::from_dims(&shape),
-        quant_type: String::new(),
-        offset: 0,
-        data,
-    }
-}
+// Use common fixtures
+use crate::common::create_test_tensor;
 
 /// Helper to manually dequantize Q4_1 (reference implementation)
 fn dequantize_q4_1_reference(tensor: &GgufTensor) -> Vec<f32> {
