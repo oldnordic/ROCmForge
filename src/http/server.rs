@@ -1,5 +1,6 @@
 //! HTTP/SSE server for ROCmForge inference engine
 
+use crate::logging::init_logging_default;
 use crate::engine::{EngineConfig, InferenceEngine};
 use crate::models::discover_models_with_cache;
 use crate::scheduler::{GenerationRequest as SchedulerRequest, RequestState};
@@ -501,6 +502,9 @@ pub async fn run_server(
     gguf_path: Option<&str>,
     tokenizer_path: Option<&str>,
 ) -> ServerResult<()> {
+    // Initialize tracing for structured logging (idempotent)
+    init_logging_default();
+
     let model_path = gguf_path
         .map(|s| s.to_string())
         .or_else(|| std::env::var("ROCMFORGE_GGUF").ok());

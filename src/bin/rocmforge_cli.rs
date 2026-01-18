@@ -115,6 +115,9 @@ struct TokenStream {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Initialize tracing for structured logging (idempotent)
+    rocmforge::init_logging_default();
+
     let cli = Cli::parse();
     match cli.command {
         Commands::Generate {
