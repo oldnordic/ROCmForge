@@ -5,181 +5,203 @@
 ## Directory Layout
 
 ```
-rocmtree/
-├── src/               # All source code
-├── tests/             # Integration tests
-├── benches/           # Criterion benchmarks
-├── docs/              # Documentation files
-├── examples/          # Example code (if present)
-├── Cargo.toml         # Package manifest
-└── Makefile           # Build tasks
+ROCmForge/
+├── src/                    # Main source code
+│   ├── api/               # HTTP API layer
+│   ├── backend/           # HIP/ROCm backend abstraction
+│   ├── bin/               # CLI binaries and utilities
+│   ├── ggml/              # GGML-compatible operations
+│   │   └── hip_backend/   # HIP backend implementation
+│   │       └── ops/       # Individual GPU kernels
+│   ├── http/              # HTTP server (Axum)
+│   ├── kv_cache/          # Key-value cache (paged)
+│   ├── loader/            # GGUF model loader
+│   ├── model/             # Model configs and execution
+│   ├── ops/               # High-level operations
+│   ├── scheduler/         # Request batching
+│   ├── tensor/            # Tensor operations
+│   ├── tokenizer.rs       # Tokenization
+│   ├── engine.rs          # Core inference engine
+│   └── lib.rs             # Library root
+├── tests/                 # Integration tests
+├── docs/                  # Documentation
+├── benches/               # Criterion benchmarks
+├── build.rs               # Build script (kernel compilation)
+├── Cargo.toml             # Package manifest
+└── Makefile               # Build automation
 ```
 
 ## Directory Purposes
 
-**src/**
-- Purpose: All Rust source code
-- Contains: 100+ .rs files organized by domain
-- Key files: `lib.rs` (entry), `engine.rs` (orchestrator)
-- Subdirectories: See detailed breakdown below
-
-**src/bin/**
-- Purpose: CLI and tool binaries
-- Contains: `rocmforge_cli.rs`, `inspect_gguf.rs`, `test_gguf_load.rs`
-- Key files: `rocmforge_cli.rs` - main CLI interface
+**src/api/**
+- Purpose: HTTP API interface (OpenAI-compatible)
+- Contains: API types, handlers
+- Key files: `types.rs`, `mod.rs`
+- Subdirectories: None
 
 **src/backend/**
-- Purpose: GPU abstraction layer
-- Contains: `hip_backend.rs`, `hip_blas.rs`, `gpu_executor.rs`, `scratch.rs`
-- Key files: `hip_backend.rs` - main HIP/ROCm backend
+- Purpose: HIP/ROCm GPU backend abstraction
+- Contains: Backend implementation, GPU management
+- Key files: `hip_backend.rs`, `mod.rs`
+- Subdirectories: None
+
+**src/bin/**
+- Purpose: Executable binaries
+- Contains: CLI tools and test utilities
+- Key files: `rocmforge_cli.rs`, `inspect_gguf.rs`, `test_gguf_load.rs`, `run_simple_model.rs`
+- Subdirectories: None
 
 **src/ggml/**
-- Purpose: GGML-style IR implementation
-- Contains: `backend.rs`, `graph.rs`, `tensor.rs`
-- Subdirectories: `hip_backend/ops/` - GPU kernel implementations
+- Purpose: GGML-compatible operations
+- Contains: GGML operation implementations
+- Key files: `mod.rs`, tensor operations
+- Subdirectories: `hip_backend/`
 
-**src/attention/**
-- Purpose: Attention mechanisms
-- Contains: `backend_registry.rs`, `gpu.rs`, `cpu.rs`
-- Key files: `backend_registry.rs` - pluggable backend system
+**src/ggml/hip_backend/**
+- Purpose: HIP-specific GGML backend
+- Contains: Backend implementation, kernel management
+- Key files: `mod.rs`
+- Subdirectories: `ops/`
 
-**src/kv_cache/**
-- Purpose: Key-Value cache for inference
-- Contains: `kv_cache.rs` (1,439 lines - needs splitting)
-- Key files: `kv_cache.rs` - paged attention implementation
-
-**src/scheduler/**
-- Purpose: Request scheduling and batching
-- Contains: `scheduler.rs`, `mod.rs`
-- Key files: `scheduler.rs` - continuous batching logic
-
-**src/loader/**
-- Purpose: Model file loading
-- Contains: `gguf.rs`, `mmap_loader.rs`, `mod.rs`
-- Key files: `gguf.rs` - GGUF format parser
-
-**src/model/**
-- Purpose: Model implementations and configs
-- Contains: `config.rs`, `execution_plan/`
-- Key files: `config.rs` - model configurations
-
-**src/sampler/**
-- Purpose: Token sampling strategies
-- Contains: `gpu.rs`, `mod.rs`
-- Key files: GPU-based sampling implementations
+**src/ggml/hip_backend/ops/**
+- Purpose: Individual GPU kernel implementations
+- Contains: matmul, softmax, rope, swiglu, etc.
+- Key files: `matmul.rs`, `softmax.rs`, `rope.rs`, `swiglu.rs`
+- Subdirectories: None
 
 **src/http/**
-- Purpose: HTTP API server
-- Contains: `server.rs`, `mod.rs`
-- Key files: `server.rs` - Axum server with SSE
+- Purpose: HTTP server implementation (Axum)
+- Contains: Server, routes, SSE streaming
+- Key files: `server.rs`
+- Subdirectories: None
+
+**src/kv_cache/**
+- Purpose: Paged attention KV cache
+- Contains: Cache implementation, memory management
+- Key files: `kv_cache.rs`, `mod.rs`
+- Subdirectories: None
+
+**src/loader/**
+- Purpose: GGUF model loader
+- Contains: Parser, weight loading
+- Key files: `gguf.rs`
+- Subdirectories: None
+
+**src/model/**
+- Purpose: Model configurations and execution
+- Contains: Config structs, execution plan
+- Key files: `config.rs`, `execution_plan.rs`
+- Subdirectories: None
+
+**src/scheduler/**
+- Purpose: Request batching and scheduling
+- Contains: Queue, batch management
+- Key files: `mod.rs`
+- Subdirectories: None
+
+**src/sampler/**
+- Purpose: Token sampling algorithms
+- Contains: Top-k, top-p, temperature sampling
+- Key files: `mod.rs`
+- Subdirectories: None
 
 **src/tensor/**
-- Purpose: Tensor operations
-- Contains: `matmul.rs`, other tensor ops
-- Key files: `matmul.rs` - matrix multiplication
+- Purpose: Tensor operations and math
+- Contains: Matmul, element-wise ops
+- Key files: `mod.rs`, `matmul.rs`
+- Subdirectories: None
 
 **tests/**
 - Purpose: Integration tests
-- Contains: 12 test files (e.g., `hip_blas_matmul_tests.rs`, `attention_tests.rs`)
-- Naming: `{feature}_tests.rs` pattern
-
-**benches/**
-- Purpose: Criterion benchmarks
-- Contains: `phase12_benchmark.rs`
-- Key files: Performance benchmarks for attention and batching
-
-**docs/**
-- Purpose: Project documentation
-- Contains: `.md` files including ROADMAP.md, DATABASE_SCHEMA.md
-- Key files: Project planning and architecture docs
+- Contains: Backend tests, loader tests, E2E tests
+- Key files: `hip_blas_matmul_tests.rs`, `loader_tests.rs`
+- Subdirectories: `common/`
 
 ## Key File Locations
 
 **Entry Points:**
-- `src/lib.rs` - Library entry point, public API exports
-- `src/bin/rocmforge_cli.rs` - Main CLI interface
-- `src/engine.rs` - Core inference orchestrator
+- `src/bin/rocmforge_cli.rs` - Main CLI entry point
+- `src/lib.rs` - Library root
 
 **Configuration:**
 - `Cargo.toml` - Package manifest and dependencies
-- `Makefile` - Build tasks
+- `build.rs` - Build script (HIP kernel compilation)
+- `Makefile` - Build automation
 
 **Core Logic:**
-- `src/engine.rs` - Inference engine
-- `src/scheduler/scheduler.rs` - Continuous batching
+- `src/engine.rs` - Central inference orchestrator
+- `src/loader/gguf.rs` - GGUF model loading
 - `src/backend/hip_backend.rs` - GPU backend
-- `src/kv_cache/kv_cache.rs` - KV cache
+- `src/http/server.rs` - HTTP server
 
 **Testing:**
 - `tests/` - Integration tests
-- `benches/` - Performance benchmarks
+- `src/**/*test*.rs` - Unit tests (inline)
+- `benches/` - Criterion benchmarks
 
 **Documentation:**
-- `README.md` - User documentation
-- `docs/` - Developer documentation
+- `docs/` - Project documentation
+- `CLAUDE.md` - Development rules and instructions
 
 ## Naming Conventions
 
 **Files:**
-- snake_case.rs for modules (e.g., `hip_backend.rs`, `matmul.rs`)
-- {name}_tests.rs for test files (e.g., `hip_blas_matmul_tests.rs`)
-- mod.rs for module exports
+- `snake_case.rs` for modules (kebab-case for directories)
+- `*_test.rs` or `tests/*` for test files
+- `lib.rs` for library root
+- `main.rs` or binary name for executables
 
 **Directories:**
-- snake_case for all directories
-- Singular names for modules (e.g., `backend/`, not `backends/`)
-- Plural for collections (e.g., `benches/`, `tests/`)
+- `snake_case` for all directories
+- Singular names (`kv_cache/`, not `kv_caches/`)
+- Plural for collections (`tests/`, `benches/`)
 
 **Special Patterns:**
-- bin/ for CLI binaries
-- ops/ for kernel operations
-- execution_plan/ for sub-modules
+- `mod.rs` for directory exports
+- `bin/` for executable binaries
+- `ops/` for operation collections
 
 ## Where to Add New Code
 
-**New Feature (inference):**
-- Primary code: `src/` (create new directory if major feature)
-- Tests: `tests/{feature}_tests.rs`
-- Benchmarks: `benches/{feature}_benchmark.rs`
+**New Feature (GPU operation):**
+- Primary code: `src/ggml/hip_backend/ops/{operation}.rs`
+- Tests: `src/ggml/hip_backend/ops/{operation}_test.rs` or `tests/`
+- Documentation: Inline rustdoc comments
 
-**New GPU Operation:**
-- Implementation: `src/ggml/hip_backend/ops/{operation}.rs`
-- Tests: `tests/{operation}_tests.rs`
-- Export from: `src/ggml/hip_backend/ops/mod.rs`
+**New Feature (API endpoint):**
+- Primary code: `src/http/server.rs` or new `src/api/{feature}.rs`
+- Tests: `tests/{feature}_test.rs`
 
-**New Attention Implementation:**
-- Implementation: `src/attention/{name}.rs`
-- Register in: `src/attention/backend_registry.rs`
+**New Feature (Model architecture):**
+- Primary code: `src/model/{feature}.rs`
+- Config updates: `src/model/config.rs`
+- Tests: `tests/{feature}_test.rs`
 
-**New Model Format Support:**
-- Implementation: `src/loader/{format}.rs`
-- Export from: `src/loader/mod.rs`
+**New Component/Module:**
+- Implementation: `src/{module}/mod.rs`
+- Types: `src/{module}/types.rs` if needed
+- Tests: `tests/{module}_test.rs`
 
 **Utilities:**
-- Shared helpers: `src/util/` (create if needed)
-- GPU utilities: `src/backend/`
+- Shared helpers: Create in relevant module or `src/util/`
+- Type definitions: Inline in module or `src/types.rs`
 
 ## Special Directories
 
+**target/**
+- Purpose: Cargo build output
+- Source: Auto-generated by Cargo
+- Committed: No (in .gitignore)
+
 **src/bin/**
-- Purpose: Executable binaries
-- Source: Compiled by Cargo as separate binaries
+- Purpose: Executable binaries (multiple binaries supported)
+- Source: Source code for each binary
 - Committed: Yes
 
-**tests/**
-- Purpose: Integration tests
-- Source: Compiled and run by `cargo test`
-- Committed: Yes
-
-**benches/**
-- Purpose: Criterion benchmarks
-- Source: Run by `cargo bench`
-- Committed: Yes
-
-**.planning/**
-- Purpose: Project planning documents (GSD workflow)
-- Source: Created by `/gsd:*` commands
-- Committed: Yes
+**.codemcp/**
+- Purpose: CodeMCP AI assistant configuration
+- Source: Generated/configured
+- Committed: Yes (config.toml)
 
 ---
 

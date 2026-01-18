@@ -5,125 +5,127 @@
 ## Naming Patterns
 
 **Files:**
-- snake_case.rs for all modules (e.g., `hip_backend.rs`, `matmul.rs`)
-- {name}_tests.rs for test files (e.g., `hip_blas_matmul_tests.rs`)
-- mod.rs for directory exports
+- `snake_case.rs` for all module files
+- `kebab-case` for directories
+- `*_test.rs` for test files
+- `mod.rs` for directory exports
 
 **Functions:**
-- camelCase for all functions (e.g., `validate_matmul_dims`, `load_gguf`)
+- `snake_case` for all functions
 - No special prefix for async functions
-- Descriptive names preferred over abbreviations
+- Descriptive names: `matmul_f32`, `validate_matmul_dims`
 
 **Variables:**
-- camelCase for variables
-- SCREAMING_SNAKE_CASE for constants
-- No underscore prefix for private members (Rust's `pub` controls visibility)
+- `snake_case` for variables
+- `SCREAMING_SNAKE_CASE` for constants (`GGUF_MAGIC`)
+- No underscore prefix for private members (Rust convention)
 
 **Types:**
-- PascalCase for structs and enums (e.g., `DeviceTensor`, `HipError`)
-- No `I` prefix for interfaces (Rust uses traits)
-- PascalCase for type aliases
+- PascalCase for structs: `HipBackend`, `KvCache`
+- PascalCase for type aliases: `Result<T>`
+- PascalCase for enum names, SCREAMING_SNAKE_CASE for values
 
 ## Code Style
 
 **Formatting:**
-- Standard Rust 4-space indentation
-- Double quotes for string literals
-- Semicolons required where expected by Rust
-- Same-line opening braces for structs/impls
-- Next-line opening braces for control flow
+- rustfmt with default settings (no explicit config)
+- 4-space indentation (Rust standard)
+- Double quotes for strings
+- Trailing semicolons required
+- Line length: Default rustfmt (100 chars)
 
 **Linting:**
-- Clippy with extensive allowances for GPU-specific patterns
-- Allowances in `src/lib.rs`:
-  - too_many_arguments (common in FFI)
-  - manual_slice_size_calculation (GPU kernel pattern)
-  - needless_range_loop (clearer for GPU ops)
-  - And 12 other GPU-specific allowances
-- No `.rustfmt.toml` or `.clippy.toml` found (using defaults)
+- Rust compiler warnings (`cargo clippy`)
+- No explicit linter config detected
+- Run: `cargo clippy` for lint suggestions
 
 ## Import Organization
 
 **Order:**
-1. External crates (std, external dependencies)
-2. Internal modules (crate::)
-3. re-exports (pub use)
+1. External crates (`std`, `tokio`, `serde`)
+2. Internal modules (`crate::`)
+3. Relative imports (`super::`, `use super::*`)
+4. Type imports (`use crate::module::Type`)
 
 **Grouping:**
 - Blank lines between groups
-- Alphabetical within each group (typical Rust convention)
+- Alphabetical within each group (not strictly enforced)
 
 **Path Aliases:**
-- No path aliases configured
-- Uses `crate::` for internal imports
+- `crate::` for absolute paths from lib root
+- No external path aliases configured
 
 ## Error Handling
 
 **Patterns:**
-- Custom error types via thiserror crate
-- All error types derive `Debug` and `Error`
-- Extensive use of `unwrap()` and `expect()` (technical debt)
+- `Result<T, Error>` return types
+- `anyhow::Error` for application errors
+- Custom error types with `thiserror`
+- `unwrap()` used heavily in tests (not production)
 
 **Error Types:**
-- Backend-specific errors: `HipError`, `GgufError`
-- Centralized error definitions with specific variants
-- Location: `src/backend/hip_backend.rs:9-50`
+- Custom errors end with `Error`: `HipError`, `KvCacheError`
+- `?` operator for propagation
+- `panic!` only for truly unrecoverable errors
+
+**Logging:**
+- Transitioning from `eprintln!` to `tracing`
+- Structured logging: `tracing::info!`, `tracing::error!`
 
 ## Logging
 
 **Framework:**
-- tracing crate for structured logging
-- Levels: debug, info, warn, error
+- `tracing` and `tracing-subscriber`
+- Levels: error, warn, info, debug, trace
 
 **Patterns:**
-- Structured logging with context: `tracing::debug({...}, "message")`
-- Log at service boundaries, not utilities
-- Some temporary debug prints remain (e.g., in matmul operations)
+- Structured logging: `tracing::info!(context, "message")`
+- 42 files still contain `eprintln!` (transition in progress)
+- Log at service boundaries, not in utilities
 
 ## Comments
 
 **When to Comment:**
-- Explain why, not what
-- Document GPU-specific optimizations
-- Explain unsafe blocks (inconsistent)
-- TODO/FIXME comments for phase-specific fixes
+- Explain why, not what (Rust is self-documenting)
+- Document business logic, algorithms, edge cases
+- `///` for public API documentation
+- `//!` for module-level docs
 
 **JSDoc/TSDoc:**
-- Rustdoc: `//!` for module-level documentation
-- Rustdoc: `///` for item-level documentation
-- 101 files with module-level docs
-- 68 files with item-level docs
+- Rustdoc: `///` for functions, `//!` for modules
+- `///` with examples for public APIs
 
 **TODO Comments:**
-- Format: `// TODO: description` or `// FIX-10: description`
-- 10 TODO/FIXME comments across codebase
-- Phase-specific fix comments: `// PHASE 24 FIX:`
+- Format: `// TODO: description` or `// FIXME: description`
+- Also: `// BUG:` for known issues
+- `// PHASE X:` for tracking development phases
 
 ## Function Design
 
 **Size:**
-- No strict limit enforced
-- Some files exceed 300 LOC significantly (e.g., `kv_cache.rs` at 1,439 lines)
+- Keep under 300 LOC (600 with justification)
+- Extract helpers for complex logic
+- 3 files exceed 3000 LOC (known tech debt)
 
 **Parameters:**
-- No explicit limit on parameter count
-- Many functions with 8+ parameters (FFI-related)
+- Use structs for 3+ parameters
+- Destructure in parameter list
 
 **Return Values:**
-- Result<T, E> for fallible operations
-- Explicit return statements
-- Early returns for guard clauses
+- `Result<T, E>` for fallible operations
+- Explicit returns
+- Return early for guard clauses
 
 ## Module Design
 
 **Exports:**
-- Named exports preferred (pub fn, pub struct)
-- Re-exports via `pub use` in mod.rs files
-- Clear public API in `src/lib.rs`
+- Named exports preferred (`pub use`)
+- `mod.rs` for directory exports
+- `pub(crate)` for internal visibility
 
 **Barrel Files:**
-- mod.rs files for directory exports
-- Re-export public API
+- `mod.rs` re-exports public API
+- Keep internal helpers private
 - Avoid circular dependencies
 
 ---

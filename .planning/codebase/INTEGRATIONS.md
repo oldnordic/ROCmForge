@@ -4,90 +4,100 @@
 
 ## APIs & External Services
 
-**Payment Processing:**
-- None detected
+**HuggingFace Tokenizers:**
+- Tokenizer library for text encoding/decoding
+- SDK/Client: `tokenizers` crate from HuggingFace
+- Auth: None required (local tokenization)
+- Used in: `src/tokenizer.rs`
 
-**Email/SMS:**
-- None detected
-
-**External APIs:**
-- None detected (no OpenAI, Anthropic, Google, Azure integrations)
+**GGUF Format Support:**
+- Model format for LLM weights
+- Implementation: Custom parser in `src/loader/gguf.rs`
+- No external API - pure Rust implementation
 
 ## Data Storage
 
-**Databases:**
-- None (uses in-memory state only)
+**Model Files:**
+- GGUF format model files
+- Location: Configured via `ROCMFORGE_MODELS` env var
+- Client: Memory-mapped I/O via `memmap2`
 
-**File Storage:**
-- Local model files only (GGUF format)
-- No cloud storage integration (S3, Azure Blob, etc.)
+**Tokenizer Files:**
+- HuggingFace tokenizer.json
+- Location: Configured via `ROCMFORGE_TOKENIZER` env var
+- Client: `tokenizers` crate
 
-**Caching:**
-- In-memory KV cache for inference (`src/kv_cache/`)
-- No external cache (Redis, Memcached)
+**No Database:**
+- No SQL/NoSQL database
+- No external storage services
+- All data stored in local files
 
-## Authentication & Identity
+## Hardware Integration
 
-**Auth Provider:**
-- None (HTTP server is open, no authentication)
+**AMD ROCm/HIP:**
+- GPU runtime for AMD GPUs
+- SDK: ROCm (HIP, hipBLAS, HIPRTC)
+- Linked libraries: amdhip64, hipblas, hiprtc (`build.rs:9-13`)
+- Target architecture: gfx1100 (RX 7900 XT default)
 
-**OAuth Integrations:**
-- None
+**GPU Kernels:**
+- Compiled at build time via HIPRTC
+- 14 kernels in `build.rs:42-95`
+- Operations: matmul, softmax, rope, swiglu, etc.
 
-## Monitoring & Observability
+## Development Tools
 
-**Error Tracking:**
-- None (basic structured logging via tracing crate only)
+**CodeMCP (AI Assistant):**
+- LLM-powered code assistance
+- Config: `.codemcp/config.toml`
+- Ollama integration for local LLM
+- BGE embeddings for semantic indexing
 
-**Analytics:**
-- None
-
-**Logs:**
-- Structured logging via tracing crate
-- stdout/stderr output only
-
-## CI/CD & Deployment
-
-**Hosting:**
-- Not applicable (native binary distribution)
-
-**CI Pipeline:**
-- No GitHub Actions workflows detected for main project
-- Some workflow files in `docs/examples/`
+**Build Tools:**
+- Make - Build automation
+- Cargo - Rust package manager
+- Criterion - Benchmarking framework
 
 ## Environment Configuration
 
 **Development:**
-- Required env vars: ROCMFORGE_GGUF, ROCMFORGE_TOKENIZER, ROCMFORGE_MODELS
-- Secrets location: Not applicable (no secrets)
-- Mock/stub services: GPU tests use panic-based skipping
-
-**Staging:**
-- Not applicable
+- Required env vars:
+  - `ROCMFORGE_GGUF` - Path to GGUF model file
+  - `ROCMFORGE_TOKENIZER` - Path to tokenizer.json
+  - `ROCMFORGE_MODELS` - Directory containing models
+- Secrets location: None (no authentication)
+- Hardware: AMD GPU with ROCm required
 
 **Production:**
-- Secrets management: Not applicable (no secrets)
-- Failover/redundancy: Not implemented
+- Same as development (no separate environments)
+- No cloud deployment configured
+- No secrets management (no external services)
 
-## Hardware Integration
+## CI/CD & Deployment
 
-**GPU Platform:**
-- AMD ROCm/HIP - Primary GPU computing platform
-- Location: `src/backend/hip_backend.rs`
-- Status: Placeholder dependencies in `Cargo.toml` (hip-sys commented out)
+**CI Pipeline:**
+- Not detected (no .github/workflows/ or similar)
 
-**Model Loading:**
-- GGUF format support - `src/loader/gguf.rs`
-- Local files only - No HuggingFace Hub integration
-- Tokenizer support - Embedded or local tokenizer.json
+**Hosting:**
+- Not applicable (local execution only)
 
-## Webhooks & Callbacks
+## External Dependencies (None)
 
-**Incoming:**
-- None
+**Payment Processing:** None
+**Email/SMS:** None
+**Authentication:** None
+**Monitoring:** None
+**Analytics:** None
 
-**Outgoing:**
-- Server-Sent Events (SSE) for streaming inference responses
+## Build Dependencies
+
+**HIP Runtime:**
+- System libraries: amdhip64, hipblas, hiprtc
+- Linked at build time via `build.rs`
+
+**Optional:**
+- ROCm SDK for GPU development
+- AMD GPU hardware for testing
 
 ---
 

@@ -5,78 +5,74 @@
 ## Languages
 
 **Primary:**
-- Rust 2021 edition - All application code (100+ .rs files)
+- Rust 2021 Edition - All application code (`Cargo.toml:4`)
 
 **Secondary:**
-- Not detected (no Python, JavaScript, TypeScript, or other languages)
+- C/C++ - GPU kernels (via HIPRTC compilation)
+- Shell - Build scripts (Makefile)
 
 ## Runtime
 
 **Environment:**
-- Rust native binary - No interpreted runtime required
-- Tokio async runtime v1.0 - For async HTTP and concurrent operations
-- ROCm/HIP - AMD GPU computing platform (placeholder dependencies)
+- ROCm/HIP runtime - AMD GPU platform (`build.rs:9-13` links amdhip64, hipblas, hiprtc)
+- Tokio async runtime - Full featured async runtime (`Cargo.toml:16`)
 
 **Package Manager:**
-- Cargo - Rust's package manager
-- Lockfile: Cargo.lock present
+- Cargo - Rust package manager
+- Lockfile: `Cargo.lock` present
 
 ## Frameworks
 
 **Core:**
-- Axum 0.7 - HTTP server framework with JSON support
-- Tower 0.4 - Service composition and middleware
-- Tokio 1.0 - Async runtime (features: full)
+- Axum - HTTP web server with JSON support (`Cargo.toml:15`)
+- Tokio - Async runtime with full features (`Cargo.toml:16`)
 
 **Testing:**
-- Built-in Rust test harness - Unit and integration tests
-- Criterion 0.5 - Benchmarking framework
-- Mockall 0.12 - Mocking framework
-- Proptest 1.4 - Property-based testing
-- Serial Test 3.0 - Thread-safe test execution
+- Rust built-in `#[test]` framework - Unit tests
+- Criterion 0.5 - Benchmarking (`Cargo.toml:66`)
+- Proptest 1.4 - Property-based testing (`Cargo.toml:67`)
 
 **Build/Dev:**
-- Cargo - Build system and package manager
-- Clippy - Linting (with extensive GPU-specific allowances)
-- Rustfmt - Code formatting (no explicit config found)
+- rustfmt - Code formatting (default settings)
+- cargo - Build and test runner
 
 ## Key Dependencies
 
 **Critical:**
-- tokenizers 0.15 - HuggingFace tokenizer support
-- half 2.4 - FP16 numerical format for GPU tensors
-- memmap2 0.9 - Memory-mapped file I/O for model loading
-- reqwest 0.11 - HTTP client with JSON and streaming
-- reqwest-eventsource 0.4 - Server-Sent Events support
+- `tokenizers` (HuggingFace) - Text tokenization (`Cargo.toml:23`)
+- `serde` / `serde_json` - Serialization (`Cargo.toml:26-27`)
+- `half` (2.4) - Half-precision floating point (`Cargo.toml:30`)
+- `anyhow` / `thiserror` - Error handling (`Cargo.toml:37-38`)
 
 **Infrastructure:**
-- serde/serde_json 1.0 - Serialization
-- tracing 0.1 - Structured logging
-- rayon 1.10 - Parallel processing
-- anyhow/thiserror 1.0 - Error handling
+- `tracing` / `tracing-subscriber` - Structured logging (`Cargo.toml:41-42`)
+- `memmap2` - Memory-mapped file I/O (`Cargo.toml:52`)
+- `rayon` - Parallel processing (`Cargo.toml:57`)
+- `bytemuck` - Safe byte casting (`Cargo.toml:54`)
 
 ## Configuration
 
 **Environment:**
-- No .env files detected
-- Environment variables: ROCMFORGE_GGUF, ROCMFORGE_TOKENIZER, ROCMFORGE_MODELS
-- Configuration through CLI arguments - `src/bin/rocmforge_cli.rs`
+- Environment variables for model paths - `src/http/server.rs:504-510`
+  - `ROCMFORGE_GGUF` - Model file path
+  - `ROCMFORGE_TOKENIZER` - Tokenizer path
+  - `ROCMFORGE_MODELS` - Models directory
 
 **Build:**
 - `Cargo.toml` - Rust package configuration
-- `Makefile` - Common build tasks
+- `build.rs` - Build script (HIP kernel compilation)
+- `Makefile` - Build automation
 
 ## Platform Requirements
 
 **Development:**
-- Linux required (ROCm is Linux-only)
-- AMD GPU with ROCm support
-- Rust toolchain (1.70+ edition 2021)
+- Linux with ROCm support (tested on AMD RX 7900 XT - gfx1100)
+- HIP/ROCm SDK for GPU compilation
+- Cargo 1.70+ (Rust 2021 edition)
 
 **Production:**
-- Native binary distribution
-- AMD GPU hardware required
-- No containerization (no Dockerfile detected)
+- AMD GPU with ROCm support (gfx1100 default target)
+- No cloud/container deployment configured
 
 ---
 
