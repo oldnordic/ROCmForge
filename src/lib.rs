@@ -26,7 +26,7 @@ pub mod engine;
 pub mod error;
 pub mod http;
 pub mod logging;
-// pub mod metrics; // TODO: Task 10-09 - incomplete, needs fixing
+pub mod metrics;
 pub mod ggml;
 pub mod kv_cache;
 pub mod loader;
