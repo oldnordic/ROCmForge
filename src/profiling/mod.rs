@@ -6,6 +6,7 @@
 //! # Modules
 //!
 //! - [`kernel_timer`] - Timer for measuring GPU kernel and CPU operation execution time
+//! - [`baseline`] - Performance baseline storage and regression detection
 //! - [`rocprof_integration`] - Integration with ROCm profiling tools (rocprof, omniperf, rocperf)
 //!
 //! # Example
@@ -47,8 +48,15 @@
 //!
 //! See [`rocprof_integration`] for more details on profiling tool integration.
 
+pub mod baseline;
 pub mod kernel_timer;
 pub mod rocprof_integration;
+
+// Public exports from baseline
+pub use baseline::{
+    PerformanceBaseline, BaselineMetrics, BaselineCollection,
+    ComparisonResult, HardwareInfo, BaselineError, RegressionThreshold,
+};
 
 // Public exports from kernel_timer
 pub use kernel_timer::{KernelTimer, ScopedTimer};
