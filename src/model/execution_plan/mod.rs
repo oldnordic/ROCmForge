@@ -43,9 +43,10 @@ pub use execution_plan_src::{
 };
 
 // Include test files
-#[cfg(test)]
-#[cfg(feature = "rocm")]
-include!("gpu_attention_integration_tests.rs");
+// TODO: Re-enable when test files are created
+// #[cfg(test)]
+// #[cfg(feature = "rocm")]
+// include!("gpu_attention_integration_tests.rs");
 
 #[cfg(test)]
 #[cfg(feature = "rocm")]

@@ -153,6 +153,9 @@ impl AttentionBackendRegistry {
         #[cfg(feature = "rocm")]
         {
             backends.push(Box::new(gpu_backend::GpuAttentionBackend::new()));
+            // FlashAttention backend - registered but not auto-selected by default
+            // Users can explicitly set it as default via set_default()
+            backends.push(Box::new(flash_attention_backend::FlashAttentionBackend::new()));
         }
 
         AttentionBackendRegistry {
@@ -352,6 +355,73 @@ pub mod gpu_backend {
 }
 
 // ============================================================================
+// FlashAttention Backend Implementation
+// ============================================================================
+
+#[cfg(feature = "rocm")]
+/// FlashAttention backend implementation using fused kernels
+pub mod flash_attention_backend {
+    use super::*;
+
+    pub struct FlashAttentionBackend {
+        #[allow(dead_code)] // Will be configured in future
+        max_seq_len: usize,
+    }
+
+    impl FlashAttentionBackend {
+        pub fn new() -> Self {
+            FlashAttentionBackend {
+                max_seq_len: 2048, // Default maximum sequence length
+            }
+        }
+
+        pub fn with_max_seq_len(mut self, max_seq_len: usize) -> Self {
+            self.max_seq_len = max_seq_len;
+            self
+        }
+    }
+
+    impl BackendImplementation for FlashAttentionBackend {
+        fn name(&self) -> &str {
+            "flash_attention"
+        }
+
+        fn supports(&self, config: &AttentionConfig) -> bool {
+            // Flash attention requires:
+            // - ROCm feature enabled (checked by #[cfg])
+            // - Head dimension <= 128 (register limit)
+            // - Sequence length <= max_sequence_length
+            config.head_dim <= 128
+                && config.seq_len <= config.max_sequence_length
+                && config.max_sequence_length <= self.max_seq_len
+        }
+
+        fn required_kv_layout(&self) -> Option<KvCacheLayout> {
+            Some(KvCacheLayout::FlashAttention)
+        }
+
+        fn forward(
+            &self,
+            config: &AttentionConfig,
+            q: &[f32],
+            k: &[f32],
+            v: &[f32],
+            mask: Option<&[f32]>,
+        ) -> AttentionBackendResult<Vec<f32>> {
+            // Validate config
+            config
+                .validate()
+                .map_err(|e| AttentionBackendError::NotSupported(e))?;
+
+            // For now, delegate to GPU implementation
+            // In phase 06-03, this will call the actual flash kernels
+            super::super::gpu::GpuBackend::forward(config.dim, q, k, v, mask, config.dropout)
+                .map_err(|e| AttentionBackendError::OperationFailed(e.to_string()))
+        }
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -365,7 +435,7 @@ mod tests {
         let backends = registry.list_backends();
 
         #[cfg(feature = "rocm")]
-        assert_eq!(backends.len(), 2); // cpu + gpu
+        assert_eq!(backends.len(), 3); // cpu + gpu + flash_attention
         #[cfg(not(feature = "rocm"))]
         assert_eq!(backends.len(), 1); // cpu only
 
@@ -424,6 +494,57 @@ mod tests {
 
         let result = registry.get_backend("nonexistent");
         assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg(feature = "rocm")]
+    fn test_get_flash_attention_backend() {
+        let registry = AttentionBackendRegistry::new();
+
+        let flash_backend = registry.get_backend("flash_attention").unwrap();
+        assert_eq!(flash_backend.name(), "flash_attention");
+    }
+
+    #[test]
+    #[cfg(feature = "rocm")]
+    fn test_set_flash_attention_as_default() {
+        let mut registry = AttentionBackendRegistry::new();
+
+        // Set flash_attention as default
+        registry.set_default("flash_attention".to_string()).unwrap();
+
+        // Flash attention should be selected for compatible configs
+        let config = AttentionConfig::new(512, 8, 64)
+            .with_max_sequence_length(1024);
+
+        let backend = registry.select_backend(&config).unwrap();
+        assert_eq!(backend.name(), "flash_attention");
+    }
+
+    #[test]
+    #[cfg(feature = "rocm")]
+    fn test_flash_attention_supports_valid_config() {
+        let registry = AttentionBackendRegistry::new();
+        let flash_backend = registry.get_backend("flash_attention").unwrap();
+
+        // Valid config: head_dim=64 <= 128, max_sequence_length=1024 <= 2048
+        let config = AttentionConfig::new(512, 8, 64)
+            .with_max_sequence_length(1024);
+
+        assert!(flash_backend.supports(&config));
+    }
+
+    #[test]
+    #[cfg(feature = "rocm")]
+    fn test_flash_attention_does_not_support_large_head_dim() {
+        let registry = AttentionBackendRegistry::new();
+        let flash_backend = registry.get_backend("flash_attention").unwrap();
+
+        // Invalid config: head_dim=129 > 128
+        let config = AttentionConfig::new(516, 4, 129)
+            .with_max_sequence_length(1024);
+
+        assert!(!flash_backend.supports(&config));
     }
 
     #[test]
