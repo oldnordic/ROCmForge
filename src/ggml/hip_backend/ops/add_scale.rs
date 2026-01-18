@@ -21,7 +21,8 @@ pub fn add(
     }
 
     // output = a
-    output.copy_from_buffer(a)?;
+    // Use stream-aware copy for consistency with backend.stream()
+    output.copy_from_buffer_with_stream(a, backend.stream().as_ptr())?;
 
     // output += b
     let handle = HipBlasHandle::new()
@@ -54,7 +55,8 @@ pub fn scale(
         ));
     }
 
-    output.copy_from_buffer(input)?;
+    // Use stream-aware copy for consistency with backend.stream()
+    output.copy_from_buffer_with_stream(input, backend.stream().as_ptr())?;
 
     let handle = HipBlasHandle::new()
         .map_err(|e| HipError::GenericError(format!("Failed to create hipBLAS handle: {}", e)))?;
