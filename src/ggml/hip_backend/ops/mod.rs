@@ -6,6 +6,7 @@ pub mod copy;
 pub mod get_rows;
 pub mod matmul;
 pub mod mask;
+pub mod q4_0_dequant;
 pub mod quantized_matmul;
 pub mod rms_norm;
 pub mod rope;

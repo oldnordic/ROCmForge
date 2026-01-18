@@ -12,7 +12,6 @@ use rocmforge::model::{
     config::{ModelConfig, ModelType},
     kv_cache::KVCache,
 };
-use serial_test::serial;
 use std::sync::Arc;
 
 // REMOVED: Duplicate test_execution_plan_construction
