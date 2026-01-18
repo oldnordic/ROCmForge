@@ -77,13 +77,20 @@ Plans:
 **Depends on**: Phase 3
 **Research**: Likely (SIMD crate selection, CPU architecture optimization)
 **Research topics**: Rust SIMD ecosystem (std::simd, packed_simd, wide), CPU feature detection
-**Plans**: TBD
+**Status**: ✅ Complete (2026-01-18)
 
 Plans:
-- [ ] 04-01: Research and select SIMD strategy for CPU ops
-- [ ] 04-02: Implement CPU backend trait with SIMD matmul
-- [ ] 04-03: Implement SIMD for attention operations
-- [ ] 04-04: Add CPU feature detection and runtime selection
+- [x] 04-01: Research and select SIMD strategy for CPU ops
+  - Selected std::simd (discovered: still requires nightly portable_simd feature)
+- [x] 04-02: Implement CPU backend trait with SIMD matmul
+  - Created src/backend/cpu/simd.rs with f32x8/f32x4 support
+  - 7/7 tests passing
+- [x] 04-03: Implement SIMD for attention operations
+  - SIMD softmax, QK^T, weighted value implemented
+  - 10/10 tests passing
+- [x] 04-04: Add CPU feature detection and runtime selection
+  - CpuBackend with SIMD/scalar path selection
+  - 10/10 tests passing
 
 ### Phase 5: Quantized Operations
 **Goal**: Native HIP dequantization kernels for efficient quantized inference
@@ -171,7 +178,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 1. Critical Bug Fixes | 3/3 (3 planned) | Complete | 2026-01-18 |
 | 2. Test Infrastructure | 4/4 (4 planned) | Complete | 2026-01-18 |
 | 3. Codebase Modularization | 4/4 (4 planned) | Complete | 2026-01-18 |
-| 4. CPU SIMD Backend | 0/4 | Not started | - |
+| 4. CPU SIMD Backend | 4/4 (4 planned) | Complete | 2026-01-18 |
 | 5. Quantized Operations | 0/4 | Not started | - |
 | 6. Attention Optimization | 0/4 | Not started | - |
 | 7. Hybrid Execution Scheduler | 0/4 | Not started | - |
