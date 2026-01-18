@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-18)
 ## Current Position
 
 Phase: 2 of 10 (Test Infrastructure)
-Plan: 0/4 planned, 0/4 executed
-Status: Planned
-Last activity: 2026-01-18 — Phase 2 planning complete
+Plan: 1 of 4 in current phase
+Status: In progress
+Last activity: 2026-01-18 — Completed 02-03-PLAN.md
 
-Progress: ██░░░░░░░░░░ 20% (Phase 1 complete, Phase 2 planned)
+Progress: █████░░░░░░ 30% (Phase 1 complete, Phase 2: 1/4 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 3
+- Total plans completed: 4
 - Average duration: ~3 hours/plan (including testing)
-- Total execution time: ~9 hours
+- Total execution time: ~12 hours
 
 **By Phase:**
 
@@ -31,7 +31,7 @@ Progress: ██░░░░░░░░░░ 20% (Phase 1 complete, Phase 2 pl
 | 2 (Test Infrastructure) | 4 | ~15 hours (est.) | ~3.75 hours |
 
 **Recent Trend:**
-- Last 3 plans: 01-01, 01-02, 01-03
+- Last 4 plans: 01-01, 01-02, 01-03, 02-03
 - Trend: Fast execution, consistent delivery
 
 *Updated after each plan completion*
@@ -42,6 +42,14 @@ Progress: ██░░░░░░░░░░ 20% (Phase 1 complete, Phase 2 pl
 
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
+
+- **Use #[ignore] for E2E tests** (Plan 02-03)
+  - Rationale: E2E tests require real GGUF models and GPU, should be opt-in
+  - Impact: Tests skip by default, run with `cargo test --ignored`
+
+- **Use ROCFORGE_TEST_MODEL env var for test model path** (Plan 02-03)
+  - Rationale: Allows flexible model configuration without code changes
+  - Impact: Testers can set model path via environment variable
 
 - **Use hipMemcpyAsync with explicit stream for D2D copies** (Plan 01-01)
   - Rationale: Ensures proper ordering with hipBLAS operations on custom stream
@@ -64,6 +72,30 @@ None yet.
 Last session: 2026-01-18
 Stopped at: Phase 2 planning complete
 Resume file: None
+
+## Phase 2 Plan 3 Summary
+
+**Completed:** 2026-01-18
+**Duration:** 15 min
+
+### Accomplishments
+
+1. **Test Infrastructure** - Created `test_model_path()` and `has_test_model()` utilities
+2. **E2E Test Suite** - Implemented 14 comprehensive end-to-end tests
+3. **Documentation** - Created `tests/README_E2E_TESTS.md` with full usage guide
+
+### Commits
+
+- `8227631`: test(02-03): add test model fixture for E2E tests
+- `efbdae9`: feat(02-03): add comprehensive E2E inference tests
+- `89c75ca`: docs(02-03): add E2E tests documentation
+
+### Decisions Made
+
+- Use `#[ignore]` attribute for E2E tests (opt-in, requires real model)
+- Support `ROCFORGE_TEST_MODEL` environment variable for model path
+- Use `serial_test` crate for GPU safety (one test at a time)
+- Tests gracefully skip when model unavailable
 
 ## Phase 1 Summary
 
@@ -111,7 +143,7 @@ Resume file: None
 |------|-------|--------|
 | 02-01 | Rewrite 20+ commented GGUF loader tests for new API | Planned |
 | 02-02 | Restore embedding_to_lmhead tests | Planned |
-| 02-03 | Add end-to-end inference tests | Planned |
+| 02-03 | Add end-to-end inference tests | Completed |
 | 02-04 | Replace unwrap() with proper error handling in tests | Planned |
 
 ### Phase 2 Overview
