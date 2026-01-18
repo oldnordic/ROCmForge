@@ -4,108 +4,9 @@ use rocmforge::loader::{
     GgufLoader, GgufMetadata, GgufTensor, GgufTensorType, OnnxDataType, OnnxLoader, OnnxSession, OnnxTensor,
 };
 use std::io::Write;
-use tempfile::NamedTempFile;
 
-/// Create a minimal valid GGUF file for testing.
-///
-/// This helper creates a GGUF file with:
-/// - Valid magic number ("GGUF")
-/// - Version 3 (current supported version)
-/// - Zero tensors (minimal structure)
-/// - One metadata KV pair (general.architecture: "test")
-fn create_test_gguf(path: &std::path::Path) -> anyhow::Result<()> {
-    use std::fs::File;
-    use std::io::BufWriter;
-
-    let file = File::create(path)?;
-    let mut writer = BufWriter::new(file);
-
-    // Write GGUF magic
-    writer.write_all(b"GGUF")?;
-
-    // Write version (3)
-    writer.write_all(&3u32.to_le_bytes())?;
-
-    // Write tensor count (0)
-    writer.write_all(&0u64.to_le_bytes())?;
-
-    // Write KV count (1)
-    writer.write_all(&1u64.to_le_bytes())?;
-
-    // Write metadata key-value pair (general.architecture: "test")
-    // Key: "general.architecture"
-    let key = b"general.architecture";
-    writer.write_all(&(key.len() as u64).to_le_bytes())?;
-    writer.write_all(key)?;
-
-    // Value type: STRING (8)
-    writer.write_all(&8u32.to_le_bytes())?;
-    // Value length: 4 bytes ("test")
-    let value = b"test";
-    writer.write_all(&(value.len() as u64).to_le_bytes())?;
-    writer.write_all(value)?;
-
-    writer.flush()?;
-    Ok(())
-}
-
-/// Create a minimal valid GGUF file with F32 tensor data for testing.
-///
-/// This helper creates a GGUF file with:
-/// - Valid magic number ("GGUF")
-/// - Version 3
-/// - One F32 tensor named "f32_tensor" with shape [2, 2]
-/// - One metadata KV pair (architecture: "test")
-fn create_test_gguf_with_f32(path: &std::path::Path) -> anyhow::Result<()> {
-    use std::fs::File;
-    use std::io::BufWriter;
-
-    let file = File::create(path)?;
-    let mut writer = BufWriter::new(file);
-
-    // Write GGUF magic
-    writer.write_all(b"GGUF")?;
-
-    // Write version (3)
-    writer.write_all(&3u32.to_le_bytes())?;
-
-    // Write tensor count (1)
-    writer.write_all(&1u64.to_le_bytes())?;
-
-    // Write KV count (1)
-    writer.write_all(&1u64.to_le_bytes())?;
-
-    // Write metadata key-value pair (architecture: "test")
-    let key = b"architecture";
-    writer.write_all(&(key.len() as u64).to_le_bytes())?;
-    writer.write_all(key)?;
-    writer.write_all(&8u32.to_le_bytes())?;  // STRING type
-    let value = b"test";
-    writer.write_all(&(value.len() as u64).to_le_bytes())?;
-    writer.write_all(value)?;
-
-    // Write tensor info
-    // Tensor name
-    let tensor_name = b"f32_tensor";
-    writer.write_all(&(tensor_name.len() as u64).to_le_bytes())?;
-    writer.write_all(tensor_name)?;
-
-    // Number of dimensions (2)
-    writer.write_all(&2u32.to_le_bytes())?;
-    // Dimension 1: 2
-    writer.write_all(&2u64.to_le_bytes())?;
-    // Dimension 2: 2
-    writer.write_all(&2u64.to_le_bytes())?;
-
-    // Tensor type: F32 (0)
-    writer.write_all(&0u32.to_le_bytes())?;
-
-    // Tensor offset (will be after all metadata)
-    writer.write_all(&0u64.to_le_bytes())?;
-
-    writer.flush()?;
-    Ok(())
-}
+// Use common fixtures
+use crate::common::{create_temp_file, create_test_gguf, create_test_gguf_with_f32, NamedTempFile};
 
 /// Rewrite of test_gguf_model_loading using current GgufLoader API.
 ///
@@ -113,8 +14,7 @@ fn create_test_gguf_with_f32(path: &std::path::Path) -> anyhow::Result<()> {
 /// and returns metadata correctly.
 #[test]
 fn test_gguf_model_loading() -> anyhow::Result<()> {
-    let temp_file = NamedTempFile::new()
-        .context("Failed to create temp file")?;
+    let temp_file = create_temp_file()?;
     create_test_gguf(temp_file.path())?;
 
     let path = temp_file.path().to_str()
@@ -133,8 +33,7 @@ fn test_gguf_model_loading() -> anyhow::Result<()> {
 /// Note: Current API uses lazy_tensors (HashMap<String, LazyTensor>).
 #[test]
 fn test_gguf_tensor_access() -> anyhow::Result<()> {
-    let temp_file = NamedTempFile::new()
-        .context("Failed to create temp file")?;
+    let temp_file = create_temp_file()?;
     create_test_gguf_with_f32(temp_file.path())?;
 
     let path = temp_file.path().to_str()
@@ -160,8 +59,7 @@ fn test_gguf_tensor_access() -> anyhow::Result<()> {
 /// Tests that F32 tensor type is correctly identified in loaded metadata.
 #[test]
 fn test_gguf_f32_conversion() -> anyhow::Result<()> {
-    let temp_file = NamedTempFile::new()
-        .context("Failed to create temp file")?;
+    let temp_file = create_temp_file()?;
     create_test_gguf_with_f32(temp_file.path())?;
 
     let path = temp_file.path().to_str()
@@ -182,8 +80,7 @@ fn test_gguf_f32_conversion() -> anyhow::Result<()> {
 /// Tests error handling for invalid GGUF magic number.
 #[test]
 fn test_gguf_invalid_magic() -> anyhow::Result<()> {
-    let mut file = NamedTempFile::new()
-        .context("Failed to create temp file")?;
+    let mut file = create_temp_file()?;
     file.write_all(&0x12345678u32.to_le_bytes())?; // Invalid magic
     file.write_all(&3u32.to_le_bytes())?; // version
     file.write_all(&0u64.to_le_bytes())?; // tensor_count
@@ -206,7 +103,7 @@ fn test_gguf_invalid_magic() -> anyhow::Result<()> {
 /// Tests error handling for unsupported GGUF versions (only version 3 is supported).
 #[test]
 fn test_gguf_unsupported_version() -> anyhow::Result<()> {
-    let mut file = NamedTempFile::new()?;
+    let mut file = create_temp_file()?;
     file.write_all(&0x46554747u32.to_le_bytes())?; // "GGUF" magic
     file.write_all(&999u32.to_le_bytes())?; // Unsupported version
     file.write_all(&0u64.to_le_bytes())?; // tensor_count
@@ -328,8 +225,7 @@ fn test_onnx_model_loading() -> anyhow::Result<()> {
     let mut loader = OnnxLoader::new();
 
     // Create a dummy ONNX model file
-    let temp_file = NamedTempFile::new()
-        .context("Failed to create temp file")?;
+    let temp_file = create_temp_file()?;
     let result = loader.load_model(temp_file.path());
 
     // In our mock implementation, this should succeed
@@ -344,8 +240,7 @@ fn test_onnx_inference() -> anyhow::Result<()> {
     let mut loader = OnnxLoader::new();
 
     // Create a dummy ONNX model file
-    let temp_file = NamedTempFile::new()
-        .context("Failed to create temp file")?;
+    let temp_file = create_temp_file()?;
     loader.load_model(temp_file.path())
         .context("Failed to load model")?;
 
@@ -379,7 +274,7 @@ fn test_onnx_inference_without_model() {
 fn test_onnx_inference_empty_inputs() {
     let mut loader = OnnxLoader::new();
 
-    let temp_file = NamedTempFile::new().context("Failed to create temp file")?;
+    let temp_file = create_temp_file().context("Failed to create temp file")?;
     loader.load_model(temp_file.path()).context("Failed to load model")?;
 
     let result = loader.run_inference(&[]);
@@ -388,8 +283,7 @@ fn test_onnx_inference_empty_inputs() {
 
 #[test]
 fn test_onnx_session_input_output_names() -> anyhow::Result<()> {
-    let temp_file = NamedTempFile::new()
-        .context("Failed to create temp file")?;
+    let temp_file = create_temp_file()?;
     let session = OnnxSession::new(temp_file.path())
         .context("Failed to create ONNX session")?;
 
@@ -401,8 +295,7 @@ fn test_onnx_session_input_output_names() -> anyhow::Result<()> {
 
 #[test]
 fn test_onnx_session_run() -> anyhow::Result<()> {
-    let temp_file = NamedTempFile::new()
-        .context("Failed to create temp file")?;
+    let temp_file = create_temp_file()?;
     let session = OnnxSession::new(temp_file.path())
         .context("Failed to create ONNX session")?;
 
