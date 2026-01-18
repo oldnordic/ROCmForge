@@ -24,17 +24,17 @@ fn test_device_tensor_from_mmap_basic() {
         .flat_map(|&f| f.to_le_bytes().to_vec())
         .collect();
 
-    let mut temp_file = tempfile::NamedTempFile::new().unwrap();
-    temp_file.write_all(&test_bytes).unwrap();
+    let mut temp_file = tempfile::NamedTempFile::new().context("TODO: add error context")?;
+    temp_file.write_all(&test_bytes).context("TODO: add error context")?;
 
-    let mmap_weights = open_mmap_weights(temp_file.path()).unwrap();
+    let mmap_weights = open_mmap_weights(temp_file.path()).context("TODO: add error context")?;
     let shape = TensorShape::from_dims(&[test_f32.len()]);
 
     // Create DeviceTensor from mmap
     let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
-    let device_tensor = DeviceTensor::from_mmap(backend, &mmap_weights, shape.clone(), 0).unwrap();
+    let device_tensor = DeviceTensor::from_mmap(backend, &mmap_weights, shape.clone(), 0).context("TODO: add error context")?;
 
     // Verify device tensor properties
     assert_eq!(device_tensor.len(), test_f32.len()); // Number of f32 elements
@@ -54,10 +54,10 @@ fn test_device_tensor_from_mmap_partial_range() {
         .flat_map(|&f| f.to_le_bytes().to_vec())
         .collect();
 
-    let mut temp_file = tempfile::NamedTempFile::new().unwrap();
-    temp_file.write_all(&test_bytes).unwrap();
+    let mut temp_file = tempfile::NamedTempFile::new().context("TODO: add error context")?;
+    temp_file.write_all(&test_bytes).context("TODO: add error context")?;
 
-    let mmap_weights = open_mmap_weights(temp_file.path()).unwrap();
+    let mmap_weights = open_mmap_weights(temp_file.path()).context("TODO: add error context")?;
     let shape = TensorShape::from_dims(&[6]); // Total elements
 
     // Create DeviceTensor from partial range (elements 2-4)
@@ -66,7 +66,7 @@ fn test_device_tensor_from_mmap_partial_range() {
     let backend = fixture.backend();
     let partial_shape = TensorShape::from_dims(&[2]); // Only 2 elements
     let device_tensor =
-        DeviceTensor::from_mmap(backend, &mmap_weights, partial_shape, 2 * 4).unwrap();
+        DeviceTensor::from_mmap(backend, &mmap_weights, partial_shape, 2 * 4).context("TODO: add error context")?;
 
     // Should only contain 2 elements (indices 2, 3)
     assert_eq!(device_tensor.len(), 2); // 2 f32 elements
@@ -85,10 +85,10 @@ fn test_device_tensor_from_mmap_empty_range() {
         .flat_map(|&f| f.to_le_bytes().to_vec())
         .collect();
 
-    let mut temp_file = tempfile::NamedTempFile::new().unwrap();
-    temp_file.write_all(&test_bytes).unwrap();
+    let mut temp_file = tempfile::NamedTempFile::new().context("TODO: add error context")?;
+    temp_file.write_all(&test_bytes).context("TODO: add error context")?;
 
-    let mmap_weights = open_mmap_weights(temp_file.path()).unwrap();
+    let mmap_weights = open_mmap_weights(temp_file.path()).context("TODO: add error context")?;
     let _shape = TensorShape::from_dims(&[3]);
 
     // Create DeviceTensor from empty range - should handle gracefully
@@ -121,10 +121,10 @@ fn test_device_tensor_from_mmap_bounds_check() {
         .flat_map(|&f| f.to_le_bytes().to_vec())
         .collect();
 
-    let mut temp_file = tempfile::NamedTempFile::new().unwrap();
-    temp_file.write_all(&test_bytes).unwrap();
+    let mut temp_file = tempfile::NamedTempFile::new().context("TODO: add error context")?;
+    temp_file.write_all(&test_bytes).context("TODO: add error context")?;
 
-    let mmap_weights = open_mmap_weights(temp_file.path()).unwrap();
+    let mmap_weights = open_mmap_weights(temp_file.path()).context("TODO: add error context")?;
     let shape = TensorShape::from_dims(&[3]);
 
     // Try to access beyond available data
@@ -135,7 +135,7 @@ fn test_device_tensor_from_mmap_bounds_check() {
     let result = DeviceTensor::from_mmap(backend, &mmap_weights, oversized_shape, 0);
 
     // Should handle gracefully (either error or truncated)
-    assert!(result.is_err() || result.unwrap().len() <= 3 * 4);
+    assert!(result.is_err() || result.context("TODO: add error context")?.len() <= 3 * 4);
 
     // Check for memory leaks
     fixture.assert_no_leak(5);

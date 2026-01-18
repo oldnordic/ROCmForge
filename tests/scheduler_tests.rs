@@ -76,7 +76,7 @@ fn test_invalid_state_transitions() {
     ));
 
     // Start processing
-    request.start_processing().unwrap();
+    request.start_processing().context("Failed to start processing")?;
 
     // Can't start again
     let result = request.start_processing();
@@ -87,7 +87,7 @@ fn test_invalid_state_transitions() {
     ));
 
     // Complete
-    request.complete(None).unwrap();
+    request.complete(None).context("Failed to complete request")?;
 
     // Can't add tokens after completion
     let result = request.add_generated_token(42);
@@ -115,8 +115,8 @@ fn test_batch_creation() {
     let request1 = GenerationRequest::new(1, vec![1, 2], 10, 0.8, 50, 0.9);
     let request2 = GenerationRequest::new(2, vec![1, 2, 3], 10, 0.8, 50, 0.9);
 
-    batch.add_request(request1).unwrap();
-    batch.add_request(request2).unwrap();
+    batch.add_request(request1).context("Failed to add request")?;
+    batch.add_request(request2).context("Failed to add request")?;
 
     assert_eq!(batch.size(), 2);
     assert!(!batch.is_empty());
@@ -197,8 +197,8 @@ fn test_queue_capacity_limit() {
     let mut scheduler = Scheduler::new(config);
 
     // Submit up to capacity
-    scheduler.submit_request(vec![1], 10, 0.8, 50, 0.9).unwrap();
-    scheduler.submit_request(vec![2], 10, 0.8, 50, 0.9).unwrap();
+    scheduler.submit_request(vec![1], 10, 0.8, 50, 0.9).context("Failed to submit request")?;
+    scheduler.submit_request(vec![2], 10, 0.8, 50, 0.9).context("Failed to submit request")?;
 
     // Should fail when exceeding capacity
     let result = scheduler.submit_request(vec![3], 10, 0.8, 50, 0.9);
@@ -213,7 +213,7 @@ fn test_cancel_pending_request() {
         .submit_request(vec![1, 2, 3], 10, 0.8, 50, 0.9)
         .unwrap();
 
-    let cancelled = scheduler.cancel_request(request_id).unwrap();
+    let cancelled = scheduler.cancel_request(request_id).context("Failed to cancel request")?;
     assert_eq!(cancelled.request_id, request_id);
     assert_eq!(cancelled.state, RequestState::Cancelled);
     assert_eq!(cancelled.finish_reason.as_deref(), Some("cancelled"));
@@ -229,10 +229,10 @@ fn test_cancel_processing_request() {
     let request_id = scheduler
         .submit_request(vec![1, 2, 3], 10, 0.8, 50, 0.9)
         .unwrap();
-    let batch = scheduler.create_batch().unwrap();
+    let batch = scheduler.create_batch().context("Failed to create batch")?;
     assert_eq!(batch.size(), 1);
 
-    let cancelled = scheduler.cancel_request(request_id).unwrap();
+    let cancelled = scheduler.cancel_request(request_id).context("Failed to cancel request")?;
     assert_eq!(cancelled.state, RequestState::Cancelled);
     assert_eq!(cancelled.finish_reason.as_deref(), Some("cancelled"));
 
@@ -279,16 +279,16 @@ fn test_batch_update() {
     scheduler
         .submit_request(vec![1, 2, 3], 2, 0.8, 50, 0.9)
         .unwrap();
-    let batch = scheduler.create_batch().unwrap();
+    let batch = scheduler.create_batch().context("Failed to create batch")?;
 
     // Simulate token generation
     let mut updated_batch = batch;
     for request in &mut updated_batch.requests {
-        request.add_generated_token(42).unwrap();
-        request.add_generated_token(43).unwrap(); // Should complete
+        request.add_generated_token(42).context("Failed to add generated token")?;
+        request.add_generated_token(43).context("Failed to add generated token")?; // Should complete
     }
 
-    let completed = scheduler.update_batch(updated_batch).unwrap();
+    let completed = scheduler.update_batch(updated_batch).context("Failed to update batch")?;
     assert_eq!(completed.len(), 1);
     assert!(completed[0].is_complete());
 
@@ -314,7 +314,7 @@ fn test_request_retrieval() {
     assert_eq!(request.state, RequestState::Pending);
 
     // Create batch to move to processing
-    let batch = scheduler.create_batch().unwrap();
+    let batch = scheduler.create_batch().context("Failed to create batch")?;
 
     // Get request from processing
     let request = scheduler.get_request(request_id);
@@ -329,7 +329,7 @@ fn test_request_retrieval() {
             let _ = request.add_generated_token(i);
         }
     }
-    scheduler.update_batch(updated_batch).unwrap();
+    scheduler.update_batch(updated_batch).context("Failed to update batch")?;
 
     // Get request from completed
     let request = scheduler.get_request(request_id);
@@ -348,14 +348,14 @@ fn test_token_generation() {
         .unwrap();
 
     // Create batch
-    let batch = scheduler.create_batch().unwrap();
+    let batch = scheduler.create_batch().context("Failed to create batch")?;
 
     // Add generated token
     let result = scheduler.add_generated_token(request_id, 42);
     assert!(result.is_ok());
 
     // Verify token was added
-    let request = scheduler.get_request(request_id).unwrap();
+    let request = scheduler.get_request(request_id).context("Failed to get request")?;
     assert_eq!(request.generated_tokens.len(), 1);
     assert_eq!(request.generated_tokens[0], 42);
 }
@@ -406,7 +406,7 @@ fn test_length_based_batching() {
         .submit_request(vec![4; 22], 10, 0.8, 50, 0.9)
         .unwrap(); // Long
 
-    let batch = scheduler.create_batch().unwrap();
+    let batch = scheduler.create_batch().context("Failed to create batch")?;
 
     // Should group similar lengths together
     let lengths: Vec<usize> = batch.requests.iter().map(|r| r.total_tokens()).collect();
@@ -451,7 +451,7 @@ proptest! {
         let mut batch_count = 0;
 
         while scheduler.has_pending_requests() {
-            let batch = scheduler.create_batch().unwrap();
+            let batch = scheduler.create_batch().context("Failed to create batch")?;
             prop_assert!(batch.size() <= max_batch_size);
             total_processed += batch.size();
             batch_count += 1;
@@ -464,7 +464,7 @@ proptest! {
                 }
             }
 
-            scheduler.update_batch(updated_batch).unwrap();
+            scheduler.update_batch(updated_batch).context("Failed to update batch")?;
         }
 
         prop_assert_eq!(total_processed, num_requests);
@@ -491,7 +491,7 @@ proptest! {
         prop_assert!(!request.is_complete());
 
         // Start processing
-        request.start_processing().unwrap();
+        request.start_processing().context("Failed to start processing")?;
         prop_assert_eq!(request.state, RequestState::Processing);
         prop_assert!(request.started_at.is_some());
 

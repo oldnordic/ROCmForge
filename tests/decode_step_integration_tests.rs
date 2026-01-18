@@ -178,13 +178,13 @@ mod tests {
         };
 
         // Create temporary GGUF file for testing
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempdir().context("TODO: add error context")?;
         let gguf_path = temp_dir.path().join("test_model.gguf");
-        create_minimal_gguf_file(&gguf_path, &config).unwrap();
+        create_minimal_gguf_file(&gguf_path, &config).context("TODO: add error context")?;
 
         // Load GGUF and create execution plan
-        let loader = GgufLoader::new(&gguf_path.to_string_lossy()).unwrap();
-        let execution_plan = ExecutionPlan::from_gguf(&backend, &loader).unwrap();
+        let loader = GgufLoader::new(&gguf_path.to_string_lossy()).context("TODO: add error context")?;
+        let execution_plan = ExecutionPlan::from_gguf(&backend, &loader).context("TODO: add error context")?;
 
         // Create KV cache (unused in this test but created for consistency)
         let _kv_cache = KVCache::new(&backend,
@@ -193,7 +193,7 @@ mod tests {
             config.head_dim,
             config.max_position_embeddings,
         )
-        .unwrap();
+        .context("TODO: add error context")?;
 
         // Create scratch buffer manager (unused in this test but created for consistency)
         let _scratch = ScratchBufferManager::new(&backend,
@@ -202,26 +202,26 @@ mod tests {
             config.head_dim,
             config.max_position_embeddings, // ← PHASE 24 FIX: 5th param
         )
-        .unwrap();
+        .context("TODO: add error context")?;
 
         // Create model runtime
-        let mut runtime = ModelRuntime::new_with_config(config.clone()).unwrap();
+        let mut runtime = ModelRuntime::new_with_config(config.clone()).context("TODO: add error context")?;
 
         // Set the execution plan
         runtime.set_execution_plan(execution_plan);
 
         // Create input token embedding (simulate token id 42)
         let input_shape = TensorShape::from_dims(&[config.hidden_size]);
-        let input_tensor = DeviceTensor::empty(&backend, input_shape).unwrap();
+        let input_tensor = DeviceTensor::empty(&backend, input_shape).context("TODO: add error context")?;
 
         // Initialize with test data
         let test_input: Vec<f32> = (0..config.hidden_size)
             .map(|i| (i as f32 * 0.1) - 3.0)
             .collect();
-        input_tensor.buffer().copy_from_host(&test_input).unwrap();
+        input_tensor.buffer().copy_from_host(&test_input).context("TODO: add error context")?;
 
         // Run decode_step
-        let output_tensor = runtime.decode_step(&input_tensor).unwrap();
+        let output_tensor = runtime.decode_step(&input_tensor).context("TODO: add error context")?;
 
         // Verify output shape aligns with vocab size (logits)
         assert_eq!(output_tensor.shape().dims(), &[config.vocab_size]);
@@ -231,7 +231,7 @@ mod tests {
         output_tensor
             .buffer()
             .copy_to_host(&mut output_host)
-            .unwrap();
+            .context("TODO: add error context")?;
 
         for &val in &output_host {
             assert!(val.is_finite(), "Output contains non-finite value: {}", val);
@@ -269,13 +269,13 @@ mod tests {
         };
 
         // Create temporary GGUF file for testing
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempdir().context("TODO: add error context")?;
         let gguf_path = temp_dir.path().join("test_model.gguf");
-        create_minimal_gguf_file(&gguf_path, &config).unwrap();
+        create_minimal_gguf_file(&gguf_path, &config).context("TODO: add error context")?;
 
         // Load GGUF and create execution plan
-        let loader = GgufLoader::new(&gguf_path.to_string_lossy()).unwrap();
-        let execution_plan = ExecutionPlan::from_gguf(&backend, &loader).unwrap();
+        let loader = GgufLoader::new(&gguf_path.to_string_lossy()).context("TODO: add error context")?;
+        let execution_plan = ExecutionPlan::from_gguf(&backend, &loader).context("TODO: add error context")?;
 
         // Test input
         let input_shape = TensorShape::from_dims(&[config.hidden_size]);
@@ -290,7 +290,7 @@ mod tests {
             config.head_dim,
             config.max_position_embeddings,
         )
-        .unwrap();
+        .context("TODO: add error context")?;
 
         let _scratch_gpu = ScratchBufferManager::new(&backend,
             config.num_attention_heads,
@@ -298,18 +298,18 @@ mod tests {
             config.head_dim,
             config.max_position_embeddings, // ← PHASE 24 FIX: 5th param
         )
-        .unwrap();
+        .context("TODO: add error context")?;
 
-        let mut runtime_gpu = ModelRuntime::new_with_config(config.clone()).unwrap();
+        let mut runtime_gpu = ModelRuntime::new_with_config(config.clone()).context("TODO: add error context")?;
         runtime_gpu.set_execution_plan(execution_plan.clone());
 
-        let input_tensor_gpu = DeviceTensor::empty(&backend, input_shape.clone()).unwrap();
+        let input_tensor_gpu = DeviceTensor::empty(&backend, input_shape.clone()).context("TODO: add error context")?;
         input_tensor_gpu
             .buffer()
             .copy_from_host(&test_input)
-            .unwrap();
+            .context("TODO: add error context")?;
 
-        let gpu_output = runtime_gpu.decode_step(&input_tensor_gpu).unwrap();
+        let gpu_output = runtime_gpu.decode_step(&input_tensor_gpu).context("TODO: add error context")?;
         assert_eq!(
             gpu_output.shape().dims(),
             &[config.vocab_size],
@@ -320,7 +320,7 @@ mod tests {
         gpu_output
             .buffer()
             .copy_to_host(&mut gpu_output_host)
-            .unwrap();
+            .context("TODO: add error context")?;
 
         for &val in &gpu_output_host {
             assert!(
@@ -355,13 +355,13 @@ mod tests {
         };
 
         // Create temporary GGUF file for testing
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempdir().context("TODO: add error context")?;
         let gguf_path = temp_dir.path().join("test_model.gguf");
-        create_minimal_gguf_file(&gguf_path, &config).unwrap();
+        create_minimal_gguf_file(&gguf_path, &config).context("TODO: add error context")?;
 
         // Load GGUF and create execution plan
-        let loader = GgufLoader::new(&gguf_path.to_string_lossy()).unwrap();
-        let execution_plan = ExecutionPlan::from_gguf(&backend, &loader).unwrap();
+        let loader = GgufLoader::new(&gguf_path.to_string_lossy()).context("TODO: add error context")?;
+        let execution_plan = ExecutionPlan::from_gguf(&backend, &loader).context("TODO: add error context")?;
 
         // Create KV cache with initial length 0
         let kv_cache = KVCache::new(&backend,
@@ -370,10 +370,10 @@ mod tests {
             config.head_dim,
             config.max_position_embeddings,
         )
-        .unwrap();
+        .context("TODO: add error context")?;
 
         // Verify initial cache state
-        assert_eq!(kv_cache.get_current_length(0).unwrap(), 0);
+        assert_eq!(kv_cache.get_current_length(0).context("TODO: add error context")?, 0);
 
         // Create scratch buffer
         let _scratch = ScratchBufferManager::new(&backend,
@@ -382,48 +382,48 @@ mod tests {
             config.head_dim,
             config.max_position_embeddings, // ← PHASE 24 FIX: 5th param
         )
-        .unwrap();
+        .context("TODO: add error context")?;
 
         // Create runtime
-        let mut runtime = ModelRuntime::new_with_config(config.clone()).unwrap();
+        let mut runtime = ModelRuntime::new_with_config(config.clone()).context("TODO: add error context")?;
         runtime.set_execution_plan(execution_plan);
 
         // First token
         let input_shape = TensorShape::from_dims(&[config.hidden_size]);
         let test_input1: Vec<f32> = (0..config.hidden_size).map(|i| (i as f32 * 0.1)).collect();
 
-        let mut input_tensor1 = DeviceTensor::empty(&backend, input_shape.clone()).unwrap();
-        input_tensor1.buffer().copy_from_host(&test_input1).unwrap();
+        let mut input_tensor1 = DeviceTensor::empty(&backend, input_shape.clone()).context("TODO: add error context")?;
+        input_tensor1.buffer().copy_from_host(&test_input1).context("TODO: add error context")?;
 
         let result1 = runtime.decode_step(&input_tensor1);
         assert!(result1.is_ok(), "First decode_step failed: {:?}", result1);
 
         // Verify cache length after first token
-        assert_eq!(runtime.kv_cache().get_current_length(0).unwrap(), 1);
+        assert_eq!(runtime.kv_cache().get_current_length(0).context("TODO: add error context")?, 1);
 
         // Second token
         let test_input2: Vec<f32> = (0..config.hidden_size)
             .map(|i| (i as f32 * 0.1) + 0.5)
             .collect();
 
-        let mut input_tensor2 = DeviceTensor::empty(&backend, input_shape).unwrap();
-        input_tensor2.buffer().copy_from_host(&test_input2).unwrap();
+        let mut input_tensor2 = DeviceTensor::empty(&backend, input_shape).context("TODO: add error context")?;
+        input_tensor2.buffer().copy_from_host(&test_input2).context("TODO: add error context")?;
 
         let result2 = runtime.decode_step(&input_tensor2);
         assert!(result2.is_ok(), "Second decode_step failed: {:?}", result2);
 
         // Verify cache length after second token
-        assert_eq!(runtime.kv_cache().get_current_length(0).unwrap(), 2);
+        assert_eq!(runtime.kv_cache().get_current_length(0).context("TODO: add error context")?, 2);
 
         // Verify outputs are finite
-        let output1 = result1.unwrap();
-        let output2 = result2.unwrap();
+        let output1 = result1.context("TODO: add error context")?;
+        let output2 = result2.context("TODO: add error context")?;
 
         let mut output1_host = vec![0.0f32; config.vocab_size];
         let mut output2_host = vec![0.0f32; config.vocab_size];
 
-        output1.buffer().copy_to_host(&mut output1_host).unwrap();
-        output2.buffer().copy_to_host(&mut output2_host).unwrap();
+        output1.buffer().copy_to_host(&mut output1_host).context("TODO: add error context")?;
+        output2.buffer().copy_to_host(&mut output2_host).context("TODO: add error context")?;
 
         for &val in &output1_host {
             assert!(
@@ -454,8 +454,8 @@ mod tests {
             "Output sums: {} vs {} (KV cache lengths: {} and {})",
             output1_sum,
             output2_sum,
-            runtime.kv_cache().get_current_length(0).unwrap(),
-            runtime.kv_cache().get_current_length(1).unwrap()
+            runtime.kv_cache().get_current_length(0).context("TODO: add error context")?,
+            runtime.kv_cache().get_current_length(1).context("TODO: add error context")?
         );
     }
 }

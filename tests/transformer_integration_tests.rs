@@ -26,29 +26,29 @@ mod tests {
         let seq_len = 3;
         let hidden_size = 128;
         let input_shape = TensorShape::from_dims(&[batch_size, seq_len, hidden_size]);
-        let mut input_tensor = DeviceTensor::empty(&backend, input_shape).unwrap();
+        let mut input_tensor = DeviceTensor::empty(&backend, input_shape).context("TODO: add error context")?;
 
         // Create weight and bias tensors
         let norm_shape = TensorShape::from_dims(&[hidden_size]);
-        let mut weight_tensor = DeviceTensor::empty(&backend, norm_shape.clone()).unwrap();
-        let mut bias_tensor = DeviceTensor::empty(&backend, norm_shape).unwrap();
+        let mut weight_tensor = DeviceTensor::empty(&backend, norm_shape.clone()).context("TODO: add error context")?;
+        let mut bias_tensor = DeviceTensor::empty(&backend, norm_shape).context("TODO: add error context")?;
 
         // Create output tensor
         let output_shape = TensorShape::from_dims(&[batch_size, seq_len, hidden_size]);
-        let mut output_tensor = DeviceTensor::empty(&backend, output_shape).unwrap();
+        let mut output_tensor = DeviceTensor::empty(&backend, output_shape).context("TODO: add error context")?;
 
         // Initialize with test data
         let total_elements = batch_size * seq_len * hidden_size;
         let test_input: Vec<f32> = (0..total_elements)
             .map(|i| ((i as f32) * 0.1 - 5.0))
             .collect();
-        input_tensor.buffer().copy_from_host(&test_input).unwrap();
+        input_tensor.buffer().copy_from_host(&test_input).context("TODO: add error context")?;
 
         let test_weight: Vec<f32> = (0..hidden_size).map(|i| 0.5 + (i as f32 * 0.01)).collect();
-        weight_tensor.buffer().copy_from_host(&test_weight).unwrap();
+        weight_tensor.buffer().copy_from_host(&test_weight).context("TODO: add error context")?;
 
         let test_bias: Vec<f32> = (0..hidden_size).map(|i| (i as f32 * 0.02) - 1.0).collect();
-        bias_tensor.buffer().copy_from_host(&test_bias).unwrap();
+        bias_tensor.buffer().copy_from_host(&test_bias).context("TODO: add error context")?;
 
         // Test LayerNorm
         let result = backend.layernorm(
@@ -66,7 +66,7 @@ mod tests {
         output_tensor
             .buffer()
             .copy_to_host(&mut output_host)
-            .unwrap();
+            .context("TODO: add error context")?;
 
         // Check that outputs are finite
         for &val in &output_host {
@@ -120,41 +120,41 @@ mod tests {
 
         // Create input tensor [seq_len, hidden_size]
         let input_shape = TensorShape::from_dims(&[seq_len, hidden_size]);
-        let mut input_tensor = DeviceTensor::empty(&backend, input_shape).unwrap();
+        let mut input_tensor = DeviceTensor::empty(&backend, input_shape).context("TODO: add error context")?;
 
         // Create weight tensors
         let gate_shape = TensorShape::from_dims(&[hidden_size, intermediate_size]);
         let up_shape = TensorShape::from_dims(&[hidden_size, intermediate_size]);
         let down_shape = TensorShape::from_dims(&[intermediate_size, hidden_size]);
 
-        let mut gate_weight = DeviceTensor::empty(&backend, gate_shape).unwrap();
-        let mut up_weight = DeviceTensor::empty(&backend, up_shape).unwrap();
-        let mut down_weight = DeviceTensor::empty(&backend, down_shape).unwrap();
+        let mut gate_weight = DeviceTensor::empty(&backend, gate_shape).context("TODO: add error context")?;
+        let mut up_weight = DeviceTensor::empty(&backend, up_shape).context("TODO: add error context")?;
+        let mut down_weight = DeviceTensor::empty(&backend, down_shape).context("TODO: add error context")?;
 
         // Create output tensor
         let output_shape = TensorShape::from_dims(&[seq_len, hidden_size]);
-        let mut output_tensor = DeviceTensor::empty(&backend, output_shape).unwrap();
+        let mut output_tensor = DeviceTensor::empty(&backend, output_shape).context("TODO: add error context")?;
 
         // Initialize with test data
         let test_input: Vec<f32> = (0..(seq_len * hidden_size))
             .map(|i| (i as f32 * 0.01).sin())
             .collect();
-        input_tensor.buffer().copy_from_host(&test_input).unwrap();
+        input_tensor.buffer().copy_from_host(&test_input).context("TODO: add error context")?;
 
         let test_gate: Vec<f32> = (0..(hidden_size * intermediate_size))
             .map(|i| (i as f32 * 0.02) - 1.0)
             .collect();
-        gate_weight.buffer().copy_from_host(&test_gate).unwrap();
+        gate_weight.buffer().copy_from_host(&test_gate).context("TODO: add error context")?;
 
         let test_up: Vec<f32> = (0..(hidden_size * intermediate_size))
             .map(|i| (i as f32 * 0.015) + 0.5)
             .collect();
-        up_weight.buffer().copy_from_host(&test_up).unwrap();
+        up_weight.buffer().copy_from_host(&test_up).context("TODO: add error context")?;
 
         let test_down: Vec<f32> = (0..(intermediate_size * hidden_size))
             .map(|i| (i as f32 * 0.025) - 0.3)
             .collect();
-        down_weight.buffer().copy_from_host(&test_down).unwrap();
+        down_weight.buffer().copy_from_host(&test_down).context("TODO: add error context")?;
 
         // Test MLP SwiGLU
         let result = backend.mlp_swiglu(
@@ -172,7 +172,7 @@ mod tests {
         output_tensor
             .buffer()
             .copy_to_host(&mut output_host)
-            .unwrap();
+            .context("TODO: add error context")?;
 
         // Check that outputs are finite
         for &val in &output_host {
@@ -223,7 +223,7 @@ mod tests {
         // Create execution plan
         let plan_result = ExecutionPlan::new(&backend, &config);
         assert!(plan_result.is_ok(), "Failed to create execution plan");
-        let execution_plan = plan_result.unwrap();
+        let execution_plan = plan_result.context("TODO: add error context")?;
 
         // Verify we have the expected number of layers
         assert_eq!(execution_plan.layers().len(), config.num_hidden_layers);
@@ -236,18 +236,18 @@ mod tests {
         let hidden_size = config.hidden_size;
         let intermediate_size = config.intermediate_size;
         let input_shape = TensorShape::from_dims(&[1, seq_len, hidden_size]);
-        let mut input_tensor = DeviceTensor::empty(&backend, input_shape).unwrap();
+        let mut input_tensor = DeviceTensor::empty(&backend, input_shape).context("TODO: add error context")?;
 
         // Initialize input with test data
         let test_input: Vec<f32> = (0..(1 * seq_len * hidden_size))
             .map(|i| (i as f32 * 0.01).cos())
             .collect();
-        input_tensor.buffer().copy_from_host(&test_input).unwrap();
+        input_tensor.buffer().copy_from_host(&test_input).context("TODO: add error context")?;
 
         // Create output tensors
         let output_shape = TensorShape::from_dims(&[1, seq_len, hidden_size]);
-        let mut attention_output = DeviceTensor::empty(&backend, output_shape.clone()).unwrap();
-        let mut mlp_output = DeviceTensor::empty(&backend, output_shape.clone()).unwrap();
+        let mut attention_output = DeviceTensor::empty(&backend, output_shape.clone()).context("TODO: add error context")?;
+        let mut mlp_output = DeviceTensor::empty(&backend, output_shape.clone()).context("TODO: add error context")?;
 
         // Create scratch buffer manager
         let scratch = ScratchBufferManager::new(
@@ -266,7 +266,7 @@ mod tests {
             config.head_dim,
             config.max_position_embeddings,
         )
-        .unwrap();
+        .context("TODO: add error context")?;
 
         // Test that we can create the necessary tensors and they have correct shapes
         assert_eq!(input_tensor.shape().dims(), &[1, seq_len, hidden_size]);
@@ -275,23 +275,23 @@ mod tests {
 
         // Verify layer plan tensors have expected shapes
         assert_eq!(
-            layer_plan.qkv_weight.shape().unwrap(),
+            layer_plan.qkv_weight.shape().context("TODO: add error context")?,
             &[3 * hidden_size, hidden_size]
         );
         assert_eq!(
-            layer_plan.o_proj.shape().unwrap(),
+            layer_plan.o_proj.shape().context("TODO: add error context")?,
             &[hidden_size, hidden_size]
         );
         assert_eq!(
-            layer_plan.mlp_gate_proj.shape().unwrap(),
+            layer_plan.mlp_gate_proj.shape().context("TODO: add error context")?,
             &[intermediate_size, hidden_size]
         );
         assert_eq!(
-            layer_plan.mlp_down_proj.shape().unwrap(),
+            layer_plan.mlp_down_proj.shape().context("TODO: add error context")?,
             &[hidden_size, intermediate_size]
         );
-        assert_eq!(layer_plan.norm1_weight.shape().unwrap(), &[hidden_size]);
-        assert_eq!(layer_plan.norm2_weight.shape().unwrap(), &[hidden_size]);
+        assert_eq!(layer_plan.norm1_weight.shape().context("TODO: add error context")?, &[hidden_size]);
+        assert_eq!(layer_plan.norm2_weight.shape().context("TODO: add error context")?, &[hidden_size]);
 
         // TODO: Test tensor operations once lazy loading is properly implemented
         // For now, just verify that the tensors exist and have the correct shapes

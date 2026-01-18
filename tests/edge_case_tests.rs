@@ -23,8 +23,8 @@ fn test_kv_cache_empty_initial_state() {
     let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend().clone();
-    let config = CacheConfig::new(1024, 100, 32, 128, 24).unwrap();
-    let cache = KvCache::new(config, backend).unwrap();
+    let config = CacheConfig::new(1024, 100, 32, 128, 24).context("TODO: add error context")?;
+    let cache = KvCache::new(config, backend).context("TODO: add error context")?;
 
     // Cache should be empty initially
     let stats = cache.get_cache_stats();
@@ -44,13 +44,13 @@ fn test_kv_cache_single_token() {
     let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend().clone();
-    let config = CacheConfig::new(1024, 10, 4, 32, 2).unwrap();
-    let mut cache = KvCache::new(config, backend).unwrap();
+    let config = CacheConfig::new(1024, 10, 4, 32, 2).context("TODO: add error context")?;
+    let mut cache = KvCache::new(config, backend).context("TODO: add error context")?;
 
     // Allocate page for single token
     let page_id = cache.allocate_page(1);
     assert!(page_id.is_ok(), "Should allocate page for single token");
-    assert_eq!(page_id.unwrap(), 0, "First page should have ID 0");
+    assert_eq!(page_id.context("TODO: add error context")?, 0, "First page should have ID 0");
 
     let stats = cache.get_cache_stats();
     assert_eq!(
@@ -70,8 +70,8 @@ fn test_kv_cache_eviction_at_capacity() {
     let backend = fixture.backend().clone();
     let page_size = 4;
     let max_pages = 3; // Small cache for testing
-    let config = CacheConfig::new(page_size, max_pages, 4, 32, 2).unwrap();
-    let mut cache = KvCache::new(config, backend).unwrap();
+    let config = CacheConfig::new(page_size, max_pages, 4, 32, 2).context("TODO: add error context")?;
+    let mut cache = KvCache::new(config, backend).context("TODO: add error context")?;
 
     // Fill cache to capacity
     for seq_id in 1..=max_pages {
@@ -119,13 +119,13 @@ fn test_kv_cache_cross_sequence_isolation() {
     let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend().clone();
-    let config = CacheConfig::new(1024, 100, 4, 32, 2).unwrap();
-    let mut cache = KvCache::new(config, backend).unwrap();
+    let config = CacheConfig::new(1024, 100, 4, 32, 2).context("TODO: add error context")?;
+    let mut cache = KvCache::new(config, backend).context("TODO: add error context")?;
 
     // Allocate pages for different sequences
-    let page1 = cache.allocate_page(1).unwrap();
-    let page2 = cache.allocate_page(2).unwrap();
-    let page3 = cache.allocate_page(1).unwrap(); // Another page for sequence 1
+    let page1 = cache.allocate_page(1).context("TODO: add error context")?;
+    let page2 = cache.allocate_page(2).context("TODO: add error context")?;
+    let page3 = cache.allocate_page(1).context("TODO: add error context")?; // Another page for sequence 1
 
     // Verify page IDs are unique
     assert_ne!(
@@ -147,13 +147,13 @@ fn test_kv_cache_sequence_reuse() {
     let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend().clone();
-    let config = CacheConfig::new(1024, 100, 4, 32, 2).unwrap();
-    let mut cache = KvCache::new(config, backend).unwrap();
+    let config = CacheConfig::new(1024, 100, 4, 32, 2).context("TODO: add error context")?;
+    let mut cache = KvCache::new(config, backend).context("TODO: add error context")?;
 
     // Allocate multiple pages for same sequence
-    let page1 = cache.allocate_page(1).unwrap();
-    let page2 = cache.allocate_page(1).unwrap();
-    let page3 = cache.allocate_page(1).unwrap();
+    let page1 = cache.allocate_page(1).context("TODO: add error context")?;
+    let page2 = cache.allocate_page(1).context("TODO: add error context")?;
+    let page3 = cache.allocate_page(1).context("TODO: add error context")?;
 
     // Verify pages are sequential
     assert_eq!(page1, 0, "First page should be 0");
@@ -283,7 +283,7 @@ fn test_cache_config_minimum_valid_values() {
         "Minimum valid configuration should be accepted"
     );
 
-    let config = config.unwrap();
+    let config = config.context("TODO: add error context")?;
     assert_eq!(config.page_size, 1);
     assert_eq!(config.max_pages, 1);
     assert_eq!(config.num_heads, 1);
@@ -299,7 +299,7 @@ fn test_cache_config_large_values() {
     let config = CacheConfig::new(65536, 10000, 128, 256, 100);
     assert!(config.is_ok(), "Large configuration should be accepted");
 
-    let config = config.unwrap();
+    let config = config.context("TODO: add error context")?;
     assert_eq!(config.page_size, 65536);
     assert_eq!(config.max_pages, 10000);
     assert_eq!(config.num_heads, 128);

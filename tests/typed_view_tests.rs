@@ -12,10 +12,10 @@ fn test_f32_view_basic() {
         .flat_map(|&f| f.to_le_bytes().to_vec())
         .collect();
 
-    let mut temp_file = tempfile::NamedTempFile::new().unwrap();
-    temp_file.write_all(&test_bytes).unwrap();
+    let mut temp_file = tempfile::NamedTempFile::new().context("TODO: add error context")?;
+    temp_file.write_all(&test_bytes).context("TODO: add error context")?;
 
-    let mmap_weights = open_mmap_weights(temp_file.path()).unwrap();
+    let mmap_weights = open_mmap_weights(temp_file.path()).context("TODO: add error context")?;
 
     // Get f32 view
     let f32_view = mmap_weights.view_f32(0..test_f32.len());
@@ -35,10 +35,10 @@ fn test_f32_view_partial_range() {
         .flat_map(|&f| f.to_le_bytes().to_vec())
         .collect();
 
-    let mut temp_file = tempfile::NamedTempFile::new().unwrap();
-    temp_file.write_all(&test_bytes).unwrap();
+    let mut temp_file = tempfile::NamedTempFile::new().context("TODO: add error context")?;
+    temp_file.write_all(&test_bytes).context("TODO: add error context")?;
 
-    let mmap_weights = open_mmap_weights(temp_file.path()).unwrap();
+    let mmap_weights = open_mmap_weights(temp_file.path()).context("TODO: add error context")?;
 
     // Get partial f32 view (elements 2-5)
     let f32_view = mmap_weights.view_f32(2..5);
@@ -59,10 +59,10 @@ fn test_f32_view_alignment() {
         .flat_map(|&f| f.to_le_bytes().to_vec())
         .collect();
 
-    let mut temp_file = tempfile::NamedTempFile::new().unwrap();
-    temp_file.write_all(&test_bytes).unwrap();
+    let mut temp_file = tempfile::NamedTempFile::new().context("TODO: add error context")?;
+    temp_file.write_all(&test_bytes).context("TODO: add error context")?;
 
-    let mmap_weights = open_mmap_weights(temp_file.path()).unwrap();
+    let mmap_weights = open_mmap_weights(temp_file.path()).context("TODO: add error context")?;
 
     // Start at odd byte offset (not f32-aligned)
     let f32_view = mmap_weights.view_f32(1..3); // Should get elements 1, 2
@@ -80,10 +80,10 @@ fn test_f32_view_empty_range() {
         .flat_map(|&f| f.to_le_bytes().to_vec())
         .collect();
 
-    let mut temp_file = tempfile::NamedTempFile::new().unwrap();
-    temp_file.write_all(&test_bytes).unwrap();
+    let mut temp_file = tempfile::NamedTempFile::new().context("TODO: add error context")?;
+    temp_file.write_all(&test_bytes).context("TODO: add error context")?;
 
-    let mmap_weights = open_mmap_weights(temp_file.path()).unwrap();
+    let mmap_weights = open_mmap_weights(temp_file.path()).context("TODO: add error context")?;
 
     // Empty range
     let f32_view = mmap_weights.view_f32(1..1);
@@ -99,10 +99,10 @@ fn test_f32_view_bounds_check() {
         .flat_map(|&f| f.to_le_bytes().to_vec())
         .collect();
 
-    let mut temp_file = tempfile::NamedTempFile::new().unwrap();
-    temp_file.write_all(&test_bytes).unwrap();
+    let mut temp_file = tempfile::NamedTempFile::new().context("TODO: add error context")?;
+    temp_file.write_all(&test_bytes).context("TODO: add error context")?;
 
-    let mmap_weights = open_mmap_weights(temp_file.path()).unwrap();
+    let mmap_weights = open_mmap_weights(temp_file.path()).context("TODO: add error context")?;
 
     // Out of bounds range should panic or be handled gracefully
     let f32_view = mmap_weights.view_f32(0..5); // Beyond available data

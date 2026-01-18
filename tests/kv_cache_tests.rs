@@ -43,7 +43,7 @@ fn test_kv_cache_initialization() {
         .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
-    let config = CacheConfig::new(1024, 100, 32, 128, 24).unwrap();
+    let config = CacheConfig::new(1024, 100, 32, 128, 24).context("Failed to create cache config")?;
     let cache = KvCache::new(config, backend.clone());
 
     assert!(cache.is_ok());
@@ -65,8 +65,8 @@ fn test_page_allocation() {
         .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
-    let config = CacheConfig::new(4, 10, 32, 128, 24).unwrap();
-    let mut cache = KvCache::new(config, backend.clone()).unwrap();
+    let config = CacheConfig::new(4, 10, 32, 128, 24).context("Failed to create cache config")?;
+    let mut cache = KvCache::new(config, backend.clone()).context("Failed to create KV cache")?;
 
     // Allocate first page
     let page_id1 = cache.allocate_page(1);
@@ -108,8 +108,8 @@ fn test_capacity_limit() {
         .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
-    let config = CacheConfig::new(4, 2, 32, 128, 24).unwrap();
-    let mut cache = KvCache::new(config, backend.clone()).unwrap();
+    let config = CacheConfig::new(4, 2, 32, 128, 24).context("Failed to create cache config")?;
+    let mut cache = KvCache::new(config, backend.clone()).context("Failed to create KV cache")?;
 
     // Allocate up to capacity
     let page_id1 = cache.allocate_page(1);
@@ -140,11 +140,11 @@ fn test_token_appending() {
     let backend = fixture.backend();
     // Set max_pages=1 and page_size=4
     // FIX-10: With LRU eviction, when page is full, it will evict and reallocate
-    let config = CacheConfig::new(4, 1, 32, 128, 24).unwrap();
-    let mut cache = KvCache::new(config, backend.clone()).unwrap();
+    let config = CacheConfig::new(4, 1, 32, 128, 24).context("Failed to create cache config")?;
+    let mut cache = KvCache::new(config, backend.clone()).context("Failed to create KV cache")?;
 
     // Allocate a page first
-    cache.allocate_page(1).unwrap();
+    cache.allocate_page(1).context("Failed to allocate page")?;
 
     // Append tokens within page capacity
     for i in 0..4 {
@@ -172,10 +172,10 @@ fn test_token_appending_with_new_page() {
         .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
-    let config = CacheConfig::new(2, 10, 32, 128, 24).unwrap();
-    let mut cache = KvCache::new(config, backend.clone()).unwrap();
+    let config = CacheConfig::new(2, 10, 32, 128, 24).context("Failed to create cache config")?;
+    let mut cache = KvCache::new(config, backend.clone()).context("Failed to create KV cache")?;
 
-    cache.allocate_page(1).unwrap();
+    cache.allocate_page(1).context("Failed to allocate page")?;
 
     // Fill first page
     cache.append_token(1, 1).unwrap();
@@ -199,10 +199,10 @@ fn test_sequence_retrieval() {
         .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
-    let config = CacheConfig::new(4, 10, 32, 128, 24).unwrap();
-    let mut cache = KvCache::new(config, backend.clone()).unwrap();
+    let config = CacheConfig::new(4, 10, 32, 128, 24).context("Failed to create cache config")?;
+    let mut cache = KvCache::new(config, backend.clone()).context("Failed to create KV cache")?;
 
-    cache.allocate_page(1).unwrap();
+    cache.allocate_page(1).context("Failed to allocate page")?;
 
     // Append tokens
     let expected_tokens = vec![10, 20, 30];
@@ -228,10 +228,10 @@ fn test_sequence_removal() {
         .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
-    let config = CacheConfig::new(4, 10, 32, 128, 24).unwrap();
-    let mut cache = KvCache::new(config, backend.clone()).unwrap();
+    let config = CacheConfig::new(4, 10, 32, 128, 24).context("Failed to create cache config")?;
+    let mut cache = KvCache::new(config, backend.clone()).context("Failed to create KV cache")?;
 
-    cache.allocate_page(1).unwrap();
+    cache.allocate_page(1).context("Failed to allocate page")?;
     cache.append_token(1, 42).unwrap();
 
     let stats_before = cache.get_cache_stats();
@@ -260,13 +260,13 @@ fn test_multiple_sequences() {
         .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
-    let config = CacheConfig::new(4, 20, 32, 128, 24).unwrap();
-    let mut cache = KvCache::new(config, backend.clone()).unwrap();
+    let config = CacheConfig::new(4, 20, 32, 128, 24).context("Failed to create cache config")?;
+    let mut cache = KvCache::new(config, backend.clone()).context("Failed to create KV cache")?;
 
     // Create multiple sequences
-    cache.allocate_page(1).unwrap();
-    cache.allocate_page(2).unwrap();
-    cache.allocate_page(3).unwrap();
+    cache.allocate_page(1).context("Failed to allocate page")?;
+    cache.allocate_page(2).context("Failed to allocate page")?;
+    cache.allocate_page(3).context("Failed to allocate page")?;
 
     // Add tokens to each sequence
     cache.append_token(1, 100).unwrap();
@@ -302,11 +302,11 @@ fn test_page_reuse() {
         .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
-    let config = CacheConfig::new(4, 10, 32, 128, 24).unwrap();
-    let mut cache = KvCache::new(config, backend.clone()).unwrap();
+    let config = CacheConfig::new(4, 10, 32, 128, 24).context("Failed to create cache config")?;
+    let mut cache = KvCache::new(config, backend.clone()).context("Failed to create KV cache")?;
 
     // Create and remove sequence
-    cache.allocate_page(1).unwrap();
+    cache.allocate_page(1).context("Failed to allocate page")?;
     cache.append_token(1, 42).unwrap();
     cache.remove_sequence(1).unwrap();
 
@@ -314,7 +314,7 @@ fn test_page_reuse() {
     assert_eq!(stats_after_removal.free_pages, 1);
 
     // Create new sequence - should reuse the freed page
-    cache.allocate_page(2).unwrap();
+    cache.allocate_page(2).context("Failed to allocate page")?;
 
     let stats_after_reuse = cache.get_cache_stats();
     assert_eq!(stats_after_reuse.total_pages, 1); // Still only 1 page
@@ -331,8 +331,8 @@ fn test_invalid_operations() {
         .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
-    let config = CacheConfig::new(4, 10, 32, 128, 24).unwrap();
-    let mut cache = KvCache::new(config, backend.clone()).unwrap();
+    let config = CacheConfig::new(4, 10, 32, 128, 24).context("Failed to create cache config")?;
+    let mut cache = KvCache::new(config, backend.clone()).context("Failed to create KV cache")?;
 
     // Try to append token to non-existent sequence
     let result = cache.append_token(999, 42);
@@ -371,10 +371,10 @@ proptest! {
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
         // FIX-10: With LRU eviction, max_pages=1 allows unlimited tokens via eviction
-        let config = CacheConfig::new(page_size, 1, 32, 128, 24).unwrap();
-        let mut cache = KvCache::new(config, backend.clone()).unwrap();
+        let config = CacheConfig::new(page_size, 1, 32, 128, 24).context("Failed to create cache config")?;
+        let mut cache = KvCache::new(config, backend.clone()).context("Failed to create KV cache")?;
 
-        cache.allocate_page(1).unwrap();
+        cache.allocate_page(1).context("Failed to allocate page")?;
 
         let mut success_count = 0;
         for &token in &tokens {
@@ -404,12 +404,12 @@ proptest! {
         let fixture = GPU_FIXTURE.as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
-        let config = CacheConfig::new(page_size, 20, 32, 128, 24).unwrap();
-        let mut cache = KvCache::new(config, backend.clone()).unwrap();
+        let config = CacheConfig::new(page_size, 20, 32, 128, 24).context("Failed to create cache config")?;
+        let mut cache = KvCache::new(config, backend.clone()).context("Failed to create KV cache")?;
 
         // Create two sequences
-        cache.allocate_page(1).unwrap();
-        cache.allocate_page(2).unwrap();
+        cache.allocate_page(1).context("Failed to allocate page")?;
+        cache.allocate_page(2).context("Failed to allocate page")?;
 
         // Add tokens to sequence 1
         let mut seq1_success = 0;
@@ -460,8 +460,8 @@ proptest! {
         let fixture = GPU_FIXTURE.as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
-        let config = CacheConfig::new(page_size, 20, 32, 128, 24).unwrap();
-        let mut cache = KvCache::new(config, backend.clone()).unwrap();
+        let config = CacheConfig::new(page_size, 20, 32, 128, 24).context("Failed to create cache config")?;
+        let mut cache = KvCache::new(config, backend.clone()).context("Failed to create KV cache")?;
 
         let mut active_sequences = std::collections::HashSet::new();
 
@@ -511,8 +511,8 @@ fn test_concurrent_access_thread_safety() {
         .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
-    let config = CacheConfig::new(16, 100, 32, 128, 24).unwrap();
-    let cache = Arc::new(Mutex::new(KvCache::new(config, backend.clone()).unwrap()));
+    let config = CacheConfig::new(16, 100, 32, 128, 24).context("Failed to create cache config")?;
+    let cache = Arc::new(Mutex::new(KvCache::new(config, backend.clone()).context("Failed to create KV cache")?));
 
     let num_threads = 10;
     let tokens_per_thread = 20;
@@ -591,11 +591,11 @@ fn test_sequence_lifetime_tracking() {
         .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
-    let config = CacheConfig::new(4, 10, 32, 128, 24).unwrap();
-    let mut cache = KvCache::new(config, backend.clone()).unwrap();
+    let config = CacheConfig::new(4, 10, 32, 128, 24).context("Failed to create cache config")?;
+    let mut cache = KvCache::new(config, backend.clone()).context("Failed to create KV cache")?;
 
     // Allocate page for sequence 1
-    cache.allocate_page(1).unwrap();
+    cache.allocate_page(1).context("Failed to allocate page")?;
     cache.append_token(1, 100).unwrap();
     cache.append_token(1, 101).unwrap();
 
@@ -620,12 +620,12 @@ fn test_auto_cleanup_completed_sequences() {
         .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
-    let config = CacheConfig::new(4, 5, 32, 128, 24).unwrap();
-    let mut cache = KvCache::new(config, backend.clone()).unwrap();
+    let config = CacheConfig::new(4, 5, 32, 128, 24).context("Failed to create cache config")?;
+    let mut cache = KvCache::new(config, backend.clone()).context("Failed to create KV cache")?;
 
     // Create multiple sequences
     for seq_id in 1..=3 {
-        cache.allocate_page(seq_id).unwrap();
+        cache.allocate_page(seq_id).context("Failed to allocate page")?;
         cache.append_token(seq_id, seq_id * 100).unwrap();
     }
 
@@ -658,23 +658,23 @@ fn test_lru_eviction_when_capacity_exceeded() {
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     // Small cache to trigger eviction: page_size=4, max_pages=2
-    let config = CacheConfig::new(4, 2, 32, 128, 24).unwrap();
-    let mut cache = KvCache::new(config, backend.clone()).unwrap();
+    let config = CacheConfig::new(4, 2, 32, 128, 24).context("Failed to create cache config")?;
+    let mut cache = KvCache::new(config, backend.clone()).context("Failed to create KV cache")?;
 
     // Create sequence 1 and add tokens
-    cache.allocate_page(1).unwrap();
+    cache.allocate_page(1).context("Failed to allocate page")?;
     cache.append_token(1, 100).unwrap();
     cache.append_token(1, 101).unwrap();
 
     // Create sequence 2
-    cache.allocate_page(2).unwrap();
+    cache.allocate_page(2).context("Failed to allocate page")?;
     cache.append_token(2, 200).unwrap();
 
     // Update sequence 2's last accessed time (make it more recent)
     cache.update_sequence_access(2).unwrap();
 
     // Create sequence 3 - should trigger LRU eviction of sequence 1
-    cache.allocate_page(3).unwrap();
+    cache.allocate_page(3).context("Failed to allocate page")?;
 
     let stats = cache.get_cache_stats();
     // Should have evicted sequence 1 (least recently used)
@@ -693,24 +693,24 @@ fn test_lru_eviction_with_multiple_pages() {
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
     // Small cache: page_size=2, max_pages=3
-    let config = CacheConfig::new(2, 3, 32, 128, 24).unwrap();
-    let mut cache = KvCache::new(config, backend.clone()).unwrap();
+    let config = CacheConfig::new(2, 3, 32, 128, 24).context("Failed to create cache config")?;
+    let mut cache = KvCache::new(config, backend.clone()).context("Failed to create KV cache")?;
 
     // Create sequence 1 with 2 pages
-    cache.allocate_page(1).unwrap();
+    cache.allocate_page(1).context("Failed to allocate page")?;
     cache.append_token(1, 100).unwrap();
     cache.append_token(1, 101).unwrap(); // Full page
     cache.append_token(1, 102).unwrap(); // New page
 
     // Create sequence 2
-    cache.allocate_page(2).unwrap();
+    cache.allocate_page(2).context("Failed to allocate page")?;
     cache.append_token(2, 200).unwrap();
 
     // Update sequence 2's access time
     cache.update_sequence_access(2).unwrap();
 
     // Create sequence 3 - should evict sequence 1 (LRU)
-    cache.allocate_page(3).unwrap();
+    cache.allocate_page(3).context("Failed to allocate page")?;
 
     // Verify eviction
     assert!(cache.get_sequence_tokens(1).is_err());
@@ -727,11 +727,11 @@ fn test_sequence_access_time_tracking() {
         .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
-    let config = CacheConfig::new(4, 10, 32, 128, 24).unwrap();
-    let mut cache = KvCache::new(config, backend.clone()).unwrap();
+    let config = CacheConfig::new(4, 10, 32, 128, 24).context("Failed to create cache config")?;
+    let mut cache = KvCache::new(config, backend.clone()).context("Failed to create KV cache")?;
 
     // Create sequence 1
-    cache.allocate_page(1).unwrap();
+    cache.allocate_page(1).context("Failed to allocate page")?;
 
     // Get initial access time
     let initial_time = cache.get_sequence_access_time(1).unwrap();
@@ -755,12 +755,12 @@ fn test_cleanup_preserves_active_sequences() {
         .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
-    let config = CacheConfig::new(4, 10, 32, 128, 24).unwrap();
-    let mut cache = KvCache::new(config, backend.clone()).unwrap();
+    let config = CacheConfig::new(4, 10, 32, 128, 24).context("Failed to create cache config")?;
+    let mut cache = KvCache::new(config, backend.clone()).context("Failed to create KV cache")?;
 
     // Create multiple sequences
     for seq_id in 1..=5 {
-        cache.allocate_page(seq_id).unwrap();
+        cache.allocate_page(seq_id).context("Failed to allocate page")?;
         cache.append_token(seq_id, seq_id * 10).unwrap();
     }
 
@@ -792,12 +792,12 @@ fn test_get_active_sequences() {
         .as_ref()
         .expect("GPU not available - test skipped");
     let backend = fixture.backend();
-    let config = CacheConfig::new(4, 10, 32, 128, 24).unwrap();
-    let mut cache = KvCache::new(config, backend.clone()).unwrap();
+    let config = CacheConfig::new(4, 10, 32, 128, 24).context("Failed to create cache config")?;
+    let mut cache = KvCache::new(config, backend.clone()).context("Failed to create KV cache")?;
 
     // Create sequences
     for seq_id in 1..=5 {
-        cache.allocate_page(seq_id).unwrap();
+        cache.allocate_page(seq_id).context("Failed to allocate page")?;
     }
 
     // Mark some as completed
