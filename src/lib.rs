@@ -32,6 +32,7 @@ pub mod model;
 pub mod models;
 pub mod ops;
 pub mod profiling;
+pub mod prompt;
 pub mod sampler;
 pub mod scheduler;
 pub mod tensor;
