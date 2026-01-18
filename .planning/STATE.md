@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-01-18)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Phase 1 — Critical Bug Fixes
+**Current focus:** Phase 2 — Test Infrastructure
 
 ## Current Position
 
-Phase: 1 of 10 (Critical Bug Fixes)
-Plan: 3/3 planned, 3/3 executed
-Status: Complete
-Last activity: 2026-01-18 — Phase 1 complete
+Phase: 2 of 10 (Test Infrastructure)
+Plan: 0/4 planned, 0/4 executed
+Status: Planned
+Last activity: 2026-01-18 — Phase 2 planning complete
 
-Progress: ██████████░░░░ 100% (Phase 1 complete)
+Progress: ██░░░░░░░░░░ 20% (Phase 1 complete, Phase 2 planned)
 
 ## Performance Metrics
 
@@ -28,6 +28,7 @@ Progress: ██████████░░░░ 100% (Phase 1 complete)
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1 (Critical Bug Fixes) | 3 | ~9 hours | ~3 hours |
+| 2 (Test Infrastructure) | 4 | ~15 hours (est.) | ~3.75 hours |
 
 **Recent Trend:**
 - Last 3 plans: 01-01, 01-02, 01-03
@@ -61,18 +62,8 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-01-18
-Stopped at: Phase 1 complete
+Stopped at: Phase 2 planning complete
 Resume file: None
-
-## Phase 1 Plans
-
-| Plan | Title | Status |
-|------|-------|--------|
-| 01-01 | Fix GPU stream synchronization (hipBLAS vs hipMemcpy mismatch) | ✅ Complete |
-| 01-02 | Fix inference loop spawn race condition | ✅ Complete |
-| 01-03 | Fix engine cleanup in CLI | ✅ Complete |
-
----
 
 ## Phase 1 Summary
 
@@ -114,6 +105,27 @@ Resume file: None
 - Keep `synchronize()` calls for defensive programming
 - 500ms cleanup timeout sufficient for CLI (Phase 10 will implement task join)
 
-### Next Phase
+## Phase 2 Plans
 
-**Phase 2: Test Infrastructure** - Restore commented tests and improve coverage
+| Plan | Title | Status |
+|------|-------|--------|
+| 02-01 | Rewrite 20+ commented GGUF loader tests for new API | Planned |
+| 02-02 | Restore embedding_to_lmhead tests | Planned |
+| 02-03 | Add end-to-end inference tests | Planned |
+| 02-04 | Replace unwrap() with proper error handling in tests | Planned |
+
+### Phase 2 Overview
+
+**Goal**: Restore commented tests and improve test coverage
+
+**All plans can execute in parallel** (no dependencies between them).
+
+**Key Files**:
+- `tests/loader_tests.rs` - 5 commented GGUF loader tests
+- `tests/embedding_to_lmhead_tests.rs` - Entire file commented (436 lines)
+- `tests/e2e_inference_tests.rs` - New file needed for E2E tests
+- All test files - 463 unwrap() calls to replace
+
+---
+
+*Updated: 2026-01-18*
