@@ -3,6 +3,8 @@
 //! A high-performance inference engine for Large Language Models
 //! specifically designed for AMD GPUs using ROCm and HIP.
 
+#![cfg_attr(feature = "simd", feature(portable_simd))] // For std::simd CPU backend (Rust 1.82+)
+
 #![allow(clippy::too_many_arguments)] // Many FFI functions and kernel launches need many args
 #![allow(clippy::manual_slice_size_calculation)] // Common in GPU kernel code
 #![allow(clippy::needless_range_loop)] // Clearer for GPU operations

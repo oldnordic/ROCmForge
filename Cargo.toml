@@ -2,6 +2,7 @@
 name = "rocmforge"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.82"  # Required for stable std::simd
 authors = ["ROCmForge Team"]
 description = "AMD GPU inference engine for LLMs"
 license = "MIT"
@@ -89,6 +90,8 @@ path = "test_inference.rs"
 [features]
 default = []
 rocm = []
+# Enable SIMD CPU backend (requires nightly Rust)
+simd = []
 # cuda = ["cudarc"]
 
 [profile.release]
