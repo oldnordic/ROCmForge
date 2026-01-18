@@ -1287,6 +1287,13 @@ impl GgmlBackend for HipGgmlBackend {
     }
 
     fn synchronize(&mut self) -> GgmlResult<()> {
-        Ok(())
+        // PHASE 01 FIX: Actually synchronize instead of being a no-op
+        //
+        // Previously this was a no-op that just returned Ok(()).
+        // This caused hangs because GPU operations queued on the backend's
+        // stream weren't completing before the caller tried to read results.
+        self.backend
+            .synchronize()
+            .map_err(|e| GgmlError::Backend(e.to_string()))
     }
 }
