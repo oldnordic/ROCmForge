@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-18)
 ## Current Position
 
 Phase: 7 of 10 (Hybrid Execution)
-Plan: 1 of 4
-Status: 07-01 complete, Plan 1 complete
-Last activity: 2026-01-18 — Completed 07-01 (Hybrid scheduler architecture)
+Plan: 2 of 4
+Status: 07-02 complete, Plan 2 complete
+Last activity: 2026-01-18 — Completed 07-02 (Backend capability implementation)
 
-Progress: ██████████ 82.0% (Phases 1-6 complete, Phase 7 plan 1/4 complete)
+Progress: ██████████ 84.5% (Phases 1-6 complete, Phase 7 plan 2/4 complete)
 
 **Phase 6 Status:** ✅ Complete
 - 06-01: Complete - Flash attention research (RESEARCH.md with kernel documentation and integration strategy)
@@ -22,9 +22,9 @@ Progress: ██████████ 82.0% (Phases 1-6 complete, Phase 7 pla
 - 06-03: Complete - Flash attention kernel integration (GPU kernel calls with buffer management)
 - 06-04: Complete - Benchmark and optimize attention (Benchmark suite with CPU baselines)
 
-**Phase 7 Status:** 🔄 In Progress (1/4 plans complete)
+**Phase 7 Status:** 🔄 In Progress (2/4 plans complete)
 - 07-01: Complete - Hybrid scheduler architecture (CapabilityProvider trait, HybridScheduler with 4 strategies, telemetry system)
-- 07-02: Pending - Backend capability implementation
+- 07-02: Complete - Backend capability implementation (CpuBackend and HipGgmlBackend implement CapabilityProvider)
 - 07-03: Pending - Cost modeling for backend selection
 - 07-04: Pending - Integration and testing
 
@@ -49,9 +49,9 @@ Progress: ██████████ 82.0% (Phases 1-6 complete, Phase 7 pla
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 20
-- Average duration: ~1.52 hours/plan (including testing)
-- Total execution time: ~30.4 hours
+- Total plans completed: 21
+- Average duration: ~1.48 hours/plan (including testing)
+- Total execution time: ~31.1 hours
 
 **By Phase:**
 
@@ -63,11 +63,11 @@ Progress: ██████████ 82.0% (Phases 1-6 complete, Phase 7 pla
 | 4 (CPU SIMD Backend) | 4 | ~1.2 hours | ~0.3 hours |
 | 5 (Quantized Operations) | 4 | ~0.4 hours | ~6 min |
 | 6 (Attention Optimization) | 4 | ~2 hours | ~30 min |
-| 7 (Hybrid Execution) | 1 | ~0.25 hours | ~15 min |
+| 7 (Hybrid Execution) | 2 | ~0.5 hours | ~15 min |
 
 **Recent Trend:**
-- Last 10 plans: 04-01, 04-02, 04-03, 04-04, 05-01, 05-02, 05-03, 05-04, 06-01 to 06-04, 07-01
-- Trend: Fast execution, architecture complete in ~15 min
+- Last 10 plans: 04-01, 04-02, 04-03, 04-04, 05-01, 05-02, 05-03, 05-04, 06-01 to 06-04, 07-01, 07-02
+- Trend: Fast execution, ~15 min per plan for Phase 7
 
 *Updated after each plan completion*
 
@@ -152,6 +152,42 @@ Resume file: None
 - No actual backend integration (CpuBackend/HipGgmlBackend don't implement CapabilityProvider yet)
 - Placeholder cost estimation (100us, 1024 bytes)
 - GPU name hardcoded as "gpu"
+
+## Phase 7 Plan 2 Summary
+
+**Completed:** 2026-01-18
+**Duration:** 15 min
+
+### Accomplishments
+
+1. **Op to OpType Mapping** - Added OpType::from_op() method to bridge Op enum with capability system
+2. **CpuBackend CapabilityProvider** - Implemented capability declarations for all CPU operations (MatMul, Add, Scale, Softmax, QuantizedMatMul, Attention)
+3. **HipGgmlBackend CapabilityProvider** - Implemented capability declarations for all GPU operations with size limits and feature requirements
+4. **12/12 New Tests Passing** - 6 CPU capability tests + 6 GPU capability tests
+
+### Commits
+
+- `f1f5cd9`: feat(07-02): add Op to OpType mapping function
+- `b866c0f`: feat(07-02): implement CapabilityProvider for CpuBackend
+- `4988b14`: feat(07-02): implement CapabilityProvider for HipGgmlBackend
+
+### Decisions Made
+
+- **Use correct trait name** - Plan referenced CapableBackend but actual trait is CapabilityProvider from 07-01
+- **DType corrections** - Plan specified DType::I8 which doesn't exist; used DType::I32 instead
+- **GPU-only testing** - GPU tests verify capability structure without requiring actual GPU hardware
+
+### Files Modified
+
+- `src/ggml/hybrid_scheduler.rs` - Added OpType::from_op() method
+- `src/ggml/cpu_backend.rs` - Added CapabilityProvider impl + 6 tests (+144 LOC)
+- `src/ggml/hip_backend/mod.rs` - Added CapabilityProvider impl + 6 tests (+192 LOC)
+
+### Test Coverage
+
+- **Total tests**: 31 passing (8 hybrid_scheduler + 17 cpu_backend + 6 hip_backend)
+- **CPU capability tests**: Verify CPU supports all basic operations, correct backend ID
+- **GPU capability tests**: Verify GPU capability structure, size limits, feature requirements
 
 ## Phase 2 Plan 2 Summary
 
