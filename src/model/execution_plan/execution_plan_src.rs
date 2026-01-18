@@ -1,28 +1,9 @@
-//! Execution Plan for Transformer Layers
-//!
-//! Static execution plan describing how each transformer layer executes.
-//! Minimal design - no dynamic graph, no heavyweight abstractions.
-//!
-//! # Lazy Loading Status (Phase 1 COMPLETE, Phase 2 COMPLETE)
-//!
-//! **Phase 1** (Infrastructure): COMPLETE
-//! - `LazyTensor` handles implemented in `src/loader/lazy_tensor.rs`
-//! - Memory-mapped file access via `MmapGguf`
-//! - On-demand tensor loading with GPU cache
-//! - 67% RAM reduction during model loading (~15GB → ~5GB)
-//!
-//! **Phase 2** (ExecutionPlan Redesign): COMPLETE (Option A Implementation)
-//! - `ExecutionPlan` now stores `Arc<LazyTensor>` instead of `DeviceTensor`
-//! - Tensors loaded on-demand during first forward pass
-//! - Model initialization <5s (down from ~60s)
-//! - Combined with Phase 17 async loading: ~20x total speedup for cold start
-//!
-//! ## Current Architecture (Phase 2)
-//!
-//! - **Storage**: `Arc<LazyTensor>` for all weights (lazy handles)
-//! - **Loading**: On-demand via `get_or_load_tensor()` during inference
-//! - **Caching**: GPU cache in `GgufLoader` (thread-safe RwLock)
-//! - **Thread Safety**: `Arc<LazyTensor>` is Send + Sync, OnceCell for cached tensors
+// This file contains the original execution_plan.rs code
+// It will be gradually modularized into separate files
+// See mod.rs for module-level documentation
+
+use super::{Architecture, LayerPlan};
+use super::ggml_plan::{EmbeddingGgmlPlan, RopeCache, LayerGgmlPlan};
 
 use crate::attention::rope::RopeConfig;
 use crate::backend::{DeviceTensor, HipBackend, HipError, HipResult};
@@ -38,37 +19,6 @@ use once_cell::sync::OnceCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex; // Renamed to avoid conflict with once_cell::sync
-
-/// Detected model architecture based on tensor naming patterns
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Architecture {
-    /// Qwen2-style: tensors start with `blk.N.`
-    Qwen2,
-    /// LLaMA-style: tensors start with `transformer.layers.N.`
-    LLaMA,
-    /// Mistral-style: tensors start with `model.layers.N.`
-    Mistral,
-}
-
-impl Architecture {
-    /// Get the layer prefix pattern for this architecture
-    pub fn layer_prefix(&self, layer_idx: usize) -> String {
-        match self {
-            Architecture::Qwen2 => format!("blk.{}", layer_idx),
-            Architecture::LLaMA => format!("transformer.layers.{}", layer_idx),
-            Architecture::Mistral => format!("model.layers.{}", layer_idx),
-        }
-    }
-
-    /// Get the architecture name for logging
-    pub fn name(&self) -> &'static str {
-        match self {
-            Architecture::Qwen2 => "Qwen2",
-            Architecture::LLaMA => "LLaMA",
-            Architecture::Mistral => "Mistral",
-        }
-    }
-}
 
 /// Loading statistics for debugging/observability
 ///
@@ -128,100 +78,6 @@ pub struct ExecutionPlan {
 
     /// Position encoding handler for applying RoPE embeddings
     position_handler: Option<GlmPositionHandler>,
-}
-
-#[derive(Debug)]
-struct EmbeddingGgmlPlan {
-    graph: Graph,
-    backend: StdMutex<HipGgmlBackend>,
-    tokens_buffer: crate::backend::HipBuffer,
-    output_buffer: crate::backend::HipBuffer,
-    max_seq_len: usize,
-    hidden_size: usize,
-}
-
-#[derive(Debug)]
-struct RopeCache {
-    cos: DeviceTensor,
-    sin: DeviceTensor,
-    half_dim: usize,
-    max_seq_len: usize,
-}
-
-#[derive(Debug)]
-struct LayerGgmlPlan {
-    graph: StdMutex<Graph>,
-    backend: StdMutex<HipGgmlBackend>,
-    input_id: crate::ggml::TensorId,
-    output_id: crate::ggml::TensorId,
-    kv_read_k_id: crate::ggml::TensorId,
-    kv_read_v_id: crate::ggml::TensorId,
-    kv_write_k_id: crate::ggml::TensorId,
-    kv_write_v_id: crate::ggml::TensorId,
-    scores_id: crate::ggml::TensorId,
-    softmax_id: crate::ggml::TensorId,
-    cos_id: crate::ggml::TensorId,
-    sin_id: crate::ggml::TensorId,
-    num_heads: usize,
-    head_dim: usize,
-    hidden_size: usize,
-    max_seq_len: usize,
-}
-
-/// Execution plan for a single transformer layer
-///
-/// Contains lazy tensor handles for all weights needed for layer execution:
-/// - QKV projection (fused Q, K, V OR separate Q, K, V)
-/// - Output projection
-/// - MLP layers (gate_proj, up_proj, down_proj for GLM)
-/// - Layer normalization weights
-#[derive(Debug, Clone)]
-pub struct LayerPlan {
-    /// Fused QKV projection weight matrix [3 * hidden_size, hidden_size]
-    /// NOTE: Some models (e.g., Qwen2) use separate Q, K, V weights instead.
-    /// Check q_weight, k_weight, v_weight below - if those are present, use them.
-    pub qkv_weight: Arc<LazyTensor>,
-
-    /// Separate Q projection weight [hidden_size, hidden_size]
-    /// Present when model uses separate Q, K, V projections (e.g., Qwen2)
-    pub q_weight: Option<Arc<LazyTensor>>,
-    /// Separate K projection weight [hidden_size, kv_dim]
-    pub k_weight: Option<Arc<LazyTensor>>,
-    /// Separate V projection weight [hidden_size, kv_dim]
-    pub v_weight: Option<Arc<LazyTensor>>,
-
-    /// Optional QKV bias [3 * hidden_size] (for fused) or separate biases
-    pub qkv_bias: Option<Arc<LazyTensor>>,
-    pub q_bias: Option<Arc<LazyTensor>>,
-    pub k_bias: Option<Arc<LazyTensor>>,
-    pub v_bias: Option<Arc<LazyTensor>>,
-
-    /// Output projection weight [hidden_size, hidden_size]
-    pub o_proj: Arc<LazyTensor>,
-    /// Optional output projection bias [hidden_size]
-    pub o_proj_bias: Option<Arc<LazyTensor>>,
-    /// MLP gate projection weight [intermediate_size, hidden_size] (GLM)
-    pub mlp_gate_proj: Arc<LazyTensor>,
-    /// MLP up projection weight [intermediate_size, hidden_size] (GLM)
-    pub mlp_up_proj: Arc<LazyTensor>,
-    /// MLP down projection weight [hidden_size, intermediate_size] (GLM)
-    pub mlp_down_proj: Arc<LazyTensor>,
-    /// Legacy MLP first layer weight [intermediate_size, hidden_size]
-    pub mlp_fc1: Arc<LazyTensor>,
-    /// Optional MLP first layer bias [intermediate_size]
-    pub mlp_fc1_bias: Option<Arc<LazyTensor>>,
-    /// Legacy MLP second layer weight [hidden_size, intermediate_size]
-    pub mlp_fc2: Arc<LazyTensor>,
-    /// Optional MLP second layer bias [hidden_size]
-    pub mlp_fc2_bias: Option<Arc<LazyTensor>>,
-    /// First layer norm weight [hidden_size]
-    pub norm1_weight: Arc<LazyTensor>,
-    /// Optional first layer norm bias [hidden_size]
-    pub norm1_bias: Option<Arc<LazyTensor>>,
-    /// Second layer norm weight [hidden_size]
-    pub norm2_weight: Arc<LazyTensor>,
-    /// Optional second layer norm bias [hidden_size]
-    pub norm2_bias: Option<Arc<LazyTensor>>,
 }
 
 #[allow(dead_code)]
@@ -397,55 +253,7 @@ impl ExecutionPlan {
     /// - LLaMA: tensors start with `transformer.layers.N.`
     /// - Mistral: tensors start with `model.layers.N.`
     fn detect_architecture(tensor_names: &HashSet<String>) -> HipResult<Architecture> {
-        // Check for Qwen2 pattern: blk.0.*
-        let qwen2_pattern = "blk.0.";
-        let has_qwen2 = tensor_names
-            .iter()
-            .any(|name| name.starts_with(qwen2_pattern));
-
-        if has_qwen2 {
-            println!("Detected architecture: Qwen2 (pattern: {})", qwen2_pattern);
-            return Ok(Architecture::Qwen2);
-        }
-
-        // Check for LLaMA pattern: transformer.layers.0.*
-        let llama_pattern = "transformer.layers.0.";
-        let has_llama = tensor_names
-            .iter()
-            .any(|name| name.starts_with(llama_pattern));
-
-        if has_llama {
-            println!("Detected architecture: LLaMA (pattern: {})", llama_pattern);
-            return Ok(Architecture::LLaMA);
-        }
-
-        // Check for Mistral pattern: model.layers.0.*
-        let mistral_pattern = "model.layers.0.";
-        let has_mistral = tensor_names
-            .iter()
-            .any(|name| name.starts_with(mistral_pattern));
-
-        if has_mistral {
-            println!(
-                "Detected architecture: Mistral (pattern: {})",
-                mistral_pattern
-            );
-            return Ok(Architecture::Mistral);
-        }
-
-        // Unknown architecture - try to provide helpful error
-        let sample_tensors: Vec<_> = tensor_names
-            .iter()
-            .filter(|name| name.contains('.'))
-            .take(10)
-            .collect();
-
-        Err(HipError::GenericError(format!(
-            "Unable to detect model architecture from tensor names. \
-             Expected patterns like 'blk.0.*', 'transformer.layers.0.*', or 'model.layers.0.*'. \
-             Sample tensors found: {:?}",
-            sample_tensors
-        )))
+        Architecture::detect(tensor_names)
     }
 
     /// Create execution plan from GGUF loader using helper functions
@@ -4371,40 +4179,5 @@ impl ExecutionPlan {
     }
 }
 
-impl LayerPlan {
-    /// Create a new layer plan
-    ///
-    /// **DEPRECATED**: This method is deprecated due to Phase 2 lazy loading.
-    /// Layer plans are now created via `ExecutionPlan::from_gguf()` which properly
-    /// initializes lazy tensor handles.
-    #[deprecated(note = "Layer plans are created by ExecutionPlan::from_gguf()")]
-    fn new(_backend: &HipBackend, _config: &ModelConfig, _layer_idx: usize) -> HipResult<Self> {
-        Err(HipError::GenericError(
-            "LayerPlan::new() is deprecated. Use ExecutionPlan::from_gguf() instead.".to_string(),
-        ))
-    }
-
-    /* Old accessor methods removed - LayerPlan now stores Arc<LazyTensor> instead of DeviceTensor
-     *
-     * Phase 2 Lazy Loading Architecture:
-     * - LayerPlan stores Arc<LazyTensor> handles (not loaded DeviceTensor)
-     * - Access to layer weights is through ExecutionPlan::get_or_load_tensor()
-     * - Tensors are loaded on-demand during first forward pass
-     * - The forward_layer() method demonstrates the correct pattern for accessing layer weights
-     *
-     * The old accessor methods (qkv_weight, mlp_fc1, etc.) are removed because:
-     * 1. They returned &DeviceTensor but we now store Arc<LazyTensor>
-     * 2. Lazy loading requires on-demand access via ExecutionPlan, not direct field access
-     * 3. The ExecutionPlan::forward_layer() method properly handles lazy loading
-     */
-}
-
-// Include GPU attention integration tests
-#[cfg(test)]
-#[cfg(feature = "rocm")]
-include!("gpu_attention_integration_tests.rs");
-
-// Include lazy loading tests
-#[cfg(test)]
-#[cfg(feature = "rocm")]
-include!("lazy_tests.rs");
+// Note: LayerPlan impl is now in layer_plan.rs
+// Note: Test includes are now in mod.rs
