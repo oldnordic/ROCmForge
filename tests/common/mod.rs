@@ -35,6 +35,7 @@
 
 use once_cell::sync::Lazy;
 use rocmforge::backend::HipBackend;
+pub use serial_test::serial;
 
 /// Global GPU test fixture
 ///
@@ -84,13 +85,13 @@ impl GpuTestFixture {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let backend = HipBackend::new_checked()?;  // Use new_checked!
         let (free, total) = backend.get_memory_info()?;
-        let device = backend.device();
+        let device_name = backend.device().name.clone();
 
         Ok(Self {
             backend,
             initial_free_mb: free / 1024 / 1024,
             initial_total_mb: total / 1024 / 1024,
-            device_name: device.name.clone(),
+            device_name,
         })
     }
 
