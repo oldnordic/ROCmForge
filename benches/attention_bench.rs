@@ -10,11 +10,8 @@
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-#[cfg(feature = "rocm")]
-use rocmforge::attention::{
-    backend_registry::{AttentionBackendRegistry, AttentionConfig},
-    cpu::CpuBackend,
-};
+// Import backend registry types (always available for CPU)
+use rocmforge::attention::backend_registry::{AttentionBackendRegistry, AttentionConfig};
 
 // ============================================================================
 // Benchmark Harness
@@ -32,30 +29,6 @@ impl Benchmark {
             name: name.to_string(),
             iterations,
             warmup_iterations: iterations.min(10),
-        }
-    }
-
-    fn run<F>(&self, mut f: F) -> BenchmarkResult
-    where
-        F: FnMut(),
-    {
-        // Warmup
-        for _ in 0..self.warmup_iterations {
-            f();
-        }
-
-        // Actual measurements
-        let mut durations = Vec::with_capacity(self.iterations);
-        for _ in 0..self.iterations {
-            let start = Instant::now();
-            f();
-            durations.push(start.elapsed());
-        }
-
-        BenchmarkResult {
-            name: self.name.clone(),
-            iterations: self.iterations,
-            durations,
         }
     }
 
@@ -121,20 +94,18 @@ impl BenchmarkResult {
 
     fn avg_ms(&self) -> f64 {
         let total: Duration = self.durations.iter().sum();
-        avg_duration(total, self.iterations).as_secs_f64() * 1000.0
+        (total / self.iterations as u32).as_secs_f64() * 1000.0
     }
-}
-
-fn avg_duration(total: Duration, count: usize) -> Duration {
-    total / count as u32
 }
 
 // ============================================================================
 // Test Data Generation
 // ============================================================================
 
-fn generate_test_data(seq_len: usize, num_heads: usize, head_dim: usize) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
-    let total_size = seq_len * num_heads * head_dim;
+fn generate_test_data(dim: usize) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    // Generate test data for [batch_size=1, seq_len=dim, dim] shape
+    // CPU backend expects: q.len() = batch_size * seq_len * dim = 1 * dim * dim
+    let total_size = dim * dim;
 
     // Generate test data with some variation (not all zeros)
     let mut q = Vec::with_capacity(total_size);
@@ -158,35 +129,37 @@ fn benchmark_cpu_attention() {
     println!("\n[CPU Attention Benchmarks]");
     println!("==========================");
 
-    // Test configurations: (seq_len, num_heads, head_dim)
-    let configs = vec![
-        (128, 4, 32),
-        (256, 8, 64),
-        (512, 8, 64),
-        (1024, 16, 64),
-    ];
+    let registry = AttentionBackendRegistry::new();
+    let cpu_backend = registry.get_backend("cpu").unwrap();
 
-    for (seq_len, num_heads, head_dim) in configs {
-        let dim = num_heads * head_dim;
-        let total_size = seq_len * num_heads * head_dim;
+    // Test configurations: different dimensions
+    // Shape is [batch_size=1, seq_len=dim, dim]
+    let dims = vec![32, 64, 128, 256, 512];
 
-        let (q, k, v) = generate_test_data(seq_len, num_heads, head_dim);
+    for dim in dims {
+        let (q, k, v) = generate_test_data(dim);
 
-        let bench_name = format!("CPU Attention (seq={}, heads={}, dim={})", seq_len, num_heads, head_dim);
+        let bench_name = format!("CPU Attention (seq_len={}, dim={})", dim, dim);
         let bench = Benchmark::new(&bench_name, 100);
 
         let result = bench.run_time(|| {
-            black_box(
-                CpuBackend::forward(dim, &q, &k, &v, None, None)
-                    .expect("CPU forward should succeed"),
-            )
+            match cpu_backend.forward(
+                &AttentionConfig::new(dim, 1, dim),
+                &q, &k, &v, None
+            ) {
+                Ok(output) => black_box(output),
+                Err(e) => {
+                    eprintln!("CPU forward failed: {}", e);
+                    Vec::new()
+                }
+            }
         });
 
         result.report();
 
         // Calculate tokens per second
         let avg_ms = result.avg_ms();
-        let tokens_per_sec = (seq_len * 1000.0) / avg_ms;
+        let tokens_per_sec = (dim as f64 * 1000.0) / avg_ms;
         println!("Tokens/sec: {:.2}", tokens_per_sec);
     }
 }
@@ -194,6 +167,26 @@ fn benchmark_cpu_attention() {
 // ============================================================================
 // GPU Benchmarks (ROCm Feature Required)
 // ============================================================================
+
+#[cfg(feature = "rocm")]
+fn generate_test_data_flash(seq_len: usize, num_heads: usize, head_dim: usize) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    // FlashAttention expects: [batch_size, seq_len, num_heads * head_dim]
+    // But BackendImplementation provides: [batch_size, seq_len, dim] where dim = num_heads * head_dim
+    let dim = num_heads * head_dim;
+    let total_size = seq_len * dim;
+
+    let mut q = Vec::with_capacity(total_size);
+    let mut k = Vec::with_capacity(total_size);
+    let mut v = Vec::with_capacity(total_size);
+
+    for i in 0..total_size {
+        q.push((i as f32 * 0.01).sin() * 0.1);
+        k.push((i as f32 * 0.01).cos() * 0.1);
+        v.push((i as f32 * 0.01).tan() * 0.1);
+    }
+
+    (q, k, v)
+}
 
 #[cfg(feature = "rocm")]
 fn benchmark_flash_attention() {
@@ -214,14 +207,13 @@ fn benchmark_flash_attention() {
     // Test configurations: (seq_len, num_heads, head_dim)
     let configs = vec![
         (128, 4, 32),
-        (256, 8, 64),
+        (256, 8, 32),
         (512, 8, 64),
         (1024, 16, 64),
     ];
 
     for (seq_len, num_heads, head_dim) in configs {
         let dim = num_heads * head_dim;
-        let total_size = seq_len * num_heads * head_dim;
 
         let config = AttentionConfig::new(dim, num_heads, head_dim)
             .with_max_sequence_length(seq_len);
@@ -231,7 +223,7 @@ fn benchmark_flash_attention() {
             continue;
         }
 
-        let (q, k, v) = generate_test_data(seq_len, num_heads, head_dim);
+        let (q, k, v) = generate_test_data_flash(seq_len, num_heads, head_dim);
 
         let bench_name = format!("Flash Attention (seq={}, heads={}, dim={})", seq_len, num_heads, head_dim);
         let bench = Benchmark::new(&bench_name, 50); // Fewer iterations for GPU
@@ -240,7 +232,7 @@ fn benchmark_flash_attention() {
             match flash_backend.forward(&config, &q, &k, &v, None) {
                 Ok(output) => black_box(output),
                 Err(e) => {
-                    println!("Flash attention failed: {}", e);
+                    eprintln!("Flash attention failed: {}", e);
                     Vec::new()
                 }
             }
@@ -250,7 +242,7 @@ fn benchmark_flash_attention() {
 
         // Calculate tokens per second
         let avg_ms = result.avg_ms();
-        let tokens_per_sec = (seq_len * 1000.0) / avg_ms;
+        let tokens_per_sec = (seq_len as f64 * 1000.0) / avg_ms;
         println!("Tokens/sec: {:.2}", tokens_per_sec);
     }
 }
@@ -271,51 +263,31 @@ fn benchmark_cpu_vs_flash() {
     let flash_backend = flash_backend.unwrap();
 
     // Test configuration that works for both
-    let seq_len = 512;
-    let num_heads = 8;
-    let head_dim = 64;
-    let dim = num_heads * head_dim;
+    // Use smaller size since CPU backend uses seq_len = dim
+    let dim = 64;
+    let (q, k, v) = generate_test_data(dim);
 
-    let config = AttentionConfig::new(dim, num_heads, head_dim)
-        .with_max_sequence_length(seq_len);
-
-    let (q, k, v) = generate_test_data(seq_len, num_heads, head_dim);
+    let cpu_config = AttentionConfig::new(dim, 1, dim);
 
     // Benchmark CPU
     let cpu_bench = Benchmark::new("CPU (comparison)", 100);
     let cpu_result = cpu_bench.run_time(|| {
-        black_box(
-            CpuBackend::forward(dim, &q, &k, &v, None, None)
-                .expect("CPU forward should succeed"),
-        )
-    });
-
-    // Benchmark Flash Attention
-    let flash_bench = Benchmark::new("Flash Attention (comparison)", 50);
-    let flash_result = flash_bench.run_time(|| {
-        match flash_backend.forward(&config, &q, &k, &v, None) {
+        match cpu_backend.forward(&cpu_config, &q, &k, &v, None) {
             Ok(output) => black_box(output),
             Err(e) => {
-                println!("Flash attention failed: {}", e);
+                eprintln!("CPU forward failed: {}", e);
                 Vec::new()
             }
         }
     });
 
     cpu_result.report();
-    flash_result.report();
 
-    // Calculate speedup
-    let cpu_avg = cpu_result.avg_ms();
-    let flash_avg = flash_result.avg_ms();
-
-    if flash_avg < cpu_avg {
-        let speedup = cpu_avg / flash_avg;
-        println!("\n>>> Flash Attention Speedup: {:.2}x", speedup);
-    } else {
-        let slowdown = flash_avg / cpu_avg;
-        println!("\n>>> Flash Attention Slowdown: {:.2}x (may be due to overhead)", slowdown);
-    }
+    // Note: FlashAttention comparison skipped due to layout mismatch
+    // CPU backend uses [batch, seq_len, dim]
+    // FlashAttention backend uses [batch, seq_len, num_heads * head_dim] but expects different internal layout
+    println!("\n>>> Flash Attention comparison skipped (layout mismatch between backends)");
+    println!(">>> See 06-03-SUMMARY.md for known layout issues");
 }
 
 // ============================================================================
