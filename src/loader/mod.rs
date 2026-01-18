@@ -20,6 +20,13 @@ pub use tensor_type::GgufTensorType;
 pub use metadata::GgufMetadata;
 pub use gguf_tensor::GgufTensor;
 
+// Re-export dequantization functions for benchmarks
+pub use dequant::{
+    dequant_q2_k, dequant_q3_k, dequant_q4_0, dequant_q4_1, dequant_q4_k,
+    dequant_q5_0, dequant_q5_1, dequant_q5_k, dequant_q6_k, dequant_q8_0,
+    dequant_mxfp4, dequant_mxfp6, dequantize,
+};
+
 pub use lazy_tensor::*;
 pub use mmap::*;
 pub use mmap_loader::*;
