@@ -103,10 +103,31 @@ impl GgufMetadata {
                 self.max_position_embeddings = value.parse().unwrap_or(2048)
             }
             "llama.vocab_size" => self.vocab_size = value.parse().unwrap_or(0),
+            // Mistral-specific keys
+            "mistral.n_layers" | "mistral.block_count" => self.num_layers = value.parse().unwrap_or(0),
+            "mistral.attention.head_count" | "mistral.n_heads" => self.num_heads = value.parse().unwrap_or(0),
+            "mistral.attention.head_count_kv" => {
+                self.num_kv_heads = Some(value.parse().unwrap_or(0))
+            }
+            "mistral.embedding_length" | "mistral.hidden_size" | "mistral.n_embd" => {
+                self.hidden_size = value.parse().unwrap_or(0)
+            }
+            "mistral.feed_forward_length" | "mistral.intermediate_size" => {
+                self.intermediate_size = value.parse().unwrap_or(0)
+            }
+            "mistral.attention.key_length" | "mistral.head_dim" => {
+                self.head_dim = value.parse().unwrap_or(0)
+            }
+            "mistral.max_position_embeddings" => {
+                self.max_position_embeddings = value.parse().unwrap_or(2048)
+            }
+            "mistral.vocab_size" => self.vocab_size = value.parse().unwrap_or(0),
             // Common RMS norm epsilon key names
             "llama.attention.layer_norm_rms_epsilon"
             | "qwen2.attention.layer_norm_rms_epsilon"
-            | "qwen2.attention_norm_epsilon" => {
+            | "qwen2.attention_norm_epsilon"
+            | "mistral.attention.layer_norm_rms_epsilon"
+            | "mistral.norm_eps" => {
                 self.rms_norm_eps = value.parse().unwrap_or(1e-6)
             }
             // Tokenizer JSON (embedded in some models)
@@ -156,5 +177,49 @@ mod tests {
         let mut meta = GgufMetadata::default();
         meta.update_from_kv("llama.attention.head_count_kv", "4");
         assert_eq!(meta.num_kv_heads, Some(4));
+    }
+
+    #[test]
+    fn test_mistral_metadata_parsing() {
+        let mut meta = GgufMetadata::default();
+
+        // Test all Mistral key variants
+        meta.update_from_kv("mistral.block_count", "32");
+        assert_eq!(meta.num_layers, 32);
+
+        meta.update_from_kv("mistral.attention.head_count", "32");
+        assert_eq!(meta.num_heads, 32);
+
+        meta.update_from_kv("mistral.attention.head_count_kv", "8");
+        assert_eq!(meta.num_kv_heads, Some(8));
+
+        meta.update_from_kv("mistral.hidden_size", "4096");
+        assert_eq!(meta.hidden_size, 4096);
+
+        meta.update_from_kv("mistral.intermediate_size", "14336");
+        assert_eq!(meta.intermediate_size, 14336);
+
+        meta.update_from_kv("mistral.head_dim", "128");
+        assert_eq!(meta.head_dim, 128);
+
+        meta.update_from_kv("mistral.max_position_embeddings", "32768");
+        assert_eq!(meta.max_position_embeddings, 32768);
+
+        meta.update_from_kv("mistral.vocab_size", "32000");
+        assert_eq!(meta.vocab_size, 32000);
+
+        meta.update_from_kv("mistral.norm_eps", "0.00001");
+        assert_eq!(meta.rms_norm_eps, 0.00001);
+
+        // Test alternative key names
+        let mut meta2 = GgufMetadata::default();
+        meta2.update_from_kv("mistral.n_layers", "24");
+        assert_eq!(meta2.num_layers, 24);
+
+        meta2.update_from_kv("mistral.embedding_length", "2048");
+        assert_eq!(meta2.hidden_size, 2048);
+
+        meta2.update_from_kv("mistral.n_heads", "20");
+        assert_eq!(meta2.num_heads, 20);
     }
 }
