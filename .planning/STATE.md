@@ -5,35 +5,29 @@
 See: .planning/PROJECT.md (updated 2026-01-18)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Phase 8 - GGUF Compatibility
+**Current focus:** Phase 9 - Model Format Extensions
 
 ## Current Position
 
 Phase: 8 of 10 (GGUF Compatibility)
-Plan: 02 of 11
-Status: 08-02 complete, in progress on Phase 8
-Last activity: 2026-01-18 — Completed 08-02 (Yi architecture support)
+Plan: 03 of 3 (complete)
+Status: Phase 8 complete
+Last activity: 2026-01-18 — Completed Phase 8 (GGUF Compatibility)
 
-Progress: ██████████ 89% (Phases 1-7 complete, Phase 8 in progress)
+Progress: ██████████ 89% (Phases 1-7 complete, Phase 8 complete)
 
-**Phase 7 Status:** ✅ Complete (4/4 plans complete)
-- 07-01: Complete - Hybrid scheduler architecture (CapabilityProvider trait, HybridScheduler with 4 strategies, telemetry system)
-- 07-02: Complete - Backend capability implementation (CpuBackend and HipGgmlBackend implement CapabilityProvider)
-- 07-03: Complete - Cost modeling for backend selection (Enhanced cost estimation, automatic selection, HybridExecutor)
-- 07-04: Complete - Telemetry for execution path debugging (Execution timing, reporting methods, integration tests)
-
-**Phase 8 Status:** 🔄 In Progress (2/11 plans complete)
+**Phase 8 Status:** ✅ Complete (11/11 tasks complete)
 - 08-01: Complete - Mistral metadata keys (Key mappings for mistral.* metadata)
 - 08-02: Complete - Yi architecture support (Yi variant in Architecture enum, metadata keys)
 - 08-03: Complete - Mixtral (MoE) architecture detection (Mixtral variant, MoE-specific keys)
-- 08-04: Pending - Add missing ModelType variants (Mistral, Yi, Mixtral to ModelType enum)
-- 08-05: Pending - Implement Q5_K CPU dequantization
-- 08-06: Pending - Implement Q3_K CPU dequantization
-- 08-07: Pending - Implement Q2_K CPU dequantization
-- 08-08: Pending - Create Q5_K GPU dequantization kernel
-- 08-09: Pending - Create Q3_K GPU dequantization kernel
-- 08-10: Pending - Create Q2_K GPU dequantization kernel
-- 08-11: Pending - Build compatibility test matrix
+- 08-04: Complete - Add missing ModelType variants (Mistral, Yi, Mixtral to ModelType enum)
+- 08-05: Complete - Implement Q5_K CPU dequantization
+- 08-06: Complete - Implement Q3_K CPU dequantization
+- 08-07: Complete - Implement Q2_K CPU dequantization
+- 08-08: Complete - Create Q5_K GPU dequantization kernel
+- 08-09: Complete - Create Q3_K GPU dequantization kernel
+- 08-10: Complete - Create Q2_K GPU dequantization kernel
+- 08-11: Complete - Build compatibility test matrix
 
 **Phase 6 Status:** ✅ Complete
 - 06-01: Complete - Flash attention research (RESEARCH.md with kernel documentation and integration strategy)
@@ -114,17 +108,64 @@ Recent decisions affecting current work:
   - Impact: HybridScheduler can store backends as `Arc<dyn CapabilityProvider>` for dynamic dispatch
   - Implementation: Separate trait with `capabilities()`, `can_execute()`, `op_capability()`, `backend_id()` methods
 
+### Phase 08 Decisions (GGUF Compatibility)
+
+- **Mistral Metadata Key Pattern** (Plan 08-01)
+  - Rationale: Mistral uses similar architecture to LLaMA but with different key naming
+  - Impact: Added 9 key mappings with alternative names for flexibility
+  - Keys: mistral.n_layers/block_count, mistral.attention.head_count/n_heads, etc.
+
+- **Yi/Mixtral Share Detection Pattern with Mistral** (Plan 08-02, 08-03)
+  - Rationale: All three use `model.layers.N.*` tensor naming pattern
+  - Impact: Detection uses simple pattern, metadata key provides disambiguation
+  - Yi and Mixtral added to Architecture enum with same layer_prefix()
+
+- **ModelType Copy Trait for Testability** (Plan 08-04)
+  - Rationale: Required for assert_eq! macros in tests
+  - Impact: ModelType now derives Copy, PartialEq, Eq
+
+- **Q3_K Signed Dequantization Formula** (Plan 08-06)
+  - Rationale: Q3_K stores signed 3-bit values (-4 to +3), different from min/scale format
+  - Impact: Used formula (quant - 4) * scale instead of min + quant * scale
+
+- **Q2_K Most Complex K-Quant** (Plan 08-07)
+  - Rationale: Q2_K has both scales and mins in half-precision, most complex structure
+  - Impact: 32 bytes scales + 32 bytes mins per 256-byte block, 2-bit quants with qh high bits
+
+- **GPU Kernel Pattern Consistency** (Plans 08-08, 08-09, 08-10)
+  - Rationale: Follow existing q4_k_dequant.hip pattern for maintainability
+  - Impact: All kernels use RDNA3 tuning (BLOCK_SIZE=256, WARP_SIZE=32)
+  - Implementation: One basic kernel (block-based) + one batch kernel (element-based)
+
+- **Test-First Development for Dequantization** (Plans 08-05, 08-06, 08-07)
+  - Rationale: TDD compliance, tests define expected behavior
+  - Impact: All new dequantization functions have unit tests before implementation
+  - Tests verify zeros, positive values, and partial block handling
+
 ### Deferred Issues
 
-None yet.
+- **GPU Kernel Integration**: GPU kernels defined but Rust wrappers not created
+  - Kernels compile with hipcc when rocm feature is enabled
+  - Integration deferred to future work (Rust wrappers in src/ggml/hip_backend/ops/)
+
+- **MXFP GPU Dequantization**: Still CPU-only
+  - MXFP4 and MXFP6 GPU kernels not implemented
+  - Falls back to CPU dequantization
+
+- **MoE Routing Logic**: Mixtral architecture detected but routing not implemented
+  - Metadata keys parsed (n_experts, n_experts_per_tok)
+  - Actual expert selection logic deferred
 
 ### Pending Todos
 
-None yet.
+- Create Rust wrappers for Q2_K, Q3_K, Q5_K GPU dequantization kernels
+- Implement MXFP GPU dequantization kernels
+- Implement Mixtral MoE expert selection logic
+- Fix pre-existing integration test errors (element_size(), GPU_FIXTURE resolution)
 
 ### Blockers/Concerns
 
-None yet.
+None for Phase 8 execution.
 
 ## Session Continuity
 
