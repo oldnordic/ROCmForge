@@ -113,10 +113,14 @@ fn create_test_gguf_with_f32(path: &std::path::Path) -> anyhow::Result<()> {
 /// and returns metadata correctly.
 #[test]
 fn test_gguf_model_loading() -> anyhow::Result<()> {
-    let temp_file = NamedTempFile::new()?;
+    let temp_file = NamedTempFile::new()
+        .context("Failed to create temp file")?;
     create_test_gguf(temp_file.path())?;
 
-    let loader = GgufLoader::new(temp_file.path().to_str().unwrap())?;
+    let path = temp_file.path().to_str()
+        .context("Failed to convert temp file path to string")?;
+    let loader = GgufLoader::new(path)
+        .context("Failed to create GGUF loader")?;
     let metadata = loader.metadata();
 
     assert_eq!(metadata.architecture, "test");
@@ -129,17 +133,20 @@ fn test_gguf_model_loading() -> anyhow::Result<()> {
 /// Note: Current API uses lazy_tensors (HashMap<String, LazyTensor>).
 #[test]
 fn test_gguf_tensor_access() -> anyhow::Result<()> {
-    let temp_file = NamedTempFile::new()?;
+    let temp_file = NamedTempFile::new()
+        .context("Failed to create temp file")?;
     create_test_gguf_with_f32(temp_file.path())?;
 
-    let loader = GgufLoader::new(temp_file.path().to_str().unwrap())?;
+    let path = temp_file.path().to_str()
+        .context("Failed to convert temp file path to string")?;
+    let loader = GgufLoader::new(path)
+        .context("Failed to create GGUF loader")?;
 
     // Access via lazy_tensors (current API)
-    let tensor = loader.lazy_tensors.get("f32_tensor");
-    assert!(tensor.is_some());
+    let tensor = loader.lazy_tensors.get("f32_tensor")
+        .context("Tensor 'f32_tensor' not found in lazy_tensors")?;
 
-    let tensor = tensor.unwrap();
-    let shape = tensor.shape().expect("Tensor should have shape");
+    let shape = tensor.shape().context("Tensor should have shape")?;
     assert_eq!(shape.len(), 2);
     assert_eq!(shape[0], 2);
     assert_eq!(shape[1], 2);
@@ -153,11 +160,16 @@ fn test_gguf_tensor_access() -> anyhow::Result<()> {
 /// Tests that F32 tensor type is correctly identified in loaded metadata.
 #[test]
 fn test_gguf_f32_conversion() -> anyhow::Result<()> {
-    let temp_file = NamedTempFile::new()?;
+    let temp_file = NamedTempFile::new()
+        .context("Failed to create temp file")?;
     create_test_gguf_with_f32(temp_file.path())?;
 
-    let loader = GgufLoader::new(temp_file.path().to_str().unwrap())?;
-    let tensor = loader.lazy_tensors.get("f32_tensor").unwrap();
+    let path = temp_file.path().to_str()
+        .context("Failed to convert temp file path to string")?;
+    let loader = GgufLoader::new(path)
+        .context("Failed to create GGUF loader")?;
+    let tensor = loader.lazy_tensors.get("f32_tensor")
+        .context("Tensor 'f32_tensor' not found in lazy_tensors")?;
 
     assert_eq!(tensor.tensor_type(), Some(GgufTensorType::F32));
     assert_eq!(tensor.shape(), Some(vec![2, 2].as_slice()));
@@ -170,13 +182,16 @@ fn test_gguf_f32_conversion() -> anyhow::Result<()> {
 /// Tests error handling for invalid GGUF magic number.
 #[test]
 fn test_gguf_invalid_magic() -> anyhow::Result<()> {
-    let mut file = NamedTempFile::new()?;
+    let mut file = NamedTempFile::new()
+        .context("Failed to create temp file")?;
     file.write_all(&0x12345678u32.to_le_bytes())?; // Invalid magic
     file.write_all(&3u32.to_le_bytes())?; // version
     file.write_all(&0u64.to_le_bytes())?; // tensor_count
     file.write_all(&0u64.to_le_bytes())?; // kv_count
 
-    let result = GgufLoader::new(file.path().to_str().unwrap());
+    let path = file.path().to_str()
+        .context("Failed to convert temp file path to string")?;
+    let result = GgufLoader::new(path);
     assert!(result.is_err());
 
     // Verify error message mentions invalid magic
@@ -197,7 +212,7 @@ fn test_gguf_unsupported_version() -> anyhow::Result<()> {
     file.write_all(&0u64.to_le_bytes())?; // tensor_count
     file.write_all(&0u64.to_le_bytes())?; // kv_count
 
-    let result = GgufLoader::new(file.path().to_str().unwrap());
+    let result = GgufLoader::new(file.path().to_str().context("Failed to convert path to string")?);
     assert!(result.is_err());
 
     // Verify error message mentions version
@@ -281,15 +296,15 @@ fn test_onnx_tensor_creation() {
 }
 
 #[test]
-fn test_onnx_tensor_f32_conversion() {
+fn test_onnx_tensor_f32_conversion() -> anyhow::Result<()> {
     let data = vec![1.0f32, 2.0, 3.0, 4.0];
     let tensor = OnnxTensor::new("test".to_string(), vec![2, 2], &data);
 
-    let result = tensor.get_data_f32();
-    assert!(result.is_ok());
-
-    let result = result.unwrap();
+    let result = tensor.get_data_f32()
+        .context("Failed to get F32 data from tensor")?;
     assert_eq!(result, data);
+
+    Ok(())
 }
 
 #[test]
@@ -309,38 +324,44 @@ fn test_onnx_loader_creation() {
 }
 
 #[test]
-fn test_onnx_model_loading() {
+fn test_onnx_model_loading() -> anyhow::Result<()> {
     let mut loader = OnnxLoader::new();
 
     // Create a dummy ONNX model file
-    let temp_file = NamedTempFile::new().unwrap();
+    let temp_file = NamedTempFile::new()
+        .context("Failed to create temp file")?;
     let result = loader.load_model(temp_file.path());
 
     // In our mock implementation, this should succeed
     assert!(result.is_ok());
     assert!(loader.is_model_loaded());
+
+    Ok(())
 }
 
 #[test]
-fn test_onnx_inference() {
+fn test_onnx_inference() -> anyhow::Result<()> {
     let mut loader = OnnxLoader::new();
 
     // Create a dummy ONNX model file
-    let temp_file = NamedTempFile::new().unwrap();
-    loader.load_model(temp_file.path()).unwrap();
+    let temp_file = NamedTempFile::new()
+        .context("Failed to create temp file")?;
+    loader.load_model(temp_file.path())
+        .context("Failed to load model")?;
 
     let input_data = vec![1.0f32, 2.0, 3.0, 4.0];
     let input_tensor = OnnxTensor::new("input".to_string(), vec![2, 2], &input_data);
 
-    let outputs = loader.run_inference(&[input_tensor]);
-    assert!(outputs.is_ok());
-
-    let outputs = outputs.unwrap();
+    let outputs = loader.run_inference(&[input_tensor])
+        .context("Failed to run inference")?;
     assert_eq!(outputs.len(), 1);
 
     // In our mock implementation, this should be an identity operation
-    let output_data = outputs[0].get_data_f32().unwrap();
+    let output_data = outputs[0].get_data_f32()
+        .context("Failed to get F32 data")?;
     assert_eq!(output_data, input_data);
+
+    Ok(())
 }
 
 #[test]
@@ -358,40 +379,43 @@ fn test_onnx_inference_without_model() {
 fn test_onnx_inference_empty_inputs() {
     let mut loader = OnnxLoader::new();
 
-    let temp_file = NamedTempFile::new().unwrap();
-    loader.load_model(temp_file.path()).unwrap();
+    let temp_file = NamedTempFile::new().context("Failed to create temp file")?;
+    loader.load_model(temp_file.path()).context("Failed to load model")?;
 
     let result = loader.run_inference(&[]);
     assert!(result.is_err());
 }
 
 #[test]
-fn test_onnx_session_input_output_names() {
-    let temp_file = NamedTempFile::new().unwrap();
-    let session = OnnxSession::new(temp_file.path());
+fn test_onnx_session_input_output_names() -> anyhow::Result<()> {
+    let temp_file = NamedTempFile::new()
+        .context("Failed to create temp file")?;
+    let session = OnnxSession::new(temp_file.path())
+        .context("Failed to create ONNX session")?;
 
-    assert!(session.is_ok());
-
-    let session = session.unwrap();
     assert_eq!(session.input_names(), &["input"]);
     assert_eq!(session.output_names(), &["output"]);
+
+    Ok(())
 }
 
 #[test]
-fn test_onnx_session_run() {
-    let temp_file = NamedTempFile::new().unwrap();
-    let session = OnnxSession::new(temp_file.path()).unwrap();
+fn test_onnx_session_run() -> anyhow::Result<()> {
+    let temp_file = NamedTempFile::new()
+        .context("Failed to create temp file")?;
+    let session = OnnxSession::new(temp_file.path())
+        .context("Failed to create ONNX session")?;
 
     let input_data = vec![1.0f32, 2.0, 3.0, 4.0];
     let input_tensor = OnnxTensor::new("input".to_string(), vec![2, 2], &input_data);
 
-    let outputs = session.run(&[input_tensor]);
-    assert!(outputs.is_ok());
-
-    let outputs = outputs.unwrap();
+    let outputs = session.run(&[input_tensor])
+        .context("Failed to run session")?;
     assert_eq!(outputs.len(), 1);
     assert_eq!(outputs[0].name, "output");
     assert_eq!(outputs[0].shape, vec![2, 2]);
+
+    Ok(())
 }
 
 // Property-based tests
@@ -420,7 +444,7 @@ proptest! {
         prop_assert!(matches!(tensor.data_type, OnnxDataType::F32));
         prop_assert_eq!(tensor.data.len(), total_elements * 4);
 
-        let converted = tensor.get_data_f32().unwrap();
+        let converted = tensor.get_data_f32().context("Failed to get F32 data")?;
         prop_assert_eq!(converted.len(), total_elements);
         prop_assert_eq!(converted, truncated_data);
     }
