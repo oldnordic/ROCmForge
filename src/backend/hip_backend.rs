@@ -861,6 +861,65 @@ impl HipBuffer {
         Ok(())
     }
 
+    /// Copy data from another device buffer using the specified HIP stream.
+    ///
+    /// This is the stream-aware variant of `copy_from_buffer()` that uses
+    /// `hipMemcpyAsync` instead of `hipMemcpy`, allowing the copy to be
+    /// properly ordered with other GPU operations on the same stream.
+    ///
+    /// # Arguments
+    /// * `src` - Source buffer to copy from
+    /// * `stream` - HIP stream to queue the copy on
+    ///
+    /// # Synchronization
+    /// Unlike `copy_from_buffer()`, this does NOT implicitly synchronize.
+    /// The caller is responsible for synchronizing the stream after the async
+    /// copy if they need to wait for completion.
+    ///
+    /// # Why This Matters
+    /// Using the same stream for all operations (copies, kernels, hipBLAS) ensures
+    /// proper ordering and avoids the synchronization issues that can occur when
+    /// mixing default stream operations (`hipMemcpy`) with custom stream operations
+    /// (hipBLAS, kernels).
+    ///
+    /// # Example
+    /// ```ignore
+    /// // After hipBLAS operations complete on backend.stream()
+    /// output.copy_from_buffer_with_stream(&result, backend.stream().as_ptr())?;
+    /// backend.synchronize()?; // Wait for async copy to complete
+    /// ```
+    pub fn copy_from_buffer_with_stream(&self, src: &HipBuffer, stream: *mut c_void) -> HipResult<()> {
+        if src.size() != self.size() {
+            return Err(HipError::MemoryCopyFailed(format!(
+                "Buffer size mismatch: src={} bytes, dst={} bytes",
+                src.size(),
+                self.size()
+            )));
+        }
+
+        let result = unsafe {
+            hipMemcpyAsync(
+                self.ptr(),
+                src.ptr(),
+                self.size(),
+                HIP_MEMCPY_DEVICE_TO_DEVICE,
+                stream,
+            )
+        };
+
+        if result != HIP_SUCCESS {
+            return Err(HipError::MemoryCopyFailed(format!(
+                "hipMemcpyAsync D2D failed with code {} (dst={:?}, src={:?}, size={})",
+                result,
+                self.ptr(),
+                src.ptr(),
+                self.size()
+            )));
+        }
+
+        Ok(())
+    }
+
     pub fn copy_from_buffer_region(
         &self,
         dst_offset_bytes: usize,
@@ -2962,15 +3021,20 @@ impl ModelRuntime {
                 layer_idx + 1,
                 execution_plan.layers().len()
             );
+            eprintln!(">>> decode_step: Getting hidden_states shape...");
             let seq_len = hidden_states.shape().dims()[0];
+            eprintln!(">>> decode_step: seq_len={}, choosing execution path...", seq_len);
             if seq_len == 1 {
+                eprintln!(">>> decode_step: Calling forward_layer_ggml_decode (seq_len=1)...");
                 hidden_states = execution_plan.forward_layer_ggml_decode(
                     &self.backend,
                     &hidden_states,
                     &mut self.kv_cache,
                     layer_idx,
                 )?;
+                eprintln!(">>> decode_step: forward_layer_ggml_decode returned successfully");
             } else {
+                eprintln!(">>> decode_step: Calling forward_layer (seq_len={})...", seq_len);
                 hidden_states = execution_plan.forward_layer(
                     &self.backend,
                     &hidden_states,
@@ -2978,6 +3042,7 @@ impl ModelRuntime {
                     Some(&mut self.kv_cache),
                     layer_idx,
                 )?;
+                eprintln!(">>> decode_step: forward_layer returned successfully");
             }
             eprintln!(
                 ">>> decode_step: Layer {}/{} complete ({:?} elapsed)",
