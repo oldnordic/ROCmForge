@@ -2645,8 +2645,7 @@ fn transpose_f32_matrix(data: &[f32], rows: usize, cols: usize) -> Vec<f32> {
 }
 
 /// Simple f16 implementation for conversion
-#[allow(dead_code)]
-struct F16(u16);
+pub struct F16(pub u16);
 
 impl F16 {
     fn from_bits(bits: u16) -> Self {
