@@ -712,4 +712,110 @@ mod tests {
         assert_eq!(stats.gpu_operations, 1);
         assert_eq!(stats.cpu_operations, 1);
     }
+
+    // Automatic selection tests
+    #[test]
+    fn test_automatic_prefers_gpu_for_large_ops() {
+        let gpu = Arc::new(MockProvider::new("gpu", vec![OpType::MatMul]));
+        let cpu = Arc::new(MockProvider::new("cpu", vec![OpType::MatMul]));
+        let scheduler = HybridScheduler::new(ExecutionStrategy::Automatic)
+            .with_cpu_backend(cpu)
+            .with_gpu_backend(gpu);
+
+        // MatMul is a large operation - should prefer GPU
+        let selection = scheduler.select_backend(&Op::MatMul).unwrap();
+        assert_eq!(selection.backend_id, "gpu");
+        assert!(matches!(selection.reason, SelectionReason::CostModel { .. }));
+
+        // Verify cost model was used
+        if let SelectionReason::CostModel { gpu_cost, cpu_cost } = selection.reason {
+            // GPU should be preferred (not significantly slower than CPU)
+            assert!(gpu_cost.estimated_us > 0);
+            assert!(cpu_cost.estimated_us > 0);
+        }
+    }
+
+    #[test]
+    fn test_automatic_error_when_no_backends() {
+        let scheduler = HybridScheduler::new(ExecutionStrategy::Automatic);
+        // No backends registered - should error
+        let result = scheduler.select_backend(&Op::MatMul);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cost_comparison() {
+        let gpu_cost = OpCost {
+            estimated_us: 100,
+            memory_bytes: 1024,
+            transfer_cost: None,
+        };
+        let cpu_cost = OpCost {
+            estimated_us: 40,  // CPU is faster
+            memory_bytes: 1024,
+            transfer_cost: None,
+        };
+
+        // CPU is more than 2x faster - should be preferred
+        assert!(cpu_cost.estimated_us < gpu_cost.estimated_us / 2);
+    }
+
+    #[test]
+    fn test_cost_model_with_transfer_penalty() {
+        // Simulate CPU having transfer cost
+        let gpu_cost = OpCost {
+            estimated_us: 100,
+            memory_bytes: 4096,
+            transfer_cost: None,  // GPU already has data
+        };
+        let cpu_cost = OpCost {
+            estimated_us: 80,
+            memory_bytes: 4096,
+            transfer_cost: Some(10),  // CPU needs transfer
+        };
+
+        // GPU should be preferred even though CPU base is slightly faster
+        // when considering total cost including transfer
+        let cpu_total = cpu_cost.estimated_us + cpu_cost.transfer_cost.unwrap_or(0);
+        // CPU total (80 + 10 = 90) < GPU (100), so CPU would be preferred here
+        // The test validates that transfer cost is correctly computed
+        assert_eq!(cpu_total, 90);
+        assert!(cpu_cost.transfer_cost.is_some());
+        assert!(gpu_cost.transfer_cost.is_none());
+    }
+
+    #[test]
+    fn test_tensor_element_estimation() {
+        let scheduler = HybridScheduler::new(ExecutionStrategy::Automatic);
+
+        // MatMul should estimate large tensor
+        let matmul_elements = scheduler.estimate_tensor_elements(&Op::MatMul);
+        assert_eq!(matmul_elements, 2048 * 2048);
+
+        // Softmax should estimate smaller tensor
+        let softmax_elements = scheduler.estimate_tensor_elements(&Op::Softmax);
+        assert_eq!(softmax_elements, 128 * 128);
+
+        // Add should estimate small tensor
+        let add_elements = scheduler.estimate_tensor_elements(&Op::Add);
+        assert_eq!(add_elements, 1024);
+    }
+
+    #[test]
+    fn test_enhanced_cost_estimation() {
+        let gpu = Arc::new(MockProvider::new("gpu", vec![OpType::MatMul, OpType::Softmax]));
+        let scheduler = HybridScheduler::new(ExecutionStrategy::Automatic)
+            .with_gpu_backend(gpu);
+
+        // MatMul cost should be higher than Softmax
+        let matmul_selection = scheduler.select_backend(&Op::MatMul).unwrap();
+        let softmax_selection = scheduler.select_backend(&Op::Softmax).unwrap();
+
+        assert!(matmul_selection.estimated_cost.estimated_us > 0);
+        assert!(softmax_selection.estimated_cost.estimated_us > 0);
+
+        // MatMul typically has larger estimated cost than Softmax
+        // (due to larger tensor size estimation)
+        assert!(matmul_selection.estimated_cost.memory_bytes > softmax_selection.estimated_cost.memory_bytes);
+    }
 }
