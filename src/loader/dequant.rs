@@ -976,6 +976,67 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_dequant_q2_k_zeros() {
+        // Test Q2_K with all zeros
+        let mut data = vec![0u8; 256];
+
+        // Set scale = 1.0 in half precision
+        data[0] = 0x00;
+        data[1] = 0x3C;
+
+        // Min is already 0 from initialization
+
+        let tensor = create_test_tensor(GgufTensorType::Q2_K, data, vec![256]);
+        let result = dequant_q2_k(&tensor).unwrap();
+
+        assert_eq!(result.len(), 256);
+        // All should be 0 (min=0, quant=0, scale=1.0)
+        for val in &result[..16] {
+            assert!(val.abs() < 1e-5);
+        }
+    }
+
+    #[test]
+    fn test_dequant_q2_k_positive() {
+        // Test Q2_K with known values
+        let mut data = vec![0u8; 256];
+
+        // Set scale = 1.0
+        data[0] = 0x00;
+        data[1] = 0x3C;
+
+        // Set first quant to 1 (bit 0-1)
+        data[68] = 0x01; // First 2 bits = 1
+
+        let tensor = create_test_tensor(GgufTensorType::Q2_K, data, vec![256]);
+        let result = dequant_q2_k(&tensor).unwrap();
+
+        assert_eq!(result.len(), 256);
+        // First element should be ~1 (min=0, quant=1, scale=1)
+        assert!((result[0] - 1.0).abs() < 0.1, "First element: {}", result[0]);
+    }
+
+    #[test]
+    fn test_dequant_q2_k_partial_block() {
+        // Test Q2_K with partial block
+        let mut data = vec![0u8; 256];
+
+        data[0] = 0x00;
+        data[1] = 0x3C;
+
+        let tensor = create_test_tensor(GgufTensorType::Q2_K, data, vec![100]);
+        let result = dequant_q2_k(&tensor).unwrap();
+
+        assert_eq!(result.len(), 100);
+        // Should all be ~0
+        for i in 0..16usize {
+            if i < 100 {
+                assert!(result[i].abs() < 1e-5, "Element at {}: {}", i, result[i]);
+            }
+        }
+    }
 }
 
 /// Generic dequantization dispatcher
