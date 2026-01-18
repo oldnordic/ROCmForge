@@ -88,6 +88,21 @@ fn compile_hip_kernels() {
             "mxfp4_to_fp32_kernel",
         ),
         (
+            "kernels/q8_0_dequant.hip",
+            "Q8_0_DEQUANT_HSACO",
+            "q8_0_to_fp32_kernel",
+        ),
+        (
+            "kernels/q4_k_dequant.hip",
+            "Q4_K_DEQUANT_HSACO",
+            "q4_k_to_fp32_kernel",
+        ),
+        (
+            "kernels/q6_k_dequant.hip",
+            "Q6_K_DEQUANT_HSACO",
+            "q6_k_to_fp32_kernel",
+        ),
+        (
             "kernels/mqa_kv_replicate.hip",
             "MQA_KV_REPLICATE_HSACO",
             "mqa_kv_replicate_kernel",
