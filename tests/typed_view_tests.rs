@@ -1,7 +1,6 @@
 //! Tests for typed tensor views using bytemuck
 
-use rocmforge::loader::mmap_loader::{open_mmap_weights, MmapWeights};
-use std::io::Write;
+use rocmforge::loader::mmap_loader::open_mmap_weights;
 use anyhow::Context;
 
 #[test]

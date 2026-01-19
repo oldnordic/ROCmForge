@@ -1392,7 +1392,7 @@ impl CapabilityProvider for HipGgmlBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ggml::hybrid_scheduler::{CapabilityProvider, OpType};
+    use crate::ggml::hybrid_scheduler::OpType;
 
     // Note: These tests don't require actual GPU hardware
     // They verify the capability declarations are correct

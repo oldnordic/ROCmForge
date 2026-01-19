@@ -5,13 +5,11 @@
 use serial_test::serial;
 use anyhow::Context;
 use std::fs;
-use std::io::Write;
 use std::path::Path;
 
 use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
-use rocmforge::backend::hip_backend::{DeviceTensor, HipBackend, ModelRuntime};
+use rocmforge::backend::hip_backend::{DeviceTensor, ModelRuntime};
 use rocmforge::loader::gguf::GgufLoader;
-use rocmforge::model::config::ModelConfig;
 use rocmforge::model::execution_plan::ExecutionPlan;
 
 /// Create a synthetic GLM GGUF model for testing

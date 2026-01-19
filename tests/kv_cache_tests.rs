@@ -1,9 +1,7 @@
 //! Comprehensive TDD tests for KV cache module
 use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
-use rocmforge::backend::HipBackend;
-use rocmforge::kv_cache::{CacheConfig, CachePage, KvCache, KvCacheError, SequenceCache};
+use rocmforge::kv_cache::{CacheConfig, KvCache, KvCacheError};
 use serial_test::serial;
-use std::collections::HashMap;
 use anyhow::Context;
 
 #[test]

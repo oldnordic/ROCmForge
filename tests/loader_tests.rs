@@ -4,10 +4,9 @@
 mod common;
 
 use rocmforge::loader::{
-    GgufLoader, GgufMetadata, GgufTensor, OnnxDataType, OnnxLoader, OnnxSession, OnnxTensor,
+    GgufLoader, OnnxDataType, OnnxLoader, OnnxSession, OnnxTensor,
 };
 use rocmforge::loader::GgufTensorType;
-use std::io::Write;
 use anyhow::Context;
 
 // Use common fixtures

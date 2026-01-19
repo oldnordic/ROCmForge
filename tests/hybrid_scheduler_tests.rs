@@ -10,7 +10,7 @@
 
 use rocmforge::ggml::hybrid_scheduler::{
     HybridScheduler, ExecutionStrategy, SelectionReason,
-    ExecutionEvent, BackendExecutionSummary,
+    ExecutionEvent,
 };
 use rocmforge::ggml::hybrid_scheduler::OpType;
 use std::time::Instant;

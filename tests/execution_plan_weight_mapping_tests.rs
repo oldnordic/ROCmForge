@@ -1,5 +1,5 @@
 use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
-use rocmforge::backend::hip_backend::{DeviceTensor, HipBackend};
+use rocmforge::backend::HipBackend;
 use rocmforge::loader::gguf::GgufLoader;
 use rocmforge::loader::lazy_tensor::LazyTensor;
 use rocmforge::model::execution_plan::ExecutionPlan;

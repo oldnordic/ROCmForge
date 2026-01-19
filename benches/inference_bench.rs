@@ -38,8 +38,7 @@
 //! ```
 
 use std::hint::black_box;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 // Use profiling module for timing
 #[cfg(feature = "rocm")]

@@ -7,8 +7,6 @@
 #[cfg(test)]
 mod model_loading_tests {
     use rocmforge::loader::gguf::GgufLoader;
-    use rocmforge::model::config::ModelConfig;
-    use rocmforge::model::execution_plan::ExecutionPlan;
     use std::path::Path;
 
     /// Helper: Find a test model GGUF file

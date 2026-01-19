@@ -149,7 +149,6 @@ fn create_minimal_gguf_file(path: &Path, config: &ModelConfig) -> anyhow::Result
 
     Ok(())
 }
-use serial_test::serial;
 
 #[cfg(test)]
 mod tests {

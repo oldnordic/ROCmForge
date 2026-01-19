@@ -1,7 +1,5 @@
 #[cfg(test)]
 mod hip_isolation_tests {
-    use std::ffi::c_void;
-    use std::ptr;
 
     #[link(name = "amdhip64")]
     extern "C" {

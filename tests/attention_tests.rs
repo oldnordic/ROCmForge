@@ -1,10 +1,6 @@
 //! Attention mechanism tests for ROCmForge
 //! Tests Scaled Dot-Product Attention implementation
 
-use rocmforge::backend::hip_backend::HipBuffer;
-use rocmforge::backend::hip_blas::HipBlasHandle;
-use rocmforge::tensor::matmul::{cpu_matmul_f32, matmul_f32};
-
 // Simple deterministic random number generator for testing
 struct SimpleRng {
     seed: u32,

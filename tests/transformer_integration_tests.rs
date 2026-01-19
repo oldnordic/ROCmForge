@@ -1,13 +1,10 @@
 //! End-to-end transformer layer tests
 //! Tests the complete transformer pipeline including LayerNorm, attention, and MLP
 use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
-use rocmforge::backend::hip_backend::{DeviceTensor, HipBackend};
-use rocmforge::backend::scratch::ScratchBufferManager;
 use rocmforge::loader::mmap_loader::TensorShape;
 use rocmforge::model::config::{ModelConfig, ModelType};
 use rocmforge::model::execution_plan::ExecutionPlan;
 use rocmforge::model::kv_cache::KVCache;
-use serial_test::serial;
 use anyhow::Context;
 
 #[cfg(test)]

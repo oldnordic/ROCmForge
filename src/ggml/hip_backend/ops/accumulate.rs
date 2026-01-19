@@ -112,7 +112,6 @@ pub fn accumulate(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn test_accumulate_basic() {

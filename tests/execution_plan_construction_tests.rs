@@ -5,11 +5,9 @@
 //! using the helper functions for weight mapping.
 
 use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
-use rocmforge::backend::{DeviceTensor, HipBackend};
 use rocmforge::loader::gguf::GgufLoader;
-use rocmforge::model::{ExecutionPlan, LayerPlan, ModelConfig};
+use rocmforge::model::ExecutionPlan;
 use serial_test::serial;
-use std::collections::HashMap;
 
 /// Test execution plan construction from GGUF
 #[test]

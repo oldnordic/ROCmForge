@@ -1,11 +1,8 @@
 //! Test MLP SwiGLU implementation without requiring ROCm libraries
 //! This test focuses on the TDD validation logic
-use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
 
 #[cfg(test)]
 mod tests {
-    use rocmforge::backend::hip_backend::{DeviceTensor, HipBackend};
-use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
     use rocmforge::loader::mmap_loader::TensorShape;
     use serial_test::serial;
 

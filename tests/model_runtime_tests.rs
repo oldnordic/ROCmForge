@@ -1,7 +1,5 @@
 //! Tests for ModelRuntime device buffer management
 
-use std::io::Write;
-
 #[cfg(feature = "rocm")]
 use rocmforge::backend::ModelRuntime;
 #[cfg(feature = "rocm")]

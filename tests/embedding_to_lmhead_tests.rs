@@ -19,10 +19,9 @@ use rocmforge::loader::gguf::GgufTensor;
 use rocmforge::loader::GgufTensorType;
 use rocmforge::tensor::matmul::{cpu_matmul_f32, matmul_f32};
 use std::collections::HashMap;
-use std::path::Path;
 
 // Use common fixtures
-use common::{create_temp_file, create_embedding_gguf, NamedTempFile};
+use common::{create_temp_file, create_embedding_gguf};
 
 // ============================================================================
 // Test Infrastructure

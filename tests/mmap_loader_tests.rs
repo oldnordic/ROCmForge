@@ -1,6 +1,6 @@
 //! Tests for mmap-based weight loading
 
-use rocmforge::loader::mmap_loader::{open_mmap_weights, MmapWeights};
+use rocmforge::loader::mmap_loader::open_mmap_weights;
 use std::io::Write;
 use std::path::Path;
 use tempfile::NamedTempFile;

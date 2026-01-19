@@ -5,13 +5,8 @@
 
 #[cfg(test)]
 mod tests {
-    use serial_test::serial;
-    use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
-    use rocmforge::backend::{DeviceTensor, HipBackend};
-    use rocmforge::loader::TensorShape;
     use rocmforge::model::config::ModelConfig;
-    use rocmforge::model::kv_cache::KVCache;
-    use rocmforge::ops::attention_gpu::HipAttentionKernels;
+    use serial_test::serial;
 
     /// Test basic HIP backend creation for attention kernels
     #[test]

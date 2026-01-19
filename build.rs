@@ -1,6 +1,4 @@
 use std::env;
-use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn main() {
     println!("cargo:rerun-if-changed=kernels");
@@ -20,6 +18,9 @@ fn main() {
 
 #[cfg(feature = "rocm")]
 fn compile_hip_kernels() {
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+
     let hipcc = env::var("HIPCC").unwrap_or_else(|_| {
         let rocm_root = env::var("ROCM_PATH").unwrap_or_else(|_| "/opt/rocm".to_string());
         format!("{}/bin/hipcc", rocm_root)

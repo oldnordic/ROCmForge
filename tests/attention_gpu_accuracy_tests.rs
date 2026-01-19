@@ -4,9 +4,6 @@
 use proptest::prelude::*;
 #[cfg(feature = "rocm")]
 use proptest::test_runner::TestRunner;
-use rocmforge::attention::compare::max_abs_diff;
-use rocmforge::attention::{Attention, AttentionBackend};
-use rocmforge::tensor::Tensor;
 
 #[cfg(feature = "rocm")]
 #[test]

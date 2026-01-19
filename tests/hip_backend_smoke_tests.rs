@@ -1,12 +1,10 @@
 //! HIP smoke tests for real GPU execution validation
 
 use serial_test::serial;
-use std::ffi::CString;
 use std::path::Path;
-use std::ptr;
 
 use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
-use rocmforge::backend::{HipBackend, HipError, HipResult};
+use rocmforge::backend::HipResult;
 
 #[cfg(test)]
 mod tests {

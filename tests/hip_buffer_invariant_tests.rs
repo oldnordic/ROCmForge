@@ -1,5 +1,4 @@
 //! Tests for HipBuffer size invariants and CPU fallback path buffer corruption
-use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
 
 #[cfg(feature = "rocm")]
 use rocmforge::backend::{DeviceTensor, HipBackend};

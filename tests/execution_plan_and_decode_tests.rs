@@ -5,7 +5,7 @@
 //! KV cache operations, and full decode_step() functionality.
 
 use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
-use rocmforge::backend::{DeviceTensor, HipBackend, HipError};
+use rocmforge::backend::{HipBackend, HipError};
 use serial_test::serial;
 use rocmforge::loader::TensorShape;
 use rocmforge::model::{

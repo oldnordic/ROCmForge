@@ -5,8 +5,6 @@
 
 #[cfg(test)]
 mod gpu_position_embedding_tests {
-    use crate::attention::rope::RopeConfig;
-    use crate::model::glm_position::{GlmAttentionPattern, GlmPositionConfig, GlmPositionHandler};
     use std::sync::Arc;
 
     /// Helper: Get GPU backend or skip test if not available (llama.cpp pattern)

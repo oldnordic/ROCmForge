@@ -1,6 +1,5 @@
 //! TDD tests for KV Cache and Scratch Buffer Manager
 //! Tests must fail initially, then pass after implementation
-use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
 
 #[cfg(feature = "rocm")]
 use rocmforge::backend::scratch::ScratchBufferManager;

@@ -76,7 +76,6 @@ pub use backend::gpu_test_common::*;
 
 #[cfg(test)]
 mod library_tests {
-    use super::*;
 
     #[test]
     fn test_library_imports() {

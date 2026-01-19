@@ -4,10 +4,10 @@
 //! These tests verify that the forward pass works correctly with real GGUF weights.
 
 use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
-use rocmforge::backend::{DeviceTensor, HipBackend};
+use rocmforge::backend::DeviceTensor;
 use rocmforge::loader::gguf::GgufLoader;
 use rocmforge::loader::TensorShape;
-use rocmforge::model::{ExecutionPlan, ModelConfig};
+use rocmforge::model::ExecutionPlan;
 use serial_test::serial;
 
 /// Test basic forward pass functionality

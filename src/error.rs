@@ -575,7 +575,7 @@ mod tests {
 
     #[test]
     fn test_poison_error_from_impl_exists() {
-        use std::sync::{Mutex, PoisonError};
+        use std::sync::PoisonError;
 
         // Verify the From<PoisonError<T>> trait impl exists by calling it explicitly
         // We create a dummy error and verify it converts correctly

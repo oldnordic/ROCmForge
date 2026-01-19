@@ -3,16 +3,11 @@
 //! Test suite for GGUF file parsing and tensor loading functionality.
 
 use serial_test::serial;
-use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
 use std::path::Path;
 
 use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
-use rocmforge::backend::hip_backend::{DeviceTensor, HipBackend};
-use rocmforge::loader::{GgufLoader, GgufMetadata, GgufTensor};
-use rocmforge::loader::TensorShape;
-use rocmforge::model::config::ModelConfig;
+use rocmforge::loader::GgufLoader;
 
 /// Create a minimal synthetic GGUF file for testing
 fn create_minimal_gguf_file(path: &Path) -> anyhow::Result<()> {

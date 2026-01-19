@@ -49,12 +49,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
 
 use rocmforge::backend::hip_backend::{DeviceTensor, HipBackend};
-use rocmforge::loader::gguf::GgufLoader;
-
-use serial_test::serial;
 
 // -----------------------------------------------------------------------------
 // GPU Test Fixture (for integration tests in tests/ directory)

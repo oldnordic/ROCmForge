@@ -39,4 +39,6 @@ pub fn temp_path() -> PathBuf {
 }
 
 // Re-export commonly used tempfile types for convenience
+// Note: These are exported for external use even if not used directly in this module
+#[allow(dead_code)]
 pub use tempfile::{NamedTempFile, TempDir};
