@@ -36,12 +36,12 @@ Requirements for GPU-accelerated token sampling.
 
 Requirements for GPU-accelerated rotary position embeddings.
 
-- [ ] **ROPE-01**: RoPE application runs on GPU for GPU tensors
-- [ ] **ROPE-02**: Multi-head rotation is handled correctly on GPU
-- [ ] **ROPE-03**: Position IDs are handled for long context (>2048 tokens)
-- [ ] **ROPE-04**: RoPE kernel is added to build.rs compilation list
-- [ ] **ROPE-05**: RoPE kernel has unit tests verifying rotation correctness
-- [ ] **ROPE-06**: CPU-GPU transfer overhead is eliminated (no round-trip)
+- [x] **ROPE-01**: RoPE application runs on GPU for GPU tensors
+- [x] **ROPE-02**: Multi-head rotation is handled correctly on GPU
+- [x] **ROPE-03**: Position IDs are handled for long context (>2048 tokens)
+- [x] **ROPE-04**: RoPE kernel is added to build.rs compilation list
+- [x] **ROPE-05**: RoPE kernel has unit tests verifying rotation correctness
+- [x] **ROPE-06**: CPU-GPU transfer overhead is eliminated (no round-trip)
 
 ### GPU Quantization (QUANT)
 
@@ -128,12 +128,12 @@ Explicitly excluded from v1.2.
 | SAMPLING-04 | Phase 15 | Pending |
 | SAMPLING-05 | Phase 15 | Pending |
 | SAMPLING-06 | Phase 15 | Pending |
-| ROPE-01 | Phase 16 | Pending |
-| ROPE-02 | Phase 16 | Pending |
-| ROPE-03 | Phase 16 | Pending |
-| ROPE-04 | Phase 16 | Pending |
-| ROPE-05 | Phase 16 | Pending |
-| ROPE-06 | Phase 16 | Pending |
+| ROPE-01 | Phase 16 | Validated |
+| ROPE-02 | Phase 16 | Validated |
+| ROPE-03 | Phase 16 | Validated |
+| ROPE-04 | Phase 16 | Validated |
+| ROPE-05 | Phase 16 | Validated |
+| ROPE-06 | Phase 16 | Validated |
 | QUANT-01 | Phase 17 | Pending |
 | QUANT-02 | Phase 17 | Pending |
 | QUANT-03 | Phase 17 | Pending |

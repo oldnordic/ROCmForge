@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-01-19)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Phase 16 - GPU RoPE Implementation
+**Current focus:** Phase 16 - GPU RoPE Implementation (COMPLETE)
 
 ## Current Position
 
 Phase: 16 of 20 (GPU RoPE Implementation)
-Plan: 2/7 in current phase
-Status: In progress
-Last activity: 2026-01-19 — Completed 16-02: RoPE GPU tests and compilation fixes
+Plan: 2/2 in current phase
+Status: Complete
+Last activity: 2026-01-19 — Completed Phase 16: RoPE kernel verification and GPU tests added
 
-Progress: [█████░░░░░░░░░░░░░░░░░░░] 18% (16.2 of 20 phases planned)
+Progress: [██████░░░░░░░░░░░░░░░░░] 20% (16 of 20 phases complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 103 (v1.0 + v1.1)
-- Average duration: ~45 min
-- Total execution time: ~73 hours
+- Total plans completed: 119 (v1.0 + v1.1 + v1.2 through 16)
+- Average duration: ~44 min
+- Total execution time: ~76 hours
 
 **By Phase:**
 
