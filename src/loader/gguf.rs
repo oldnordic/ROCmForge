@@ -28,6 +28,7 @@ use rayon::prelude::*;
 
 // Thread-safe wrapper for parallel dequantization results
 // RwLock allows multiple readers or one writer - perfect for parallel writes
+#[allow(dead_code)] // Reserved for future async GPU loading (Rayon integration)
 type ParallelResult = Arc<RwLock<Vec<f32>>>;
 
 /// GGUF file magic number
@@ -957,6 +958,7 @@ impl GgufLoader {
         Ok(device_tensor_arc)
     }
 
+    #[allow(dead_code)] // Reserved for future tensor type classification
     fn is_embedding_weight(name: &str) -> bool {
         matches!(
             name,
@@ -1831,6 +1833,11 @@ impl GgufLoader {
     }
 
     /// Read tensor data from file
+    ///
+    /// NOTE: This method is unused after Phase 1 lazy loading refactoring.
+    /// Tensors are now loaded on-demand via get_or_load_tensor() with memory mapping.
+    /// Kept for potential future use or fallback to eager loading.
+    #[allow(dead_code)]
     fn read_tensor_data(&mut self, file: &mut File) -> Result<()> {
         for tensor in self.tensors.values_mut() {
             // Seek to tensor offset
@@ -1984,6 +1991,12 @@ impl GgufLoader {
     }
 
     /// Upload tensor to GPU memory
+    ///
+    /// NOTE: This method is a template for GPU tensor upload functionality.
+    /// Currently, tensor loading is handled via lazy loading in ExecutionPlan.
+    /// The method dequantizes various tensor types (F32, F16, Q8_0, Q4_0, Q4_1, Q5_0, Q5_1, Q4_K, Q6_K, MXFP4, MXFP6).
+    /// TODO: Integrate HIP kernels for direct GPU quantized tensor loading.
+    #[allow(dead_code)]
     fn upload_tensor_to_gpu(
         &self,
         backend: &HipBackend,
@@ -2379,6 +2392,9 @@ impl GgufLoader {
     }
 
     /// Dequantize MXFP4 tensor to FP32
+    ///
+    /// NOTE: Used by upload_tensor_to_gpu for MXFP4 format support.
+    #[allow(dead_code)]
     fn dequantize_mxfp4(&self, tensor: &GgufTensor) -> Result<Vec<f32>> {
         let total_elements = tensor.total_elements();
         let mut result = vec![0.0f32; total_elements];
@@ -2423,6 +2439,9 @@ impl GgufLoader {
     }
 
     /// Dequantize MXFP6 tensor to FP32
+    ///
+    /// NOTE: Used by upload_tensor_to_gpu for MXFP6 format support.
+    #[allow(dead_code)]
     fn dequantize_mxfp6(&self, tensor: &GgufTensor) -> Result<Vec<f32>> {
         let total_elements = tensor.total_elements();
         let mut result = vec![0.0f32; total_elements];
@@ -2638,10 +2657,12 @@ fn transpose_f32_matrix(data: &[f32], rows: usize, cols: usize) -> Vec<f32> {
 pub struct F16(pub u16);
 
 impl F16 {
+    #[allow(dead_code)] // Reserved for future f16 conversion utilities
     fn from_bits(bits: u16) -> Self {
         Self(bits)
     }
 
+    #[allow(dead_code)] // Reserved for future f16 conversion utilities
     fn to_f32(self) -> f32 {
         // Simple conversion - in practice would use proper half-precision conversion
         let bits = self.0;

@@ -25,12 +25,15 @@ pub struct Q4_0Block {
 }
 
 // Constants for Q4_0 format
+#[allow(dead_code)] // Reserved for future Q4_0 format validation
 const Q4_0_BLOCK_SIZE: usize = 20;  // 4 bytes scale + 16 bytes packed data
+#[allow(dead_code)] // Reserved for future Q4_0 format validation
 const Q4_0_ELEMENTS_PER_BLOCK: usize = 32;
 
 /// Cached kernel modules and functions for Q4_0 dequantization
 #[derive(Debug)]
 pub struct Q4_0DequantCache {
+    #[allow(dead_code)] // Module kept alive to keep HSACO loaded in memory
     module: Option<HipModule>,
     kernel: Option<HipKernel>,
 }

@@ -29,7 +29,7 @@ pub type Q6KdequantResult<T> = Result<T, String>;
 
 /// Q6_K dequantization cache containing loaded module and kernel
 pub struct Q6KdequantCache {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Module kept alive to keep HSACO loaded in memory
     module: HipModule,
     kernel: HipKernel,
 }

@@ -51,6 +51,7 @@ impl PagedAttentionConfig {
 /// Paged attention kernels for GPU computation
 pub struct PagedAttentionKernels {
     backend: Arc<HipBackend>,
+    #[allow(dead_code)] // Reserved for future paged attention configuration
     config: PagedAttentionConfig,
     kernel_compiled: bool,
 }
@@ -541,7 +542,12 @@ impl PagedAttentionKernels {
 }
 
 // HIP Kernel Source (for future implementation)
+//
+// NOTE: This kernel source is a template for future GPU implementation of paged attention.
+// It is not currently used - the paged attention module falls back to CPU computation.
+// TODO: Implement HIPRTC compilation and launch of this kernel (see Phase 3 docs).
 #[cfg(feature = "rocm")]
+#[allow(dead_code)]
 const PAGED_ATTENTION_KERNEL: &str = r#"
 #include <hip/hip_runtime.h>
 

@@ -597,6 +597,7 @@ impl InferenceEngine {
     // ========== Phase 10-20: Retry Logic for Temporary GPU Errors ==========
 
     /// Record a retry attempt in metrics (if available)
+    #[allow(dead_code)] // Reserved for future retry metrics integration
     async fn record_retry_attempt(&self, operation: &str, attempt: usize) {
         // This is a placeholder for metrics integration
         // In a full implementation, this would update the retry counters

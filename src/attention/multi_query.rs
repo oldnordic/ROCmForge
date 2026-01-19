@@ -426,6 +426,11 @@ impl MultiQueryAttention {
     }
 
     /// Validate input tensor shapes
+    ///
+    /// NOTE: This function is currently unused. The validation logic in forward()
+    /// is handled by the extract_* functions which already validate consistency.
+    /// Kept for potential future use or external callers.
+    #[allow(dead_code)]
     fn validate_input_shapes(
         &self,
         q: &[f32],

@@ -207,6 +207,12 @@ impl ExecutionPlan {
     }
 
     /// Get or load fused QKV tensor, handling separate Q/K/V weights for Qwen2
+    ///
+    /// NOTE: This method is currently unused. The Qwen2 attention weights are loaded
+    /// separately in get_layer_weights() and concatenated there. This method was
+    /// intended for lazy QKV loading but the current implementation loads weights eagerly.
+    /// Kept for potential future lazy loading optimization.
+    #[allow(dead_code)]
     fn get_or_load_fused_qkv(&self, q_lazy: &Arc<LazyTensor>) -> HipResult<DeviceTensor> {
         match &**q_lazy {
             LazyTensor::Unloaded { name, .. } => {
@@ -2680,6 +2686,7 @@ impl ExecutionPlan {
     /// Extracts token embedding weights from GGUF and validates shape.
     /// Supports multiple naming conventions: token_embd, embed_tokens, word_embeddings.
     /// llama.cpp-compatible: accepts both layouts, infers vocab_size when 0.
+    #[allow(dead_code)] // Reserved for alternative weight mapping strategies
     fn map_embedding(
         backend: &HipBackend,
         config: &ModelConfig,
@@ -2760,6 +2767,7 @@ impl ExecutionPlan {
     /// Extracts LM head weights from GGUF and validates shape.
     /// Supports multiple naming conventions: output.weight, lm_head.weight, logits.weight.
     /// llama.cpp-compatible: accepts both layouts, infers vocab_size when 0, supports tied embeddings.
+    #[allow(dead_code)] // Reserved for alternative weight mapping strategies
     fn map_lm_head(
         backend: &HipBackend,
         config: &ModelConfig,
@@ -2924,6 +2932,7 @@ impl ExecutionPlan {
     /// - **Qwen2**: Uses `blk.N.attn_q.weight`, `blk.N.attn_k.weight`, `blk.N.attn_v.weight`
     /// - **LLaMA**: Uses `transformer.layers.N.attention.wq.weight` (fused or separate)
     /// - **Mistral**: Uses `model.layers.N.self_attn.q_proj.weight` (fused or separate)
+    #[allow(dead_code)] // Reserved for alternative weight mapping strategies
     fn map_attention_weights(
         backend: &HipBackend,
         config: &ModelConfig,
@@ -3060,6 +3069,7 @@ impl ExecutionPlan {
     /// - `blk.N.attn_output.weight` [hidden_size, hidden_size]
     ///
     /// Returns `Err` if Qwen2-style tensors are not found.
+    #[allow(dead_code)] // Reserved for alternative weight mapping strategies
     fn try_map_qwen2_attention_weights(
         backend: &HipBackend,
         config: &ModelConfig,
@@ -3137,6 +3147,7 @@ impl ExecutionPlan {
     }
 
     /// Map LLaMA-style attention weights (fused QKV with transformer.layers.N. prefix)
+    #[allow(dead_code)] // Reserved for alternative weight mapping strategies
     fn map_llama_attention_weights(
         _backend: &HipBackend,
         config: &ModelConfig,
@@ -3240,6 +3251,7 @@ impl ExecutionPlan {
     /// **Concatenation strategy:**
     /// If K and V have shape [hidden_size, head_dim], we pad them to [hidden_size, hidden_size]
     /// before concatenation. This ensures the output always has the expected shape.
+    #[allow(dead_code)] // Reserved for alternative weight mapping strategies
     fn concatenate_qkv_tensors(
         backend: &HipBackend,
         q_weight: &DeviceTensor,
@@ -3333,6 +3345,7 @@ impl ExecutionPlan {
     ///
     /// Validates that the tensor has shape [dim1, dim2] or [dim2, dim1].
     /// If transposed, returns a transposed copy. Otherwise returns the original.
+    #[allow(dead_code)] // Reserved for alternative weight mapping strategies
     fn validate_and_transpose_mlp_weight(
         backend: &HipBackend,
         weight: &DeviceTensor,
@@ -3377,6 +3390,7 @@ impl ExecutionPlan {
     /// - **Qwen2**: Uses `blk.N.ffn_gate.weight`, `blk.N.ffn_up.weight`, `blk.N.ffn_down.weight`
     /// - **LLaMA**: Uses `transformer.layers.N.mlp.gate_proj.weight`, etc.
     /// - **Mistral**: Uses `model.layers.N.mlp.gate_proj.weight`, etc.
+    #[allow(dead_code)] // Reserved for alternative weight mapping strategies
     fn map_mlp_weights(
         backend: &HipBackend,
         config: &ModelConfig,
@@ -3476,6 +3490,7 @@ impl ExecutionPlan {
     /// - `blk.N.ffn_down.weight` [hidden_size, intermediate_size] or [intermediate_size, hidden_size]
     ///
     /// Returns `Err` if Qwen2-style tensors are not found.
+    #[allow(dead_code)] // Reserved for alternative weight mapping strategies
     fn try_map_qwen2_mlp_weights(
         backend: &HipBackend,
         config: &ModelConfig,
@@ -3547,6 +3562,7 @@ impl ExecutionPlan {
     }
 
     /// Map LLaMA-style MLP weights (transformer.layers.N.* prefix)
+    #[allow(dead_code)] // Reserved for alternative weight mapping strategies
     fn map_llama_mlp_weights(
         _backend: &HipBackend,
         config: &ModelConfig,
@@ -3686,6 +3702,7 @@ impl ExecutionPlan {
     /// - **Qwen2**: Uses `blk.N.attn_norm.weight` and `blk.N.ffn_norm.weight`
     /// - **LLaMA**: Uses `transformer.layers.N.attention_norm.weight` and `transformer.layers.N.ffn_norm.weight`
     /// - **Mistral**: Uses `model.layers.N.input_layernorm.weight` and `model.layers.N.post_attention_layernorm.weight`
+    #[allow(dead_code)] // Reserved for alternative weight mapping strategies
     fn map_layer_norm_weights(
         backend: &HipBackend,
         config: &ModelConfig,
@@ -3807,6 +3824,7 @@ impl ExecutionPlan {
     /// - `blk.N.ffn_norm.bias` [hidden_size] (optional)
     ///
     /// Returns `Err` if Qwen2-style tensors are not found.
+    #[allow(dead_code)] // Reserved for alternative weight mapping strategies
     fn try_map_qwen2_layer_norm_weights(
         backend: &HipBackend,
         config: &ModelConfig,
@@ -3904,6 +3922,7 @@ impl ExecutionPlan {
     }
 
     /// Map LLaMA-style layer norm weights (transformer.layers.N.*)
+    #[allow(dead_code)] // Reserved for alternative weight mapping strategies
     fn map_llama_layer_norm_weights(
         _backend: &HipBackend,
         config: &ModelConfig,

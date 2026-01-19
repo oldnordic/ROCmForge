@@ -22,6 +22,7 @@ pub struct RopeCache {
     pub cos: DeviceTensor,
     pub sin: DeviceTensor,
     pub half_dim: usize,
+    #[allow(dead_code)] // Stored for potential future use in layout-aware operations
     pub max_seq_len: usize,
 }
 
@@ -36,12 +37,15 @@ pub struct LayerGgmlPlan {
     pub kv_read_v_id: TensorId,
     pub kv_write_k_id: TensorId,
     pub kv_write_v_id: TensorId,
+    #[allow(dead_code)] // Reserved for future attention visualization
     pub scores_id: TensorId,
+    #[allow(dead_code)] // Reserved for future attention visualization
     pub softmax_id: TensorId,
     pub cos_id: TensorId,
     pub sin_id: TensorId,
     pub num_heads: usize,
     pub head_dim: usize,
     pub hidden_size: usize,
+    #[allow(dead_code)] // Stored for potential future use in layout-aware operations
     pub max_seq_len: usize,
 }

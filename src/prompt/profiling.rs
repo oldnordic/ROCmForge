@@ -212,6 +212,7 @@ pub struct PromptProfiler {
     timers: HashMap<String, Instant>,
 
     /// Memory usage tracking
+    #[allow(dead_code)] // Reserved for future memory profiling
     memory_tracking: bool,
 
     /// Enable profiling (can be disabled at runtime)

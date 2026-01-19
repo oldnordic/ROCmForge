@@ -48,10 +48,12 @@ pub type QuantizedResult<T> = Result<T, String>;
 
 // Constants for Q4_0 format
 const Q4_0_BLOCK_SIZE: usize = 20;  // 4 bytes scale + 16 bytes packed data
+#[allow(dead_code)] // Reserved for future Q4_0 format validation
 const Q4_0_ELEMENTS_PER_BLOCK: usize = 32;
 
 // Constants for Q8_0 format
 const Q8_0_BLOCK_SIZE: usize = 36;  // 4 bytes scale + 32 bytes int8 data
+#[allow(dead_code)] // Reserved for future Q8_0 format validation
 const Q8_0_ELEMENTS_PER_BLOCK: usize = 32;
 
 // Constants for Q4_K format
@@ -65,6 +67,7 @@ const Q6_K_ELEMENTS_PER_BLOCK: usize = 256;  // Elements per block
 /// Cached kernel modules and functions for quantized matmul operations
 #[derive(Debug)]
 struct Q4_0KernelCache {
+    #[allow(dead_code)] // Module kept alive to keep HSACO loaded in memory
     module: Option<HipModule>,
     kernel: Option<HipKernel>,
 }
@@ -73,6 +76,7 @@ struct Q4_0KernelCache {
 #[derive(Debug)]
 #[allow(non_camel_case_types)] // Matches GGUF quantization format naming
 struct Q4_KKernelCache {
+    #[allow(dead_code)] // Module kept alive to keep HSACO loaded in memory
     module: Option<HipModule>,
     kernel: Option<HipKernel>,
 }
@@ -81,6 +85,7 @@ struct Q4_KKernelCache {
 #[derive(Debug)]
 #[allow(non_camel_case_types)] // Matches GGUF quantization format naming
 struct Q6_KKernelCache {
+    #[allow(dead_code)] // Module kept alive to keep HSACO loaded in memory
     module: Option<HipModule>,
     kernel: Option<HipKernel>,
 }

@@ -156,6 +156,7 @@ struct GenerateRequest {
 struct GenerateResponse {
     request_id: u32,
     text: String,
+    #[allow(dead_code)] // Reserved for future token-level response tracking
     tokens: Vec<u32>,
     finished: bool,
     finish_reason: Option<String>,
@@ -164,6 +165,7 @@ struct GenerateResponse {
 #[derive(Debug, Deserialize)]
 struct TokenStream {
     request_id: u32,
+    #[allow(dead_code)] // Reserved for future token-level streaming
     token: u32,
     text: String,
     finished: bool,

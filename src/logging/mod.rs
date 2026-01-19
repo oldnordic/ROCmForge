@@ -25,6 +25,7 @@ use tracing_subscriber::{
 static TRACING_INITIALIZED: OnceCell<()> = OnceCell::new();
 
 /// Default log level when no environment variable is set
+#[allow(dead_code)] // Reserved for future log level default configuration
 const DEFAULT_LOG_LEVEL: &str = "info";
 
 /// Environment variable for log level override

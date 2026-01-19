@@ -256,6 +256,7 @@ impl InferenceServer {
         self.tokenizer.encode(prompt)
     }
 
+    #[allow(dead_code)] // Reserved for future token-to-text conversion in API responses
     fn token_to_text(&self, token: u32) -> String {
         self.tokenizer.decode_token(token)
     }

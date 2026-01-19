@@ -20,6 +20,7 @@ struct FreeBlock {
     /// Buffer that can be reused
     buffer: HipBuffer,
     /// Size in bytes
+    #[allow(dead_code)] // Reserved for future allocator statistics tracking
     size: usize,
 }
 

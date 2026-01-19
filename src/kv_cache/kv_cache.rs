@@ -348,10 +348,13 @@ pub struct PhysicalBlockPool {
     /// Free list for O(1) allocation
     free_list: VecDeque<BlockId>,
     /// Block size in tokens
+    #[allow(dead_code)] // Reserved for future pool statistics
     block_size: usize,
     /// Number of KV heads
+    #[allow(dead_code)] // Reserved for future pool statistics
     num_heads: usize,
     /// Head dimension
+    #[allow(dead_code)] // Reserved for future pool statistics
     head_dim: usize,
     /// Allocation statistics for tuning
     stats: AllocationStats,

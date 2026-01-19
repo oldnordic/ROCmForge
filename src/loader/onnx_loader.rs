@@ -76,6 +76,7 @@ impl OnnxTensor {
 #[derive(Debug)]
 pub struct OnnxSession {
     // In a real implementation, this would hold the ONNX Runtime session
+    #[allow(dead_code)] // Reserved for future ONNX Runtime session management
     model_path: String,
     input_names: Vec<String>,
     output_names: Vec<String>,
