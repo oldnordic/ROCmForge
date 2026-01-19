@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-19)
 ## Current Position
 
 Phase: 15 of 20 (GPU Sampling Kernels)
-Plan: 5/5 in current phase
+Plan: 7/7 in current phase
 Status: Phase complete
-Last activity: 2026-01-19 — Completed 15-05: GPU sampler cache updated for compiled HSACO loading
+Last activity: 2026-01-19 — Completed 15-07: Comprehensive GPU sampling unit and integration tests
 
-Progress: [█████░░░░░░░░░░░░░░░░░░░] 18% (15.5 of 20 phases planned)
+Progress: [█████░░░░░░░░░░░░░░░░░░░] 18% (15.7 of 20 phases planned)
 
 ## Performance Metrics
 
@@ -51,6 +51,8 @@ Progress: [█████░░░░░░░░░░░░░░░░░░
 | 15-03 | 1 | ~3min | 3 min |
 | 15-04 | 1 | ~4min | 4 min |
 | 15-05 | 1 | ~5min | 5 min |
+| 15-06 | 1 | ~0min | 0 min |
+| 15-07 | 1 | ~9min | 9 min |
 
 **Recent Trend:**
 - Last 5 phases: Stable (3-6 min/plan)
@@ -72,6 +74,7 @@ Recent decisions affecting v1.2:
 - **15-03 Kernel Design**: Multi-kernel pipeline for top-p sampling to avoid watchdog timeout; two-pass parallel scan (thread stride sums + thread-0 accumulation); binary search for threshold (O(log v)) and sampling (O(log v))
 - **15-04 Kernel Integration**: Fused top-k + top-p sampling kernel added to build.rs; uses rejection sampling with MAX_ITERATIONS=10 bound and argmax fallback; watchdog timeout risks documented in TODO comments
 - **15-05 API Integration**: Updated SamplingKernelCache to load 7 kernel types from HSACO env vars; deprecated single-kernel topp_sampling_kernel; updated GpuTopPSampler to use 3-kernel pipeline; added 4 new kernel wrapper functions
+- **15-07 Test Coverage**: Comprehensive unit and integration tests for GPU sampling; includes edge case tests (single token, uniform distribution, empty probabilities); temperature scaling tests (SAMPLING-03); statistical GPU vs CPU comparison tests
 
 ### Pending Todos
 
@@ -101,9 +104,11 @@ None yet.
 - Phase 15-03: Implemented multi-kernel topp_sampling.hip pipeline (prefix_sum, threshold, sample)
 - Phase 15-04: Added fused top-k + top-p sampling kernel to build.rs (FUSED_SAMPLING_HSACO)
 - Phase 15-05: Updated GPU sampler cache with 7 kernel fields; added kernel wrappers; updated GpuTopPSampler for multi-kernel pipeline
+- Phase 15-06: (Skipped or not tracked)
+- Phase 15-07: Added comprehensive GPU sampling unit tests (5 new tests) and integration tests (13 new tests in sampling_gpu_tests.rs); fixed pre-existing compilation errors
 
 ## Session Continuity
 
 Last session: 2026-01-19
-Stopped at: Completed 15-05 — Phase 15 complete, ready for Phase 16
+Stopped at: Completed 15-07 — Phase 15 complete, ready for Phase 16
 Resume file: None
