@@ -8,7 +8,7 @@ use crate::prompt::profiling::{AttentionPattern, estimate_attention_memory};
 impl AttentionPattern {
     /// Detect attention pattern from model configuration and heuristics
     pub fn detect(
-        seq_len: usize,
+        _seq_len: usize,
         use_causal: bool,
         _layer_idx: usize,
         _total_layers: usize,
@@ -23,7 +23,7 @@ impl AttentionPattern {
     }
 
     /// Get optimal block size for kernel execution
-    pub fn optimal_block_size(&self, seq_len: usize, head_dim: usize) -> usize {
+    pub fn optimal_block_size(&self, seq_len: usize, _head_dim: usize) -> usize {
         match self {
             AttentionPattern::Dense => {
                 // Dense attention benefits from larger blocks
@@ -252,7 +252,7 @@ impl BatchAttentionOptimizer {
         available_memory_mb: usize,
     ) -> usize {
         let available_bytes = available_memory_mb * 1024 * 1024;
-        let per_token_memory = estimate_attention_memory(1, num_heads, head_dim);
+        let _per_token_memory = estimate_attention_memory(1, num_heads, head_dim);
 
         // Binary search for optimal chunk size
         let mut low = 1;

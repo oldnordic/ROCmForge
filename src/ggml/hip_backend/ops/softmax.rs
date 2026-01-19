@@ -1,13 +1,13 @@
 //! HIP softmax op using existing softmax kernel.
 
-use crate::backend::{HipBackend, HipError, HipResult, HipBuffer};
+use crate::backend::{HipBackend, HipResult, HipBuffer};
 
 pub fn softmax(
     backend: &HipBackend,
     input: &HipBuffer,
     output: &HipBuffer,
-    batch_size: u32,
-    seq_len: u32,
+    _batch_size: u32,
+    _seq_len: u32,
 ) -> HipResult<()> {
     let _ = backend;
     output.copy_from_buffer(input)?;

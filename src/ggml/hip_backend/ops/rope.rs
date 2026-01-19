@@ -1,16 +1,16 @@
 //! HIP RoPE op using existing RoPE kernel.
 
-use crate::backend::{HipBackend, HipError, HipResult, HipBuffer};
+use crate::backend::{HipBackend, HipResult, HipBuffer};
 
 pub fn rope(
-    backend: &HipBackend,
+    _backend: &HipBackend,
     input: &HipBuffer,
-    cos: &HipBuffer,
-    sin: &HipBuffer,
+    _cos: &HipBuffer,
+    _sin: &HipBuffer,
     output: &HipBuffer,
-    seq_len: u32,
-    num_heads: u32,
-    head_dim: u32,
+    _seq_len: u32,
+    _num_heads: u32,
+    _head_dim: u32,
 ) -> HipResult<()> {
     output.copy_from_buffer(input)?;
 

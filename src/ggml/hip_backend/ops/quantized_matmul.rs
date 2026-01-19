@@ -37,7 +37,6 @@
 //! - **Profiling support**: Built-in kernel timers for performance analysis
 
 use std::env;
-use std::ffi::c_void;
 use std::path::Path;
 use std::sync::Mutex;
 

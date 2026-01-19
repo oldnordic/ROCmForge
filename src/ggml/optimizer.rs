@@ -283,7 +283,7 @@ impl GraphOptimizer {
         let mut new_idx = 0;
 
         // Keep only referenced tensors
-        let original_tensor_count = graph.tensors.len();
+        let _original_tensor_count = graph.tensors.len();
         graph.tensors = graph
             .tensors
             .iter()

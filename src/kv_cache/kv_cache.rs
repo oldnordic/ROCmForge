@@ -86,7 +86,7 @@ impl CachePreset {
     /// - Small: ~4GB VRAM (edge devices)
     /// - Medium: ~12GB VRAM (consumer GPUs)
     /// - Large: ~40GB VRAM (data center)
-    pub fn max_pages(self, num_heads: usize, head_dim: usize, num_layers: usize) -> usize {
+    pub fn max_pages(self, num_heads: usize, head_dim: usize, _num_layers: usize) -> usize {
         // Estimate memory per page in bytes
         let bytes_per_token = num_heads * head_dim * 2 * std::mem::size_of::<f32>(); // K + V
         let bytes_per_page = self.page_size() * bytes_per_token;

@@ -124,7 +124,7 @@ impl CpuBackend {
         #[cfg(feature = "simd")]
         let use_simd = self.simd_capable;
         #[cfg(not(feature = "simd"))]
-        let use_simd = false;
+        let _use_simd = false;
 
         let c_buf = self.buffer_mut(c_id).ok_or_else(|| {
             GgmlError::Backend(format!("Output tensor C not found: {:?}", c_id))
@@ -196,7 +196,7 @@ impl CpuBackend {
         #[cfg(feature = "simd")]
         let use_simd = self.simd_capable;
         #[cfg(not(feature = "simd"))]
-        let use_simd = false;
+        let _use_simd = false;
 
         let output_buf = self.buffer_mut(output_id).ok_or_else(|| {
             GgmlError::Backend(format!("Output tensor not found: {:?}", output_id))

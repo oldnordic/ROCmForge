@@ -22,7 +22,7 @@
 //! }
 //! ```
 
-use crate::ggml::{GgmlBackend, GgmlError, GgmlResult, Op, TensorDesc, TensorId};
+use crate::ggml::{GgmlBackend, GgmlResult, Op, TensorDesc, TensorId};
 use std::collections::HashMap;
 
 /// Fake buffer type (llama.cpp uses (uint8_t *) 16 as fake pointer)

@@ -1086,7 +1086,7 @@ impl GgmlBackend for HipGgmlBackend {
                 let input_desc = self
                     .tensor_desc(inputs[1])
                     .ok_or_else(|| GgmlError::InvalidShape("Missing input desc".to_string()))?;
-                let output_desc = self
+                let _output_desc = self
                     .tensor_desc(outputs[0])
                     .ok_or_else(|| GgmlError::InvalidShape("Missing output desc".to_string()))?;
 
@@ -1109,10 +1109,10 @@ impl GgmlBackend for HipGgmlBackend {
                 }
 
                 // Validate matmul dimensions
-                let m = input_desc.shape[0] as i32;
+                let _m = input_desc.shape[0] as i32;
                 let k = input_desc.shape[1] as i32;
                 let weights_k = n_cols as i32;
-                let n = n_rows as i32;
+                let _n = n_rows as i32;
                 if k != weights_k {
                     return Err(GgmlError::InvalidShape(format!(
                         "MatMulQ4_0 dimension mismatch: k={} weights_k={}",
@@ -1163,7 +1163,7 @@ impl GgmlBackend for HipGgmlBackend {
                 let input_desc = self
                     .tensor_desc(inputs[1])
                     .ok_or_else(|| GgmlError::InvalidShape("Missing input desc".to_string()))?;
-                let output_desc = self
+                let _output_desc = self
                     .tensor_desc(outputs[0])
                     .ok_or_else(|| GgmlError::InvalidShape("Missing output desc".to_string()))?;
 
@@ -1186,10 +1186,10 @@ impl GgmlBackend for HipGgmlBackend {
                 }
 
                 // Validate matmul dimensions
-                let m = input_desc.shape[0] as i32;
+                let _m = input_desc.shape[0] as i32;
                 let k = input_desc.shape[1] as i32;
                 let weights_k = n_cols as i32;
-                let n = n_rows as i32;
+                let _n = n_rows as i32;
                 if k != weights_k {
                     return Err(GgmlError::InvalidShape(format!(
                         "MatMulQ8_0 dimension mismatch: k={} weights_k={}",
@@ -1253,7 +1253,7 @@ impl GgmlBackend for HipGgmlBackend {
 
                 // Validate dst size: dst must be large enough to hold src at offset
                 let src_elements = src_desc.element_count();
-                let dst_elements = dst_desc.element_count();
+                let _dst_elements = dst_desc.element_count();
                 let byte_offset = offset * std::mem::size_of::<f32>();
                 if byte_offset + src_desc.byte_size() > dst_desc.byte_size() {
                     return Err(GgmlError::InvalidShape(format!(

@@ -45,7 +45,7 @@ impl ChunkStrategy {
         seq_len: usize,
         num_heads: usize,
         head_dim: usize,
-        available_memory_mb: usize,
+        _available_memory_mb: usize,
     ) -> usize {
         match self {
             ChunkStrategy::None => seq_len,
@@ -157,7 +157,7 @@ impl PromptChunker {
 
         for i in 0..num_chunks {
             let start = i * chunk_size;
-            let mut end = (start + chunk_size).min(seq_len);
+            let end = (start + chunk_size).min(seq_len);
 
             // Add overlap (except for first chunk)
             let overlap_start = if i > 0 {

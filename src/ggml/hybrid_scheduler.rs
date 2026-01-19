@@ -556,7 +556,7 @@ impl HybridExecutor {
             ExecutionStrategy::CpuPreferred
         };
 
-        let mut scheduler = HybridScheduler::new(strategy);
+        let scheduler = HybridScheduler::new(strategy);
 
         // Register capability providers if available
         // Note: We need to wrap the backends to provide CapabilityProvider

@@ -26,7 +26,7 @@
 //! # Ok::<(), rocmforge::error::RocmForgeError>(())
 //! ```
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use std::sync::Mutex;
 use std::collections::HashMap;
 

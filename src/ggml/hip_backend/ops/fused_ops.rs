@@ -20,7 +20,6 @@
 //! - **Lower latency**: Fewer CPU-GPU synchronizations
 //! - **Better cache utilization**: Data stays in GPU registers/SMEM
 
-use std::ffi::c_void;
 use std::path::Path;
 use std::sync::Mutex;
 

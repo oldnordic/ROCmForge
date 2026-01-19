@@ -14,7 +14,6 @@ use crate::ggml::backend::GgmlBackend;
 use crate::ggml::{executor::execute_graph, Graph, Layout, Op, TensorDesc, DType};
 use crate::ggml::hip_backend::HipGgmlBackend;
 use crate::model::{config::ModelConfig, glm_position::GlmPositionHandler, kv_cache::KVCache};
-use crate::ops::attention_gpu::HipAttentionKernels;
 use once_cell::sync::OnceCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -1426,7 +1425,7 @@ impl ExecutionPlan {
         let write_bytes = stride
             .checked_mul(elem_bytes)
             .ok_or_else(|| HipError::GenericError("KV write size overflow".to_string()))?;
-        let read_bytes = new_len
+        let _read_bytes = new_len
             .checked_mul(stride)
             .and_then(|v| v.checked_mul(elem_bytes))
             .ok_or_else(|| HipError::GenericError("KV read size overflow".to_string()))?;
@@ -1438,7 +1437,7 @@ impl ExecutionPlan {
         let (kv_keys, kv_values) = kv_cache.get(layer_idx)
             .map_err(|e| HipError::GenericError(format!("KV cache get failed: {}", e)))?;
 
-        let mut graph = plan
+        let graph = plan
             .graph
             .lock()
             .map_err(|_| HipError::GenericError("Layer graph lock poisoned".to_string()))?;
@@ -2109,7 +2108,7 @@ impl ExecutionPlan {
             ">>>   self_attention_separate({}): Step 2/7 - Reshape Q,K,V for attention...",
             layer_idx
         );
-        let step_start = std::time::Instant::now();
+        let _step_start = std::time::Instant::now();
 
         let q_reshaped =
             self.reshape_for_attention(backend, &q_proj, seq_len, num_heads, head_dim)?;
@@ -2275,8 +2274,8 @@ impl ExecutionPlan {
 
         let input_shape = input.shape().dims();
         let weight_shape = weight.shape().dims();
-        let batch_size = input_shape[0];
-        let input_dim = input_shape[1];
+        let _batch_size = input_shape[0];
+        let _input_dim = input_shape[1];
         let output_dim = weight_shape[1];
 
         eprintln!(
@@ -2505,7 +2504,7 @@ impl ExecutionPlan {
         q: &DeviceTensor,
         k: &DeviceTensor,
         v: &DeviceTensor,
-        kv_cache: Option<&mut KVCache>,
+        _kv_cache: Option<&mut KVCache>,
         layer_idx: usize,
     ) -> HipResult<DeviceTensor> {
         eprintln!(">>>     scaled_dot_product_attention({}): START", layer_idx);
@@ -2592,8 +2591,8 @@ impl ExecutionPlan {
         // Compute attention for each head
         for head in 0..num_heads {
             let kv_head = head / (num_heads / num_kv_heads); // Map Q head to KV head for GQA
-            let head_offset = head * q_seq_len * head_dim;
-            let kv_head_offset = kv_head * kv_seq_len * head_dim;
+            let _head_offset = head * q_seq_len * head_dim;
+            let _kv_head_offset = kv_head * kv_seq_len * head_dim;
 
             for q_pos in 0..q_seq_len {
                 let mut attention_weights = vec![0.0f32; kv_seq_len];

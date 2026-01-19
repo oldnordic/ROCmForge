@@ -1,15 +1,15 @@
 //! HIP RMSNorm op using existing RMSNorm kernel.
 
-use crate::backend::{HipBackend, HipError, HipResult, HipBuffer};
+use crate::backend::{HipBackend, HipResult, HipBuffer};
 
 pub fn rms_norm(
-    backend: &HipBackend,
+    _backend: &HipBackend,
     input: &HipBuffer,
-    weight: &HipBuffer,
+    _weight: &HipBuffer,
     output: &HipBuffer,
-    seq_len: u32,
-    hidden_size: u32,
-    eps: f32,
+    _seq_len: u32,
+    _hidden_size: u32,
+    _eps: f32,
 ) -> HipResult<()> {
     output.copy_from_buffer(input)?;
 

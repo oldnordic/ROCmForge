@@ -37,7 +37,7 @@ pub struct Q4_0Block {
 /// Currently dequantizes on CPU then uploads to GPU.
 /// TODO: Implement native HIP kernel for on-device dequantization (05-02).
 pub fn dequantize_q4_0_gpu(
-    backend: &HipBackend,
+    _backend: &HipBackend,
     quantized_data: &[u8],
     output: &crate::backend::HipBuffer,
     num_elements: usize,

@@ -6,10 +6,8 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use crate::loader::gguf::GgufLoader;
-use crate::backend::HipBackend;
 
 /// Cached prefix data
 #[derive(Debug, Clone)]

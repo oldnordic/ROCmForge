@@ -850,7 +850,7 @@ pub async fn run_server(
     // This creates the paged KV cache with correct model dimensions instead of wrong defaults
     // (32 heads, 128 head_dim, 1000 pages) which wastes memory and may cause dimension mismatches.
     // Matches the fix applied to rocmforge_cli.rs:create_engine()
-    let mut engine = InferenceEngine::from_gguf(&model_path).await?;
+    let engine = InferenceEngine::from_gguf(&model_path).await?;
     let engine = Arc::new(engine);
     engine.start().await?;
 
@@ -864,7 +864,7 @@ pub async fn run_server(
 
     // Create and initialize metrics
     let metrics = Arc::new(Metrics::new());
-    let mut server = InferenceServer::new(Some(engine), tokenizer.clone());
+    let server = InferenceServer::new(Some(engine), tokenizer.clone());
     server.metrics_registry.init(metrics.clone()).await;
 
     let app = create_router(server);

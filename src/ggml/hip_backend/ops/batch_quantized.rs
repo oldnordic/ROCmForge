@@ -13,7 +13,6 @@
 //! - **Async kernel launch**: Overlap execution with CPU operations
 //! - **Profiling support**: Built-in timing for performance analysis
 
-use std::ffi::c_void;
 
 #[cfg(feature = "rocm")]
 use crate::profiling::KernelTimer;

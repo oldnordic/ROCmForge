@@ -18,7 +18,7 @@ use tracing_subscriber::{
     fmt::{self, format::FmtSpan},
     layer::SubscriberExt,
     util::SubscriberInitExt,
-    EnvFilter, Layer, Registry,
+    EnvFilter, Layer,
 };
 
 /// Global flag to track if tracing has been initialized

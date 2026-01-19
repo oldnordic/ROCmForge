@@ -1,14 +1,14 @@
 //! HIP SwiGLU op using existing SwiGLU kernel.
 
-use crate::backend::{HipBackend, HipError, HipResult, HipBuffer};
+use crate::backend::{HipBackend, HipResult, HipBuffer};
 
 pub fn swiglu(
-    backend: &HipBackend,
-    gate: &HipBuffer,
-    up: &HipBuffer,
-    output: &HipBuffer,
-    seq_len: u32,
-    intermediate_size: u32,
+    _backend: &HipBackend,
+    _gate: &HipBuffer,
+    _up: &HipBuffer,
+    _output: &HipBuffer,
+    _seq_len: u32,
+    _intermediate_size: u32,
 ) -> HipResult<()> {
     #[cfg(feature = "rocm")]
     unsafe {
