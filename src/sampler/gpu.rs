@@ -24,17 +24,37 @@ const HIP_SUCCESS: i32 = 0;
 /// NOTE: We do NOT store HipBackend here because that would create a separate
 /// HIP stream from the caller's. Kernels must be launched on the caller's stream
 /// and synchronized on the same stream to avoid hangs.
+///
+/// Kernels loaded from build.rs compiled HSACO files:
+/// - softmax_kernel: from SAMPLING_UTILS_HSACO
+/// - temperature_scale_kernel: from TEMPERATURE_SCALE_HSACO
+/// - topk_sampling_kernel: from TOPK_SAMPLING_HSACO
+/// - topp_prefix_sum_kernel: from TOPP_PREFIX_SUM_HSACO
+/// - topp_threshold_kernel: from TOPP_THRESHOLD_HSACO
+/// - topp_sample_kernel: from TOPP_SAMPLE_HSACO
+/// - topk_topp_sampling_kernel: from FUSED_SAMPLING_HSACO
 #[cfg(feature = "rocm")]
 #[derive(Debug)]
 struct SamplingKernelCache {
+    // softmax_kernel from SAMPLING_UTILS_HSACO
     softmax_module: Option<HipModule>,
     softmax_kernel: Option<HipKernel>,
-    prefix_sum_module: Option<HipModule>,
-    prefix_sum_kernel: Option<HipKernel>,
-    topp_module: Option<HipModule>,
-    topp_kernel: Option<HipKernel>,
+    // temperature_scale_kernel from TEMPERATURE_SCALE_HSACO
+    temperature_scale_module: Option<HipModule>,
+    temperature_scale_kernel: Option<HipKernel>,
+    // topk_sampling_kernel from TOPK_SAMPLING_HSACO
     topk_module: Option<HipModule>,
     topk_kernel: Option<HipKernel>,
+    // topp_prefix_sum_kernel from TOPP_PREFIX_SUM_HSACO
+    topp_prefix_sum_module: Option<HipModule>,
+    topp_prefix_sum_kernel: Option<HipKernel>,
+    // topp_threshold_kernel from TOPP_THRESHOLD_HSACO
+    topp_threshold_module: Option<HipModule>,
+    topp_threshold_kernel: Option<HipKernel>,
+    // topp_sample_kernel from TOPP_SAMPLE_HSACO
+    topp_sample_module: Option<HipModule>,
+    topp_sample_kernel: Option<HipKernel>,
+    // topk_topp_sampling_kernel from FUSED_SAMPLING_HSACO
     fused_module: Option<HipModule>,
     fused_kernel: Option<HipKernel>,
 }
@@ -71,47 +91,38 @@ fn get_or_init_sampling_cache() -> Result<&'static Mutex<Option<SamplingKernelCa
     let load_backend = HipBackend::new()
         .map_err(|e| HipError::InitializationFailed(format!("Failed to create HipBackend for loading: {}", e)))?;
 
-    // Load softmax kernel
-    let softmax_path = std::env::var("SOFTMAX_HSACO")
-        .unwrap_or_else(|_| "kernels/softmax.hsaco".to_string());
+    // ========================================================================
+    // Load sampling kernels from compiled HSACO files
+    // ========================================================================
+
+    // Load softmax_kernel from SAMPLING_UTILS_HSACO
+    let softmax_path = std::env::var("SAMPLING_UTILS_HSACO")
+        .unwrap_or_else(|_| "kernels/sampling_utils.hsaco".to_string());
 
     let (softmax_module, softmax_kernel) = if Path::new(&softmax_path).exists() {
         let module = load_backend.load_module(&softmax_path)?;
         let kernel = load_backend.get_kernel_function(&module, "softmax_kernel")?;
         (Some(module), Some(kernel))
     } else {
-        tracing::warn!("Softmax kernel not found at {}, using CPU fallback", softmax_path);
+        tracing::warn!("Softmax kernel not found at {} (SAMPLING_UTILS_HSACO), using CPU fallback", softmax_path);
         (None, None)
     };
 
-    // Load prefix sum kernel
-    let prefix_sum_path = std::env::var("PREFIX_SUM_HSACO")
-        .unwrap_or_else(|_| "kernels/prefix_sum.hsaco".to_string());
+    // Load temperature_scale_kernel from TEMPERATURE_SCALE_HSACO
+    let temperature_scale_path = std::env::var("TEMPERATURE_SCALE_HSACO")
+        .unwrap_or_else(|_| "kernels/temperature_scale.hsaco".to_string());
 
-    let (prefix_sum_module, prefix_sum_kernel) = if Path::new(&prefix_sum_path).exists() {
-        let module = load_backend.load_module(&prefix_sum_path)?;
-        let kernel = load_backend.get_kernel_function(&module, "prefix_sum_kernel")?;
+    let (temperature_scale_module, temperature_scale_kernel) = if Path::new(&temperature_scale_path).exists() {
+        let module = load_backend.load_module(&temperature_scale_path)?;
+        let kernel = load_backend.get_kernel_function(&module, "temperature_scale_kernel")?;
         (Some(module), Some(kernel))
     } else {
-        tracing::warn!("Prefix sum kernel not found at {}, using CPU fallback", prefix_sum_path);
+        tracing::warn!("Temperature scale kernel not found at {} (TEMPERATURE_SCALE_HSACO), using CPU fallback", temperature_scale_path);
         (None, None)
     };
 
-    // Load top-p kernel
-    let topp_path = std::env::var("TOPP_HSACO")
-        .unwrap_or_else(|_| "kernels/topp_sampling.hsaco".to_string());
-
-    let (topp_module, topp_kernel) = if Path::new(&topp_path).exists() {
-        let module = load_backend.load_module(&topp_path)?;
-        let kernel = load_backend.get_kernel_function(&module, "topp_sampling_kernel")?;
-        (Some(module), Some(kernel))
-    } else {
-        tracing::warn!("Top-p kernel not found at {}, using CPU fallback", topp_path);
-        (None, None)
-    };
-
-    // Load top-k kernel
-    let topk_path = std::env::var("TOPK_HSACO")
+    // Load topk_sampling_kernel from TOPK_SAMPLING_HSACO
+    let topk_path = std::env::var("TOPK_SAMPLING_HSACO")
         .unwrap_or_else(|_| "kernels/topk_sampling.hsaco".to_string());
 
     let (topk_module, topk_kernel) = if Path::new(&topk_path).exists() {
@@ -119,33 +130,76 @@ fn get_or_init_sampling_cache() -> Result<&'static Mutex<Option<SamplingKernelCa
         let kernel = load_backend.get_kernel_function(&module, "topk_sampling_kernel")?;
         (Some(module), Some(kernel))
     } else {
-        tracing::warn!("Top-k kernel not found at {}, using CPU fallback", topk_path);
+        tracing::warn!("Top-k sampling kernel not found at {} (TOPK_SAMPLING_HSACO), using CPU fallback", topk_path);
         (None, None)
     };
 
-    // Load fused kernel
-    let fused_path = std::env::var("FUSED_HSACO")
-        .unwrap_or_else(|_| "kernels/topk_topp_sampling.hsaco".to_string());
+    // Load topp_prefix_sum_kernel from TOPP_PREFIX_SUM_HSACO
+    let topp_prefix_sum_path = std::env::var("TOPP_PREFIX_SUM_HSACO")
+        .unwrap_or_else(|_| "kernels/topp_prefix_sum.hsaco".to_string());
+
+    let (topp_prefix_sum_module, topp_prefix_sum_kernel) = if Path::new(&topp_prefix_sum_path).exists() {
+        let module = load_backend.load_module(&topp_prefix_sum_path)?;
+        let kernel = load_backend.get_kernel_function(&module, "topp_prefix_sum_kernel")?;
+        (Some(module), Some(kernel))
+    } else {
+        tracing::warn!("Top-p prefix sum kernel not found at {} (TOPP_PREFIX_SUM_HSACO), using CPU fallback", topp_prefix_sum_path);
+        (None, None)
+    };
+
+    // Load topp_threshold_kernel from TOPP_THRESHOLD_HSACO
+    let topp_threshold_path = std::env::var("TOPP_THRESHOLD_HSACO")
+        .unwrap_or_else(|_| "kernels/topp_threshold.hsaco".to_string());
+
+    let (topp_threshold_module, topp_threshold_kernel) = if Path::new(&topp_threshold_path).exists() {
+        let module = load_backend.load_module(&topp_threshold_path)?;
+        let kernel = load_backend.get_kernel_function(&module, "topp_threshold_kernel")?;
+        (Some(module), Some(kernel))
+    } else {
+        tracing::warn!("Top-p threshold kernel not found at {} (TOPP_THRESHOLD_HSACO), using CPU fallback", topp_threshold_path);
+        (None, None)
+    };
+
+    // Load topp_sample_kernel from TOPP_SAMPLE_HSACO
+    let topp_sample_path = std::env::var("TOPP_SAMPLE_HSACO")
+        .unwrap_or_else(|_| "kernels/topp_sample.hsaco".to_string());
+
+    let (topp_sample_module, topp_sample_kernel) = if Path::new(&topp_sample_path).exists() {
+        let module = load_backend.load_module(&topp_sample_path)?;
+        let kernel = load_backend.get_kernel_function(&module, "topp_sample_kernel")?;
+        (Some(module), Some(kernel))
+    } else {
+        tracing::warn!("Top-p sample kernel not found at {} (TOPP_SAMPLE_HSACO), using CPU fallback", topp_sample_path);
+        (None, None)
+    };
+
+    // Load topk_topp_sampling_kernel (fused) from FUSED_SAMPLING_HSACO
+    let fused_path = std::env::var("FUSED_SAMPLING_HSACO")
+        .unwrap_or_else(|_| "kernels/fused_sampling.hsaco".to_string());
 
     let (fused_module, fused_kernel) = if Path::new(&fused_path).exists() {
         let module = load_backend.load_module(&fused_path)?;
         let kernel = load_backend.get_kernel_function(&module, "topk_topp_sampling_kernel")?;
         (Some(module), Some(kernel))
     } else {
-        tracing::warn!("Fused kernel not found at {}, using CPU fallback", fused_path);
+        tracing::warn!("Fused sampling kernel not found at {} (FUSED_SAMPLING_HSACO), using CPU fallback", fused_path);
         (None, None)
     };
 
-    // Initialize cache
+    // Initialize cache with all loaded kernels
     *cache = Some(SamplingKernelCache {
         softmax_module,
         softmax_kernel,
-        prefix_sum_module,
-        prefix_sum_kernel,
-        topp_module,
-        topp_kernel,
+        temperature_scale_module,
+        temperature_scale_kernel,
         topk_module,
         topk_kernel,
+        topp_prefix_sum_module,
+        topp_prefix_sum_kernel,
+        topp_threshold_module,
+        topp_threshold_kernel,
+        topp_sample_module,
+        topp_sample_kernel,
         fused_module,
         fused_kernel,
     });
@@ -157,7 +211,267 @@ fn get_or_init_sampling_cache() -> Result<&'static Mutex<Option<SamplingKernelCa
 // Kernel Launch Wrappers
 // ============================================================================
 
-/// Launch top-p sampling kernel on GPU
+/// Launch temperature scale kernel on GPU
+///
+/// Scales logits by 1/temperature for temperature sampling.
+///
+/// # Arguments
+/// * `backend` - HipBackend for kernel launch
+/// * `logits` - GPU pointer to logits tensor [batch_size, vocab_size]
+/// * `temperature` - Temperature value (higher = more random)
+/// * `batch_size` - Number of batch elements
+/// * `vocab_size` - Vocabulary size
+///
+/// # Safety
+/// Caller must ensure all GPU pointers are valid and synchronized after this call.
+#[cfg(feature = "rocm")]
+pub unsafe fn temperature_scale_kernel(
+    backend: &HipBackend,
+    logits: *mut f32,
+    temperature: f32,
+    batch_size: u32,
+    vocab_size: u32,
+) -> Result<(), String> {
+    match get_or_init_sampling_cache() {
+        Ok(cache_ref) => {
+            let cache = cache_ref.lock()
+                .map_err(|e| format!("Failed to lock sampling cache: {}", e))?;
+            let cache_ref = cache.as_ref()
+                .ok_or_else(|| "Sampling cache not initialized".to_string())?;
+
+            let kernel = cache_ref.temperature_scale_kernel.as_ref()
+                .ok_or_else(|| "temperature_scale_kernel not loaded".to_string())?;
+
+            let grid_dim = (batch_size, 1, 1);
+            let block_dim = (BLOCK_SIZE, 1, 1);
+            let shared_mem_bytes = 0u32;
+
+            let mut logits_arg = logits;
+            let mut temperature_arg = temperature;
+            let mut batch_size_arg = batch_size;
+            let mut vocab_size_arg = vocab_size;
+
+            let args: &[*mut c_void] = &[
+                &mut logits_arg as *mut _ as *mut c_void,
+                &mut temperature_arg as *mut _ as *mut c_void,
+                &mut batch_size_arg as *mut _ as *mut c_void,
+                &mut vocab_size_arg as *mut _ as *mut c_void,
+            ];
+
+            backend.launch_kernel_with_module_shared(
+                kernel,
+                grid_dim,
+                block_dim,
+                args,
+                shared_mem_bytes,
+            ).map_err(|e| format!("Failed to launch temperature scale kernel: {:?}", e))?;
+
+            Ok(())
+        }
+        Err(e) => Err(format!("Failed to get cache: {:?}", e)),
+    }
+}
+
+/// Launch top-p prefix sum kernel on GPU (Kernel 1 of 3 for top-p sampling)
+///
+/// Computes cumulative distribution function (CDF) for top-p sampling.
+///
+/// # Arguments
+/// * `backend` - HipBackend for kernel launch
+/// * `probs` - GPU pointer to probability tensor [batch_size, vocab_size]
+/// * `prefix_sum_out` - GPU pointer to output CDF [batch_size, vocab_size]
+/// * `batch_size` - Number of batch elements
+/// * `vocab_size` - Vocabulary size
+///
+/// # Safety
+/// Caller must ensure all GPU pointers are valid and synchronized after this call.
+#[cfg(feature = "rocm")]
+pub unsafe fn topp_prefix_sum_kernel(
+    backend: &HipBackend,
+    probs: *const f32,
+    prefix_sum_out: *mut f32,
+    batch_size: u32,
+    vocab_size: u32,
+) -> Result<(), String> {
+    match get_or_init_sampling_cache() {
+        Ok(cache_ref) => {
+            let cache = cache_ref.lock()
+                .map_err(|e| format!("Failed to lock sampling cache: {}", e))?;
+            let cache_ref = cache.as_ref()
+                .ok_or_else(|| "Sampling cache not initialized".to_string())?;
+
+            let kernel = cache_ref.topp_prefix_sum_kernel.as_ref()
+                .ok_or_else(|| "topp_prefix_sum_kernel not loaded".to_string())?;
+
+            let grid_dim = (batch_size, 1, 1);
+            let block_dim = (BLOCK_SIZE, 1, 1);
+            let shared_mem_bytes = 0u32;
+
+            let mut probs_arg = probs;
+            let mut prefix_sum_out_arg = prefix_sum_out;
+            let mut batch_size_arg = batch_size;
+            let mut vocab_size_arg = vocab_size;
+
+            let args: &[*mut c_void] = &[
+                &mut probs_arg as *mut _ as *mut c_void,
+                &mut prefix_sum_out_arg as *mut _ as *mut c_void,
+                &mut batch_size_arg as *mut _ as *mut c_void,
+                &mut vocab_size_arg as *mut _ as *mut c_void,
+            ];
+
+            backend.launch_kernel_with_module_shared(
+                kernel,
+                grid_dim,
+                block_dim,
+                args,
+                shared_mem_bytes,
+            ).map_err(|e| format!("Failed to launch top-p prefix sum kernel: {:?}", e))?;
+
+            Ok(())
+        }
+        Err(e) => Err(format!("Failed to get cache: {:?}", e)),
+    }
+}
+
+/// Launch top-p threshold kernel on GPU (Kernel 2 of 3 for top-p sampling)
+///
+/// Finds the threshold index for top-p sampling using binary search on CDF.
+///
+/// # Arguments
+/// * `backend` - HipBackend for kernel launch
+/// * `prefix_sum` - GPU pointer to CDF [batch_size, vocab_size]
+/// * `threshold_out` - GPU pointer to output threshold indices [batch_size]
+/// * `top_p` - Cumulative probability threshold
+/// * `batch_size` - Number of batch elements
+/// * `vocab_size` - Vocabulary size
+///
+/// # Safety
+/// Caller must ensure all GPU pointers are valid and synchronized after this call.
+#[cfg(feature = "rocm")]
+pub unsafe fn topp_threshold_kernel(
+    backend: &HipBackend,
+    prefix_sum: *const f32,
+    threshold_out: *mut i32,
+    top_p: f32,
+    batch_size: u32,
+    vocab_size: u32,
+) -> Result<(), String> {
+    match get_or_init_sampling_cache() {
+        Ok(cache_ref) => {
+            let cache = cache_ref.lock()
+                .map_err(|e| format!("Failed to lock sampling cache: {}", e))?;
+            let cache_ref = cache.as_ref()
+                .ok_or_else(|| "Sampling cache not initialized".to_string())?;
+
+            let kernel = cache_ref.topp_threshold_kernel.as_ref()
+                .ok_or_else(|| "topp_threshold_kernel not loaded".to_string())?;
+
+            let grid_dim = (batch_size, 1, 1);
+            let block_dim = (BLOCK_SIZE, 1, 1);
+            let shared_mem_bytes = 0u32;
+
+            let mut prefix_sum_arg = prefix_sum;
+            let mut threshold_out_arg = threshold_out;
+            let mut top_p_arg = top_p;
+            let mut batch_size_arg = batch_size;
+            let mut vocab_size_arg = vocab_size;
+
+            let args: &[*mut c_void] = &[
+                &mut prefix_sum_arg as *mut _ as *mut c_void,
+                &mut threshold_out_arg as *mut _ as *mut c_void,
+                &mut top_p_arg as *mut _ as *mut c_void,
+                &mut batch_size_arg as *mut _ as *mut c_void,
+                &mut vocab_size_arg as *mut _ as *mut c_void,
+            ];
+
+            backend.launch_kernel_with_module_shared(
+                kernel,
+                grid_dim,
+                block_dim,
+                args,
+                shared_mem_bytes,
+            ).map_err(|e| format!("Failed to launch top-p threshold kernel: {:?}", e))?;
+
+            Ok(())
+        }
+        Err(e) => Err(format!("Failed to get cache: {:?}", e)),
+    }
+}
+
+/// Launch top-p sample kernel on GPU (Kernel 3 of 3 for top-p sampling)
+///
+/// Samples token IDs using binary search on CDF within threshold.
+///
+/// # Arguments
+/// * `backend` - HipBackend for kernel launch
+/// * `prefix_sum` - GPU pointer to CDF [batch_size, vocab_size]
+/// * `threshold_idx` - GPU pointer to threshold indices [batch_size]
+/// * `random_values` - GPU pointer to random values [batch_size]
+/// * `sampled_tokens` - GPU pointer to output token IDs [batch_size]
+/// * `batch_size` - Number of batch elements
+/// * `vocab_size` - Vocabulary size
+///
+/// # Safety
+/// Caller must ensure all GPU pointers are valid and synchronized after this call.
+#[cfg(feature = "rocm")]
+pub unsafe fn topp_sample_kernel(
+    backend: &HipBackend,
+    prefix_sum: *const f32,
+    threshold_idx: *const i32,
+    random_values: *const f32,
+    sampled_tokens: *mut i32,
+    batch_size: u32,
+    vocab_size: u32,
+) -> Result<(), String> {
+    match get_or_init_sampling_cache() {
+        Ok(cache_ref) => {
+            let cache = cache_ref.lock()
+                .map_err(|e| format!("Failed to lock sampling cache: {}", e))?;
+            let cache_ref = cache.as_ref()
+                .ok_or_else(|| "Sampling cache not initialized".to_string())?;
+
+            let kernel = cache_ref.topp_sample_kernel.as_ref()
+                .ok_or_else(|| "topp_sample_kernel not loaded".to_string())?;
+
+            let grid_dim = (batch_size, 1, 1);
+            let block_dim = (BLOCK_SIZE, 1, 1);
+            let shared_mem_bytes = 0u32;
+
+            let mut prefix_sum_arg = prefix_sum;
+            let mut threshold_idx_arg = threshold_idx;
+            let mut random_values_arg = random_values;
+            let mut sampled_tokens_arg = sampled_tokens;
+            let mut batch_size_arg = batch_size;
+            let mut vocab_size_arg = vocab_size;
+
+            let args: &[*mut c_void] = &[
+                &mut prefix_sum_arg as *mut _ as *mut c_void,
+                &mut threshold_idx_arg as *mut _ as *mut c_void,
+                &mut random_values_arg as *mut _ as *mut c_void,
+                &mut sampled_tokens_arg as *mut _ as *mut c_void,
+                &mut batch_size_arg as *mut _ as *mut c_void,
+                &mut vocab_size_arg as *mut _ as *mut c_void,
+            ];
+
+            backend.launch_kernel_with_module_shared(
+                kernel,
+                grid_dim,
+                block_dim,
+                args,
+                shared_mem_bytes,
+            ).map_err(|e| format!("Failed to launch top-p sample kernel: {:?}", e))?;
+
+            Ok(())
+        }
+        Err(e) => Err(format!("Failed to get cache: {:?}", e)),
+    }
+}
+
+/// Legacy top-p sampling kernel wrapper (deprecated - use multi-kernel pipeline)
+///
+/// This function is kept for compatibility but will return an error
+/// since top-p sampling now requires a 3-kernel pipeline.
+/// Use topp_prefix_sum_kernel, topp_threshold_kernel, and topp_sample_kernel instead.
 ///
 /// # Arguments
 /// * `backend` - HipBackend for kernel launch
@@ -171,58 +485,17 @@ fn get_or_init_sampling_cache() -> Result<&'static Mutex<Option<SamplingKernelCa
 /// # Safety
 /// Caller must ensure all GPU pointers are valid and synchronized after this call.
 #[cfg(feature = "rocm")]
+#[deprecated(since = "0.2.0", note = "Use topp_prefix_sum_kernel, topp_threshold_kernel, and topp_sample_kernel instead")]
 pub unsafe fn topp_sampling_kernel(
-    backend: &HipBackend,
-    probabilities: *const f32,
-    random_values: *const f32,
-    output: *mut u32,
-    top_p: f32,
-    batch_size: u32,
-    vocab_size: u32,
+    _backend: &HipBackend,
+    _probabilities: *const f32,
+    _random_values: *const f32,
+    _output: *mut u32,
+    _top_p: f32,
+    _batch_size: u32,
+    _vocab_size: u32,
 ) -> Result<(), String> {
-    match get_or_init_sampling_cache() {
-        Ok(cache_ref) => {
-            let cache = cache_ref.lock()
-                .map_err(|e| format!("Failed to lock sampling cache: {}", e))?;
-            let cache_ref = cache.as_ref()
-                .ok_or_else(|| "Sampling cache not initialized".to_string())?;
-
-            let kernel = cache_ref.topp_kernel.as_ref()
-                .ok_or_else(|| "topp_kernel not loaded".to_string())?;
-
-            let grid_dim = (batch_size, 1, 1);
-            let block_dim = (BLOCK_SIZE, 1, 1);
-            let shared_mem_bytes = 0u32;
-
-            // Prepare kernel arguments - ALL args must be copied to mut locals first
-            let mut probabilities_arg = probabilities;
-            let mut random_values_arg = random_values;
-            let mut output_arg = output;
-            let mut top_p_arg = top_p;
-            let mut batch_size_arg = batch_size;
-            let mut vocab_size_arg = vocab_size;
-
-            let args: &[*mut c_void] = &[
-                &mut probabilities_arg as *mut _ as *mut c_void,
-                &mut random_values_arg as *mut _ as *mut c_void,
-                &mut output_arg as *mut _ as *mut c_void,
-                &mut top_p_arg as *mut _ as *mut c_void,
-                &mut batch_size_arg as *mut _ as *mut c_void,
-                &mut vocab_size_arg as *mut _ as *mut c_void,
-            ];
-
-            backend.launch_kernel_with_module_shared(
-                kernel,
-                grid_dim,
-                block_dim,
-                args,
-                shared_mem_bytes,
-            ).map_err(|e| format!("Failed to launch top-p kernel: {:?}", e))?;
-
-            Ok(())
-        }
-        Err(e) => Err(format!("Failed to get cache: {:?}", e)),
-    }
+    Err("topp_sampling_kernel is deprecated. Use the 3-kernel pipeline: topp_prefix_sum_kernel, topp_threshold_kernel, topp_sample_kernel".to_string())
 }
 
 /// Launch top-k sampling kernel on GPU
@@ -406,6 +679,11 @@ impl GpuTopPSampler {
     }
 
     /// Try to sample using GPU kernels
+    ///
+    /// Uses 3-kernel pipeline for top-p sampling:
+    /// 1. topp_prefix_sum_kernel - computes CDF
+    /// 2. topp_threshold_kernel - finds threshold index
+    /// 3. topp_sample_kernel - samples tokens
     fn try_gpu_sample(
         &self,
         probabilities: &[f32],
@@ -414,7 +692,7 @@ impl GpuTopPSampler {
     ) -> SamplerResult<Vec<u32>> {
         tracing::debug!("try_gpu_sample: batch_size={}, vocab_size={}", batch_size, vocab_size);
 
-        // Check if kernel is loaded
+        // Check if all 3 kernels are loaded
         let cache_ref = get_or_init_sampling_cache()
             .map_err(|e| {
                 tracing::error!("Failed to get kernel cache: {:?}", e);
@@ -426,24 +704,52 @@ impl GpuTopPSampler {
                 SamplerError::InvalidTopP(0.0)
             })?;
 
-        let topp_kernel = cache.as_ref()
-            .and_then(|c| c.topp_kernel.as_ref())
+        let cache_ref = cache.as_ref()
             .ok_or_else(|| {
-                tracing::warn!("top-p kernel not loaded, falling back to CPU");
-                SamplerError::InvalidTopP(0.0) // Generic error for "kernel not loaded"
+                tracing::warn!("Sampling cache not initialized");
+                SamplerError::InvalidTopP(0.0)
             })?;
 
-        tracing::debug!("top-p kernel loaded, allocating GPU buffers");
+        // Check all 3 kernels for multi-kernel pipeline
+        let prefix_sum_kernel = cache_ref.topp_prefix_sum_kernel.as_ref()
+            .ok_or_else(|| {
+                tracing::warn!("topp_prefix_sum_kernel not loaded, falling back to CPU");
+                SamplerError::InvalidTopP(0.0)
+            })?;
+        let threshold_kernel = cache_ref.topp_threshold_kernel.as_ref()
+            .ok_or_else(|| {
+                tracing::warn!("topp_threshold_kernel not loaded, falling back to CPU");
+                SamplerError::InvalidTopP(0.0)
+            })?;
+        let sample_kernel = cache_ref.topp_sample_kernel.as_ref()
+            .ok_or_else(|| {
+                tracing::warn!("topp_sample_kernel not loaded, falling back to CPU");
+                SamplerError::InvalidTopP(0.0)
+            })?;
 
-        // Allocate GPU buffers
+        tracing::debug!("All top-p kernels loaded, allocating GPU buffers");
+
+        // Allocate GPU buffers for 3-kernel pipeline
         let total_elements = batch_size * vocab_size;
         let probs_bytes = total_elements * std::mem::size_of::<f32>();
+        let prefix_sum_bytes = total_elements * std::mem::size_of::<f32>();
+        let threshold_bytes = batch_size * std::mem::size_of::<i32>();
         let random_bytes = batch_size * std::mem::size_of::<f32>();
-        let output_bytes = batch_size * std::mem::size_of::<u32>();
+        let output_bytes = batch_size * std::mem::size_of::<i32>();
 
         let probs_gpu = HipBuffer::new(probs_bytes)
             .map_err(|e| {
                 tracing::error!("Failed to allocate probs buffer: {:?}", e);
+                SamplerError::InvalidTopP(0.0)
+            })?;
+        let prefix_sum_gpu = HipBuffer::new(prefix_sum_bytes)
+            .map_err(|e| {
+                tracing::error!("Failed to allocate prefix_sum buffer: {:?}", e);
+                SamplerError::InvalidTopP(0.0)
+            })?;
+        let threshold_gpu = HipBuffer::new(threshold_bytes)
+            .map_err(|e| {
+                tracing::error!("Failed to allocate threshold buffer: {:?}", e);
                 SamplerError::InvalidTopP(0.0)
             })?;
         let random_gpu = HipBuffer::new(random_bytes)
@@ -474,29 +780,97 @@ impl GpuTopPSampler {
                 SamplerError::InvalidTopP(0.0)
             })?;
 
-        tracing::debug!("Data copied to GPU, launching kernel");
+        tracing::debug!("Data copied to GPU, launching 3-kernel pipeline");
 
-        // Launch kernel
+        // Kernel 1: Compute prefix sum (CDF)
         let probs_ptr = probs_gpu.as_ptr() as *const f32;
-        let random_ptr = random_gpu.as_ptr() as *const f32;
-        let output_ptr = output_gpu.as_mut_ptr() as *mut u32;
+        let prefix_sum_ptr = prefix_sum_gpu.as_mut_ptr() as *mut f32;
 
         unsafe {
-            topp_sampling_kernel(
-                &self.backend,
-                probs_ptr,
-                random_ptr,
-                output_ptr,
-                self.top_p,
-                batch_size as u32,
-                vocab_size as u32,
+            // Launch kernel 1: prefix sum
+            let grid_dim = (batch_size as u32, 1, 1);
+            let block_dim = (BLOCK_SIZE, 1, 1);
+            let shared_mem_bytes = 0u32;
+
+            let mut probs_arg = probs_ptr;
+            let mut prefix_sum_arg = prefix_sum_ptr;
+            let mut batch_size_arg = batch_size as u32;
+            let mut vocab_size_arg = vocab_size as u32;
+
+            let args: &[*mut c_void] = &[
+                &mut probs_arg as *mut _ as *mut c_void,
+                &mut prefix_sum_arg as *mut _ as *mut c_void,
+                &mut batch_size_arg as *mut _ as *mut c_void,
+                &mut vocab_size_arg as *mut _ as *mut c_void,
+            ];
+
+            self.backend.launch_kernel_with_module_shared(
+                prefix_sum_kernel,
+                grid_dim,
+                block_dim,
+                args,
+                shared_mem_bytes,
             ).map_err(|e| {
-                tracing::error!("Failed to launch top-p kernel: {:?}", e);
+                tracing::error!("Failed to launch prefix sum kernel: {:?}", e);
+                SamplerError::InvalidTopP(0.0)
+            })?;
+
+            // Kernel 2: Find threshold
+            let threshold_ptr = threshold_gpu.as_mut_ptr() as *mut i32;
+
+            let mut prefix_sum_arg2 = prefix_sum_ptr;
+            let mut threshold_arg = threshold_ptr;
+            let mut top_p_arg = self.top_p;
+
+            let args2: &[*mut c_void] = &[
+                &mut prefix_sum_arg2 as *mut _ as *mut c_void,
+                &mut threshold_arg as *mut _ as *mut c_void,
+                &mut top_p_arg as *mut _ as *mut c_void,
+                &mut batch_size_arg as *mut _ as *mut c_void,
+                &mut vocab_size_arg as *mut _ as *mut c_void,
+            ];
+
+            self.backend.launch_kernel_with_module_shared(
+                threshold_kernel,
+                grid_dim,
+                block_dim,
+                args2,
+                shared_mem_bytes,
+            ).map_err(|e| {
+                tracing::error!("Failed to launch threshold kernel: {:?}", e);
+                SamplerError::InvalidTopP(0.0)
+            })?;
+
+            // Kernel 3: Sample tokens
+            let random_ptr = random_gpu.as_ptr() as *const f32;
+            let output_ptr = output_gpu.as_mut_ptr() as *mut i32;
+
+            let mut threshold_idx_arg = threshold_ptr;
+            let mut random_arg = random_ptr;
+            let mut output_arg = output_ptr;
+
+            let args3: &[*mut c_void] = &[
+                &mut prefix_sum_arg2 as *mut _ as *mut c_void,
+                &mut threshold_idx_arg as *mut _ as *mut c_void,
+                &mut random_arg as *mut _ as *mut c_void,
+                &mut output_arg as *mut _ as *mut c_void,
+                &mut batch_size_arg as *mut _ as *mut c_void,
+                &mut vocab_size_arg as *mut _ as *mut c_void,
+            ];
+
+            self.backend.launch_kernel_with_module_shared(
+                sample_kernel,
+                grid_dim,
+                block_dim,
+                args3,
+                shared_mem_bytes,
+            ).map_err(|e| {
+                tracing::error!("Failed to launch sample kernel: {:?}", e);
                 SamplerError::InvalidTopP(0.0)
             })?;
         }
 
-        tracing::debug!("Kernel launched, synchronizing");
+        tracing::debug!("Kernels launched, synchronizing");
 
         // Synchronize and copy results back
         self.backend.synchronize()
@@ -507,12 +881,15 @@ impl GpuTopPSampler {
 
         tracing::debug!("Synchronized, copying results back");
 
-        let mut results = vec![0u32; batch_size];
-        output_gpu.copy_to_host(&mut results)
+        let mut results_i32 = vec![0i32; batch_size];
+        output_gpu.copy_to_host(&mut results_i32)
             .map_err(|e| {
                 tracing::error!("Failed to copy output from GPU: {:?}", e);
                 SamplerError::InvalidTopP(0.0)
             })?;
+
+        // Convert i32 to u32
+        let results: Vec<u32> = results_i32.into_iter().map(|v| v as u32).collect();
 
         tracing::debug!("GPU sampling complete: {:?}", results);
 
