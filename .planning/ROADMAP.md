@@ -59,7 +59,7 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 
 ### Phase 14: Scheduler Clone Bug Fix
 
-**Goal**: Fix critical data-loss bug where `update_iteration_batch` overwrites scheduler state with stale batch clones.
+**Goal**: Verify and document the scheduler clone bug fix where `update_iteration_batch` could overwrite scheduler state with stale batch clones.
 
 **Depends on**: Nothing (first phase of v1.2)
 
@@ -70,7 +70,10 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 2. Test `test_update_iteration_batch_cannot_clobber_new_tokens` passes
 3. Multi-token generation produces correct output without token loss
 
-**Plans**: TBD
+**Plans:** 2 plans
+
+- [ ] 14-01-PLAN.md — Verify fix and add test alias matching requirements
+- [ ] 14-02-PLAN.md — Refactor to Entry API for cleaner implementation (optional)
 
 ---
 
@@ -215,7 +218,7 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 | 13-01. Qwen2 head_dim Fix | v1.1 | 1/1 | Complete | 2026-01-19 |
 | 13-02. Memory Pooling Documentation | v1.1 | 1/1 | Complete | 2026-01-19 |
 | 13-03. Dead Code Removal | v1.1 | 4/4 | Complete | 2026-01-19 |
-| 14. Scheduler Clone Bug Fix | v1.2 | 0/? | Not started | - |
+| 14. Scheduler Clone Bug Fix | v1.2 | 0/2 | Not started | - |
 | 15. GPU Sampling Kernels | v1.2 | 0/? | Not started | - |
 | 16. GPU RoPE Implementation | v1.2 | 0/? | Not started | - |
 | 17. GPU Quantization | v1.2 | 0/? | Not started | - |
