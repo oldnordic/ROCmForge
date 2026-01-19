@@ -8,7 +8,8 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 
 - **v1.0 Production-Ready** — Phases 1-12 + 12.1A + 12.1B (shipped 2026-01-19)
 - **v1.1 Bug Fix Release** — Phases 13-01, 13-02, 13-03 (shipped 2026-01-19)
-- **v1.2 Technical Debt Cleanup + Performance** — Phases 14-20 (in progress)
+- **v1.2 Technical Debt Cleanup + Performance** — Phases 14-20 (shipped 2026-01-19)
+- **v1.3 Test Health & Performance Validation** — Phase 21 (in progress)
 
 ## Phases
 
@@ -53,7 +54,7 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 
 ---
 
-## v1.2 Technical Debt Cleanup + Performance (In Progress)
+## v1.2 Technical Debt Cleanup + Performance (SHIPPED 2026-01-19)
 
 **Milestone Goal:** Eliminate technical debt, fix all broken tests, and implement missing GPU kernels for full GPU acceleration.
 
@@ -243,14 +244,14 @@ Plans:
 **Plans:** 8 plans in 4 waves
 
 Plans:
-- [ ] 20-01-PLAN.md — Fix unreachable patterns and unexpected_cfg warnings (HYGIENE-02, HYGIENE-06)
-- [ ] 20-02-PLAN.md — Fix type naming style warnings (Q4_K, Q6_K naming)
-- [ ] 20-03-PLAN.md — Remove unused imports (8 imports across 6 files)
-- [ ] 20-04-PLAN.md — Replace deprecated methods (18 calls to to_host_vec/copy_to_host)
-- [ ] 20-05-PLAN.md — Fix unused mut, unused assignment, and privacy warnings
-- [ ] 20-06-PLAN.md — Categorize dead code warnings and fix unused fields
-- [ ] 20-07-PLAN.md — Review and fix unused functions, methods, constants
-- [ ] 20-08-PLAN.md — Review #[allow(dead_code)] markers and verify zero baseline
+- [x] 20-01-PLAN.md — Fix unreachable patterns and unexpected_cfg warnings (HYGIENE-02, HYGIENE-06)
+- [x] 20-02-PLAN.md — Fix type naming style warnings (Q4_K, Q6_K naming)
+- [x] 20-03-PLAN.md — Remove unused imports (8 imports across 6 files)
+- [x] 20-04-PLAN.md — Replace deprecated methods (18 calls to to_host_vec/copy_to_host)
+- [x] 20-05-PLAN.md — Fix unused mut, unused assignment, and privacy warnings
+- [x] 20-06-PLAN.md — Categorize dead code warnings and fix unused fields
+- [x] 20-07-PLAN.md — Review and fix unused functions, methods, constants
+- [x] 20-08-PLAN.md — Review #[allow(dead_code)] markers and verify zero baseline
 
 **Wave Structure:**
 - Wave 1: 20-01 (unreachable/cfg), 20-02 (naming), 20-03 (imports) — parallel execution
@@ -278,7 +279,22 @@ Plans:
 7. GPU sampling is faster than CPU fallback (10x+ speedup)
 8. End-to-end inference latency is improved vs v1.1 baseline
 
-**Plans**: TBD
+**Plans:** 6 plans in 5 waves
+
+Plans:
+- [ ] 21-01-PLAN.md — Fix cfg(feature) gates on GPU kernel re-exports (TEST-01 prerequisite)
+- [ ] 21-02-PLAN.md — Fix KV cache capacity enforcement bug (TEST-02)
+- [ ] 21-03-PLAN.md — Fix memory allocation crash in decode_step_integration_tests (TEST-01)
+- [ ] 21-04-PLAN.md — Verify E2E tests graceful skip implementation (TEST-03, TEST-04)
+- [ ] 21-05-PLAN.md — Run full test suite and verify all tests pass (TEST-05, TEST-06)
+- [ ] 21-06-PLAN.md — Validate performance improvements vs v1.1 baseline (PERF-01 through PERF-04)
+
+**Wave Structure:**
+- Wave 1: 21-01 (cfg gates), 21-02 (KV cache) — parallel execution
+- Wave 2: 21-03 (decode_step tests, depends on 21-01)
+- Wave 3: 21-04 (E2E tests, depends on 21-01)
+- Wave 4: 21-05 (full test suite, depends on 21-01, 21-02, 21-03, 21-04)
+- Wave 5: 21-06 (performance validation, depends on 21-05)
 
 ---
 
@@ -311,10 +327,10 @@ Plans:
 | 17. GPU Quantization | v1.2 | 3/3 | Complete | 2026-01-19 |
 | 18. GPU Attention Completion | v1.2 | 3/3 | Complete | 2026-01-19 |
 | 19. Wavefront-Native Quantized Matmul | v1.3 | 4/4 | Complete | 2026-01-19 |
-| 20. Code Hygiene Completion | v1.3 | 0/8 | Not started | - |
-| 21. Test Health & Performance | v1.3 | 0/? | Not started | - |
+| 20. Code Hygiene Completion | v1.3 | 8/8 | Complete | 2026-01-19 |
+| 21. Test Health & Performance | v1.3 | 0/6 | Not started | - |
 
-**Total Progress:** 129/139 v1.0+v1.1+v1.2+v1.3 plans complete (93%)
+**Total Progress:** 137/153 v1.0+v1.1+v1.2+v1.3 plans complete (90%)
 
 ---
 

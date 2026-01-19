@@ -14,12 +14,12 @@
 Requirements for eliminating technical debt and establishing a clean codebase baseline.
 
 - [x] **HYGIENE-01**: Scheduler clone bug is fixed — `update_iteration_batch` no longer overwrites with stale clones
-- [ ] **HYGIENE-02**: All unreachable pattern warnings are eliminated (2 locations)
-- [ ] **HYGIENE-03**: All `#[allow(dead_code)]` markers are reviewed and resolved
-- [ ] **HYGIENE-04**: All unused import warnings are eliminated
-- [ ] **HYGIENE-05**: All unused variable/assignment warnings are eliminated
-- [ ] **HYGIENE-06**: All unexpected_cfg warnings are resolved (feature name fixes)
-- [ ] **HYGIENE-07**: Zero compiler warnings baseline achieved (`cargo check` passes clean)
+- [x] **HYGIENE-02**: All unreachable pattern warnings are eliminated (2 locations)
+- [x] **HYGIENE-03**: All `#[allow(dead_code)]` markers are reviewed and resolved
+- [x] **HYGIENE-04**: All unused import warnings are eliminated
+- [x] **HYGIENE-05**: All unused variable/assignment warnings are eliminated
+- [x] **HYGIENE-06**: All unexpected_cfg warnings are resolved (feature name fixes)
+- [x] **HYGIENE-07**: Zero compiler warnings baseline achieved (`cargo check` passes clean)
 
 ### GPU Sampling Kernels (SAMPLING)
 
