@@ -21,3 +21,12 @@ pub use batch_quantized::{QuantFormat, QuantizedMatmulOp, BatchQuantizedMatmul, 
 
 #[cfg(feature = "rocm")]
 pub use batch_quantized::{AsyncKernelLauncher, AsyncHandle};
+
+// Public exports for Q4_0 dequantization operations
+pub use q4_0_dequant::{
+    dequantize_q4_0_with_fallback,
+    dequantize_q4_0_kernel_cached,
+    get_or_init_q4_0_dequant_cache,
+    dequantize_q4_0_cpu_upload,
+    dequantize_q4_0_cpu,
+};
