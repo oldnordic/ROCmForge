@@ -7,6 +7,7 @@
 //! - GPU memory allocation via DeviceTensor
 
 use crate::backend::hip_backend::{AsyncLoader, DeviceTensor, HipBackend, HipBuffer};
+use crate::ggml::hip_backend::ops::q4_0_dequant::dequantize_q4_0_with_fallback;
 use crate::loader::lazy_tensor::LazyTensor;
 use crate::loader::mmap::MmapGguf;
 use crate::loader::tensor_type::GgufTensorType;
@@ -716,6 +717,57 @@ impl GgufLoader {
             .get_slice(offset, size)
             .map_err(|e| anyhow!("Failed to read tensor '{}' from mmap: {}", name, e))?;
 
+        // Check if this is a Q4_0 tensor that can use GPU dequantization
+        // Q4_0: Upload quantized bytes directly, dequantize on GPU
+        let needs_transpose = Self::is_fused_qkv_weight(name);
+        if tensor_type == GgufTensorType::Q4_0 && !needs_transpose {
+            // GPU dequantization path for Q4_0
+            // Allocate output buffer for FP32 data
+            let num_elements = shape.total_elements();
+            let output_buffer = backend
+                .allocate_buffer(num_elements * 4)
+                .map_err(|e| anyhow!("Failed to allocate output buffer for '{}': {}", name, e))?;
+
+            // Call GPU dequantization with CPU fallback
+            dequantize_q4_0_with_fallback(backend, tensor_bytes, &output_buffer, num_elements)
+                .map_err(|e| anyhow!("GPU dequantization failed for '{}': {}", name, e))?;
+
+            eprintln!(
+                ">>> load_tensor_to_gpu: '{}' GPU dequantization complete, {} f32 values ({} MB)",
+                name,
+                num_elements,
+                num_elements * 4 / 1024 / 1024
+            );
+
+            // Wrap buffer in DeviceTensor
+            let device_tensor = DeviceTensor::from_buffer(backend, output_buffer, shape)
+                .map_err(|e| anyhow!("Failed to create DeviceTensor for '{}': {}", name, e))?;
+
+            let device_tensor_arc = Arc::new(device_tensor);
+
+            eprintln!(
+                ">>> load_tensor_to_gpu: '{}' uploaded to GPU successfully",
+                name
+            );
+
+            // Cache the result
+            {
+                let mut cache = self
+                    .gpu_cache
+                    .write()
+                    .map_err(|e| anyhow!("GPU cache write lock poisoned: {}", e))?;
+                cache.insert(name.to_string(), device_tensor_arc.clone());
+            }
+
+            tracing::debug!(
+                "Loaded tensor '{}' to GPU and cached ({} bytes)",
+                name,
+                size
+            );
+            return Ok(device_tensor_arc);
+        }
+
+        // CPU dequantization path (for non-Q4_0 or Q4_0 with transpose requirement)
         // Dequantize based on tensor type
         let mut f32_data: Vec<f32> = match tensor_type {
             GgufTensorType::F32 => tensor_bytes
@@ -742,6 +794,7 @@ impl GgufLoader {
                 self.dequantize_q8_0(&temp_tensor)?
             }
             GgufTensorType::Q4_0 => {
+                // Q4_0 with transpose requirement - use CPU fallback
                 let temp_tensor = GgufTensor {
                     name: name.to_string(),
                     shape: shape.clone(),
@@ -1986,13 +2039,13 @@ impl GgufLoader {
                     .map_err(|e| anyhow!("Failed to upload MXFP6 tensor: {}", e))
             }
             GgufTensorType::Q4_K => {
-                // Dequantize Q4_K to FP32
+                // Dequantize Q4_K to FP32 (CPU dequantization then upload)
                 let f32_data = self.dequantize_q4_k(tensor)?;
                 DeviceTensor::from_host_vec(backend, f32_data, tensor.shape.clone())
                     .map_err(|e| anyhow!("Failed to upload Q4_K tensor: {}", e))
             }
             GgufTensorType::Q6_K => {
-                // Dequantize Q6_K to FP32
+                // Dequantize Q6_K to FP32 (CPU dequantization then upload)
                 let f32_data = self.dequantize_q6_k(tensor)?;
                 DeviceTensor::from_host_vec(backend, f32_data, tensor.shape.clone())
                     .map_err(|e| anyhow!("Failed to upload Q6_K tensor: {}", e))
