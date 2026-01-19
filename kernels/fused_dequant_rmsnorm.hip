@@ -222,7 +222,7 @@ extern "C" __global__ void fused_q4_0_rmsnorm_batch_kernel(
 
         // Wave reduction for sum of squares
         for (int stride = WARP_SIZE / 2; stride > 0; stride >>= 1) {
-            sum_sq += __shfl_down_f32(sum_sq, stride, WARP_SIZE);
+            sum_sq += __shfl_down(sum_sq, stride);
         }
 
         if (lane_id == 0) {
