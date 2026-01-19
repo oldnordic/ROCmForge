@@ -58,11 +58,11 @@ Requirements for on-device quantization operations.
 
 Requirements for GPU-accelerated attention mechanisms.
 
-- [ ] **ATTENTION-01**: FlashAttention variant is verified working on GPU
+- [x] **ATTENTION-01**: FlashAttention variant is verified working on GPU
 - [x] **ATTENTION-02**: Multi-query attention (MQA) runs fully on GPU
 - [x] **ATTENTION-03**: Grouped-query attention (GQA) runs fully on GPU
 - [x] **ATTENTION-04**: Attention kernels are added to build.rs (if missing)
-- [ ] **ATTENTION-05**: Attention kernels have correctness tests
+- [x] **ATTENTION-05**: Attention kernels have correctness tests
 
 ### Test Health (TEST)
 
@@ -140,11 +140,11 @@ Explicitly excluded from v1.2.
 | QUANT-04 | Phase 17 | Validated |
 | QUANT-05 | Phase 17 | Validated |
 | QUANT-06 | Phase 17 | Validated |
-| ATTENTION-01 | Phase 18 | Pending |
+| ATTENTION-01 | Phase 18 | Validated |
 | ATTENTION-02 | Phase 18 | Validated |
 | ATTENTION-03 | Phase 18 | Validated |
 | ATTENTION-04 | Phase 18 | Validated |
-| ATTENTION-05 | Phase 18 | Pending |
+| ATTENTION-05 | Phase 18 | Validated |
 | TEST-01 | Phase 20 | Pending |
 | TEST-02 | Phase 20 | Pending |
 | TEST-03 | Phase 20 | Pending |
