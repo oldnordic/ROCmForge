@@ -11,6 +11,8 @@
 
 #![allow(deprecated)] // TODO: Migrate from to_host_vec() to copy_from_device_safe() (Phase 13-03-02)
 
+use std::ffi::c_void;
+
 use crate::backend::{
     hip_blas::{self, HipBlasHandle, HIPBLAS_OP_N, HIPBLAS_OP_T},
     DeviceTensor, HipBackend, HipError, HipResult,

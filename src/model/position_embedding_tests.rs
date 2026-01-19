@@ -7,6 +7,9 @@
 mod gpu_position_embedding_tests {
     use std::sync::Arc;
 
+    use crate::model::glm_position::{GlmPositionConfig, GlmPositionHandler};
+    use crate::attention::rope::RopeConfig;
+
     /// Helper: Get GPU backend or skip test if not available (llama.cpp pattern)
     fn get_backend_or_skip() -> Arc<crate::backend::HipBackend> {
         match crate::backend::HipBackend::new_checked() {

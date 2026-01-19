@@ -48,6 +48,7 @@ pub use execution_plan_src::{
 // #[cfg(feature = "rocm")]
 // include!("gpu_attention_integration_tests.rs");
 
-#[cfg(test)]
-#[cfg(feature = "rocm")]
-include!("lazy_tests.rs");
+// lazy_tests.rs does not exist yet - commented out to fix compilation
+// #[cfg(test)]
+// #[cfg(feature = "rocm")]
+// include!("lazy_tests.rs");

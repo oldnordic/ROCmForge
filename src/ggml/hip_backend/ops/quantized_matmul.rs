@@ -37,6 +37,7 @@
 //! - **Profiling support**: Built-in kernel timers for performance analysis
 
 use std::env;
+use std::ffi::c_void;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -455,7 +456,7 @@ pub fn matmul_q4_0(
 /// # Safety
 /// Caller must ensure all pointers are valid and synchronized.
 #[cfg(feature = "rocm")]
-unsafe fn matmul_q4_0_gpu(
+pub(crate) unsafe fn matmul_q4_0_gpu(
     backend: &HipBackend,
     activations: *const f32,
     weights_q4_0: *const u8,
