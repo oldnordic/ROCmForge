@@ -140,12 +140,20 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 
 **Success Criteria** (what must be TRUE):
 1. Q4_0 dequantization runs on GPU
-2. Q4_K dequantization runs on GPU (if not already implemented)
-3. Q6_K dequantization runs on GPU (if not already implemented)
+2. Q4_K dequantization runs on GPU
+3. Q6_K dequantization runs on GPU
 4. Quantized matmul fusion runs on GPU (dequant + matmul in one kernel)
 5. CPU dequantization fallback is removed for GPU tensors
 
-**Plans**: TBD
+**Plans:** 3 plans in 2 waves
+
+- [ ] 17-01-PLAN.md — Implement Q4_0 GPU dequantization kernel wrapper
+- [ ] 17-02-PLAN.md — Implement Q4_K and Q6_K GPU dequantization kernel wrappers
+- [ ] 17-03-PLAN.md — Integrate fused matmul kernels and remove CPU fallback
+
+**Wave Structure:**
+- Wave 1: 17-01 (Q4_0 dequant), 17-02 (Q4_K/Q6_K dequant) — parallel execution
+- Wave 2: 17-03 (fused matmul, depends on dequant wrappers)
 
 ---
 
@@ -225,20 +233,20 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 | 7. Hybrid Execution Scheduler | v1.0 | 4/4 | Complete | 2026-01-18 |
 | 8. GGUF Compatibility | v1.0 | 11/11 | Complete | 2026-01-18 |
 | 9. Performance Optimization | v1.0 | 18/18 | Complete | 2026-01-18 |
-| 10. Production Hardening | v1.0 | 20/20 | Complete | 2026-01-19 |
-| 11. Fix Test Suite & Verify E2E | v1.0 | 2/2 | Complete | 2026-01-19 |
-| 12. Complete CPU SIMD Attention | v1.0 | 4/4 | Complete | 2026-01-19 |
-| 12.1A. CPU SIMD Completion | v1.0 | 2/2 | Complete | 2026-01-19 |
-| 12.1B. Context Engine Integration | v1.0 | 1/1 | Complete | 2026-01-19 |
-| 13-01. Qwen2 head_dim Fix | v1.1 | 1/1 | Complete | 2026-01-19 |
-| 13-02. Memory Pooling Documentation | v1.1 | 1/1 | Complete | 2026-01-19 |
-| 13-03. Dead Code Removal | v1.1 | 4/4 | Complete | 2026-01-19 |
+| 10. Production Hardening | v1.0 | 20/20 | Complete | 2026-01-18 |
+| 11. Fix Test Suite & Verify E2E | v1.0 | 2/2 | Complete | 2026-01-18 |
+| 12. Complete CPU SIMD Attention | v1.0 | 4/4 | Complete | 2026-01-18 |
+| 12.1A. CPU SIMD Completion | v1.0 | 2/2 | Complete | 2026-01-18 |
+| 12.1B. Context Engine Integration | v1.0 | 1/1 | Complete | 2026-01-18 |
+| 13-01. Qwen2 head_dim Fix | v1.1 | 1/1 | Complete | 2026-01-18 |
+| 13-02. Memory Pooling Documentation | v1.1 | 1/1 | Complete | 2026-01-18 |
+| 13-03. Dead Code Removal | v1.1 | 4/4 | Complete | 2026-01-18 |
 | 14. Scheduler Clone Bug Fix | v1.2 | 2/2 | Complete | 2026-01-19 |
 | 15. GPU Sampling Kernels | v1.2 | 7/7 | Complete | 2026-01-19 |
 | 16. GPU RoPE Implementation | v1.2 | 2/2 | Complete | 2026-01-19 |
-| 17. GPU Quantization | v1.2 | 0/? | Not started | - |
+| 17. GPU Quantization | v1.2 | 0/3 | Not started | - |
 | 18. GPU Attention Completion | v1.2 | 0/? | Not started | - |
 | 19. Code Hygiene Completion | v1.2 | 0/? | Not started | - |
 | 20. Test Health & Performance | v1.2 | 0/? | Not started | - |
 
-**Total Progress:** 119/121 v1.0+v1.1+v1.2 plans complete (98%)
+**Total Progress:** 119/124 v1.0+v1.1+v1.2 plans complete (96%)
