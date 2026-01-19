@@ -228,6 +228,37 @@ impl GlmPositionHandler {
     }
 
     /// Apply position embeddings to DeviceTensors
+    ///
+    /// # GPU RoPE Execution Flow
+    ///
+    /// This method is called from `execution_plan_src.rs:self_attention()` (line 1948) during
+    /// the attention computation. It implements a GPU-first strategy with CPU fallback:
+    ///
+    /// 1. **GPU kernel attempted first** (lines 280-356):
+    ///    - Uploads cos/sin frequencies to GPU via `from_host_vec()` (required - these are
+    ///      precomputed on CPU at Rope initialization)
+    ///    - Calls `position_embeddings_gpu_kernel()` (line 333) which applies RoPE to both
+    ///      Q and K tensors in a single kernel launch
+    ///    - Calls `backend.synchronize()` to ensure kernel completes (line 346)
+    ///    - If successful, returns the modified Q/K tensors directly (no CPU round-trip)
+    ///
+    /// 2. **CPU fallback** (lines 358-385) only if GPU kernel fails:
+    ///    - Downloads Q and K to CPU via `to_host_vec()`
+    ///    - Applies RoPE using CPU implementation
+    ///    - Uploads results back to GPU
+    ///
+    /// # Kernel Chain
+    ///
+    /// `execution_plan_src.rs:1948` → `glm_position.rs:apply_position_embeddings_device()` →
+    /// `kernels.rs:position_embeddings_gpu_kernel()` → `kernels/position_embeddings.hip`
+    ///
+    /// The actual HIP kernel in `kernels/position_embeddings.hip` performs the rotation on GPU,
+    /// applying the formula:
+    /// ```text
+    /// q[i] = q[i] * cos[pos] - q[i + half_dim] * sin[pos]
+    /// q[i + half_dim] = q[i] * sin[pos] + q[i + half_dim] * cos[pos]
+    /// ```
+    /// (same for K tensor)
     #[cfg(feature = "rocm")]
     pub fn apply_position_embeddings_device(
         &self,
