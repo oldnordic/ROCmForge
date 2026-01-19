@@ -185,11 +185,50 @@ Plans:
 
 ---
 
-### Phase 19: Code Hygiene Completion
+### Phase 19: Wavefront-Native Quantized Matmul Kernels
+
+**Goal**: Quantized matmul kernels (Q4_0, Q4_K, Q6_K, fused_dequant_rmsnorm) rewritten as HIP-native code, removing all CUDA intrinsics.
+
+**Depends on**: Phase 18
+
+**Requirements**: QUANT-07, QUANT-08, QUANT-09, HYGIENE-08
+
+**Success Criteria** (what must be TRUE):
+1. All `__shfl_down_f32` intrinsics replaced with HIP `__shfl_down`
+2. Kernels compile for gfx1100 (RDNA3) without errors
+3. Tile sizes are wave64-aligned (divisible by 64)
+4. No warp32 assumptions remain in quantized kernels
+5. Numerical correctness validated against llama.cpp reference
+
+**Plans**: 4 plans in 4 waves
+
+Plans:
+- [ ] 19-01-PLAN.md — Analyze and document Q4_0, Q4_K, Q6_K bit-packing formats from CPU reference implementations
+- [ ] 19-02-PLAN.md — Replace __shfl_down_f32 with __shfl_down in q4_0_matmul.hip, q4_k_matmul.hip, q6_k_matmul.hip
+- [ ] 19-03-PLAN.md — Replace __shfl_down_f32 with __shfl_down in fused_dequant_rmsnorm.hip and verify all kernels
+- [ ] 19-04-PLAN.md — Compile kernels for gfx1100 and validate numerical correctness
+
+**Wave Structure:**
+- Wave 1: 19-01 (format analysis)
+- Wave 2: 19-02 (Q4_0, Q4_K, Q6_K intrinsics - depends on 01)
+- Wave 3: 19-03 (fused RMSNorm intrinsics - depends on 02)
+- Wave 4: 19-04 (compilation and validation - depends on 02, 03)
+
+**Local References:**
+- `/home/feanor/Projects/rocm-examples/HIP-Basic/warp_shuffle/main.hip` — HIP wave operations
+- `/home/feanor/Projects/rocm-examples/HIP-Basic/shared_memory/` — LDS usage patterns
+
+**AMD Documentation:**
+- https://rocm.docs.amd.com/projects/HIP/en/latest/
+- https://rocm.blogs.amd.com/software-tools-optimization/mxfp4-mxfp6-quantization/README.html
+
+---
+
+### Phase 20: Code Hygiene Completion
 
 **Goal**: Zero compiler warnings baseline achieved after all feature work is complete.
 
-**Depends on**: Phase 18
+**Depends on**: Phase 19
 
 **Requirements**: HYGIENE-02, HYGIENE-03, HYGIENE-04, HYGIENE-05, HYGIENE-06, HYGIENE-07
 
@@ -205,11 +244,11 @@ Plans:
 
 ---
 
-### Phase 20: Test Health & Performance Validation
+### Phase 21: Test Health & Performance Validation
 
 **Goal**: All tests passing and performance validated against v1.1 baseline.
 
-**Depends on**: Phase 19
+**Depends on**: Phase 20
 
 **Requirements**: TEST-01, TEST-02, TEST-03, TEST-04, TEST-05, TEST-06, PERF-01, PERF-02, PERF-03, PERF-04
 
@@ -254,8 +293,25 @@ Plans:
 | 15. GPU Sampling Kernels | v1.2 | 7/7 | Complete | 2026-01-19 |
 | 16. GPU RoPE Implementation | v1.2 | 2/2 | Complete | 2026-01-19 |
 | 17. GPU Quantization | v1.2 | 3/3 | Complete | 2026-01-19 |
-| 18. GPU Attention Completion | v1.2 | 2/3 | In progress | 2026-01-19 |
-| 19. Code Hygiene Completion | v1.2 | 0/? | Not started | - |
-| 20. Test Health & Performance | v1.2 | 0/? | Not started | - |
+| 18. GPU Attention Completion | v1.2 | 3/3 | Complete | 2026-01-19 |
+| 19. Wavefront-Native Quantized Matmul | v1.3 | 0/4 | Not started | - |
+| 20. Code Hygiene Completion | v1.3 | 0/? | Not started | - |
+| 21. Test Health & Performance | v1.3 | 0/? | Not started | - |
 
-**Total Progress:** 124/127 v1.0+v1.1+v1.2 plans complete (98%)
+**Total Progress:** 125/127 v1.0+v1.1+v1.2 plans complete (98%)
+
+---
+
+## v1.3 Critical: CUDA Intrinsics Elimination
+
+**Milestone Goal:** Remove ALL CUDA-specific code from ROCmForge, establishing pure HIP-native quantized matmul kernels.
+
+**IMPORTANT:** This is a critical milestone. ROCmForge does NOT port CUDA code. All kernels must be rewritten from mathematical first principles for AMD HIP.
+
+**Reference:** `.planning/research/ANTI_CUDA_PORTING_RATIONALE.md`
+
+---
+
+## Future Milestones
+
+**v1.4**: Multi-GPU support, advanced optimizations
