@@ -24,23 +24,23 @@ use crate::backend::{HipBackend, HipKernel, HipModule};
 use half::f16;
 
 /// Result type for Q4_K dequantization operations
-pub type Q4_KDequantResult<T> = Result<T, String>;
+pub type Q4KdequantResult<T> = Result<T, String>;
 
 /// Q4_K dequantization cache containing loaded module and kernel
-pub struct Q4_KDequantCache {
+pub struct Q4KdequantCache {
     #[allow(dead_code)]
     module: HipModule,
     kernel: HipKernel,
 }
 
 /// Global cache for Q4_K dequantization kernel
-static Q4_K_DEQUANT_CACHE: Mutex<Option<Q4_KDequantCache>> = Mutex::new(None);
+static Q4_K_DEQUANT_CACHE: Mutex<Option<Q4KdequantCache>> = Mutex::new(None);
 
 /// Initialize or retrieve the cached Q4_K dequantization kernel
 ///
 /// Loads the HSACO file specified by Q4_K_DEQUANT_HSACO environment variable
 /// and extracts the q4_k_to_fp32_kernel function.
-pub fn get_or_init_q4_k_dequant_cache(backend: &HipBackend) -> Q4_KDequantResult<&'static Q4_KDequantCache> {
+pub fn get_or_init_q4_k_dequant_cache(backend: &HipBackend) -> Q4KdequantResult<&'static Q4KdequantCache> {
     // Fast path: cache already initialized
     {
         let cache = Q4_K_DEQUANT_CACHE.lock().unwrap();
@@ -48,7 +48,7 @@ pub fn get_or_init_q4_k_dequant_cache(backend: &HipBackend) -> Q4_KDequantResult
             // SAFETY: We're extending the lifetime of a reference to static data.
             // The cache lives for the entire program duration (static Mutex).
             return Ok(unsafe {
-                &*(cache.as_ref().unwrap() as *const Q4_KDequantCache)
+                &*(cache.as_ref().unwrap() as *const Q4KdequantCache)
             });
         }
     }
@@ -67,7 +67,7 @@ pub fn get_or_init_q4_k_dequant_cache(backend: &HipBackend) -> Q4_KDequantResult
         .get_kernel_function(&module, "q4_k_to_fp32_kernel")
         .map_err(|e| format!("Failed to get Q4_K dequant kernel: {}", e))?;
 
-    let cache = Q4_KDequantCache { module, kernel };
+    let cache = Q4KdequantCache { module, kernel };
 
     // Store in global cache
     {
@@ -78,7 +78,7 @@ pub fn get_or_init_q4_k_dequant_cache(backend: &HipBackend) -> Q4_KDequantResult
     // Return reference to the newly cached value
     let cache = Q4_K_DEQUANT_CACHE.lock().unwrap();
     Ok(unsafe {
-        &*(cache.as_ref().unwrap() as *const Q4_KDequantCache)
+        &*(cache.as_ref().unwrap() as *const Q4KdequantCache)
     })
 }
 
@@ -104,7 +104,7 @@ pub fn dequantize_q4_k_gpu_kernel(
     quantized_data: &[u8],
     output: &crate::backend::HipBuffer,
     num_elements: usize,
-) -> Q4_KDequantResult<()> {
+) -> Q4KdequantResult<()> {
     // Get cached kernel
     let cache = get_or_init_q4_k_dequant_cache(backend)?;
 
@@ -169,7 +169,7 @@ pub fn dequantize_q4_k_with_fallback(
     quantized_data: &[u8],
     output: &crate::backend::HipBuffer,
     num_elements: usize,
-) -> Q4_KDequantResult<()> {
+) -> Q4KdequantResult<()> {
     // Try GPU first
     match dequantize_q4_k_gpu_kernel(backend, quantized_data, output, num_elements) {
         Ok(()) => Ok(()),
