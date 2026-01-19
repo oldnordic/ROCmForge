@@ -72,8 +72,8 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 
 **Plans:** 2 plans
 
-- [ ] 14-01-PLAN.md — Verify fix and add test alias matching requirements
-- [ ] 14-02-PLAN.md — Refactor to Entry API for cleaner implementation (optional)
+- [x] 14-01-PLAN.md — Verify fix and add test alias matching requirements
+- [x] 14-02-PLAN.md — Refactor to Entry API for cleaner implementation (optional)
 
 ---
 
@@ -92,7 +92,17 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 4. Sampling kernels are added to build.rs compilation list
 5. Sampling kernels have unit tests verifying correctness
 
-**Plans**: TBD
+**Plans:** 7 plans in 5 waves
+
+- [x] 15-01-PLAN.md — Add sampling_utils.hip (softmax, temperature) to build.rs
+- [x] 15-02-PLAN.md — Add topk_sampling.hip to build.rs and fix timeout
+- [x] 15-03-PLAN.md — Replace stub topp_sampling.hip with multi-kernel pipeline
+- [x] 15-04-PLAN.md — Add fused topk_topp_sampling.hip to build.rs
+- [x] 15-05-PLAN.md — Update GPU sampler cache to load compiled HSACO files
+- [x] 15-06-PLAN.md — Update GPU samplers to use GPU kernels instead of CPU
+- [x] 15-07-PLAN.md — Add comprehensive unit and integration tests
+
+**Summary:** GPU sampling kernels implemented with multi-kernel pipeline for top-p (prefix_sum, threshold, sample), parallel bitonic sort for top-k, temperature scaling support, and comprehensive unit/integration tests.
 
 ---
 
@@ -219,11 +229,11 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 | 13-02. Memory Pooling Documentation | v1.1 | 1/1 | Complete | 2026-01-19 |
 | 13-03. Dead Code Removal | v1.1 | 4/4 | Complete | 2026-01-19 |
 | 14. Scheduler Clone Bug Fix | v1.2 | 2/2 | Complete | 2026-01-19 |
-| 15. GPU Sampling Kernels | v1.2 | 0/? | Not started | - |
+| 15. GPU Sampling Kernels | v1.2 | 7/7 | Complete | 2026-01-19 |
 | 16. GPU RoPE Implementation | v1.2 | 0/? | Not started | - |
 | 17. GPU Quantization | v1.2 | 0/? | Not started | - |
 | 18. GPU Attention Completion | v1.2 | 0/? | Not started | - |
 | 19. Code Hygiene Completion | v1.2 | 0/? | Not started | - |
 | 20. Test Health & Performance | v1.2 | 0/? | Not started | - |
 
-**Total Progress:** 103/103 v1.0+v1.1+v1.2 plans complete (100%)
+**Total Progress:** 117/117 v1.0+v1.1+v1.2 plans complete (100%)
