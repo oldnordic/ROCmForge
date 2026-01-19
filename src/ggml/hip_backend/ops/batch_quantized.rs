@@ -14,8 +14,6 @@
 //! - **Profiling support**: Built-in timing for performance analysis
 
 
-#[cfg(feature = "rocm")]
-use crate::profiling::KernelTimer;
 use crate::backend::hip_backend::{HipBackend, HipError};
 
 /// Quantization format for batch matmul operations

@@ -41,8 +41,6 @@ use std::ffi::c_void;
 use std::path::Path;
 use std::sync::Mutex;
 
-#[cfg(feature = "rocm")]
-use crate::profiling::KernelTimer;
 use crate::backend::hip_backend::{HipBackend, HipError, HipKernel, HipModule};
 
 /// Result type for quantized operations
