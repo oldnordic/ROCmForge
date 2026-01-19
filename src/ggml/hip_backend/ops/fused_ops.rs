@@ -214,7 +214,7 @@ pub unsafe fn fused_q4_0_rmsnorm_gpu(
 
     backend
         .launch_kernel_with_module_shared(kernel, grid_dim, block_dim, args, shared_mem_bytes)
-        .map_err(|e| HipError::LaunchFailed(format!("Fused dequant+RMSNorm kernel failed: {:?}", e)))?;
+        .map_err(|e| HipError::KernelLaunchFailed(format!("Fused dequant+RMSNorm kernel failed: {:?}", e)))?;
 
     Ok(())
 }
@@ -347,7 +347,7 @@ pub unsafe fn fused_rope_kv_append_gpu(
 
     backend
         .launch_kernel_with_module_shared(kernel, grid_dim, block_dim, args, shared_mem_bytes)
-        .map_err(|e| HipError::LaunchFailed(format!("Fused RoPE+KV append kernel failed: {:?}", e)))?;
+        .map_err(|e| HipError::KernelLaunchFailed(format!("Fused RoPE+KV append kernel failed: {:?}", e)))?;
 
     Ok(())
 }
@@ -486,8 +486,8 @@ pub unsafe fn fused_rope_kv_append_batch_gpu(
     ];
 
     backend
-        .launch_kernel_with_module_shared(batch_kernel, grid_dim, block_dim, args, shared_mem_bytes)
-        .map_err(|e| HipError::LaunchFailed(format!("Fused RoPE+KV append batch kernel failed: {:?}", e)))?;
+        .launch_kernel_with_module_shared(&batch_kernel, grid_dim, block_dim, args, shared_mem_bytes)
+        .map_err(|e| HipError::KernelLaunchFailed(format!("Fused RoPE+KV append batch kernel failed: {:?}", e)))?;
 
     Ok(())
 }

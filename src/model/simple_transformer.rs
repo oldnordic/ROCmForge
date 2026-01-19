@@ -54,7 +54,7 @@ impl Linear {
         // Initialize bias to zeros
         let bias_data = vec![0.0f32; out_features];
 
-        let linear = Self {
+        let mut linear = Self {
             weight: Tensor { data: weight_data },
             bias: Tensor { data: bias_data },
             in_features,

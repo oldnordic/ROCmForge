@@ -223,16 +223,18 @@ impl KernelTimer {
         // Record the event in the stream
         stop_event.record(stream)?;
 
-        self.stop = Some(TimerStop::Gpu {
-            event: stop_event,
-        });
-
         // Synchronize the stop event to ensure timing is available
         // This is necessary for accurate elapsed time calculation
         stop_event.synchronize()?;
 
-        // Calculate elapsed time
-        self.elapsed_ms = Some(start_event.elapsed_time(&stop_event)?);
+        // Calculate elapsed time before moving stop_event
+        let elapsed = start_event.elapsed_time(&stop_event)?;
+
+        self.stop = Some(TimerStop::Gpu {
+            event: stop_event,
+        });
+
+        self.elapsed_ms = Some(elapsed);
 
         Ok(())
     }

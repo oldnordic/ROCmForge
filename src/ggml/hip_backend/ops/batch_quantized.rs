@@ -389,17 +389,11 @@ impl AsyncKernelLauncher {
                 unsafe {
                     quantized_matmul::matmul_q4_0_gpu(
                         &self.backend,
-                        input.device_ptr().map_err(|e| {
-                            HipError::GenericError(format!("Failed to get input ptr: {}", e))
-                        })?,
+                        input.as_ptr() as *const f32,
                         self.backend.allocate_buffer(op.weights.len()).map_err(|e| {
                             HipError::MemoryAllocationFailed(format!("Failed to allocate: {}", e))
-                        })?.device_ptr().map_err(|e| {
-                            HipError::GenericError(format!("Failed to get weight ptr: {}", e))
-                        })?,
-                        output.device_ptr_mut().map_err(|e| {
-                            HipError::GenericError(format!("Failed to get output ptr: {}", e))
-                        })?,
+                        })?.as_ptr() as *const u8,
+                        output.as_mut_ptr() as *mut f32,
                         op.m,
                         op.n,
                         op.k,
@@ -426,8 +420,57 @@ impl AsyncKernelLauncher {
         op: &QuantizedMatmulOp,
         output: &crate::backend::HipBuffer,
     ) -> Result<(), HipError> {
-        // Execute using the same backend
-        self.execute_single(input, op, output)
+        // Execute synchronously using the quantized matmul functions
+        use crate::ggml::hip_backend::ops::quantized_matmul;
+
+        match op.format {
+            QuantFormat::Q4_0 => {
+                quantized_matmul::matmul_q4_0(
+                    &self.backend,
+                    &op.weights,
+                    input,
+                    op.n,
+                    op.k,
+                    output,
+                )
+                .map_err(|e| HipError::GenericError(format!("Q4_0 matmul failed: {}", e)))?;
+            }
+            QuantFormat::Q4_K => {
+                quantized_matmul::matmul_q4_k(
+                    &self.backend,
+                    &op.weights,
+                    input,
+                    op.n,
+                    op.k,
+                    output,
+                )
+                .map_err(|e| HipError::GenericError(format!("Q4_K matmul failed: {}", e)))?;
+            }
+            QuantFormat::Q6_K => {
+                quantized_matmul::matmul_q6_k(
+                    &self.backend,
+                    &op.weights,
+                    input,
+                    op.n,
+                    op.k,
+                    output,
+                )
+                .map_err(|e| HipError::GenericError(format!("Q6_K matmul failed: {}", e)))?;
+            }
+            QuantFormat::Q8_0 => {
+                quantized_matmul::matmul_q8_0(
+                    &self.backend,
+                    &op.weights,
+                    input,
+                    op.n,
+                    op.k,
+                    output,
+                )
+                .map_err(|e| HipError::GenericError(format!("Q8_0 matmul failed: {}", e)))?;
+            }
+        }
+
+        Ok(())
     }
 }
 

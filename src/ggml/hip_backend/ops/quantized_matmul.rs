@@ -407,19 +407,13 @@ pub fn matmul_q4_0(
         .map_err(|e| format!("Failed to upload weights: {}", e))?;
 
     // Get input device pointer
-    let input_ptr = input
-        .device_ptr()
-        .map_err(|e| format!("Failed to get input device ptr: {}", e))?;
+    let input_ptr = input.as_ptr() as *const f32;
 
     // Get output device pointer
-    let output_ptr = output
-        .device_ptr_mut()
-        .map_err(|e| format!("Failed to get output device ptr: {}", e))?;
+    let output_ptr = output.as_mut_ptr() as *mut f32;
 
     // Get weight device pointer
-    let weight_ptr = weight_buffer
-        .device_ptr()
-        .map_err(|e| format!("Failed to get weight device ptr: {}", e))?;
+    let weight_ptr = weight_buffer.as_ptr() as *const u8;
 
     // Launch fused kernel
     unsafe {
@@ -504,7 +498,7 @@ pub(crate) unsafe fn matmul_q4_0_gpu(
 
     backend
         .launch_kernel_with_module_shared(kernel, grid_dim, block_dim, args, shared_mem_bytes)
-        .map_err(|e| HipError::LaunchFailed(format!("Failed to launch q4_0_matmul kernel: {:?}", e)))?;
+        .map_err(|e| HipError::KernelLaunchFailed(format!("Failed to launch q4_0_matmul kernel: {:?}", e)))?;
 
     Ok(())
 }
@@ -659,19 +653,13 @@ pub fn matmul_q4_k(
         .map_err(|e| format!("Failed to upload weights: {}", e))?;
 
     // Get input device pointer
-    let input_ptr = input
-        .device_ptr()
-        .map_err(|e| format!("Failed to get input device ptr: {}", e))?;
+    let input_ptr = input.as_ptr() as *const f32;
 
     // Get output device pointer
-    let output_ptr = output
-        .device_ptr_mut()
-        .map_err(|e| format!("Failed to get output device ptr: {}", e))?;
+    let output_ptr = output.as_mut_ptr() as *mut f32;
 
     // Get weight device pointer
-    let weight_ptr = weight_buffer
-        .device_ptr()
-        .map_err(|e| format!("Failed to get weight device ptr: {}", e))?;
+    let weight_ptr = weight_buffer.as_ptr() as *const u8;
 
     // Launch fused kernel
     unsafe {
@@ -774,7 +762,7 @@ unsafe fn matmul_q4_k_gpu(
 
     backend
         .launch_kernel_with_module_shared(kernel, grid_dim, block_dim, args, shared_mem_bytes)
-        .map_err(|e| HipError::LaunchFailed(format!("Failed to launch q4_k_matmul kernel: {:?}", e)))?;
+        .map_err(|e| HipError::KernelLaunchFailed(format!("Failed to launch q4_k_matmul kernel: {:?}", e)))?;
 
     Ok(())
 }
@@ -822,19 +810,13 @@ pub fn matmul_q6_k(
         .map_err(|e| format!("Failed to upload weights: {}", e))?;
 
     // Get input device pointer
-    let input_ptr = input
-        .device_ptr()
-        .map_err(|e| format!("Failed to get input device ptr: {}", e))?;
+    let input_ptr = input.as_ptr() as *const f32;
 
     // Get output device pointer
-    let output_ptr = output
-        .device_ptr_mut()
-        .map_err(|e| format!("Failed to get output device ptr: {}", e))?;
+    let output_ptr = output.as_mut_ptr() as *mut f32;
 
     // Get weight device pointer
-    let weight_ptr = weight_buffer
-        .device_ptr()
-        .map_err(|e| format!("Failed to get weight device ptr: {}", e))?;
+    let weight_ptr = weight_buffer.as_ptr() as *const u8;
 
     // Launch fused kernel
     unsafe {
@@ -937,7 +919,7 @@ unsafe fn matmul_q6_k_gpu(
 
     backend
         .launch_kernel_with_module_shared(kernel, grid_dim, block_dim, args, shared_mem_bytes)
-        .map_err(|e| HipError::LaunchFailed(format!("Failed to launch q6_k_matmul kernel: {:?}", e)))?;
+        .map_err(|e| HipError::KernelLaunchFailed(format!("Failed to launch q6_k_matmul kernel: {:?}", e)))?;
 
     Ok(())
 }
@@ -1193,9 +1175,8 @@ mod tests {
             &backend,
             &quantized_weights,
             &input_buffer,
-            m,
-            n,
-            k,
+            n,  // n_rows
+            k,  // n_cols
             &output_buffer,
         )
         .expect("Fused matmul failed");

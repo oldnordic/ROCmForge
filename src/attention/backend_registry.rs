@@ -147,7 +147,7 @@ pub struct AttentionBackendRegistry {
 
 impl AttentionBackendRegistry {
     pub fn new() -> Self {
-        let backends: Vec<Box<dyn BackendImplementation>> =
+        let mut backends: Vec<Box<dyn BackendImplementation>> =
             vec![Box::new(cpu_backend::CpuAttentionBackend::new())];
 
         #[cfg(feature = "rocm")]
