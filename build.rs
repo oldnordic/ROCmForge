@@ -153,6 +153,21 @@ fn compile_hip_kernels() {
             "FUSED_ROPE_KVAPPEND_HSACO",
             "fused_rope_kv_cache_append_kernel",
         ),
+        (
+            "kernels/sampling_utils.hip",
+            "SAMPLING_UTILS_HSACO",
+            "softmax_kernel",
+        ),
+        (
+            "kernels/sampling_utils.hip",
+            "TEMPERATURE_SCALE_HSACO",
+            "temperature_scale_kernel",
+        ),
+        (
+            "kernels/topk_sampling.hip",
+            "TOPK_SAMPLING_HSACO",
+            "topk_sampling_kernel",
+        ),
     ];
 
     for (src_file, env_name, kernel_name) in &kernels {
