@@ -66,7 +66,6 @@ const Q6_K_ELEMENTS_PER_BLOCK: usize = 256;  // Elements per block
 
 /// Cached kernel modules and functions for quantized matmul operations
 #[derive(Debug)]
-#[allow(dead_code)] // Reserved for future quantized matmul optimization
 struct Q4_0KernelCache {
     module: Option<HipModule>,
     kernel: Option<HipKernel>,
@@ -91,7 +90,6 @@ struct Q6_KKernelCache {
 }
 
 // Global kernel caches
-#[allow(dead_code)] // Reserved for future quantized matmul optimization
 static Q4_0_CACHE: Mutex<Option<Q4_0KernelCache>> = Mutex::new(None);
 #[allow(dead_code)] // Reserved for future quantized matmul optimization
 static Q4_K_CACHE: Mutex<Option<Q4_KKernelCache>> = Mutex::new(None);
@@ -99,7 +97,6 @@ static Q4_K_CACHE: Mutex<Option<Q4_KKernelCache>> = Mutex::new(None);
 static Q6_K_CACHE: Mutex<Option<Q6_KKernelCache>> = Mutex::new(None);
 
 /// Get or initialize the global Q4_0 kernel cache
-#[allow(dead_code)] // Reserved for future quantized matmul optimization
 fn get_or_init_q4_0_cache() -> Result<&'static Mutex<Option<Q4_0KernelCache>>, HipError> {
     // First check if already initialized
     {
