@@ -75,10 +75,12 @@ enum TimerStop {
     /// GPU timing using HIP events
     #[cfg(feature = "rocm")]
     Gpu {
+        #[allow(dead_code)] // Event stored for Debug impl; timing is done via HipEvent::elapsed
         event: HipEvent,
     },
     /// CPU timing using Instant
     Cpu {
+        #[allow(dead_code)] // Instant stored for Debug impl; timing is done via Instant::elapsed
         instant: Instant,
     },
 }

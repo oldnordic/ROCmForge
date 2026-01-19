@@ -48,6 +48,7 @@ pub struct KVCache {
     current_seq_len: Vec<usize>,
     // Pre-calculated sizes for sub-allocation
     layer_size_bytes: usize,
+    #[allow(dead_code)] // Reserved for future head-level operations
     head_size_bytes: usize,
 }
 

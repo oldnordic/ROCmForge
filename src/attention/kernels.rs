@@ -65,6 +65,7 @@ static ATTENTION_KERNEL_CACHE: Mutex<Option<AttentionKernelCache>> = Mutex::new(
 #[derive(Debug)]
 struct MqaKernelCache {
     backend: Arc<HipBackend>,
+    #[allow(dead_code)] // Module kept alive to keep HSACO loaded in memory
     mqa_kv_replicate_module: HipModule,
     mqa_kv_replicate_kernel: HipKernel,
 }
@@ -74,10 +75,13 @@ struct MqaKernelCache {
 #[derive(Debug)]
 struct AttentionKernelCache {
     backend: Arc<HipBackend>,
+    #[allow(dead_code)] // Module kept alive to keep HSACO loaded in memory
     qkt_matmul_module: HipModule,
     qkt_matmul_kernel: HipKernel,
+    #[allow(dead_code)] // Module kept alive to keep HSACO loaded in memory
     softmax_module: HipModule,
     softmax_kernel: HipKernel,
+    #[allow(dead_code)] // Module kept alive to keep HSACO loaded in memory
     weighted_matmul_module: HipModule,
     weighted_matmul_kernel: HipKernel,
 }

@@ -29,14 +29,17 @@ use once_cell::sync::OnceCell;
 ///
 /// Provides HIP kernel implementations for attention computation:
 /// - QK^T computation kernel
-/// - Softmax with causal masking kernel  
+/// - Softmax with causal masking kernel
 /// - Attention-weighted V computation kernel
 pub struct HipAttentionKernels {
     backend: HipBackend,
     blas_handle: HipBlasHandle,
     // HIP kernel modules will be loaded here
+    #[allow(dead_code)] // Reserved for future kernel loading from .hip files
     qk_kernel: Option<crate::backend::hip_backend::HipModule>,
+    #[allow(dead_code)] // Reserved for future kernel loading from .hip files
     softmax_kernel: Option<crate::backend::hip_backend::HipModule>,
+    #[allow(dead_code)] // Reserved for future kernel loading from .hip files
     v_kernel: Option<crate::backend::hip_backend::HipModule>,
     #[cfg(feature = "rocm")]
     attention_softmax_kernel: OnceCell<CompiledKernel>,
@@ -46,6 +49,7 @@ pub struct HipAttentionKernels {
 
 #[cfg(feature = "rocm")]
 struct CompiledKernel {
+    #[allow(dead_code)] // Module kept alive to keep HSACO loaded in memory
     module: HipModule,
     kernel: HipKernel,
 }

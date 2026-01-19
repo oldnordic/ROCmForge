@@ -335,6 +335,7 @@ pub struct HipEvent {
 }
 
 // HIP Event flags (from hip_runtime_api.h)
+#[allow(dead_code)] // Reserved for future event configuration options
 const HIP_EVENT_DEFAULT: u32 = 0x0;
 #[allow(dead_code)] // Reserved for future event configuration options
 const HIP_EVENT_DISABLE_TIMING: u32 = 0x1;
@@ -3427,6 +3428,7 @@ impl ModelRuntime {
 }
 
 /// Helper function to copy buffer to host vector
+#[allow(dead_code)] // Legacy function kept for reference; use copy_from_device_safe instead
 fn vec_from_buffer(backend: &HipBackend, buffer: &HipBuffer, len: usize) -> HipResult<Vec<f32>> {
     let mut host_data = vec![0.0f32; len];
     // SAFETY: We check that the buffer size matches our expectation
