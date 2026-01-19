@@ -177,7 +177,7 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 Plans:
 - [x] 18-01-PLAN.md — Verify FlashAttention GPU kernels (generic, causal, non-causal)
 - [x] 18-02-PLAN.md — Verify MQA/GQA KV replication and GPU execution path
-- [ ] 18-03-PLAN.md — Create integration tests and verify all ATTENTION requirements
+- [x] 18-03-PLAN.md — Create integration tests and verify all ATTENTION requirements
 
 **Wave Structure:**
 - Wave 1: 18-01 (FlashAttention), 18-02 (MQA/GQA) — parallel execution
@@ -191,7 +191,7 @@ Plans:
 
 **Depends on**: Phase 18
 
-**Requirements**: QUANT-07, QUANT-08, QUANT-09, HYGIENE-08
+**Requirements**: QUANT-07, QUANT-08, QUANT-09
 
 **Success Criteria** (what must be TRUE):
 1. All `__shfl_down_f32` intrinsics replaced with HIP `__shfl_down`
@@ -203,10 +203,10 @@ Plans:
 **Plans**: 4 plans in 4 waves
 
 Plans:
-- [ ] 19-01-PLAN.md — Analyze and document Q4_0, Q4_K, Q6_K bit-packing formats from CPU reference implementations
-- [ ] 19-02-PLAN.md — Replace __shfl_down_f32 with __shfl_down in q4_0_matmul.hip, q4_k_matmul.hip, q6_k_matmul.hip
-- [ ] 19-03-PLAN.md — Replace __shfl_down_f32 with __shfl_down in fused_dequant_rmsnorm.hip and verify all kernels
-- [ ] 19-04-PLAN.md — Compile kernels for gfx1100 and validate numerical correctness
+- [x] 19-01-PLAN.md — Analyze and document Q4_0, Q4_K, Q6_K bit-packing formats from CPU reference implementations
+- [x] 19-02-PLAN.md — Replace __shfl_down_f32 with __shfl_down in q4_0_matmul.hip, q4_k_matmul.hip, q6_k_matmul.hip
+- [x] 19-03-PLAN.md — Replace __shfl_down_f32 with __shfl_down in fused_dequant_rmsnorm.hip and verify all kernels
+- [x] 19-04-PLAN.md — Compile kernels for gfx1100 and validate numerical correctness
 
 **Wave Structure:**
 - Wave 1: 19-01 (format analysis)
@@ -240,7 +240,20 @@ Plans:
 5. All unexpected_cfg warnings are resolved (feature name fixes)
 6. Zero compiler warnings baseline achieved (`cargo check` passes clean)
 
-**Plans**: TBD
+**Plans:** 6 plans in 3 waves
+
+Plans:
+- [ ] 20-01-PLAN.md — Fix unreachable patterns and unexpected_cfg warnings (HYGIENE-02, HYGIENE-06)
+- [ ] 20-02-PLAN.md — Fix type naming style warnings (Q4_K, Q6_K naming)
+- [ ] 20-03-PLAN.md — Remove unused imports (8 imports across 6 files)
+- [ ] 20-04-PLAN.md — Replace deprecated methods (18 calls to to_host_vec/copy_to_host)
+- [ ] 20-05-PLAN.md — Fix unused mut, unused assignment, and privacy warnings
+- [ ] 20-06-PLAN.md — Review and resolve all dead_code warnings
+
+**Wave Structure:**
+- Wave 1: 20-01 (unreachable/cfg), 20-02 (naming), 20-03 (imports) — parallel execution
+- Wave 2: 20-04 (deprecated methods)
+- Wave 3: 20-05 (simple hygiene), 20-06 (dead code review) — parallel execution
 
 ---
 
@@ -294,11 +307,11 @@ Plans:
 | 16. GPU RoPE Implementation | v1.2 | 2/2 | Complete | 2026-01-19 |
 | 17. GPU Quantization | v1.2 | 3/3 | Complete | 2026-01-19 |
 | 18. GPU Attention Completion | v1.2 | 3/3 | Complete | 2026-01-19 |
-| 19. Wavefront-Native Quantized Matmul | v1.3 | 0/4 | Not started | - |
-| 20. Code Hygiene Completion | v1.3 | 0/? | Not started | - |
+| 19. Wavefront-Native Quantized Matmul | v1.3 | 4/4 | Complete | 2026-01-19 |
+| 20. Code Hygiene Completion | v1.3 | 0/6 | Not started | - |
 | 21. Test Health & Performance | v1.3 | 0/? | Not started | - |
 
-**Total Progress:** 125/127 v1.0+v1.1+v1.2 plans complete (98%)
+**Total Progress:** 129/137 v1.0+v1.1+v1.2+v1.3 plans complete (94%)
 
 ---
 

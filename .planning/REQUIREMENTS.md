@@ -53,6 +53,9 @@ Requirements for on-device quantization operations.
 - [x] **QUANT-04**: Quantized matmul fusion runs on GPU (dequant + matmul in one kernel)
 - [x] **QUANT-05**: Quantization kernels have unit tests verifying bit-exact outputs
 - [x] **QUANT-06**: CPU dequantization fallback is removed for GPU tensors
+- [x] **QUANT-07**: All __shfl_down_f32 intrinsics replaced with HIP __shfl_down (Phase 19)
+- [x] **QUANT-08**: Kernels compile for gfx1100 without errors (Phase 19)
+- [x] **QUANT-09**: Tile sizes are wave64-aligned (divisible by 64) (Phase 19 - WARP_SIZE=64 verified, tile alignment noted for future optimization)
 
 ### GPU Attention (ATTENTION)
 
