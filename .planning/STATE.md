@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-01-19)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Phase 15 - GPU Sampling Kernels
+**Current focus:** Phase 16 - GPU RoPE Implementation
 
 ## Current Position
 
-Phase: 15 of 20 (GPU Sampling Kernels)
-Plan: 6/7 in current phase
+Phase: 16 of 20 (GPU RoPE Implementation)
+Plan: 1/1 in current phase
 Status: In progress
-Last activity: 2026-01-19 — Completed 15-06: GPU sampler structs now use GPU kernels with temperature scaling
+Last activity: 2026-01-19 — Completed 16-01: RoPE kernel compilation and GPU path verification
 
-Progress: [█████░░░░░░░░░░░░░░░░░░░] 18% (15.6 of 20 phases planned)
+Progress: [█████░░░░░░░░░░░░░░░░░░░] 18% (16.1 of 20 phases planned)
 
 ## Performance Metrics
 
@@ -53,6 +53,7 @@ Progress: [█████░░░░░░░░░░░░░░░░░░
 | 15-05 | 1 | ~5min | 5 min |
 | 15-06 | 1 | ~4min | 4 min |
 | 15-07 | 1 | ~9min | 9 min |
+| 16-01 | 1 | ~4min | 4 min |
 
 **Recent Trend:**
 - Last 5 phases: Stable (3-6 min/plan)
@@ -76,6 +77,7 @@ Recent decisions affecting v1.2:
 - **15-05 API Integration**: Updated SamplingKernelCache to load 7 kernel types from HSACO env vars; deprecated single-kernel topp_sampling_kernel; updated GpuTopPSampler to use 3-kernel pipeline; added 4 new kernel wrapper functions
 - **15-06 GPU Sampler Implementations**: Implemented try_gpu_sample() for GpuTopKSampler and GpuFusedSampler; added temperature scaling support to GpuTopKSampler and GpuTopPSampler via temperature_scale_kernel
 - **15-07 Test Coverage**: Comprehensive unit and integration tests for GPU sampling; includes edge case tests (single token, uniform distribution, empty probabilities); temperature scaling tests (SAMPLING-03); statistical GPU vs CPU comparison tests
+- **16-01 RoPE Verification**: Verified RoPE kernel compilation (rope.hip, position_embeddings.hip compile successfully); confirmed pure GPU execution path with no CPU round-trip; documented GPU-first RoPE execution flow from execution_plan_src.rs through glm_position.rs to kernels.rs
 
 ### Pending Todos
 
@@ -106,9 +108,10 @@ None yet.
 - Phase 15-05: Updated GPU sampler cache with 7 kernel fields; added kernel wrappers; updated GpuTopPSampler for multi-kernel pipeline
 - Phase 15-06: Implemented try_gpu_sample() for GpuTopKSampler and GpuFusedSampler; added temperature scaling to GpuTopKSampler and GpuTopPSampler
 - Phase 15-07: Added comprehensive GPU sampling unit tests (5 new tests) and integration tests (13 new tests in sampling_gpu_tests.rs); fixed pre-existing compilation errors
+- Phase 16-01: Verified RoPE kernel compilation and GPU path purity; documented execution flow in rope.rs and glm_position.rs
 
 ## Session Continuity
 
 Last session: 2026-01-19
-Stopped at: Completed 15-06 — GPU sampler implementations with temperature scaling
+Stopped at: Completed 16-01 — RoPE kernel compilation and GPU path verification
 Resume file: None
