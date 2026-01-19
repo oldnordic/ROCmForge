@@ -1203,11 +1203,11 @@ mod tests {
         // Read back results
         let mut result = vec![0.0f32; m * n];
         let mut result_ref = vec![0.0f32; m * n];
-        output_buffer
-            .copy_to_host(&mut result)
+        backend
+            .copy_from_device_safe(&output_buffer, &mut result)
             .expect("Failed to copy result");
-        output_ref_buffer
-            .copy_to_host(&mut result_ref)
+        backend
+            .copy_from_device_safe(&output_ref_buffer, &mut result_ref)
             .expect("Failed to copy reference result");
 
         // Compare with tolerance for floating-point differences
