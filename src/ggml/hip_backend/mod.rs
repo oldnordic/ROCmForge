@@ -1283,10 +1283,6 @@ impl GgmlBackend for HipGgmlBackend {
                 )
                 .map_err(|e| GgmlError::Backend(e.to_string()))
             }
-            _ => Err(GgmlError::Unimplemented(format!(
-                "HIP backend op not implemented: {:?}",
-                op
-            ))),
         }
     }
 
