@@ -617,7 +617,7 @@ fn benchmark_ttft_breakdown() {
 
     // Test different prompt lengths
     let prompt_lengths = vec![32, 128, 512];
-    const GEN_TOKENS: usize = 10;
+    const _GEN_TOKENS: usize = 10; // Reserved for future benchmark expansion
 
     for prompt_len in prompt_lengths {
         let mut profiler = TtftProfiler::new();

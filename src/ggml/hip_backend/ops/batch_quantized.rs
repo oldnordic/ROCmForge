@@ -20,6 +20,7 @@ use crate::backend::hip_backend::{HipBackend, HipError};
 
 /// Quantization format for batch matmul operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(non_camel_case_types)] // Q4_K, Q6_K match GGUF quantization format naming
 pub enum QuantFormat {
     /// Q4_0: 32 elements per 20-byte block
     Q4_0,

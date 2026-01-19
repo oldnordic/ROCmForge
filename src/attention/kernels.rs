@@ -11,11 +11,14 @@ use std::sync::{Arc, Mutex};
 use crate::backend::hip_backend::{HipBackend, HipError, HipKernel, HipModule};
 
 // RDNA3 (wave32) tuning constants for AMD Radeon RX 7900 XT
+#[allow(dead_code)] // Tuning constants reserved for future kernel optimization
 const BLOCK_SIZE: u32 = 256; // 8 waves of 32 threads
+#[allow(dead_code)] // Tuning constants reserved for future kernel optimization
 const WARP_SIZE: u32 = 32; // RDNA3 wavefront size
 
 /// Cached kernel modules and functions
 #[derive(Debug)]
+#[allow(dead_code)] // Reserved for future kernel caching optimization
 struct KernelCache {
     backend: Arc<HipBackend>,
     scale_module: Option<HipModule>,
@@ -45,9 +48,11 @@ struct KernelCache {
 }
 
 // Global kernel cache (lazy initialization)
+#[allow(dead_code)] // Reserved for future kernel caching optimization
 static GLOBAL_CACHE: Mutex<Option<KernelCache>> = Mutex::new(None);
 
 /// Get or initialize the global kernel cache
+#[allow(dead_code)] // Reserved for future kernel caching optimization
 fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> {
     // First check if already initialized
     {

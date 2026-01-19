@@ -336,7 +336,9 @@ pub struct HipEvent {
 
 // HIP Event flags (from hip_runtime_api.h)
 const HIP_EVENT_DEFAULT: u32 = 0x0;
+#[allow(dead_code)] // Reserved for future event configuration options
 const HIP_EVENT_DISABLE_TIMING: u32 = 0x1;
+#[allow(dead_code)] // Reserved for future event configuration options
 const HIP_EVENT_RECORD_TIMING: u32 = 0x2; // Default behavior
 
 impl HipEvent {

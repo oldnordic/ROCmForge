@@ -48,6 +48,7 @@ pub struct ExecutionPlan {
     embedding_weights_lazy: Arc<LazyTensor>,
 
     /// Embedding layout as stored in GGUF
+    #[allow(dead_code)] // Stored for potential future use in layout-aware operations
     embedding_layout: Layout,
 
     /// Lazy tensor handle for LM head (loaded on-demand)

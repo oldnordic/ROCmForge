@@ -68,6 +68,7 @@ use rocmforge::backend::hip_backend::{DeviceTensor, HipBackend};
 /// NOTE: This is duplicated from tests/common/mod.rs because integration tests
 /// in the tests/ directory are compiled as separate crates and cannot import
 /// from tests/common directly.
+#[allow(dead_code)] // Duplicated fixture from tests/common, kept for potential future use
 struct GpuFixture {
     backend: Arc<HipBackend>,
     initial_free_mb: usize,
