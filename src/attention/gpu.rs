@@ -236,6 +236,10 @@ impl GpuBackend {
 
         // Apply softmax row-wise on GPU
         {
+            let backend = HipBackend::new().map_err(|e| {
+                AttentionError::HandleCreation(format!("Failed to create HIP backend: {}", e))
+            })?;
+
             let scores_gpu =
                 HipBuffer::new(scores.len() * std::mem::size_of::<f32>()).map_err(|e| {
                     AttentionError::MemoryAllocation(format!(
@@ -268,7 +272,7 @@ impl GpuBackend {
                 )));
             }
 
-            scores_gpu.copy_to_host(&mut scores).map_err(|e| {
+            backend.copy_from_device_safe(&scores_gpu, &mut scores).map_err(|e| {
                 AttentionError::MemoryCopy(format!("Failed to copy softmax results to host: {}", e))
             })?;
         }
@@ -348,7 +352,7 @@ impl GpuBackend {
 
                 // Copy batch result to correct location in output buffer
                 let mut batch_output = vec![0.0f32; seq_len * dim];
-                output_batch.copy_to_host(&mut batch_output).map_err(|e| {
+                backend.copy_from_device_safe(&output_batch, &mut batch_output).map_err(|e| {
                     AttentionError::MemoryCopy(format!("Failed to copy batch output: {}", e))
                 })?;
 
@@ -359,7 +363,7 @@ impl GpuBackend {
             }
 
             // Copy output back to CPU
-            output_gpu.copy_to_host(&mut output).map_err(|e| {
+            backend.copy_from_device_safe(&output_gpu, &mut output).map_err(|e| {
                 AttentionError::MemoryCopy(format!("Failed to copy output to host: {}", e))
             })?;
         }
@@ -379,20 +383,26 @@ impl GpuBackend {
     ) -> AttentionResult<DeviceTensor> {
         // For now, fallback to host-based computation using DeviceTensor data
         // This establishes the integration pattern before optimizing for full GPU operation
-        let q_host = q
-            .to_host_vec()
+        let backend = HipBackend::new().map_err(|e| {
+            AttentionError::HandleCreation(format!("Failed to create HIP backend: {}", e))
+        })?;
+
+        let mut q_host = vec![0.0f32; q.len()];
+        backend.copy_from_device_safe(q.buffer(), &mut q_host)
             .map_err(|e| AttentionError::MemoryCopy(format!("Failed to copy Q to host: {}", e)))?;
-        let k_host = k
-            .to_host_vec()
+        let mut k_host = vec![0.0f32; k.len()];
+        backend.copy_from_device_safe(k.buffer(), &mut k_host)
             .map_err(|e| AttentionError::MemoryCopy(format!("Failed to copy K to host: {}", e)))?;
-        let v_host = v
-            .to_host_vec()
+        let mut v_host = vec![0.0f32; v.len()];
+        backend.copy_from_device_safe(v.buffer(), &mut v_host)
             .map_err(|e| AttentionError::MemoryCopy(format!("Failed to copy V to host: {}", e)))?;
         let mask_host = mask
             .map(|m| {
-                m.to_host_vec().map_err(|e| {
+                let mut data = vec![0.0f32; m.len()];
+                backend.copy_from_device_safe(m.buffer(), &mut data).map_err(|e| {
                     AttentionError::MemoryCopy(format!("Failed to copy mask to host: {}", e))
-                })
+                })?;
+                Ok(data)
             })
             .transpose()?;
 

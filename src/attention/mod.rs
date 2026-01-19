@@ -163,23 +163,32 @@ impl Attention {
         match self.backend {
             AttentionBackend::Cpu => {
                 // Fallback to CPU implementation by copying to host
-                let q_host = q.to_host_vec().map_err(|e| {
+                let backend = HipBackend::new().map_err(|e| {
+                    AttentionError::DimensionError(format!("Failed to create HIP backend: {}", e))
+                })?;
+
+                let mut q_host = vec![0.0f32; q.len()];
+                backend.copy_from_device_safe(q.buffer(), &mut q_host).map_err(|e| {
                     AttentionError::DimensionError(format!("Failed to copy Q to host: {}", e))
                 })?;
-                let k_host = k.to_host_vec().map_err(|e| {
+                let mut k_host = vec![0.0f32; k.len()];
+                backend.copy_from_device_safe(k.buffer(), &mut k_host).map_err(|e| {
                     AttentionError::DimensionError(format!("Failed to copy K to host: {}", e))
                 })?;
-                let v_host = v.to_host_vec().map_err(|e| {
+                let mut v_host = vec![0.0f32; v.len()];
+                backend.copy_from_device_safe(v.buffer(), &mut v_host).map_err(|e| {
                     AttentionError::DimensionError(format!("Failed to copy V to host: {}", e))
                 })?;
                 let mask_host = mask
                     .map(|m| {
-                        m.to_host_vec().map_err(|e| {
+                        let mut data = vec![0.0f32; m.len()];
+                        backend.copy_from_device_safe(m.buffer(), &mut data).map_err(|e| {
                             AttentionError::DimensionError(format!(
                                 "Failed to copy mask to host: {}",
                                 e
                             ))
-                        })
+                        })?;
+                        Ok(data)
                     })
                     .transpose()?;
 
@@ -198,9 +207,6 @@ impl Attention {
                 );
 
                 // Create output DeviceTensor with same shape as input V tensor
-                let backend = HipBackend::new().map_err(|e| {
-                    AttentionError::DimensionError(format!("Failed to create HIP backend: {}", e))
-                })?;
                 let output_shape = v.shape().clone(); // Use same shape as V tensor
                 println!(
                     "DEBUG: CPU returned output with {} elements: {:?}",

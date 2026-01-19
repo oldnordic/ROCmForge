@@ -210,9 +210,9 @@ impl Linear {
             k, // k (cols of input/rows of weight)
         );
 
-        // Device → Host: Copy result back to CPU
-        output_buffer
-            .copy_to_host(&mut output_data)
+        // Device → Host: Copy result back to CPU using safe method
+        backend
+            .copy_from_device_safe(&output_buffer, &mut output_data)
             .map_err(|e| ModelError::GpuError(e.into()))?;
 
         // Host: Add bias (still on CPU for now)

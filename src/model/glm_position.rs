@@ -389,9 +389,14 @@ impl GlmPositionHandler {
             // If GPU kernel failed, fall back to CPU implementation
             if !gpu_success {
                 // CPU fallback: download tensors, apply RoPE, upload back
-                let q_host = q.to_host_vec()
+                let backend = HipBackend::new()
+                    .map_err(|e| AttentionError::HandleCreation(format!("Failed to create backend for CPU fallback: {}", e)))?;
+
+                let mut q_host = vec![0.0f32; q.len()];
+                backend.copy_from_device_safe(q.buffer(), &mut q_host)
                     .map_err(|e| AttentionError::MemoryCopy(format!("Failed to download Q tensor: {}", e)))?;
-                let k_host = k.to_host_vec()
+                let mut k_host = vec![0.0f32; k.len()];
+                backend.copy_from_device_safe(k.buffer(), &mut k_host)
                     .map_err(|e| AttentionError::MemoryCopy(format!("Failed to download K tensor: {}", e)))?;
 
                 let mut q_with_pos = q_host.clone();
@@ -399,10 +404,6 @@ impl GlmPositionHandler {
                 rope.apply_q(&mut q_with_pos, position_ids, num_heads)
                     .and_then(|_| rope.apply_k(&mut k_with_pos, position_ids, num_heads))
                     .map_err(|e| AttentionError::GpuOperation(format!("CPU RoPE fallback failed: {}", e)))?;
-
-                // Create new tensors with the modified data
-                let backend = HipBackend::new()
-                    .map_err(|e| AttentionError::HandleCreation(format!("Failed to create backend for CPU fallback: {}", e)))?;
 
                 let q_shape = q.shape().clone();
                 let q_new = DeviceTensor::from_host_vec(&backend, q_with_pos, q_shape)
