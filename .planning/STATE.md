@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-19)
 ## Current Position
 
 Phase: 14 of 20 (Scheduler Clone Bug Fix)
-Plan: 0/? in current phase
-Status: Ready to plan
-Last activity: 2026-01-19 — v1.2 roadmap created
+Plan: 1/2 in current phase
+Status: In progress
+Last activity: 2026-01-19 — Completed 14-01: Scheduler Clone Bug Verification
 
-Progress: [████░░░░░░░░░░░░░░░░░░░░] 14% (14 phases of 20 planned)
+Progress: [█████░░░░░░░░░░░░░░░░░░░] 15% (14.5 phases of 20 planned)
 
 ## Performance Metrics
 
@@ -44,6 +44,7 @@ Progress: [████░░░░░░░░░░░░░░░░░░░
 | 13-01 | 1 | ~3min | 3 min |
 | 13-02 | 1 | ~3min | 3 min |
 | 13-03 | 4 | ~47min | 12 min |
+| 14-01 | 1 | ~2min | 2 min |
 
 **Recent Trend:**
 - Last 5 phases: Stable (30-54 min/plan)
@@ -68,7 +69,7 @@ None yet.
 
 ### Blockers/Concerns
 
-- **Scheduler Clone Bug**: `update_iteration_batch` overwrites scheduler state with stale batch clones; test exists at scheduler.rs:988-1030
+- ~~**Scheduler Clone Bug**: `update_iteration_batch` overwrites scheduler state with stale batch clones~~ **RESOLVED** (14-01)
 - **GPU Sampling Kernels**: Need verification if existing `topk_sampling.hip` and `topp_sampling.hip` kernels are functional
 - **Code quality note**: 27 lib warnings remain from v1.1; duplicate `GgufMetadata` structs exist (pre-existing technical debt)
 
@@ -79,8 +80,11 @@ None yet.
 - Phase 13-02: Memory pooling documentation
 - Phase 13-03: Dead code removal (93% warning reduction)
 
+**v1.2 Progress:**
+- Phase 14-01: Scheduler clone bug verification (HYGIENE-01 satisfied)
+
 ## Session Continuity
 
 Last session: 2026-01-19
-Stopped at: v1.2 roadmap created — ready for Phase 14 planning
+Stopped at: Completed 14-01 — Scheduler clone bug verified, test alias added
 Resume file: None
