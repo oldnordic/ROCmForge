@@ -10,9 +10,9 @@ See: .planning/PROJECT.md (updated 2026-01-19)
 ## Current Position
 
 Phase: 17 of 20 (GPU Quantization)
-Plan: 1/1 in current phase
-Status: In Progress
-Last activity: 2026-01-19 — Completed Phase 17 Plan 1: Q4_0 GPU Dequantization
+Plan: 2/2 in current phase
+Status: Complete
+Last activity: 2026-01-19 — Completed Phase 17 Plan 2: Q4_K and Q6_K GPU Dequantization
 
 Progress: [██████░░░░░░░░░░░░░░░░░] 20% (17 of 20 phases complete)
 
@@ -56,6 +56,7 @@ Progress: [██████░░░░░░░░░░░░░░░░░
 | 16-01 | 1 | ~4min | 4 min |
 | 16-02 | 1 | ~11min | 11 min |
 | 17-01 | 1 | ~13min | 13 min |
+| 17-02 | 1 | ~20min | 20 min |
 
 **Recent Trend:**
 - Last 5 phases: Stable (3-13 min/plan)
@@ -82,6 +83,7 @@ Recent decisions affecting v1.2:
 - **16-01 RoPE Verification**: Verified RoPE kernel compilation (rope.hip, position_embeddings.hip compile successfully); confirmed pure GPU execution path with no CPU round-trip; documented GPU-first RoPE execution flow from execution_plan_src.rs through glm_position.rs to kernels.rs
 - **16-02 RoPE GPU Tests**: Added long context position test (ROPE-03) and multi-head independent rotation test (ROPE-02); fixed 7 compilation errors (HipBuffer API, HipError variants, borrow issues, mutability); documented pre-existing GPU kernel execution bug (rope_gpu_kernel returns -1)
 - **17-01 Q4_0 GPU Dequantization**: Implemented GPU-side Q4_0 dequantization using cached HSACO kernel; kernel cache pattern with lazy initialization from Q4_0_DEQUANT_HSACO env var; graceful CPU fallback when GPU unavailable; bit-exact GPU tests (QUANT-05)
+- **17-02 Q4_K and Q6_K GPU Dequantization**: Implemented GPU-side Q4_K and Q6_K dequantization using cached HSACO kernels; Q4_K format (256 elements/super-block, 8 sub-blocks, value = min + quant*scale); Q6_K format (256 elements/block, signed 6-bit values); integrated into GgufLoader with CPU fallback; bit-exact GPU tests (QUANT-05 satisfied for Q4_K and Q6_K)
 
 ### Pending Todos
 
@@ -116,9 +118,10 @@ None yet.
 - Phase 16-01: Verified RoPE kernel compilation and GPU path purity; documented execution flow in rope.rs and glm_position.rs
 - Phase 16-02: Added RoPE GPU tests (long context positions, multi-head independent rotation); fixed 7 compilation errors (HipBuffer API changes, error variant names, borrow issues)
 - Phase 17-01: Implemented Q4_0 GPU dequantization with kernel cache, CPU fallback, and bit-exact tests (QUANT-05 satisfied)
+- Phase 17-02: Implemented Q4_K and Q6_K GPU dequantization with kernel cache, CPU fallback, and bit-exact tests (QUANT-05 satisfied for K-quants)
 
 ## Session Continuity
 
 Last session: 2026-01-19
-Stopped at: Completed 17-01 — Q4_0 GPU dequantization with kernel cache and bit-exact tests
+Stopped at: Completed 17-02 — Q4_K and Q6_K GPU dequantization with bit-exact tests
 Resume file: None
