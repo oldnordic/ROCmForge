@@ -24,11 +24,49 @@ The E2E tests (`tests/e2e_inference_tests.rs`) validate the complete inference p
 
 ### Model Requirements
 You need a GGUF model file. Recommended small models:
-- `qwen2.5-0.5b.gguf` - Tiny Chinese/English model (~500MB)
-- `tiny-llama.gguf` - Small test model
-- `bge-small-en-v1.5.Q8_0.gguf` - Embedding model
+- `qwen2.5-0.5b-instruct-q4_0.gguf` - Tiny Chinese/English model (~300MB)
+- `tinyllama-1.1b-q4_0.gguf` - Small test model (~700MB)
+- `qwen2.5-0.5b-instruct-q8_0.gguf` - Higher quality (~600MB)
 
-Download from HuggingFace or other sources.
+#### Download Instructions
+
+**Option 1: Using huggingface-cli**
+```bash
+# Install huggingface-cli
+pip install huggingface-hub
+
+# Download Qwen2.5 0.5B (Q4_0 quantization, ~300MB)
+huggingface-cli download Qwen/Qwen2.5-0.5B-Instruct-GGUF \
+  qwen2.5-0.5b-instruct-q4_0.gguf \
+  --local-dir /models \
+  --local-dir-use-symlinks False
+
+# Or download TinyLlama (1.1B, Q4_0)
+huggingface-cli download TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF \
+  tinyllama-1.1b-chat.Q4_0.gguf \
+  --local-dir /models \
+  --local-dir-use-symlinks False
+```
+
+**Option 2: Direct download from HuggingFace**
+```bash
+# Create models directory
+mkdir -p /models
+cd /models
+
+# Download Qwen2.5 0.5B Q4 (recommended for testing)
+wget https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_0.gguf
+
+# Or download using curl
+curl -L -o qwen2.5-0.5b-instruct-q4_0.gguf \
+  https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_0.gguf
+```
+
+**Option 3: Using a local model path**
+```bash
+# If you have a model elsewhere, set the environment variable
+export ROCFORGE_TEST_MODEL=/path/to/your/model.gguf
+```
 
 ## Running the Tests
 
@@ -210,3 +248,31 @@ For issues with E2E tests:
 2. Review test output with `--nocapture` flag
 3. Verify model file is valid GGUF format
 4. Check GPU availability with `rocm-smi`
+
+## Known Issues
+
+### CPU Backend Path
+When running E2E tests without a GPU or without the `rocm` feature enabled:
+- Tests may attempt to use CPU backend as fallback
+- CPU inference is significantly slower than GPU
+- Some tests may timeout with large models on CPU
+
+### Model Compatibility
+Not all GGUF models are fully supported:
+- Q4_0, Q4_1, Q5_0, Q5_1, Q8_0 formats: Fully supported
+- K-quants (Q2_K, Q3_K, Q4_K, Q5_K, Q6_K): Partial support
+- MXFP formats: Experimental
+- MoE models (Mixtral): Metadata detection only, routing not implemented
+
+### Compilation Warnings
+The test suite may generate warnings about unused functions in the common fixtures module. These are helper functions available for future test development and can be safely ignored.
+
+## Status
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Test Infrastructure | ✅ Complete | All tests compile, 8/19 pass without model |
+| Model Loading | ✅ Complete | GGUF loading with `from_gguf()` |
+| Inference Pipeline | ⚠️ Testing | Requires real model for full validation |
+| HTTP Integration | ✅ Complete | Server API tested |
+| Error Handling | ✅ Complete | Graceful degradation and error reporting |

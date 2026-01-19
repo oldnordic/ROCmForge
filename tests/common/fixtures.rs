@@ -7,7 +7,7 @@ use rocmforge::backend::HipBackend;
 use rocmforge::loader::gguf::{GgufTensor, GgufTensorType};
 use rocmforge::loader::TensorShape;
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Seek, Write};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -275,7 +275,8 @@ pub fn create_test_tensor(
 ///
 /// Uses device 0 by default. Returns error if no GPU available.
 pub fn try_create_backend() -> anyhow::Result<Arc<HipBackend>> {
-    HipBackend::new().map(Arc::new)
+    HipBackend::new()
+        .map_err(|e| anyhow::anyhow!("Failed to create HIP backend: {}", e))
 }
 
 /// Create a HIP backend for testing, panicking if unavailable.

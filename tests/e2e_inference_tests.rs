@@ -311,7 +311,7 @@ async fn test_max_tokens_zero() {
     let result = InferenceEngine::from_gguf(&model_path).await;
     assert!(result.is_ok(), "Should successfully load model");
 
-    let mut engine = result.unwrap();
+    let engine = result.unwrap();
     let start_result = engine.start().await;
     assert!(start_result.is_ok(), "Should successfully start engine");
 }
