@@ -246,17 +246,18 @@ Plans:
 ### Phase 12.1B: Context Engine Integration
 **Goal**: SQLiteGraph-based LLM context augmentation (separate service)
 **Depends on**: Nothing (independent feature)
-**Status**: 🔄 Planning (1 plan)
+**Status**: ✅ Complete (2026-01-19)
 **Mode**: Post-v1.0 enhancement (optional integration)
 
 **Note:** Kept separate to keep ROCmForge lean while SQLiteGraph grows independently as the "memory brain".
 
 Plans:
-- [ ] 12.1B-01: SQLiteGraph context integration
+- [x] 12.1B-01: SQLiteGraph context integration
   - Add sqlitegraph dependency with "context" feature flag
   - Create GraphContextStore for message-to-node storage
   - Implement HNSW vector search for semantic context retrieval
-  - Add HTTP endpoint /v1/context/search and CLI commands
+  - Add CLI commands (add, search, list, clear)
+  - Note: HTTP endpoint skipped due to HnswIndex not being Send+Sync (CLI-only access)
 
 ## Progress
 
