@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-19)
 ## Current Position
 
 Phase: 16 of 20 (GPU RoPE Implementation)
-Plan: 1/1 in current phase
+Plan: 2/7 in current phase
 Status: In progress
-Last activity: 2026-01-19 — Completed 16-01: RoPE kernel compilation and GPU path verification
+Last activity: 2026-01-19 — Completed 16-02: RoPE GPU tests and compilation fixes
 
-Progress: [█████░░░░░░░░░░░░░░░░░░░] 18% (16.1 of 20 phases planned)
+Progress: [█████░░░░░░░░░░░░░░░░░░░] 18% (16.2 of 20 phases planned)
 
 ## Performance Metrics
 
@@ -54,9 +54,10 @@ Progress: [█████░░░░░░░░░░░░░░░░░░
 | 15-06 | 1 | ~4min | 4 min |
 | 15-07 | 1 | ~9min | 9 min |
 | 16-01 | 1 | ~4min | 4 min |
+| 16-02 | 1 | ~11min | 11 min |
 
 **Recent Trend:**
-- Last 5 phases: Stable (3-6 min/plan)
+- Last 5 phases: Stable (3-11 min/plan)
 - Trend: Stable
 
 *Updated after each plan completion*
@@ -78,6 +79,7 @@ Recent decisions affecting v1.2:
 - **15-06 GPU Sampler Implementations**: Implemented try_gpu_sample() for GpuTopKSampler and GpuFusedSampler; added temperature scaling support to GpuTopKSampler and GpuTopPSampler via temperature_scale_kernel
 - **15-07 Test Coverage**: Comprehensive unit and integration tests for GPU sampling; includes edge case tests (single token, uniform distribution, empty probabilities); temperature scaling tests (SAMPLING-03); statistical GPU vs CPU comparison tests
 - **16-01 RoPE Verification**: Verified RoPE kernel compilation (rope.hip, position_embeddings.hip compile successfully); confirmed pure GPU execution path with no CPU round-trip; documented GPU-first RoPE execution flow from execution_plan_src.rs through glm_position.rs to kernels.rs
+- **16-02 RoPE GPU Tests**: Added long context position test (ROPE-03) and multi-head independent rotation test (ROPE-02); fixed 7 compilation errors (HipBuffer API, HipError variants, borrow issues, mutability); documented pre-existing GPU kernel execution bug (rope_gpu_kernel returns -1)
 
 ### Pending Todos
 
@@ -88,6 +90,7 @@ None yet.
 - ~~**Scheduler Clone Bug**: `update_iteration_batch` overwrites scheduler state with stale batch clones~~ **RESOLVED** (14-01)
 - ~~**topk_sampling.hip watchdog timeout**: Single-threaded loops over vocab_size caused GPU hang~~ **RESOLVED** (15-03)
 - ~~**topp_sampling Rust integration**: Existing `src/sampler/gpu.rs` expects single kernel but we implemented 3-kernel pipeline; needs API updates~~ **RESOLVED** (15-05)
+- **RoPE GPU kernel execution bug**: `rope_gpu_kernel()` returns -1 (execution failed) - blocks RoPE GPU tests (16-02)
 - **topk_topp_sampling watchdog risk**: Fused kernel uses single-threaded loops over vocab_size (documented in TODO comments); refactor to parallel pattern before production use
 - **Code quality note**: 27 lib warnings remain from v1.1; duplicate `GgufMetadata` structs exist (pre-existing technical debt)
 
@@ -109,9 +112,10 @@ None yet.
 - Phase 15-06: Implemented try_gpu_sample() for GpuTopKSampler and GpuFusedSampler; added temperature scaling to GpuTopKSampler and GpuTopPSampler
 - Phase 15-07: Added comprehensive GPU sampling unit tests (5 new tests) and integration tests (13 new tests in sampling_gpu_tests.rs); fixed pre-existing compilation errors
 - Phase 16-01: Verified RoPE kernel compilation and GPU path purity; documented execution flow in rope.rs and glm_position.rs
+- Phase 16-02: Added RoPE GPU tests (long context positions, multi-head independent rotation); fixed 7 compilation errors (HipBuffer API changes, error variant names, borrow issues)
 
 ## Session Continuity
 
 Last session: 2026-01-19
-Stopped at: Completed 16-01 — RoPE kernel compilation and GPU path verification
+Stopped at: Completed 16-02 — RoPE GPU tests and compilation fixes
 Resume file: None
