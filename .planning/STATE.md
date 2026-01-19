@@ -10,16 +10,16 @@ See: .planning/PROJECT.md (updated 2026-01-19)
 ## Current Position
 
 Phase: 18 of 20 (GPU Attention Completion)
-Plan: 2/2 in current phase
+Plan: 3/3 in current phase
 Status: Phase Complete
-Last activity: 2026-01-19 — Completed Phase 18-02: MQA/GQA KV replication kernel verification
+Last activity: 2026-01-19 — Completed Phase 18-03: End-to-end GPU attention integration tests
 
 Progress: [███████░░░░░░░░░░░░░░░] 25% (18 of 20 phases complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 124 (v1.0 + v1.1 + v1.2 through 18-02)
+- Total plans completed: 125 (v1.0 + v1.1 + v1.2 through 18-03)
 - Average duration: ~44 min
 - Total execution time: ~78 hours
 
@@ -60,6 +60,7 @@ Progress: [███████░░░░░░░░░░░░░░░] 2
 | 17-03 | 1 | ~5min | 5 min |
 | 18-01 | 1 | ~10min | 10 min |
 | 18-02 | 1 | ~12min | 12 min |
+| 18-03 | 1 | ~18min | 18 min |
 
 **Recent Trend:**
 - Last 5 phases: Stable (3-13 min/plan)
@@ -90,6 +91,7 @@ Recent decisions affecting v1.2:
 - **17-03 Fused Quantized MatMul**: Integrated fused dequant+matmul kernels for Q4_0, Q4_K, Q6_K; removed `#[allow(dead_code)]` markers; added GPU matmul integration tests; removed CPU dequantization fallback from GPU tensor loading (QUANT-06 satisfied); ~17x memory bandwidth reduction achieved
 - **18-01 FlashAttention GPU Verification**: Verified all 3 FlashAttention kernels registered in build.rs; causal and non-causal kernels compile and execute correctly (GPU matches CPU within tolerance); generic kernel has compilation issue (CUDA `__shfl_down_f32` intrinsic needs HIP `__shfl_down`); FlashAttentionBackend verified pure GPU path with no CPU round-trips
 - **18-02 MQA/GQA KV Replication Verification**: Verified mqa_kv_replicate.hip kernel source, build.rs integration, and Rust wrapper mqa_kv_replicate_gpu_kernel() all present; confirmed forward_device() uses pure GPU path with no CPU round-trips; RoPE is pre-applied at model layer so TODO in multi_query.rs is not a blocker; 4 MQA/GQA tests ready for GPU testing
+- **18-03 End-to-End GPU Attention Integration Tests**: Added 8 comprehensive integration tests covering FlashAttention, MQA, GQA with realistic model configurations; all ATTENTION-01 through ATTENTION-05 requirements now satisfied; GPU vs CPU consistency tests with 1e-3 tolerance; REQUIREMENTS.md updated to mark all ATTENTION requirements complete
 
 ### Pending Todos
 
@@ -129,9 +131,10 @@ None yet.
 - Phase 17-03: Integrated fused quantized matmul kernels for Q4_0, Q4_K, Q6_K; added GPU matmul integration tests; removed CPU fallback (QUANT-06 satisfied)
 - Phase 18-01: Verified FlashAttention kernels; causal and non-causal kernels work correctly; generic kernel has CUDA intrinsic compilation issue
 - Phase 18-02: Verified MQA/GQA KV replication kernel; confirmed pure GPU execution path; RoPE pre-applied at model layer
+- Phase 18-03: End-to-end GPU attention integration tests; 8 new tests for FlashAttention, MQA, GQA; all ATTENTION requirements satisfied
 
 ## Session Continuity
 
 Last session: 2026-01-19
-Stopped at: Completed 18-02 — Phase 18 (GPU Attention Completion) complete
+Stopped at: Completed 18-03 — Phase 18 (GPU Attention Completion) complete
 Resume file: None
