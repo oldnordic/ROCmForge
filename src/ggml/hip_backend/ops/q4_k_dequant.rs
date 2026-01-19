@@ -308,8 +308,9 @@ mod tests {
         for i in 0..256 {
             let sub_block = i / 32;
             let elem_in_sub = i % 32;
-            let byte_idx = elem_in_sub / 8;
-            let bit_offset = (elem_in_sub * 4) % 8;
+            let bit_pos = elem_in_sub * 4;
+            let byte_idx = bit_pos / 8;
+            let bit_offset = bit_pos % 8;
             let quant_offset = sub_block * 28 + byte_idx;
             let combined = ((data[32 + quant_offset + 1] as u16) << 8) | (data[32 + quant_offset] as u16);
             let expected_quant = ((combined >> bit_offset) & 0x0F) as f32;

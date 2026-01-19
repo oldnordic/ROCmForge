@@ -247,9 +247,8 @@ pub fn dequantize_q6_k_cpu(data: &[u8], n_elements: usize) -> Vec<f32> {
                 let combined = ((data[quants_start + byte_idx + 1] as u16) << 8)
                     | (data[quants_start + byte_idx] as u16);
 
-                // Extract 6-bit value (position depends on bit_offset)
-                // When bit_offset is 0-2: value spans two bytes
-                let quant_val = ((combined >> (10 - bit_offset)) & 0x3F) as u8;
+                // Extract 6-bit value: (combined >> bit_offset) & 0x3F
+                let quant_val = ((combined >> bit_offset) & 0x3F) as u8;
 
                 // Convert to signed range: [0, 63] -> [-32, 31]
                 let signed_val = if quant_val >= 32 {
@@ -322,12 +321,12 @@ mod tests {
 
         // Set quantized values (all zeros)
         for i in 0..192 {
-            data[32 + i] = 32; // 32 in 6-bit = 0 after signed conversion
+            data[32 + i] = 0; // 0 in 6-bit = 0 after signed conversion
         }
 
         let result = dequantize_q6_k_cpu(&data, 100); // Only 100 elements
 
-        // First 100 should be close to 0 (32 - 32 = 0, * 2.0 = 0)
+        // First 100 should be close to 0 (0 * 2.0 = 0)
         for i in 0..100 {
             assert!(
                 result[i].abs() < 1.0,
@@ -351,14 +350,45 @@ mod tests {
             data[i * 2 + 1] = scale_bytes[1];
         }
 
-        // Set quantized values (63 = -1 in signed 6-bit)
-        for i in 0..192 {
-            data[32 + i] = 63 * 4; // All 63s (which represent -1)
+        // For 6-bit packed values where each value is 63 (-1):
+        // 63 = 0b111111 in 6 bits
+        // Packed across byte boundaries:
+        // Byte 0: [v0:5][v1:3] = [63<<0 | 63<<6] = 63 | (63<<6) = 0xFC | (0xFC0) = 0xFFC
+        // But bytes are only 8 bits, so we get: byte[0] = 0xFC, byte[1] = 0x0F
+        // Actually, let's think differently:
+        // v0 occupies bits 0-5 of byte 0
+        // v1 occupies bits 6-7 of byte 0 and bits 0-3 of byte 1
+        // For v0=v1=63=0b111111:
+        // byte[0] = 0b11111111 = 0xFF
+        // byte[1] = 0b00111111 = 0x3F (only lower 6 bits set, v1's upper 2 bits are in byte[0])
+
+        // Set each 6-bit value to 63 (-1 in signed)
+        // Each byte needs to be set based on the 6-bit values it contains
+        for byte_idx in 0..192 {
+            // Each byte contains parts of up to 2 different 6-bit values
+            // For simplicity, set all values to a pattern that works
+            // Value 63 in 6-bit = 0b111111
+            // Packed: 4 values fit in 3 bytes (24 bits = 4 * 6)
+            // [v0:v0:v0:v0:v0:v0][v1:v1:v1:v1:v1:v1][v2:v2:v2:v2:v2:v2][v3:v3:v3:v3:v3:v3]
+            // [byte0:              ][byte1:              ][byte2:              ]
+            // [v0:5][v1:1] | [v1:4][v2:2] | [v2:3][v3:3]
+            // For v0=v1=v2=v3=63:
+            // byte0 = 0b11111111 = 0xFF (63 << 0 | 63 << 6, masked to 8 bits)
+            // byte1 = 0b11111111 = 0xFF (63 << 2 | 63 << 8, masked to 8 bits)
+            // byte2 = 0b00111111 = 0x3F (63 << 4, masked to 8 bits)
+
+            let group_idx = byte_idx % 3;
+            data[32 + byte_idx] = match group_idx {
+                0 => 0xFF,  // v0 lower 6 bits | v1 upper 2 bits
+                1 => 0xFF,  // v1 lower 4 bits | v2 upper 4 bits
+                2 => 0xFF,  // v2 lower 2 bits | v3 upper 6 bits
+                _ => unreachable!(),
+            };
         }
 
         let result = dequantize_q6_k_cpu(&data, 256);
 
-        // All values should be close to -1.0
+        // All values should be close to -1.0 (63 in 6-bit signed = -1)
         for i in 0..256 {
             assert!(
                 (result[i] - (-1.0)).abs() < 1.0,
