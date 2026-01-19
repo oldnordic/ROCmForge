@@ -188,6 +188,23 @@ impl GgufMetadata {
             _ => {}
         }
     }
+
+    /// Calculate head_dim from hidden_size and num_heads.
+    ///
+    /// This implements the llama.cpp pattern: calculate a sensible default
+    /// BEFORE parsing optional GGUF metadata, then allow GGUF to override.
+    ///
+    /// Call this AFTER parsing num_heads and hidden_size but BEFORE using head_dim.
+    ///
+    /// # Logic
+    /// - Only calculate if head_dim is currently 0 (wasn't set by GGUF)
+    /// - Requires num_heads > 0 and hidden_size > 0 to avoid division by zero
+    /// - Uses integer division: head_dim = hidden_size / num_heads
+    pub fn calculate_default_head_dim(&mut self) {
+        if self.num_heads > 0 && self.hidden_size > 0 && self.head_dim == 0 {
+            self.head_dim = self.hidden_size / self.num_heads;
+        }
+    }
 }
 
 #[cfg(test)]
