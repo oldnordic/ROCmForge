@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-19)
 ## Current Position
 
 Phase: 20 of 20 (Code Hygiene Completion)
-Plan: 4 of 8 in current phase
+Plan: 6 of 8 in current phase
 Status: In progress
-Last activity: 2026-01-19 — Completed Phase 20-04: Replace deprecated copy_to_host and to_host_vec methods
+Last activity: 2026-01-19 — Completed Phase 20-06: Dead code categorization and backend field fixes
 
-Progress: [█████████░░░░░░░░░░░░] 30% (19.25 of 20 phases complete)
+Progress: [█████████░░░░░░░░░░░░] 31.5% (19.5 of 20 phases complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 135 (v1.0 + v1.1 + v1.2 through 20-04)
+- Total plans completed: 137 (v1.0 + v1.1 + v1.2 through 20-06)
 - Average duration: ~44 min
-- Total execution time: ~81 hours
+- Total execution time: ~82 hours
 
 **By Phase:**
 
@@ -68,6 +68,7 @@ Progress: [█████████░░░░░░░░░░░░] 30% 
 | 20-01 | 1 | ~4min | 4 min |
 | 20-04 | 1 | ~7min | 7 min |
 | 20-05 | 1 | ~3min | 3 min |
+| 20-06 | 1 | ~2min | 2 min |
 
 **Recent Trend:**
 - Last 5 phases: Stable (3-13 min/plan)
@@ -106,6 +107,7 @@ Recent decisions affecting v1.2:
 - **20-01 Hygiene Baseline**: Fixed unreachable pattern warnings (removed catch-all _ from execute_op match, removed duplicate yi.rms_norm_eps); fixed unexpected_cfg warnings (replaced invalid cfg(feature = "std") with cfg(feature = "rocm")); reduced warnings from 64 to 59
 - **20-04 Deprecated API Replacement**: Replaced all 19 deprecated HipBuffer::copy_to_host and DeviceTensor::to_host_vec calls with HipBackend::copy_from_device_safe; eliminated all deprecated method warnings (0 remaining); total warnings reduced from 59 to 38
 - **20-05 Simple Hygiene Fixes**: Fixed unused mut warnings (removed mut from scores and output in multi_query.rs); fixed unused assignment warning (replaced unused max_time assignment with explicit let _); verified Q4_0DequantCache already pub from 20-02; HYGIENE-05 satisfied
+- **20-06 Dead Code Categorization**: Categorized all 35 dead_code warnings by type and file; fixed 13 backend file warnings with #[allow(dead_code)] justifications; remaining 22 warnings documented for future cleanup
 
 ### Pending Todos
 
@@ -154,9 +156,10 @@ None yet.
 - Phase 20-01: Fix unreachable pattern and cfg warnings; removed catch-all _ from execute_op match; removed duplicate yi.rms_norm_eps; replaced cfg(feature = "std") with cfg(feature = "rocm"); HYGIENE-02 and HYGIENE-06 satisfied
 - Phase 20-04: Replace deprecated copy_to_host and to_host_vec methods; replaced all 19 deprecated calls with HipBackend::copy_from_device_safe; eliminated all deprecated method warnings; total warnings reduced from 59 to 38
 - Phase 20-05: Fix unused mut and unused assignment warnings; removed mut from scores and output variables; replaced unused max_time assignment with explicit let _; HYGIENE-05 satisfied
+- Phase 20-06: Dead code categorization and backend field fixes; categorized 35 warnings; fixed 13 backend warnings with #[allow(dead_code)]; documented 22 remaining warnings for future plans
 
 ## Session Continuity
 
 Last session: 2026-01-19
-Stopped at: Completed 20-04 — Replaced deprecated copy_to_host and to_host_vec methods
+Stopped at: Completed 20-06 — Dead code categorization and backend field fixes
 Resume file: None
