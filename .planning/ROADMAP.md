@@ -197,10 +197,32 @@ Plans:
 - [x] 10-19: Implement graceful degradation (gap closure)
 - [x] 10-20: Add retry logic for GPU errors (gap closure)
 
+### Phase 11: Fix Test Suite & Verify E2E
+**Goal**: Fix test compilation errors and enable E2E verification
+**Depends on**: Phase 10
+**Status**: Not started
+**Gap Closure**: Closes critical gaps from v1.0 audit
+
+Plans:
+- [ ] 11-01: Fix test compilation errors (add anyhow::Context imports, remove element_size calls)
+- [ ] 11-02: Verify E2E flows with real GGUF models
+
+### Phase 12: Complete CPU SIMD Attention
+**Goal**: Implement remaining CPU SIMD operations for complete tensor coverage
+**Depends on**: Phase 4
+**Status**: Not started
+**Gap Closure**: Closes CPU SIMD backend gap from v1.0 audit
+
+Plans:
+- [ ] 12-01: Implement SIMD softmax operation
+- [ ] 12-02: Implement SIMD QK^T (query-key transpose) operation
+- [ ] 12-03: Implement SIMD weighted value operation
+- [ ] 12-04: Integrate SIMD attention with CpuBackend
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -214,3 +236,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 8. GGUF Compatibility | 11/11 (11 planned) | Complete | 2026-01-18 |
 | 9. Performance Optimization | 18/18 (18 planned) | Complete | 2026-01-18 |
 | 10. Production Hardening | 20/20 | Complete | 2026-01-19 |
+| 11. Fix Test Suite & Verify E2E | 0/2 | Not started | - |
+| 12. Complete CPU SIMD Attention | 0/4 | Not started | - |
