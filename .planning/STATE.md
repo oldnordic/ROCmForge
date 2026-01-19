@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-01-19)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Phase 20 - Code Hygiene Completion
+**Current focus:** Phase 21 - Test Health and Performance Validation
 
 ## Current Position
 
-Phase: 20 of 20 (Code Hygiene Completion)
-Plan: 8 of 8 in current phase
-Status: Phase complete
-Last activity: 2026-01-19 — Completed Phase 20-08: Dead code marker review and zero warnings baseline verification
+Phase: 21 of 21 (Test Health and Performance Validation)
+Plan: 2 of 6 in current phase
+Status: In progress
+Last activity: 2026-01-20 — Completed Phase 21-02: KV cache capacity enforcement fix
 
-Progress: [██████████████████████] 100% (20 of 20 phases complete)
+Progress: [████████████████████░░] 95% (20 of 21 phases complete, 2 plans done in Phase 21)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 139 (v1.0 + v1.1 + v1.2 through 20-08)
+- Total plans completed: 141 (v1.0 + v1.1 + v1.2 through 21-02)
 - Average duration: ~44 min
-- Total execution time: ~83 hours
+- Total execution time: ~83.5 hours
 
 **By Phase:**
 
@@ -71,6 +71,8 @@ Progress: [██████████████████████] 1
 | 20-06 | 1 | ~2min | 2 min |
 | 20-07 | 1 | ~3min | 3 min |
 | 20-08 | 1 | ~8min | 8 min |
+| 21-01 | 1 | ~3min | 3 min |
+| 21-02 | 1 | ~7min | 7 min |
 
 **Recent Trend:**
 - Last 5 phases: Stable (3-13 min/plan)
@@ -111,6 +113,8 @@ Recent decisions affecting v1.2:
 - **20-05 Simple Hygiene Fixes**: Fixed unused mut warnings (removed mut from scores and output in multi_query.rs); fixed unused assignment warning (replaced unused max_time assignment with explicit let _); verified Q4_0DequantCache already pub from 20-02; HYGIENE-05 satisfied
 - **20-06 Dead Code Categorization**: Categorized all 35 dead_code warnings by type and file; fixed 13 backend file warnings with #[allow(dead_code)] justifications; remaining 22 warnings documented for future cleanup
 - **20-08 Dead Code Marker Review and Zero Warnings Baseline**: Reviewed all #[allow(dead_code)] markers and added explanatory comments; added #[allow(dead_code)] with comments to 23 items across 16 files; verified zero Rust compiler warnings (HYGIENE-03 and HYGIENE-07 satisfied)
+- **21-01 cfg(feature) Gates Fix**: Added #[cfg(feature = "rocm")] gates to GPU-only dequantization exports in mod.rs; split Q4_0 exports into CPU-only (un-gated) and GPU-only (cfg-gated); gated imports in gguf.rs; fixed compilation errors when building without --features rocm flag (TEST-01 prerequisite satisfied)
+- **21-02 KV Cache Capacity Enforcement**: Fixed allocate_page to strictly enforce max_pages limit by removing automatic LRU eviction; when at capacity with no free pages, allocate_page now returns CapacityExceeded error; updated test_token_appending and test_capacity_limit to expect strict enforcement; TEST-02 satisfied
 
 ### Pending Todos
 
@@ -165,8 +169,12 @@ None yet.
 
 **Phase 20 COMPLETE** - All code hygiene requirements satisfied
 
+**Phase 21 Progress:**
+- Phase 21-01: cfg(feature) gates fix for GPU dequant exports; split Q4_0 exports into CPU-only and GPU-only; gated imports in gguf.rs; TEST-01 prerequisite satisfied
+- Phase 21-02: KV cache capacity enforcement fix; removed automatic LRU eviction from allocate_page; strict max_pages limit enforced; TEST-02 satisfied
+
 ## Session Continuity
 
-Last session: 2026-01-19
-Stopped at: Completed 20-08 — Phase 20 complete, all plans executed
+Last session: 2026-01-20
+Stopped at: Completed 21-02 — KV cache capacity enforcement fix
 Resume file: None
