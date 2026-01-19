@@ -12,5 +12,9 @@ pub mod simd;
 #[cfg(feature = "simd")]
 pub use simd::{simd_matmul_f32, simd_matmul_tiled_f32, SimdMatmulError, SimdMatmulResult};
 
+// Re-export AVX-512 functions when avx512 feature is enabled
+#[cfg(all(feature = "simd", feature = "avx512"))]
+pub use simd::{avx512_simd_matmul_f32, avx512_simd_matmul_tiled_f32};
+
 // CPU feature detection is always available
 pub use cpu_features::{CpuArch, CpuFeatures};
