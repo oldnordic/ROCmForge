@@ -59,11 +59,14 @@ If ROCm is available, use it. If not, fall back to optimized CPU execution seaml
 
 *What we're building toward next:*
 
-**Current Milestone: TBD**
+**Current Milestone: v1.2 Technical Debt Cleanup + Performance**
 
-**Goal:** Determine next milestone goals.
+**Goal:** Eliminate technical debt, fix all broken tests, and implement missing GPU kernels for full GPU acceleration.
 
-**Target features:** TBD
+**Target features:**
+- **Quick wins**: Zero compiler warnings (178 → 0), fix scheduler clone bug, unreachable patterns
+- **Fix broken tests**: All tests passing, fix memory allocation crash, unignore E2E tests
+- **Performance kernels**: Implement ALL GPU kernels (GPU sampling, RoPE, quantized matmul, FlashAttention, Q4_0)
 
 ### Out of Scope
 
@@ -175,4 +178,4 @@ If ROCm is available, use it. If not, fall back to optimized CPU execution seaml
 
 ---
 
-*Last updated: 2026-01-19 after v1.1 milestone completion*
+*Last updated: 2026-01-19 after v1.2 milestone initialization*
