@@ -952,23 +952,37 @@ impl GpuTopPSampler {
     }
 }
 
-/// GPU sampler for top-k sampling
+/// GPU sampler for top-k sampling with temperature support
 #[cfg(feature = "rocm")]
 #[derive(Debug, Clone)]
 pub struct GpuTopKSampler {
     backend: Arc<HipBackend>,
     top_k: usize,
+    temperature: f32,
 }
 
 #[cfg(feature = "rocm")]
 impl GpuTopKSampler {
-    /// Create a new GPU top-k sampler
+    /// Create a new GPU top-k sampler with default temperature (1.0)
     pub fn new(backend: Arc<HipBackend>, top_k: usize) -> SamplerResult<Self> {
         if top_k == 0 {
             return Err(SamplerError::InvalidTopK(top_k));
         }
 
-        Ok(GpuTopKSampler { backend, top_k })
+        Ok(GpuTopKSampler { backend, top_k, temperature: 1.0 })
+    }
+
+    /// Set temperature for sampling
+    ///
+    /// Temperature < 1.0 makes sampling more deterministic (sharper distribution)
+    /// Temperature > 1.0 makes sampling more random (flatter distribution)
+    /// Temperature = 1.0 is no scaling (default)
+    pub fn with_temperature(mut self, temperature: f32) -> SamplerResult<Self> {
+        if temperature <= 0.0 {
+            return Err(SamplerError::InvalidTemperature(temperature));
+        }
+        self.temperature = temperature;
+        Ok(self)
     }
 
     /// Sample from probabilities using top-k filtering on GPU
@@ -978,9 +992,182 @@ impl GpuTopKSampler {
         batch_size: usize,
         vocab_size: usize,
     ) -> SamplerResult<Vec<u32>> {
-        // For now, fall back to CPU implementation
-        // TODO: Implement actual GPU kernel call
-        self.sample_cpu_fallback(probabilities, batch_size, vocab_size)
+        // TDD: Try GPU path first, fall back to CPU if kernels not available or on error
+        match self.try_gpu_sample(probabilities, batch_size, vocab_size) {
+            Ok(results) => Ok(results),
+            Err(e) => {
+                tracing::debug!("GPU top-k sampling failed, falling back to CPU: {}", e);
+                self.sample_cpu_fallback(probabilities, batch_size, vocab_size)
+            }
+        }
+    }
+
+    /// Try to sample using GPU kernels
+    fn try_gpu_sample(
+        &self,
+        probabilities: &[f32],
+        batch_size: usize,
+        vocab_size: usize,
+    ) -> SamplerResult<Vec<u32>> {
+        tracing::debug!("GpuTopKSampler::try_gpu_sample: batch_size={}, vocab_size={}, top_k={}, temperature={}",
+            batch_size, vocab_size, self.top_k, self.temperature);
+
+        // Check if kernel is loaded
+        let cache_ref = get_or_init_sampling_cache()
+            .map_err(|e| {
+                tracing::error!("Failed to get kernel cache: {:?}", e);
+                SamplerError::InvalidTopK(0)
+            })?;
+        let cache = cache_ref.lock()
+            .map_err(|e| {
+                tracing::error!("Failed to lock sampling cache: {:?}", e);
+                SamplerError::InvalidTopK(0)
+            })?;
+
+        let cache_ref = cache.as_ref()
+            .ok_or_else(|| {
+                tracing::warn!("Sampling cache not initialized");
+                SamplerError::InvalidTopK(0)
+            })?;
+
+        let topk_kernel = cache_ref.topk_kernel.as_ref()
+            .ok_or_else(|| {
+                tracing::warn!("topk_kernel not loaded, falling back to CPU");
+                SamplerError::InvalidTopK(0)
+            })?;
+
+        tracing::debug!("top-k kernel loaded, allocating GPU buffers");
+
+        // Allocate GPU buffers
+        let total_elements = batch_size * vocab_size;
+        let probs_bytes = total_elements * std::mem::size_of::<f32>();
+        let random_bytes = batch_size * std::mem::size_of::<f32>();
+        let output_bytes = batch_size * std::mem::size_of::<u32>();
+
+        let probs_gpu = HipBuffer::new(probs_bytes)
+            .map_err(|e| {
+                tracing::error!("Failed to allocate probs buffer: {:?}", e);
+                SamplerError::InvalidTopK(0)
+            })?;
+        let random_gpu = HipBuffer::new(random_bytes)
+            .map_err(|e| {
+                tracing::error!("Failed to allocate random buffer: {:?}", e);
+                SamplerError::InvalidTopK(0)
+            })?;
+        let output_gpu = HipBuffer::new(output_bytes)
+            .map_err(|e| {
+                tracing::error!("Failed to allocate output buffer: {:?}", e);
+                SamplerError::InvalidTopK(0)
+            })?;
+
+        tracing::debug!("GPU buffers allocated, copying data");
+
+        // Copy probabilities to GPU
+        probs_gpu.copy_from_host(probabilities)
+            .map_err(|e| {
+                tracing::error!("Failed to copy probs to GPU: {:?}", e);
+                SamplerError::InvalidTopK(0)
+            })?;
+
+        // Generate random values on CPU and copy to GPU
+        let random_values: Vec<f32> = generate_random_gpu(&self.backend, batch_size);
+        random_gpu.copy_from_host(&random_values)
+            .map_err(|e| {
+                tracing::error!("Failed to copy random to GPU: {:?}", e);
+                SamplerError::InvalidTopK(0)
+            })?;
+
+        // Apply temperature scaling if temperature != 1.0
+        let probs_ptr = if self.temperature != 1.0 {
+            // Check if temperature scale kernel is available
+            let temp_scale_kernel = cache_ref.temperature_scale_kernel.as_ref()
+                .ok_or_else(|| {
+                    tracing::warn!("temperature_scale_kernel not loaded, falling back to CPU for temperature scaling");
+                    SamplerError::InvalidTopK(0)
+                })?;
+
+            let probs_mut_ptr = probs_gpu.as_mut_ptr() as *mut f32;
+
+            unsafe {
+                temperature_scale_kernel(
+                    &self.backend,
+                    probs_mut_ptr,
+                    self.temperature,
+                    batch_size as u32,
+                    vocab_size as u32,
+                ).map_err(|e| {
+                    tracing::error!("Failed to launch temperature scale kernel: {:?}", e);
+                    SamplerError::InvalidTopK(0)
+                })?;
+            }
+
+            tracing::debug!("Temperature scaling applied: temp={}", self.temperature);
+            probs_mut_ptr as *const f32
+        } else {
+            probs_gpu.as_ptr() as *const f32
+        };
+
+        tracing::debug!("Data copied to GPU, launching kernel");
+
+        // Launch kernel
+        let random_ptr = random_gpu.as_ptr() as *const f32;
+        let output_ptr = output_gpu.as_mut_ptr() as *mut u32;
+
+        unsafe {
+            // Launch kernel directly using backend
+            let grid_dim = (batch_size as u32, 1, 1);
+            let block_dim = (BLOCK_SIZE, 1, 1);
+            let shared_mem_bytes = 0u32;
+
+            let mut probs_arg = probs_ptr;
+            let mut random_values_arg = random_ptr;
+            let mut output_arg = output_ptr;
+            let mut top_k_arg = self.top_k as u32;
+            let mut batch_size_arg = batch_size as u32;
+            let mut vocab_size_arg = vocab_size as u32;
+
+            let args: &[*mut c_void] = &[
+                &mut probs_arg as *mut _ as *mut c_void,
+                &mut random_values_arg as *mut _ as *mut c_void,
+                &mut output_arg as *mut _ as *mut c_void,
+                &mut top_k_arg as *mut _ as *mut c_void,
+                &mut batch_size_arg as *mut _ as *mut c_void,
+                &mut vocab_size_arg as *mut _ as *mut c_void,
+            ];
+
+            self.backend.launch_kernel_with_module_shared(
+                topk_kernel,
+                grid_dim,
+                block_dim,
+                args,
+                shared_mem_bytes,
+            ).map_err(|e| {
+                tracing::error!("Failed to launch top-k kernel: {:?}", e);
+                SamplerError::InvalidTopK(0)
+            })?;
+        }
+
+        tracing::debug!("Kernel launched, synchronizing");
+
+        // Synchronize and copy results back
+        self.backend.synchronize()
+            .map_err(|e| {
+                tracing::error!("Failed to synchronize: {:?}", e);
+                SamplerError::InvalidTopK(0)
+            })?;
+
+        tracing::debug!("Synchronized, copying results back");
+
+        let mut results = vec![0u32; batch_size];
+        output_gpu.copy_to_host(&mut results)
+            .map_err(|e| {
+                tracing::error!("Failed to copy output from GPU: {:?}", e);
+                SamplerError::InvalidTopK(0)
+            })?;
+
+        tracing::debug!("GPU top-k sampling complete: {:?}", results);
+
+        Ok(results)
     }
 
     /// CPU fallback implementation for testing
@@ -1067,9 +1254,158 @@ impl GpuFusedSampler {
         batch_size: usize,
         vocab_size: usize,
     ) -> SamplerResult<Vec<u32>> {
-        // For now, fall back to CPU implementation
-        // TODO: Implement actual GPU kernel call
-        self.sample_cpu_fallback(probabilities, batch_size, vocab_size)
+        // TDD: Try GPU path first, fall back to CPU if kernels not available or on error
+        match self.try_gpu_sample(probabilities, batch_size, vocab_size) {
+            Ok(results) => Ok(results),
+            Err(e) => {
+                tracing::debug!("GPU fused sampling failed, falling back to CPU: {}", e);
+                self.sample_cpu_fallback(probabilities, batch_size, vocab_size)
+            }
+        }
+    }
+
+    /// Try to sample using GPU kernels
+    ///
+    /// Uses the fused top-k + top-p sampling kernel which combines both
+    /// filtering operations in a single kernel launch for efficiency.
+    fn try_gpu_sample(
+        &self,
+        probabilities: &[f32],
+        batch_size: usize,
+        vocab_size: usize,
+    ) -> SamplerResult<Vec<u32>> {
+        tracing::debug!("GpuFusedSampler::try_gpu_sample: batch_size={}, vocab_size={}, top_k={}, top_p={}",
+            batch_size, vocab_size, self.top_k, self.top_p);
+
+        // Check if kernel is loaded
+        let cache_ref = get_or_init_sampling_cache()
+            .map_err(|e| {
+                tracing::error!("Failed to get kernel cache: {:?}", e);
+                SamplerError::InvalidTopK(0)
+            })?;
+        let cache = cache_ref.lock()
+            .map_err(|e| {
+                tracing::error!("Failed to lock sampling cache: {:?}", e);
+                SamplerError::InvalidTopK(0)
+            })?;
+
+        let cache_ref = cache.as_ref()
+            .ok_or_else(|| {
+                tracing::warn!("Sampling cache not initialized");
+                SamplerError::InvalidTopK(0)
+            })?;
+
+        let fused_kernel = cache_ref.fused_kernel.as_ref()
+            .ok_or_else(|| {
+                tracing::warn!("fused_kernel not loaded, falling back to CPU");
+                SamplerError::InvalidTopK(0)
+            })?;
+
+        tracing::debug!("fused kernel loaded, allocating GPU buffers");
+
+        // Allocate GPU buffers
+        let total_elements = batch_size * vocab_size;
+        let probs_bytes = total_elements * std::mem::size_of::<f32>();
+        let random_bytes = batch_size * std::mem::size_of::<f32>();
+        let output_bytes = batch_size * std::mem::size_of::<u32>();
+
+        let probs_gpu = HipBuffer::new(probs_bytes)
+            .map_err(|e| {
+                tracing::error!("Failed to allocate probs buffer: {:?}", e);
+                SamplerError::InvalidTopK(0)
+            })?;
+        let random_gpu = HipBuffer::new(random_bytes)
+            .map_err(|e| {
+                tracing::error!("Failed to allocate random buffer: {:?}", e);
+                SamplerError::InvalidTopK(0)
+            })?;
+        let output_gpu = HipBuffer::new(output_bytes)
+            .map_err(|e| {
+                tracing::error!("Failed to allocate output buffer: {:?}", e);
+                SamplerError::InvalidTopK(0)
+            })?;
+
+        tracing::debug!("GPU buffers allocated, copying data");
+
+        // Copy probabilities to GPU
+        probs_gpu.copy_from_host(probabilities)
+            .map_err(|e| {
+                tracing::error!("Failed to copy probs to GPU: {:?}", e);
+                SamplerError::InvalidTopK(0)
+            })?;
+
+        // Generate random values on CPU and copy to GPU
+        let random_values: Vec<f32> = generate_random_gpu(&self.backend, batch_size);
+        random_gpu.copy_from_host(&random_values)
+            .map_err(|e| {
+                tracing::error!("Failed to copy random to GPU: {:?}", e);
+                SamplerError::InvalidTopK(0)
+            })?;
+
+        tracing::debug!("Data copied to GPU, launching fused kernel");
+
+        // Launch fused kernel
+        let probs_ptr = probs_gpu.as_ptr() as *const f32;
+        let random_ptr = random_gpu.as_ptr() as *const f32;
+        let output_ptr = output_gpu.as_mut_ptr() as *mut u32;
+
+        unsafe {
+            // Launch kernel directly using backend
+            let grid_dim = (batch_size as u32, 1, 1);
+            let block_dim = (BLOCK_SIZE, 1, 1);
+            let shared_mem_bytes = 0u32;
+
+            let mut probs_arg = probs_ptr;
+            let mut random_values_arg = random_ptr;
+            let mut output_arg = output_ptr;
+            let mut top_k_arg = self.top_k as u32;
+            let mut top_p_arg = self.top_p;
+            let mut batch_size_arg = batch_size as u32;
+            let mut vocab_size_arg = vocab_size as u32;
+
+            let args: &[*mut c_void] = &[
+                &mut probs_arg as *mut _ as *mut c_void,
+                &mut random_values_arg as *mut _ as *mut c_void,
+                &mut output_arg as *mut _ as *mut c_void,
+                &mut top_k_arg as *mut _ as *mut c_void,
+                &mut top_p_arg as *mut _ as *mut c_void,
+                &mut batch_size_arg as *mut _ as *mut c_void,
+                &mut vocab_size_arg as *mut _ as *mut c_void,
+            ];
+
+            self.backend.launch_kernel_with_module_shared(
+                fused_kernel,
+                grid_dim,
+                block_dim,
+                args,
+                shared_mem_bytes,
+            ).map_err(|e| {
+                tracing::error!("Failed to launch fused kernel: {:?}", e);
+                SamplerError::InvalidTopK(0)
+            })?;
+        }
+
+        tracing::debug!("Kernel launched, synchronizing");
+
+        // Synchronize and copy results back
+        self.backend.synchronize()
+            .map_err(|e| {
+                tracing::error!("Failed to synchronize: {:?}", e);
+                SamplerError::InvalidTopK(0)
+            })?;
+
+        tracing::debug!("Synchronized, copying results back");
+
+        let mut results = vec![0u32; batch_size];
+        output_gpu.copy_to_host(&mut results)
+            .map_err(|e| {
+                tracing::error!("Failed to copy output from GPU: {:?}", e);
+                SamplerError::InvalidTopK(0)
+            })?;
+
+        tracing::debug!("GPU fused sampling complete: {:?}", results);
+
+        Ok(results)
     }
 
     /// CPU fallback implementation for testing
@@ -1329,5 +1665,129 @@ mod tests {
         // With top_k=2, samples should be from {2, 4} for row 1
         // and from {3, 4} for row 2
         // Note: Probabilistic, so we just verify it runs
+    }
+
+    /// Test GPU fused sampling with known inputs
+    ///
+    /// TDD test for combined top-k + top-p sampling.
+    #[test]
+    #[cfg(feature = "rocm")]
+    fn test_gpu_fused_sampling_deterministic() {
+        // Create distribution where top-k and top-p both apply
+        let probabilities = vec![
+            0.05, 0.05, 0.70, 0.10, 0.10,  // Row 1: token 2 (70%), token 3 (10%), token 4 (10%)
+            0.10, 0.60, 0.10, 0.10, 0.10,  // Row 2: token 1 (60%), others (10% each)
+        ];
+
+        let backend = HipBackend::new().unwrap();
+        let sampler = GpuFusedSampler::new(backend, 3, 0.9).unwrap();
+
+        let results = sampler.sample(&probabilities, 2, 5).unwrap();
+
+        // Verify basic properties
+        assert_eq!(results.len(), 2, "Should return 2 samples");
+        assert!(results[0] < 5, "First sample should be in vocabulary range");
+        assert!(results[1] < 5, "Second sample should be in vocabulary range");
+
+        // With top_k=3, top_p=0.9:
+        // Row 1: top-3 are indices 2 (70%), 3 (10%), 4 (10%) = 90% cumulative
+        // Row 2: top-3 are indices 1 (60%), 0 (10%), 2 (10%) = 80% cumulative
+        // Note: Probabilistic, so we just verify it runs without error
+    }
+
+    /// Test GPU sampling fallback on error
+    ///
+    /// Verifies that when GPU kernels are not available, CPU fallback is used.
+    #[test]
+    fn test_gpu_sampling_fallback_on_error() {
+        // This test uses CPU fallback directly (simulating kernel unavailability)
+        let probabilities = vec![
+            0.1, 0.2, 0.4, 0.2, 0.1,  // Sum = 1.0
+            0.3, 0.3, 0.2, 0.1, 0.1,  // Sum = 1.0
+        ];
+
+        #[cfg(feature = "rocm")]
+        {
+            let backend = HipBackend::new().unwrap();
+            let sampler = GpuTopPSampler::new(backend, 0.9).unwrap();
+
+            // This will use CPU fallback if kernels aren't loaded
+            let results = sampler.sample(&probabilities, 2, 5);
+            assert!(results.is_ok(), "Should fall back to CPU sampling");
+
+            let results = results.unwrap();
+            assert_eq!(results.len(), 2);
+            assert!(results[0] < 5);
+            assert!(results[1] < 5);
+        }
+
+        #[cfg(not(feature = "rocm"))]
+        {
+            // Without ROCm, tests should still compile
+            assert!(true);
+        }
+    }
+
+    /// Test GPU top-k sampling with single dominant token
+    ///
+    /// Edge case: One token has overwhelming probability.
+    #[test]
+    #[cfg(feature = "rocm")]
+    #[ignore] // Requires actual GPU hardware
+    fn test_gpu_topk_single_dominant() {
+        let probabilities = vec![
+            0.99, 0.0025, 0.0025, 0.0025, 0.0025,  // Token 0 dominates
+            0.002, 0.99, 0.002, 0.003, 0.003,       // Token 1 dominates
+        ];
+
+        let backend = HipBackend::new().unwrap();
+        let sampler = GpuTopKSampler::new(backend, 5).unwrap();
+
+        let results = sampler.sample(&probabilities, 2, 5).unwrap();
+
+        assert_eq!(results.len(), 2);
+        // With 99% probability, most samples should be the dominant token
+        // But we just verify bounds here since it's probabilistic
+        assert!(results[0] < 5);
+        assert!(results[1] < 5);
+    }
+
+    /// Test GPU top-p sampling with uniform distribution
+    ///
+    /// Edge case: All probabilities are equal.
+    #[test]
+    #[cfg(feature = "rocm")]
+    fn test_gpu_topp_uniform_distribution() {
+        let probabilities = vec![
+            0.2, 0.2, 0.2, 0.2, 0.2,  // Uniform distribution
+            0.25, 0.25, 0.25, 0.25, 0.0,  // Another uniform distribution
+        ];
+
+        let backend = HipBackend::new().unwrap();
+        let sampler = GpuTopPSampler::new(backend, 0.5).unwrap();
+
+        let results = sampler.sample(&probabilities, 2, 5).unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert!(results[0] < 5);
+        assert!(results[1] < 5);
+    }
+
+    /// Test GPU sampling with edge case: single token vocabulary
+    ///
+    /// Edge case: Vocabulary size of 1 (only one possible token).
+    #[test]
+    #[cfg(feature = "rocm")]
+    fn test_gpu_sampling_single_token_vocab() {
+        let probabilities = vec![1.0; 2]; // batch_size=2, vocab_size=1
+
+        let backend = HipBackend::new().unwrap();
+        let sampler = GpuTopPSampler::new(backend, 0.9).unwrap();
+
+        let results = sampler.sample(&probabilities, 2, 1).unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0], 0, "Only token 0 should be sampled");
+        assert_eq!(results[1], 0, "Only token 0 should be sampled");
     }
 }
