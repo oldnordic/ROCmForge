@@ -2,280 +2,60 @@
 
 ## Overview
 
-Build a production-ready LLM inference engine for AMD GPUs that is reliable, fast, and universally compatible with GGUF models. Start by fixing critical bugs blocking inference, then establish solid testing foundations, modularize the codebase, implement CPU SIMD fallback, complete GPU kernels, optimize attention, enable hybrid execution, ensure broad GGUF compatibility, optimize for balanced performance, and harden for production use.
+Build a production-ready LLM inference engine for AMD GPUs that is reliable, fast, and universally compatible with GGUF models.
 
 ## Domain Expertise
 
 None (no applicable domain expertise found)
 
+## Milestones
+
+- ✅ **v1.0 Production-Ready** — Phases 1-12 + 12.1A + 12.1B (shipped 2026-01-19)
+- 📋 **v1.1** — Not yet defined (run `/gsd:new-milestone` to start planning)
+
 ## Phases
 
-**Phase Numbering:**
-- Integer phases (1, 2, 3): Planned milestone work
-- Decimal phases (2.1, 12.1): Post-v1.0 enhancements
+<details>
+<summary>✅ v1.0 Production-Ready (Phases 1-12 + 12.1A + 12.1B) — SHIPPED 2026-01-19</summary>
 
-Decimal phases appear between their surrounding integers in numeric order.
+**Full details archived in:** [.planning/milestones/v1.0-ROADMAP.md](.planning/milestones/v1.0-ROADMAP.md)
 
-- [ ] **Phase 1: Critical Bug Fixes** - Fix inference hangs and GPU synchronization bugs
-- [ ] **Phase 2: Test Infrastructure** - Restore commented tests and improve coverage
-- [ ] **Phase 3: Codebase Modularization** - Split large files into focused modules
-- [ ] **Phase 4: CPU SIMD Backend** - Implement optimized CPU operations with SIMD
-- [ ] **Phase 5: Quantized Operations** - Native HIP dequantization kernels
-- [ ] **Phase 6: Attention Optimization** - Flash attention detection and GPU kernels
-- [ ] **Phase 7: Hybrid Execution Scheduler** - Automatic CPU/GPU op selection
-- [x] **Phase 8: GGUF Compatibility** - Universal model support across architectures
-- [x] **Phase 9: Performance Optimization** - Balanced throughput, latency, memory efficiency
-- [x] **Phase 10: Production Hardening** - Error handling, logging, monitoring, documentation
-- [x] **Phase 11: Fix Test Suite & Verify E2E** - Test compilation and E2E verification
-- [x] **Phase 12: Complete CPU SIMD Attention** - CPU SIMD attention operations
-- [ ] **Phase 12.1: CPU SIMD Enhancements & LLM Context** - AVX-512, additional SIMD ops, SQLiteGraph integration
+- [x] Phase 1: Critical Bug Fixes (3/3 plans) — completed 2026-01-18
+- [x] Phase 2: Test Infrastructure (4/4 plans) — completed 2026-01-18
+- [x] Phase 3: Codebase Modularization (4/4 plans) — completed 2026-01-18
+- [x] Phase 4: CPU SIMD Backend (4/4 plans) — completed 2026-01-18
+- [x] Phase 5: Quantized Operations (4/4 plans) — completed 2026-01-18
+- [x] Phase 6: Attention Optimization (4/4 plans) — completed 2026-01-18
+- [x] Phase 7: Hybrid Execution Scheduler (4/4 plans) — completed 2026-01-18
+- [x] Phase 8: GGUF Compatibility (11/11 plans) — completed 2026-01-18
+- [x] Phase 9: Performance Optimization (18/18 plans) — completed 2026-01-18
+- [x] Phase 10: Production Hardening (20/20 plans) — completed 2026-01-19
+- [x] Phase 11: Fix Test Suite & Verify E2E (2/2 plans) — completed 2026-01-19
+- [x] Phase 12: Complete CPU SIMD Attention (4/4 plans) — completed 2026-01-19
+- [x] Phase 12.1A: CPU SIMD Completion (2/2 plans) — completed 2026-01-19
+- [x] Phase 12.1B: Context Engine Integration (1/1 plan) — completed 2026-01-19
 
-## Phase Details
+**Total:** 96 plans across 13 phases
 
-### Phase 1: Critical Bug Fixes
-**Goal**: Fix inference hangs and GPU synchronization bugs blocking reliable execution
-**Depends on**: Nothing (first phase)
-**Research**: Unlikely (bugs identified in CONCERNS.md)
-**Status**: ✅ Complete (2026-01-18)
-
-Plans:
-- [x] 01-01: Fix GPU stream synchronization (hipBLAS vs hipMemcpy mismatch)
-- [x] 01-02: Fix inference loop spawn race condition
-- [x] 01-03: Fix engine cleanup in CLI
-
-### Phase 2: Test Infrastructure
-**Goal**: Restore commented tests and improve test coverage
-**Depends on**: Phase 1
-**Research**: Unlikely (testing patterns exist in codebase)
-**Status**: ✅ Complete (2026-01-18)
-
-Plans:
-- [x] 02-01: Rewrite 20+ commented GGUF loader tests for new API
-- [x] 02-02: Restore embedding_to_lmhead tests
-- [x] 02-03: Add end-to-end inference tests
-- [x] 02-04: Replace unwrap() with proper error handling in tests
-
-### Phase 3: Codebase Modularization
-**Goal**: Split large files (>3000 LOC) into focused, maintainable modules
-**Depends on**: Phase 2
-**Research**: Unlikely (internal refactoring)
-**Status**: ✅ Complete (2026-01-18)
-
-Plans:
-- [x] 03-01: Split execution_plan.rs (4410 lines) into focused modules
-  - Created execution_plan/ directory with mod.rs, architecture.rs, layer_plan.rs, ggml_plan.rs
-  - Main implementation in execution_plan_src.rs (~4200 LOC)
-  - All 271 tests passing
-- [x] 03-02: Split hip_backend.rs (3684 lines) into focused modules
-  - Created hip_backend/ directory with mod.rs (public API) + backend.rs (implementation)
-  - Organized exports into logical categories
-  - All 271 tests passing
-- [x] 03-03: Split gguf.rs (2832 lines) into 6 focused modules
-  - mxfp.rs, tensor_type.rs, metadata.rs, gguf_tensor.rs, dequant.rs
-- [x] 03-04: Consolidate duplicate test fixtures
-  - Created tests/common/fixtures.rs and tempfile_helpers.rs (~260 LOC duplicate removed)
-
-### Phase 4: CPU SIMD Backend
-**Goal**: Implement optimized CPU operations with SIMD for transparent fallback
-**Depends on**: Phase 3
-**Research**: Likely (SIMD crate selection, CPU architecture optimization)
-**Research topics**: Rust SIMD ecosystem (std::simd, packed_simd, wide), CPU feature detection
-**Status**: ✅ Complete (2026-01-18)
-
-Plans:
-- [x] 04-01: Research and select SIMD strategy for CPU ops
-  - Selected std::simd (discovered: still requires nightly portable_simd feature)
-- [x] 04-02: Implement CPU backend trait with SIMD matmul
-  - Created src/backend/cpu/simd.rs with f32x8/f32x4 support
-  - 7/7 tests passing
-- [x] 04-03: Implement SIMD for attention operations
-  - SIMD softmax, QK^T, weighted value implemented
-  - 10/10 tests passing
-- [x] 04-04: Add CPU feature detection and runtime selection
-  - CpuBackend with SIMD/scalar path selection
-  - 10/10 tests passing
-
-### Phase 5: Quantized Operations
-**Goal**: Native HIP dequantization kernels for efficient quantized inference
-**Depends on**: Phase 3
-**Research**: Likely (HIP kernel development, quantization formats)
-**Research topics**: Quantization formats (Q4_0, Q4_K, Q5_0, Q6_K, Q8_0), HIP kernel patterns
-**Status**: ✅ Complete (2026-01-18)
-
-Plans:
-- [x] 05-01: Research quantization formats and dequantization algorithms
-  - Created RESEARCH.md with all Q-format specs
-  - Documented CPU dequant patterns and HIP kernel patterns
-- [x] 05-02: Implement HIP dequantization kernel for Q4_0
-  - Created kernels/q4_0_dequant.hip with batch kernel
-  - Added Rust wrapper in q4_0_dequant.rs
-  - 5/5 tests passing
-- [x] 05-03: Implement HIP dequantization kernels for remaining formats
-  - Created kernels/q8_0_dequant.hip (Q8_0: 114 lines)
-  - Created kernels/q4_k_dequant.hip (Q4_K: 194 lines, super-block structure)
-  - Created kernels/q6_k_dequant.hip (Q6_K: 199 lines, 6-bit packed)
-  - All added to build.rs
-- [x] 05-04: Integrate dequantization + matmul fused kernel
-  - Created kernels/q4_0_matmul.hip (285 lines, fused dequant+matmul)
-  - Updated quantized_matmul.rs with fused GPU implementation
-  - ~17x memory bandwidth reduction vs traditional approach
-  - 284 tests passing
-
-### Phase 6: Attention Optimization
-**Goal**: Flash attention detection and GPU kernels for optimized inference
-**Depends on**: Phase 4
-**Research**: Likely (flash attention algorithms, ROCm attention patterns)
-**Research topics**: Flash attention algorithms, ROCm attention libraries, kernel optimization
-**Status**: ✅ Complete (2026-01-18)
-
-Plans:
-- [x] 06-01: Research flash attention implementation for ROCm
-- [x] 06-02: Implement flash attention detection in backend registry
-- [x] 06-03: Implement flash attention HIP kernel
-- [x] 06-04: Benchmark and optimize attention performance
-
-### Phase 7: Hybrid Execution Scheduler
-**Goal**: Automatic CPU/GPU operation selection for maximum compatibility
-**Depends on**: Phase 4, Phase 5
-**Research**: Likely (scheduler design, op cost modeling)
-**Research topics**: Hybrid execution patterns, op cost modeling, fallback strategies
-**Status**: ✅ Complete (2026-01-18)
-
-Plans:
-- [x] 07-01: Design hybrid execution scheduler architecture
-- [x] 07-02: Implement per-operation CPU/GPU availability tracking
-- [x] 07-03: Implement automatic op selection based on availability
-- [x] 07-04: Add telemetry for execution path debugging
-
-### Phase 8: GGUF Compatibility
-**Goal**: Universal GGUF support across all model architectures and quantizations
-**Depends on**: Phase 5
-**Research**: Likely (GGUF format variations, model architectures)
-**Research topics**: GGUF format spec, LLaMA vs Qwen vs Mistral architectures, quantization compatibility
-**Status**: ✅ Complete (2026-01-18)
-
-Plans:
-- [x] 08-01: Research GGUF format variations and model architectures
-- [x] 08-02: Add support for missing architectures (Mistral, Yi, etc.)
-- [x] 08-03: Ensure all quantization formats load correctly
-- [x] 08-04: Add model compatibility test matrix
-
-### Phase 9: Performance Optimization
-**Goal**: Balanced optimization of throughput, latency, and memory efficiency
-**Depends on**: Phase 6, Phase 7
-**Research**: Unlikely (profiling and optimization based on existing code)
-**Status**: ✅ Complete (2026-01-18)
-
-Plans:
-- [x] 09-01: Profile and optimize throughput (tokens/second)
-- [x] 09-02: Profile and optimize latency (first token time)
-- [x] 09-03: Profile and optimize memory efficiency (KV cache, allocations)
-- [x] 09-04: Add performance benchmarks and regression tests
-
-### Phase 10: Production Hardening
-**Goal**: Error handling, logging, monitoring, and documentation for production use
-**Depends on**: Phase 9
-**Research**: Unlikely (production readiness practices)
-**Status**: ✅ Complete (2026-01-19)
-
-Plans:
-- [x] 10-01: Create unified error module
-- [x] 10-02: Replace unwrap() in engine.rs
-- [x] 10-03: Replace unwrap() in scheduler and kv_cache
-- [x] 10-04: Replace unwrap() in loader and backend modules
-- [x] 10-05: Integrate tracing framework
-- [x] 10-06: Replace eprintln! with tracing in engine
-- [x] 10-07: Add log configuration
-- [x] 10-08: Add readiness probe endpoint
-- [x] 10-09: Enhance /health endpoint
-- [x] 10-10: Create /metrics endpoint
-- [x] 10-11: Create /traces endpoint
-- [x] 10-12: Create .env.example
-- [x] 10-13: Write user guide
-- [x] 10-14: Write CLI reference
-- [x] 10-15: Write API documentation
-- [x] 10-16: Write deployment guide
-- [x] 10-17: Replace RwLock unwrap() in prompt/cache.rs (gap closure)
-- [x] 10-18: Replace Mutex unwrap() in profiling/kernel_launch.rs (gap closure)
-- [x] 10-19: Implement graceful degradation (gap closure)
-- [x] 10-20: Add retry logic for GPU errors (gap closure)
-
-### Phase 11: Fix Test Suite & Verify E2E
-**Goal**: Fix test compilation errors and enable E2E verification
-**Depends on**: Phase 10
-**Status**: ✅ Complete (2026-01-19)
-**Gap Closure**: Closes critical gaps from v1.0 audit
-
-Plans:
-- [x] 11-01: Fix test compilation errors (add anyhow::Context imports, remove element_size calls)
-- [x] 11-02: Verify E2E flows with real GGUF models
-
-### Phase 12: Complete CPU SIMD Attention
-**Goal**: Implement remaining CPU SIMD operations for complete tensor coverage
-**Depends on**: Phase 4
-**Status**: ✅ Complete (2026-01-19) - Already implemented in Phase 4, old audit was incorrect
-**Gap Closure**: Closes CPU SIMD backend gap from v1.0 audit (re-audit confirmed completion)
-
-Plans:
-- [x] 12-01: Implement SIMD softmax operation (EXISTS in src/attention/cpu.rs:93-173)
-- [x] 12-02: Implement SIMD QK^T (query-key transpose) operation (EXISTS in src/attention/cpu.rs:206-296)
-- [x] 12-03: Implement SIMD weighted value operation (EXISTS in src/attention/cpu.rs:329-434)
-- [x] 12-04: Integrate SIMD attention with CpuBackend (EXISTS in src/ggml/cpu_backend.rs:206)
-
-**Note:** Re-audit confirmed all CPU SIMD attention operations were implemented in Phase 4. Previous audit looked in wrong file (src/backend/cpu/simd.rs only has matmul).
-
----
-
-### Phase 12.1A: CPU SIMD Completion
-**Goal**: AVX-512 runtime detection, RMSNorm, RoPE, SiLU/SwiGLU SIMD
-**Depends on**: Phase 4
-**Status**: ✅ Complete (2026-01-19)
-**Mode**: Post-v1.0 enhancement (pure ROCmForge)
-
-Plans:
-- [x] 12.1A-01: AVX-512 runtime detection and SIMD variants
-  - Add raw-cpuid dependency for runtime CPU feature detection
-  - Create CpuFeatures module with has_avx512f(), has_avx2() methods
-  - Implement AVX-512 (f32x16) variants for matmul and attention ops
-  - Add dynamic dispatch selecting optimal SIMD path at runtime
-- [x] 12.1A-02: Additional SIMD operations (RMSNorm, RoPE, activations)
-  - Create simd_ops.rs module with layer norm and activation functions
-  - Implement RMSNorm, RoPE, SiLU, SwiGLU, GELU with SIMD
-  - All operations exported and available for integration
-
-### Phase 12.1B: Context Engine Integration
-**Goal**: SQLiteGraph-based LLM context augmentation (separate service)
-**Depends on**: Nothing (independent feature)
-**Status**: ✅ Complete (2026-01-19)
-**Mode**: Post-v1.0 enhancement (optional integration)
-
-**Note:** Kept separate to keep ROCmForge lean while SQLiteGraph grows independently as the "memory brain".
-
-Plans:
-- [x] 12.1B-01: SQLiteGraph context integration
-  - Add sqlitegraph dependency with "context" feature flag
-  - Create GraphContextStore for message-to-node storage
-  - Implement HNSW vector search for semantic context retrieval
-  - Add CLI commands (add, search, list, clear)
-  - Note: HTTP endpoint skipped due to HnswIndex not being Send+Sync (CLI-only access)
+</details>
 
 ## Progress
 
-**Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 12.1
+| Phase | Milestone | Plans Complete | Status | Completed |
+|-------|-----------|----------------|--------|-----------|
+| 1. Critical Bug Fixes | v1.0 | 3/3 | Complete | 2026-01-18 |
+| 2. Test Infrastructure | v1.0 | 4/4 | Complete | 2026-01-18 |
+| 3. Codebase Modularization | v1.0 | 4/4 | Complete | 2026-01-18 |
+| 4. CPU SIMD Backend | v1.0 | 4/4 | Complete | 2026-01-18 |
+| 5. Quantized Operations | v1.0 | 4/4 | Complete | 2026-01-18 |
+| 6. Attention Optimization | v1.0 | 4/4 | Complete | 2026-01-18 |
+| 7. Hybrid Execution Scheduler | v1.0 | 4/4 | Complete | 2026-01-18 |
+| 8. GGUF Compatibility | v1.0 | 11/11 | Complete | 2026-01-18 |
+| 9. Performance Optimization | v1.0 | 18/18 | Complete | 2026-01-18 |
+| 10. Production Hardening | v1.0 | 20/20 | Complete | 2026-01-19 |
+| 11. Fix Test Suite & Verify E2E | v1.0 | 2/2 | Complete | 2026-01-19 |
+| 12. Complete CPU SIMD Attention | v1.0 | 4/4 | Complete | 2026-01-19 |
+| 12.1A. CPU SIMD Completion | v1.0 | 2/2 | Complete | 2026-01-19 |
+| 12.1B. Context Engine Integration | v1.0 | 1/1 | Complete | 2026-01-19 |
 
-| Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
-| 1. Critical Bug Fixes | 3/3 (3 planned) | Complete | 2026-01-18 |
-| 2. Test Infrastructure | 4/4 (4 planned) | Complete | 2026-01-18 |
-| 3. Codebase Modularization | 4/4 (4 planned) | Complete | 2026-01-18 |
-| 4. CPU SIMD Backend | 4/4 (4 planned) | Complete | 2026-01-18 |
-| 5. Quantized Operations | 4/4 (4 planned) | Complete | 2026-01-18 |
-| 6. Attention Optimization | 4/4 (4 planned) | Complete | 2026-01-18 |
-| 7. Hybrid Execution Scheduler | 4/4 (4 planned) | Complete | 2026-01-18 |
-| 8. GGUF Compatibility | 11/11 (11 planned) | Complete | 2026-01-18 |
-| 9. Performance Optimization | 18/18 (18 planned) | Complete | 2026-01-18 |
-| 10. Production Hardening | 20/20 | Complete | 2026-01-19 |
-| 11. Fix Test Suite & Verify E2E | 2/2 | Complete | 2026-01-19 |
-| 12. Complete CPU SIMD Attention | 4/4 | Complete | 2026-01-19 |
-| 12.1. CPU SIMD Enhancements | 0/3 | Planning | - |
+**Execution Order:** Phases execute in numeric order: 1 → 2 → 3 → ... → 12 → 12.1A → 12.1B
