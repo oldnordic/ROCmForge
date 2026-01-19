@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-01-19)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Phase 18 - GPU Attention Completion
+**Current focus:** Phase 19 - Wavefront-Native Quantized Matmul Kernels
 
 ## Current Position
 
-Phase: 18 of 20 (GPU Attention Completion)
-Plan: 3/3 in current phase
-Status: Phase Complete
-Last activity: 2026-01-19 — Completed Phase 18-03: End-to-end GPU attention integration tests
+Phase: 19 of 20 (Wavefront-Native Quantized Matmul Kernels)
+Plan: 1/1 in current phase
+Status: In Progress
+Last activity: 2026-01-19 — Completed Phase 19-01: Quantization format analysis
 
-Progress: [███████░░░░░░░░░░░░░░░] 25% (18 of 20 phases complete)
+Progress: [███████░░░░░░░░░░░░░░░] 25% (18.125 of 20 phases complete)
 
 ## Performance Metrics
 
@@ -61,6 +61,7 @@ Progress: [███████░░░░░░░░░░░░░░░] 2
 | 18-01 | 1 | ~10min | 10 min |
 | 18-02 | 1 | ~12min | 12 min |
 | 18-03 | 1 | ~18min | 18 min |
+| 19-01 | 1 | ~1min | 1 min |
 
 **Recent Trend:**
 - Last 5 phases: Stable (3-13 min/plan)
@@ -92,6 +93,7 @@ Recent decisions affecting v1.2:
 - **18-01 FlashAttention GPU Verification**: Verified all 3 FlashAttention kernels registered in build.rs; causal and non-causal kernels compile and execute correctly (GPU matches CPU within tolerance); generic kernel has compilation issue (CUDA `__shfl_down_f32` intrinsic needs HIP `__shfl_down`); FlashAttentionBackend verified pure GPU path with no CPU round-trips
 - **18-02 MQA/GQA KV Replication Verification**: Verified mqa_kv_replicate.hip kernel source, build.rs integration, and Rust wrapper mqa_kv_replicate_gpu_kernel() all present; confirmed forward_device() uses pure GPU path with no CPU round-trips; RoPE is pre-applied at model layer so TODO in multi_query.rs is not a blocker; 4 MQA/GQA tests ready for GPU testing
 - **18-03 End-to-End GPU Attention Integration Tests**: Added 8 comprehensive integration tests covering FlashAttention, MQA, GQA with realistic model configurations; all ATTENTION-01 through ATTENTION-05 requirements now satisfied; GPU vs CPU consistency tests with 1e-3 tolerance; REQUIREMENTS.md updated to mark all ATTENTION requirements complete
+- **19-01 Quantization Format Analysis**: Documented Q4_0 (32 elements/block, 20 bytes, scale + 4-bit signed values), Q4_K (256-element super-blocks, 8 sub-blocks with scale/min), Q6_K (256-element blocks, 16 f16 scales, 6-bit signed values); CPU references verified as ground truth for GPU kernel numerical validation
 
 ### Pending Todos
 
@@ -132,9 +134,10 @@ None yet.
 - Phase 18-01: Verified FlashAttention kernels; causal and non-causal kernels work correctly; generic kernel has CUDA intrinsic compilation issue
 - Phase 18-02: Verified MQA/GQA KV replication kernel; confirmed pure GPU execution path; RoPE pre-applied at model layer
 - Phase 18-03: End-to-end GPU attention integration tests; 8 new tests for FlashAttention, MQA, GQA; all ATTENTION requirements satisfied
+- Phase 19-01: Quantization format analysis; documented Q4_0, Q4_K, Q6_K bit-packing layouts; CPU references validated as ground truth
 
 ## Session Continuity
 
 Last session: 2026-01-19
-Stopped at: Completed 18-03 — Phase 18 (GPU Attention Completion) complete
+Stopped at: Completed 19-01 — Phase 19 quantization format analysis complete
 Resume file: None
