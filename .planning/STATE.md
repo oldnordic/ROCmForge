@@ -149,7 +149,7 @@ None yet.
 - Phase 19-03: Fused RMSNorm CUDA intrinsics removal; corrected WARP_SIZE to 64; replaced __shfl_down_f32 with __shfl_down; all 4 quantized kernels are CUDA-intrinsic-free
 - Phase 19-04: Compile and validate HIP quantized kernels; compiled 4 HSACO files for gfx1100; replaced invalid __builtin_amdgcn_wave_reduce_fadd; fixed Q4_K and Q6_K CPU test bugs; validated all 12 CPU dequantization tests
 - Phase 20-01: Removed duplicate GgufMetadata struct from ggml.rs; consolidated to single definition in loader.rs
-- Phase 20-02: Renamed Q6_K type aliases (Q6_KBlock, Q6_KKernelCache, Q6_K_CACHE) to match naming conventions; made Q4_0DequantCache public
+- Phase 20-02: Renamed Q4_K/Q6_K type aliases (Q4_KDequantResult to Q4KdequantResult, Q6_KDequantResult to Q6KdequantResult, etc.) to follow Rust naming conventions; made Q4_0DequantCache public; eliminated 5 compiler warnings
 - Phase 20-03: Removed 8 unused imports (6 HipError, 2 KernelTimer) across hip_backend ops modules; eliminated all unused import warnings
 
 ## Session Continuity
