@@ -600,6 +600,97 @@ pub fn avx512_simd_matmul_tiled_f32(
     Ok(c)
 }
 
+// ============================================================================
+// Dynamic dispatch for optimal SIMD path at runtime
+// ============================================================================
+
+/// Matrix multiplication with automatic SIMD path selection at runtime
+///
+/// This function automatically selects the optimal SIMD implementation based
+/// on CPU features detected at startup:
+///
+/// - AVX-512 (f32x16) if available and avx512 feature enabled
+/// - AVX2 (f32x8) on x86_64
+/// - NEON (f32x4) on aarch64
+/// - Scalar fallback for unsupported architectures
+///
+/// # Arguments
+///
+/// Same as `simd_matmul_f32`
+///
+/// # Returns
+///
+/// * Matrix C in row-major format (m x n)
+pub fn matmul_optimized_f32(
+    a: &[f32],
+    b: &[f32],
+    m: usize,
+    n: usize,
+    k: usize,
+) -> SimdMatmulResult<Vec<f32>> {
+    use crate::backend::cpu::cpu_features::CpuFeatures;
+
+    // Get cached CPU features (detected once at startup)
+    let features = CpuFeatures::get();
+
+    // Dispatch to optimal implementation
+    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+    {
+        if features.has_avx512f() {
+            return avx512_simd_matmul_f32(a, b, m, n, k);
+        }
+    }
+
+    // Fallback to AVX2/NEON SIMD
+    #[cfg(feature = "simd")]
+    {
+        return simd_matmul_f32(a, b, m, n, k);
+    }
+
+    // Scalar fallback (when simd feature is disabled)
+    #[cfg(not(feature = "simd"))]
+    {
+        scalar_matmul_f32(a, b, m, n, k)
+    }
+}
+
+/// Tiled matrix multiplication with automatic SIMD path selection at runtime
+///
+/// Same as `matmul_optimized_f32` but uses cache-efficient tiling for
+/// larger matrices.
+pub fn matmul_optimized_tiled_f32(
+    a: &[f32],
+    b: &[f32],
+    m: usize,
+    n: usize,
+    k: usize,
+) -> SimdMatmulResult<Vec<f32>> {
+    use crate::backend::cpu::cpu_features::CpuFeatures;
+
+    // Get cached CPU features (detected once at startup)
+    let features = CpuFeatures::get();
+
+    // Dispatch to optimal implementation
+    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+    {
+        if features.has_avx512f() {
+            return avx512_simd_matmul_tiled_f32(a, b, m, n, k);
+        }
+    }
+
+    // Fallback to AVX2/NEON SIMD
+    #[cfg(feature = "simd")]
+    {
+        return simd_matmul_tiled_f32(a, b, m, n, k);
+    }
+
+    // Scalar fallback (when simd feature is disabled)
+    #[cfg(not(feature = "simd"))]
+    {
+        scalar_matmul_f32(a, b, m, n, k)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -921,5 +1012,82 @@ mod tests {
 
         // Buffer size mismatch should fail
         assert!(avx512_simd_matmul_f32(&a, &b, 3, 2, 2).is_err());
+    }
+
+    // ========================================================================
+    // Dynamic dispatch tests
+    // ========================================================================
+
+    #[test]
+    fn test_matmul_optimized_dispatch() {
+        let a = vec![1.0, 2.0, 3.0, 4.0]; // [[1,2],[3,4]]
+        let b = vec![5.0, 6.0, 7.0, 8.0]; // [[5,6],[7,8]]
+
+        let result = matmul_optimized_f32(&a, &b, 2, 2, 2).unwrap();
+        let expected = vec![19.0, 22.0, 43.0, 50.0]; // [[19,22],[43,50]]
+
+        assert_eq!(result.len(), 4);
+        for (i, &val) in result.iter().enumerate() {
+            assert!(
+                (val - expected[i]).abs() < 1e-5,
+                "Element {} mismatch: expected {}, got {}",
+                i,
+                expected[i],
+                val
+            );
+        }
+    }
+
+    #[test]
+    fn test_matmul_optimized_vs_scalar() {
+        // Verify optimized dispatch produces same results as scalar
+        for (m, n, k) in [(4, 4, 4), (8, 8, 8), (16, 12, 10)] {
+            let a: Vec<f32> = (0..m * k).map(|i| i as f32 * 0.1).collect();
+            let b: Vec<f32> = (0..k * n).map(|i| (i as f32 + 1.0) * 0.1).collect();
+
+            let optimized_result = matmul_optimized_f32(&a, &b, m, n, k).unwrap();
+            let scalar_result = scalar_matmul_f32(&a, &b, m, n, k).unwrap();
+
+            assert_eq!(
+                optimized_result.len(),
+                scalar_result.len(),
+                "Length mismatch for {}x{}x{}",
+                m, n, k
+            );
+
+            for (i, (&o, &s)) in optimized_result.iter().zip(scalar_result.iter()).enumerate() {
+                let abs_diff = (o - s).abs();
+                let rel_diff = abs_diff / s.abs().max(1e-6);
+                assert!(
+                    abs_diff < 1e-2 || rel_diff < 1e-4,
+                    "Mismatch at {} for {}x{}x{}: {} vs {}, abs_diff={}, rel_diff={}",
+                    i, m, n, k, o, s, abs_diff, rel_diff
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_matmul_optimized_tiled_dispatch() {
+        let m = 32;
+        let n = 32;
+        let k = 32;
+
+        let a: Vec<f32> = (0..m * k).map(|i| i as f32 * 0.05).collect();
+        let b: Vec<f32> = (0..k * n).map(|i| (i as f32 + 1.0) * 0.05).collect();
+
+        let result = matmul_optimized_tiled_f32(&a, &b, m, n, k).unwrap();
+        let expected = scalar_matmul_f32(&a, &b, m, n, k).unwrap();
+
+        assert_eq!(result.len(), m * n);
+        for (i, (&r, &e)) in result.iter().zip(expected.iter()).enumerate() {
+            let abs_diff = (r - e).abs();
+            let rel_diff = abs_diff / e.abs().max(1e-6);
+            assert!(
+                abs_diff < 1e-2 || rel_diff < 1e-4,
+                "Mismatch at {}: {} vs {}, abs_diff={}, rel_diff={}",
+                i, r, e, abs_diff, rel_diff
+            );
+        }
     }
 }
