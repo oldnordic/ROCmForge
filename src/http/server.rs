@@ -224,7 +224,6 @@ pub struct InferenceServer {
     metrics_registry: MetricRegistry,
 }
 
-#[allow(dead_code)]
 impl InferenceServer {
     pub fn new(engine: Option<Arc<InferenceEngine>>, tokenizer: TokenizerAdapter) -> Self {
         InferenceServer {
