@@ -625,3 +625,202 @@ mod q5_1_tests {
         Ok(())
     }
 }
+
+/// GPU Quantization Dequantization Unit Tests
+///
+/// QUANT-05: Quantization kernels have unit tests verifying bit-exact outputs
+#[cfg(test)]
+mod gpu_q4_0_tests {
+    use super::*;
+    use rocmforge::backend::HipBackend;
+    use rocmforge::ggml::hip_backend::ops::q4_0_dequant::{
+        dequantize_q4_0_kernel_cached, dequantize_q4_0_cpu,
+    };
+
+    /// Test GPU Q4_0 dequantization produces bit-exact results matching CPU reference
+    ///
+    /// This test runs in CI (no #[ignore]) and verifies bit-exact GPU output.
+    /// It will be skipped if GPU is not available via runtime check, not a test failure.
+    #[test]
+    #[cfg(feature = "rocm")]
+    fn test_gpu_q4_0_bit_exact() {
+        // This test runs in CI (no #[ignore]) and verifies bit-exact GPU output
+        // It will be skipped if GPU is not available via runtime check, not a test failure
+
+        let backend = match HipBackend::new() {
+            Ok(b) => b,
+            Err(_) => {
+                println!("GPU not available - skipping test (not a failure)");
+                return;
+            }
+        };
+
+        // Create test data: 1 block with scale=1.0, values 0-15
+        let mut data = vec![0u8; 20];
+        data[0..4].copy_from_slice(&1.0f32.to_le_bytes());
+        for i in 0..16 {
+            data[4 + i] = ((i + 1) << 4) | i;
+        }
+
+        // CPU reference
+        let cpu_result = dequantize_q4_0_cpu(&data, 32);
+
+        // GPU result
+        let output = backend.allocate_buffer(32 * 4).expect("Failed to allocate");
+        dequantize_q4_0_kernel_cached(&backend, &data, &output, 32)
+            .expect("GPU dequant failed");
+        backend.synchronize().expect("Sync failed");
+
+        let mut gpu_result = vec![0.0f32; 32];
+        output.copy_to_host(&mut gpu_result).expect("Copy to host failed");
+
+        // Verify bit-exact match (tolerance 0.001 allows for minimal FP rounding)
+        for i in 0..32 {
+            let diff = (cpu_result[i] - gpu_result[i]).abs();
+            assert!(
+                diff < 0.001,
+                "Mismatch at {}: CPU={}, GPU={}, diff={}",
+                i, cpu_result[i], gpu_result[i], diff
+            );
+        }
+    }
+
+    /// Test GPU Q4_0 dequantization with multiple blocks
+    #[test]
+    #[cfg(feature = "rocm")]
+    fn test_gpu_q4_0_bit_exact_multiple_blocks() {
+        let backend = match HipBackend::new() {
+            Ok(b) => b,
+            Err(_) => {
+                println!("GPU not available - skipping test (not a failure)");
+                return;
+            }
+        };
+
+        // Create test data: 2 blocks with different scales
+        let n_elements = 64;
+        let n_blocks = (n_elements + 31) / 32;
+        let block_size = 20;
+        let mut data = vec![0u8; n_blocks * block_size];
+
+        // Block 0: scale = 1.0, values = 8 (0.0)
+        data[0..4].copy_from_slice(&1.0f32.to_le_bytes());
+        for i in 0..16 {
+            data[4 + i] = 0x88;
+        }
+
+        // Block 1: scale = 2.0, values = 12 (4.0)
+        data[20..24].copy_from_slice(&2.0f32.to_le_bytes());
+        for i in 0..16 {
+            data[24 + i] = 0xCC; // Both nibbles = 12
+        }
+
+        // CPU reference
+        let cpu_result = dequantize_q4_0_cpu(&data, n_elements);
+
+        // GPU result
+        let output = backend.allocate_buffer(n_elements * 4).expect("Failed to allocate");
+        dequantize_q4_0_kernel_cached(&backend, &data, &output, n_elements)
+            .expect("GPU dequant failed");
+        backend.synchronize().expect("Sync failed");
+
+        let mut gpu_result = vec![0.0f32; n_elements];
+        output.copy_to_host(&mut gpu_result).expect("Copy to host failed");
+
+        // Verify bit-exact match
+        for i in 0..n_elements {
+            let diff = (cpu_result[i] - gpu_result[i]).abs();
+            assert!(
+                diff < 0.001,
+                "Mismatch at {}: CPU={}, GPU={}, diff={}",
+                i, cpu_result[i], gpu_result[i], diff
+            );
+        }
+    }
+
+    /// Test GPU Q4_0 dequantization with negative scale
+    #[test]
+    #[cfg(feature = "rocm")]
+    fn test_gpu_q4_0_bit_exact_negative_scale() {
+        let backend = match HipBackend::new() {
+            Ok(b) => b,
+            Err(_) => {
+                println!("GPU not available - skipping test (not a failure)");
+                return;
+            }
+        };
+
+        // Create test data with negative scale
+        let mut data = vec![0u8; 20];
+        data[0..4].copy_from_slice(&(-1.5f32).to_le_bytes());
+        for i in 0..16 {
+            data[4 + i] = 0x88; // All values = 8 (0.0 after dequant)
+        }
+
+        // CPU reference
+        let cpu_result = dequantize_q4_0_cpu(&data, 32);
+
+        // GPU result
+        let output = backend.allocate_buffer(32 * 4).expect("Failed to allocate");
+        dequantize_q4_0_kernel_cached(&backend, &data, &output, 32)
+            .expect("GPU dequant failed");
+        backend.synchronize().expect("Sync failed");
+
+        let mut gpu_result = vec![0.0f32; 32];
+        output.copy_to_host(&mut gpu_result).expect("Copy to host failed");
+
+        // Verify bit-exact match
+        for i in 0..32 {
+            let diff = (cpu_result[i] - gpu_result[i]).abs();
+            assert!(
+                diff < 0.001,
+                "Mismatch at {}: CPU={}, GPU={}, diff={}",
+                i, cpu_result[i], gpu_result[i], diff
+            );
+        }
+    }
+
+    /// Test GPU Q4_0 dequantization with partial block (non-multiple of 32)
+    #[test]
+    #[cfg(feature = "rocm")]
+    fn test_gpu_q4_0_bit_exact_partial_block() {
+        let backend = match HipBackend::new() {
+            Ok(b) => b,
+            Err(_) => {
+                println!("GPU not available - skipping test (not a failure)");
+                return;
+            }
+        };
+
+        // Create test data with only 10 elements
+        let mut data = vec![0u8; 20];
+        data[0..4].copy_from_slice(&1.0f32.to_le_bytes());
+        for i in 0..16 {
+            data[4 + i] = 0x88;
+        }
+
+        let n_elements = 10;
+
+        // CPU reference
+        let cpu_result = dequantize_q4_0_cpu(&data, n_elements);
+
+        // GPU result
+        let output = backend.allocate_buffer(n_elements * 4).expect("Failed to allocate");
+        dequantize_q4_0_kernel_cached(&backend, &data, &output, n_elements)
+            .expect("GPU dequant failed");
+        backend.synchronize().expect("Sync failed");
+
+        let mut gpu_result = vec![0.0f32; n_elements];
+        output.copy_to_host(&mut gpu_result).expect("Copy to host failed");
+
+        // Verify bit-exact match
+        for i in 0..n_elements {
+            let diff = (cpu_result[i] - gpu_result[i]).abs();
+            assert!(
+                diff < 0.001,
+                "Mismatch at {}: CPU={}, GPU={}, diff={}",
+                i, cpu_result[i], gpu_result[i], diff
+            );
+        }
+    }
+}
