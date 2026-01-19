@@ -222,6 +222,28 @@ impl Rope {
     }
 
     /// Apply RoPE to DeviceTensor on GPU
+    ///
+    /// # GPU RoPE Execution Flow
+    ///
+    /// This method implements a pure GPU execution path with NO CPU round-trip:
+    ///
+    /// 1. **CPU precomputation** (required): cos/sin frequencies are precomputed on CPU
+    ///    at Rope initialization and stored in `self.cos` / `self.sin`
+    ///
+    /// 2. **GPU upload** (required): cos/sin for the requested positions are uploaded
+    ///    via `from_host_vec()` - this is necessary data transfer, not a round-trip
+    ///
+    /// 3. **Pure GPU execution**: `rope_gpu_kernel()` applies the rotation entirely on GPU
+    ///
+    /// 4. **Synchronization**: `backend.synchronize()` ensures kernel completes before return
+    ///
+    /// **No CPU round-trip**: The input tensor stays on GPU throughout; only the precomputed
+    /// cos/sin values are uploaded (which is required since they're computed at init time).
+    ///
+    /// # CPU Fallback
+    ///
+    /// If GPU kernel fails, callers should handle the error and fall back to CPU implementation.
+    /// This method itself does NOT implement fallback - it returns an error on GPU failure.
     #[cfg(feature = "rocm")]
     fn apply_rope_device(
         &self,
