@@ -63,6 +63,8 @@ extern "C" __global__ void topk_topp_sampling_kernel(
             int count_above_pivot = 0;
             float sum_above_pivot = 0.0f;
 
+            // TODO: Single-threaded loop over vocab_size is a watchdog timeout risk.
+            // Refactor to parallel reduction pattern (see topk_sampling.hip for example).
             for (int i = 0; i < vocab_size; i++) {
                 const float p = probabilities[row_offset + i];
                 if (p >= pivot) {
@@ -79,6 +81,8 @@ extern "C" __global__ void topk_topp_sampling_kernel(
                 // Update pivot and continue
                 // Find a better pivot (next highest probability below current)
                 float next_pivot = 0.0f;
+                // TODO: Single-threaded loop over vocab_size is a watchdog timeout risk.
+                // Refactor to parallel pattern.
                 for (int i = 0; i < vocab_size; i++) {
                     const float p = probabilities[row_offset + i];
                     if (p < pivot && p > next_pivot) {
@@ -95,6 +99,8 @@ extern "C" __global__ void topk_topp_sampling_kernel(
             float cumulative = 0.0f;
             int sampled_idx = -1;
 
+            // TODO: Single-threaded loop over vocab_size is a watchdog timeout risk.
+            // Refactor to parallel prefix sum + binary search pattern.
             for (int i = 0; i < vocab_size; i++) {
                 const float p = probabilities[row_offset + i];
                 if (p >= pivot) {
@@ -117,6 +123,8 @@ extern "C" __global__ void topk_topp_sampling_kernel(
             int count_at_or_above = 0;
             float sum_at_or_above = 0.0f;
 
+            // TODO: Single-threaded loop over vocab_size is a watchdog timeout risk.
+            // Refactor to parallel reduction pattern.
             for (int i = 0; i < vocab_size; i++) {
                 const float p = probabilities[row_offset + i];
                 if (p >= p_sample) {
@@ -140,6 +148,8 @@ extern "C" __global__ void topk_topp_sampling_kernel(
         if (!found) {
             float max_p = -1.0f;
             int max_idx = 0;
+            // TODO: Single-threaded loop over vocab_size is a watchdog timeout risk.
+            // Refactor to parallel reduction pattern.
             for (int i = 0; i < vocab_size; i++) {
                 const float p = probabilities[row_offset + i];
                 if (p > max_p) {
@@ -161,6 +171,10 @@ extern "C" __global__ void topk_topp_sampling_kernel(
  * 3. Sample from final set
  *
  * Easier to verify, less efficient than rejection sampling
+ *
+ * TODO: This entire kernel uses single-threaded loops (tid == 0) over vocab_size.
+ * This is a watchdog timeout risk for large vocabularies. Refactor to parallel
+ * pattern similar to topk_sampling.hip before using in production.
  *
  * @param probabilities  Input probabilities [batch_size, vocab_size]
  * @param cdf            Pre-computed CDF [batch_size, vocab_size]
@@ -270,6 +284,10 @@ extern "C" __global__ void topk_topp_sampling_simple_kernel(
 
 /**
  * Compute fused top-k + top-p mask (for testing/verification)
+ *
+ * TODO: This kernel uses single-threaded loops (tid == 0) over vocab_size.
+ * This is a watchdog timeout risk for large vocabularies. Refactor to parallel
+ * pattern before using in production.
  *
  * @param probabilities Input probabilities [batch_size, vocab_size]
  * @param cdf           Pre-computed CDF [batch_size, vocab_size]

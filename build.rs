@@ -168,6 +168,26 @@ fn compile_hip_kernels() {
             "TOPK_SAMPLING_HSACO",
             "topk_sampling_kernel",
         ),
+        (
+            "kernels/topp_sampling.hip",
+            "TOPP_PREFIX_SUM_HSACO",
+            "topp_prefix_sum_kernel",
+        ),
+        (
+            "kernels/topp_sampling.hip",
+            "TOPP_THRESHOLD_HSACO",
+            "topp_threshold_kernel",
+        ),
+        (
+            "kernels/topp_sampling.hip",
+            "TOPP_SAMPLE_HSACO",
+            "topp_sample_kernel",
+        ),
+        (
+            "kernels/topk_topp_sampling.hip",
+            "FUSED_SAMPLING_HSACO",
+            "topk_topp_sampling_kernel",
+        ),
     ];
 
     for (src_file, env_name, kernel_name) in &kernels {
