@@ -218,7 +218,7 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 | 13-01. Qwen2 head_dim Fix | v1.1 | 1/1 | Complete | 2026-01-19 |
 | 13-02. Memory Pooling Documentation | v1.1 | 1/1 | Complete | 2026-01-19 |
 | 13-03. Dead Code Removal | v1.1 | 4/4 | Complete | 2026-01-19 |
-| 14. Scheduler Clone Bug Fix | v1.2 | 0/2 | Not started | - |
+| 14. Scheduler Clone Bug Fix | v1.2 | 2/2 | Complete | 2026-01-19 |
 | 15. GPU Sampling Kernels | v1.2 | 0/? | Not started | - |
 | 16. GPU RoPE Implementation | v1.2 | 0/? | Not started | - |
 | 17. GPU Quantization | v1.2 | 0/? | Not started | - |
@@ -226,4 +226,4 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 | 19. Code Hygiene Completion | v1.2 | 0/? | Not started | - |
 | 20. Test Health & Performance | v1.2 | 0/? | Not started | - |
 
-**Total Progress:** 101/101 v1.0+v1.1 plans complete (100%)
+**Total Progress:** 103/103 v1.0+v1.1+v1.2 plans complete (100%)
