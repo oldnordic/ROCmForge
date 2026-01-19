@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-01-19)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Phase 14 - Scheduler Clone Bug Fix
+**Current focus:** Phase 15 - GPU Sampling Kernels
 
 ## Current Position
 
-Phase: 14 of 20 (Scheduler Clone Bug Fix)
-Plan: 2/2 in current phase
-Status: Phase complete
-Last activity: 2026-01-19 — Completed 14-02: Entry API Refactor
+Phase: 15 of 20 (GPU Sampling Kernels)
+Plan: 1/1 in current phase
+Status: In progress
+Last activity: 2026-01-19 — Completed 15-01: Add sampling_utils.hip to build.rs
 
-Progress: [█████░░░░░░░░░░░░░░░░░░░] 15% (14.6 phases of 20 planned)
+Progress: [█████░░░░░░░░░░░░░░░░░░░] 16% (15 of 20 phases planned - adjusted to 15 plans from earlier estimate)
 
 ## Performance Metrics
 
@@ -46,6 +46,7 @@ Progress: [█████░░░░░░░░░░░░░░░░░░
 | 13-03 | 4 | ~47min | 12 min |
 | 14-01 | 1 | ~2min | 2 min |
 | 14-02 | 1 | ~3min | 3 min |
+| 15-01 | 1 | ~3min | 3 min |
 
 **Recent Trend:**
 - Last 5 phases: Stable (30-54 min/plan)
@@ -84,9 +85,10 @@ None yet.
 **v1.2 Progress:**
 - Phase 14-01: Scheduler clone bug verification (HYGIENE-01 satisfied)
 - Phase 14-02: Entry API refactor (code quality improvement)
+- Phase 15-01: Added sampling_utils.hip to build.rs (SAMPLING_UTILS_HSACO, TEMPERATURE_SCALE_HSACO)
 
 ## Session Continuity
 
 Last session: 2026-01-19
-Stopped at: Completed 14-02 — Phase 14 complete, ready for Phase 15
+Stopped at: Completed 15-01 — sampling_utils.hip added to build.rs compilation list
 Resume file: None
