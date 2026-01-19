@@ -10,16 +10,16 @@ See: .planning/PROJECT.md (updated 2026-01-19)
 ## Current Position
 
 Phase: 20 of 20 (Code Hygiene Completion)
-Plan: 6 of 8 in current phase
+Plan: 7 of 8 in current phase
 Status: In progress
-Last activity: 2026-01-19 — Completed Phase 20-06: Dead code categorization and backend field fixes
+Last activity: 2026-01-19 — Completed Phase 20-07: Unused functions, methods, constants, and type aliases review
 
-Progress: [█████████░░░░░░░░░░░░] 31.5% (19.5 of 20 phases complete)
+Progress: [█████████░░░░░░░░░░░░] 32% (19.6 of 20 phases complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 137 (v1.0 + v1.1 + v1.2 through 20-06)
+- Total plans completed: 138 (v1.0 + v1.1 + v1.2 through 20-07)
 - Average duration: ~44 min
 - Total execution time: ~82 hours
 
@@ -69,6 +69,7 @@ Progress: [█████████░░░░░░░░░░░░] 31.5
 | 20-04 | 1 | ~7min | 7 min |
 | 20-05 | 1 | ~3min | 3 min |
 | 20-06 | 1 | ~2min | 2 min |
+| 20-07 | 1 | ~3min | 3 min |
 
 **Recent Trend:**
 - Last 5 phases: Stable (3-13 min/plan)
@@ -157,9 +158,10 @@ None yet.
 - Phase 20-04: Replace deprecated copy_to_host and to_host_vec methods; replaced all 19 deprecated calls with HipBackend::copy_from_device_safe; eliminated all deprecated method warnings; total warnings reduced from 59 to 38
 - Phase 20-05: Fix unused mut and unused assignment warnings; removed mut from scores and output variables; replaced unused max_time assignment with explicit let _; HYGIENE-05 satisfied
 - Phase 20-06: Dead code categorization and backend field fixes; categorized 35 warnings; fixed 13 backend warnings with #[allow(dead_code)]; documented 22 remaining warnings for future plans
+- Phase 20-07: Unused functions, methods, constants, and type aliases review; added #[allow(dead_code)] with explanatory comments to all unused items; HYGIENE-03 satisfied
 
 ## Session Continuity
 
 Last session: 2026-01-19
-Stopped at: Completed 20-06 — Dead code categorization and backend field fixes
+Stopped at: Completed 20-07 — Unused functions, methods, constants, and type aliases review
 Resume file: None
