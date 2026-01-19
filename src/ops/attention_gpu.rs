@@ -711,21 +711,6 @@ extern "C" __global__ void attention_softmax(float* scores, int rows, int cols) 
 "#;
 
 #[cfg(feature = "rocm")]
-#[allow(dead_code)]
-const ATTENTION_MASK_KERNEL: &str = r#"
-extern "C" __global__ void attention_mask(float* scores, int rows, int cols) {
-    int row = blockIdx.x;
-    int col = blockIdx.y * blockDim.x + threadIdx.x;
-    if (row >= rows || col >= cols) {
-        return;
-    }
-    if (col > row) {
-        scores[row * cols + col] = -INFINITY;
-    }
-}
-"#;
-
-#[cfg(feature = "rocm")]
 const CAUSAL_MASK_KERNEL: &str = r#"
 #include <hip/hip_runtime.h>
 
