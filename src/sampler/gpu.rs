@@ -642,23 +642,40 @@ pub unsafe fn fused_sampling_kernel(
 // Sampler Structs
 // ============================================================================
 
-/// GPU sampler for top-p (nucleus) sampling
+/// GPU sampler for top-p (nucleus) sampling with temperature support
 #[cfg(feature = "rocm")]
 #[derive(Debug, Clone)]
 pub struct GpuTopPSampler {
     backend: Arc<HipBackend>,
     top_p: f32,
+    temperature: f32,
 }
 
 #[cfg(feature = "rocm")]
 impl GpuTopPSampler {
-    /// Create a new GPU top-p sampler
+    /// Create a new GPU top-p sampler with default temperature (1.0)
     pub fn new(backend: Arc<HipBackend>, top_p: f32) -> SamplerResult<Self> {
         if top_p <= 0.0 || top_p > 1.0 {
             return Err(SamplerError::InvalidTopP(top_p));
         }
 
-        Ok(GpuTopPSampler { backend, top_p })
+        Ok(GpuTopPSampler { backend, top_p, temperature: 1.0 })
+    }
+
+    /// Set temperature for sampling
+    ///
+    /// Temperature < 1.0 makes sampling more deterministic (sharper distribution)
+    /// Temperature > 1.0 makes sampling more random (flatter distribution)
+    /// Temperature = 1.0 is no scaling (default)
+    ///
+    /// Note: Temperature scaling is applied BEFORE softmax in the GPU pipeline.
+    /// For top-p sampling with logits, apply temperature before calling sample().
+    pub fn with_temperature(mut self, temperature: f32) -> SamplerResult<Self> {
+        if temperature <= 0.0 {
+            return Err(SamplerError::InvalidTemperature(temperature));
+        }
+        self.temperature = temperature;
+        Ok(self)
     }
 
     /// Sample from probabilities using top-p filtering on GPU
@@ -672,7 +689,7 @@ impl GpuTopPSampler {
         match self.try_gpu_sample(probabilities, batch_size, vocab_size) {
             Ok(results) => Ok(results),
             Err(e) => {
-                tracing::debug!("GPU sampling failed, falling back to CPU: {}", e);
+                tracing::debug!("GPU top-p sampling failed, falling back to CPU: {}", e);
                 self.sample_cpu_fallback(probabilities, batch_size, vocab_size)
             }
         }
@@ -681,16 +698,18 @@ impl GpuTopPSampler {
     /// Try to sample using GPU kernels
     ///
     /// Uses 3-kernel pipeline for top-p sampling:
-    /// 1. topp_prefix_sum_kernel - computes CDF
-    /// 2. topp_threshold_kernel - finds threshold index
-    /// 3. topp_sample_kernel - samples tokens
+    /// 1. (Optional) temperature_scale_kernel - applies temperature scaling
+    /// 2. topp_prefix_sum_kernel - computes CDF
+    /// 3. topp_threshold_kernel - finds threshold index
+    /// 4. topp_sample_kernel - samples tokens
     fn try_gpu_sample(
         &self,
         probabilities: &[f32],
         batch_size: usize,
         vocab_size: usize,
     ) -> SamplerResult<Vec<u32>> {
-        tracing::debug!("try_gpu_sample: batch_size={}, vocab_size={}", batch_size, vocab_size);
+        tracing::debug!("GpuTopPSampler::try_gpu_sample: batch_size={}, vocab_size={}, top_p={}, temperature={}",
+            batch_size, vocab_size, self.top_p, self.temperature);
 
         // Check if all 3 kernels are loaded
         let cache_ref = get_or_init_sampling_cache()
@@ -782,8 +801,37 @@ impl GpuTopPSampler {
 
         tracing::debug!("Data copied to GPU, launching 3-kernel pipeline");
 
+        // Apply temperature scaling if temperature != 1.0
+        let probs_ptr = if self.temperature != 1.0 {
+            // Check if temperature scale kernel is available
+            let temp_scale_kernel = cache_ref.temperature_scale_kernel.as_ref()
+                .ok_or_else(|| {
+                    tracing::warn!("temperature_scale_kernel not loaded, falling back to CPU for temperature scaling");
+                    SamplerError::InvalidTopP(0.0)
+                })?;
+
+            let probs_mut_ptr = probs_gpu.as_mut_ptr() as *mut f32;
+
+            unsafe {
+                temperature_scale_kernel(
+                    &self.backend,
+                    probs_mut_ptr,
+                    self.temperature,
+                    batch_size as u32,
+                    vocab_size as u32,
+                ).map_err(|e| {
+                    tracing::error!("Failed to launch temperature scale kernel: {:?}", e);
+                    SamplerError::InvalidTopP(0.0)
+                })?;
+            }
+
+            tracing::debug!("Temperature scaling applied: temp={}", self.temperature);
+            probs_mut_ptr as *const f32
+        } else {
+            probs_gpu.as_ptr() as *const f32
+        };
+
         // Kernel 1: Compute prefix sum (CDF)
-        let probs_ptr = probs_gpu.as_ptr() as *const f32;
         let prefix_sum_ptr = prefix_sum_gpu.as_mut_ptr() as *mut f32;
 
         unsafe {
