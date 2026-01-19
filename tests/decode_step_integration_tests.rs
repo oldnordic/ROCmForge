@@ -11,6 +11,7 @@ use rocmforge::loader::mmap_loader::TensorShape;
 use rocmforge::model::config::{ModelConfig, ModelType};
 use rocmforge::model::execution_plan::ExecutionPlan;
 use rocmforge::model::kv_cache::KVCache;
+use anyhow::Context;
 use std::fs;
 use std::path::Path;
 use tempfile::tempdir;
@@ -156,7 +157,7 @@ mod tests {
 
     /// Test decode_step() with single layer using CPU reference path
     #[test]
-    fn test_decode_step_single_layer_cpu_reference() {
+    fn test_decode_step_single_layer_cpu_reference() -> anyhow::Result<()> {
         // Initialize HIP backend
         let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
@@ -242,12 +243,13 @@ mod tests {
             !output_host.is_empty(),
             "decode_step should produce logits for all vocab entries"
         );
+        Ok(())
     }
 
     /// Test decode_step() GPU matches CPU within tolerance
     #[cfg(feature = "rocm")]
     #[test]
-    fn test_decode_step_gpu_matches_cpu_within_tolerance() {
+    fn test_decode_step_gpu_matches_cpu_within_tolerance() -> anyhow::Result<()> {
         // Skip test gracefully if ROCm is not available
         let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
@@ -333,7 +335,7 @@ mod tests {
 
     /// Test decode_step() updates KV cache correctly
     #[test]
-    fn test_decode_step_updates_kv_cache_correctly() {
+    fn test_decode_step_updates_kv_cache_correctly() -> anyhow::Result<()> {
         // Initialize backend
         let fixture = GPU_FIXTURE.as_ref()
         .expect("GPU not available - test skipped");
@@ -457,5 +459,6 @@ mod tests {
             runtime.kv_cache().get_current_length(0).context("TODO: add error context")?,
             runtime.kv_cache().get_current_length(1).context("TODO: add error context")?
         );
+        Ok(())
     }
 }

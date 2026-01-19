@@ -8,13 +8,14 @@ use rocmforge::model::config::{ModelConfig, ModelType};
 use rocmforge::model::execution_plan::ExecutionPlan;
 use rocmforge::model::kv_cache::KVCache;
 use serial_test::serial;
+use anyhow::Context;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_layer_norm_integration() {
+    fn test_layer_norm_integration() -> anyhow::Result<()> {
         // Initialize HIP backend
         let fixture = GPU_FIXTURE
             .as_ref()
@@ -103,10 +104,12 @@ mod tests {
                 std
             );
         }
+
+        Ok(())
     }
 
     #[test]
-    fn test_mlp_swiglu_integration() {
+    fn test_mlp_swiglu_integration() -> anyhow::Result<()> {
         // Initialize HIP backend
         let fixture = GPU_FIXTURE
             .as_ref()
@@ -195,10 +198,12 @@ mod tests {
             }
         }
         assert!(computation_occurred, "MLP computation should have occurred");
+
+        Ok(())
     }
 
     #[test]
-    fn test_transformer_component_shapes() {
+    fn test_transformer_component_shapes() -> anyhow::Result<()> {
         // Initialize HIP backend
         let fixture = GPU_FIXTURE
             .as_ref()
@@ -296,5 +301,7 @@ mod tests {
         // TODO: Test tensor operations once lazy loading is properly implemented
         // For now, just verify that the tensors exist and have the correct shapes
         // (Actual computation testing requires loading LazyTensors to DeviceTensors)
+
+        Ok(())
     }
 }

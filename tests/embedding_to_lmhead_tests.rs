@@ -7,17 +7,22 @@
 //! - Shape validation for various vocab sizes
 //! - Edge cases (empty tokens, invalid IDs, large vocabs)
 
+// Declare common module for test fixtures
+mod common;
+
 use rocmforge::backend::hip_backend::{HipBackend, HipBuffer};
 use rocmforge::backend::hip_blas::HipBlasHandle;
 use rocmforge::loader::{
-    GgufLoader, GgufTensor, GgufTensorType,
+    GgufLoader,
 };
+use rocmforge::loader::gguf::GgufTensor;
+use rocmforge::loader::GgufTensorType;
 use rocmforge::tensor::matmul::{cpu_matmul_f32, matmul_f32};
 use std::collections::HashMap;
 use std::path::Path;
 
 // Use common fixtures
-use crate::common::{create_temp_file, create_embedding_gguf, NamedTempFile};
+use common::{create_temp_file, create_embedding_gguf, NamedTempFile};
 
 // ============================================================================
 // Test Infrastructure

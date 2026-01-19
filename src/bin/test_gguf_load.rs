@@ -5,7 +5,7 @@
 //!
 //! Run: cargo run --bin test_gguf_load -- <path-to.gguf>
 
-use rocmforge::loader::gguf::{GgufLoader, GgufTensor, GgufTensorType};
+use rocmforge::loader::{gguf::{GgufLoader, GgufTensor}, GgufTensorType};
 use std::env;
 
 fn print_tensor_summary(tensor: &GgufTensor) {

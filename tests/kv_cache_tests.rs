@@ -4,6 +4,7 @@ use rocmforge::backend::HipBackend;
 use rocmforge::kv_cache::{CacheConfig, CachePage, KvCache, KvCacheError, SequenceCache};
 use serial_test::serial;
 use std::collections::HashMap;
+use anyhow::Context;
 
 #[test]
 fn test_cache_config_validation() {
@@ -38,7 +39,7 @@ fn test_cache_config_validation() {
 
 #[test]
 #[serial]
-fn test_kv_cache_initialization() {
+fn test_kv_cache_initialization() -> anyhow::Result<()> {
     let fixture = GPU_FIXTURE
         .as_ref()
         .expect("GPU not available - test skipped");
@@ -56,11 +57,12 @@ fn test_kv_cache_initialization() {
     assert_eq!(stats.total_tokens, 0);
 
     fixture.assert_no_leak(5);
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_page_allocation() {
+fn test_page_allocation() -> anyhow::Result<()> {
     let fixture = GPU_FIXTURE
         .as_ref()
         .expect("GPU not available - test skipped");
@@ -99,11 +101,12 @@ fn test_page_allocation() {
     assert_eq!(stats.active_sequences, 2);
 
     fixture.assert_no_leak(5);
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_capacity_limit() {
+fn test_capacity_limit() -> anyhow::Result<()> {
     let fixture = GPU_FIXTURE
         .as_ref()
         .expect("GPU not available - test skipped");
@@ -129,11 +132,12 @@ fn test_capacity_limit() {
     assert!(cache.get_sequence_tokens(3).is_ok());
 
     fixture.assert_no_leak(5);
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_token_appending() {
+fn test_token_appending() -> anyhow::Result<()> {
     let fixture = GPU_FIXTURE
         .as_ref()
         .expect("GPU not available - test skipped");
@@ -163,11 +167,12 @@ fn test_token_appending() {
     assert!(!tokens.is_empty());
 
     fixture.assert_no_leak(5);
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_token_appending_with_new_page() {
+fn test_token_appending_with_new_page() -> anyhow::Result<()> {
     let fixture = GPU_FIXTURE
         .as_ref()
         .expect("GPU not available - test skipped");
@@ -190,11 +195,12 @@ fn test_token_appending_with_new_page() {
     assert_eq!(stats.active_sequences, 1);
 
     fixture.assert_no_leak(5);
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_sequence_retrieval() {
+fn test_sequence_retrieval() -> anyhow::Result<()> {
     let fixture = GPU_FIXTURE
         .as_ref()
         .expect("GPU not available - test skipped");
@@ -219,11 +225,12 @@ fn test_sequence_retrieval() {
     assert_eq!(length, 3);
 
     fixture.assert_no_leak(5);
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_sequence_removal() {
+fn test_sequence_removal() -> anyhow::Result<()> {
     let fixture = GPU_FIXTURE
         .as_ref()
         .expect("GPU not available - test skipped");
@@ -251,11 +258,12 @@ fn test_sequence_removal() {
     assert!(matches!(result, Err(KvCacheError::InvalidSequenceId(1))));
 
     fixture.assert_no_leak(5);
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_multiple_sequences() {
+fn test_multiple_sequences() -> anyhow::Result<()> {
     let fixture = GPU_FIXTURE
         .as_ref()
         .expect("GPU not available - test skipped");
@@ -293,11 +301,12 @@ fn test_multiple_sequences() {
     assert_eq!(stats.total_tokens, 6);
 
     fixture.assert_no_leak(5);
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_page_reuse() {
+fn test_page_reuse() -> anyhow::Result<()> {
     let fixture = GPU_FIXTURE
         .as_ref()
         .expect("GPU not available - test skipped");
@@ -322,11 +331,12 @@ fn test_page_reuse() {
     assert_eq!(stats_after_reuse.active_sequences, 1);
 
     fixture.assert_no_leak(5);
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_invalid_operations() {
+fn test_invalid_operations() -> anyhow::Result<()> {
     let fixture = GPU_FIXTURE
         .as_ref()
         .expect("GPU not available - test skipped");
@@ -355,6 +365,7 @@ fn test_invalid_operations() {
     assert!(matches!(result, Err(KvCacheError::InvalidSequenceId(999))));
 
     fixture.assert_no_leak(5);
+    Ok(())
 }
 
 // Property-based tests
@@ -371,10 +382,10 @@ proptest! {
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
         // FIX-10: With LRU eviction, max_pages=1 allows unlimited tokens via eviction
-        let config = CacheConfig::new(page_size, 1, 32, 128, 24).context("Failed to create cache config")?;
-        let mut cache = KvCache::new(config, backend.clone()).context("Failed to create KV cache")?;
+        let config = CacheConfig::new(page_size, 1, 32, 128, 24).unwrap();
+        let mut cache = KvCache::new(config, backend.clone()).unwrap();
 
-        cache.allocate_page(1).context("Failed to allocate page")?;
+        cache.allocate_page(1).unwrap();
 
         let mut success_count = 0;
         for &token in &tokens {
@@ -385,11 +396,11 @@ proptest! {
 
         // FIX-10: With LRU eviction, all tokens should succeed
         // (each time the page fills, it gets evicted and a new one allocated)
-        assert_eq!(success_count, tokens.len());
+        prop_assert_eq!(success_count, tokens.len());
 
         // Verify we can retrieve the sequence (may have lost some tokens due to eviction)
         let result = cache.get_sequence_tokens(1);
-        assert!(result.is_ok());
+        prop_assert!(result.is_ok());
 
         fixture.assert_no_leak(5);
     }
@@ -404,12 +415,12 @@ proptest! {
         let fixture = GPU_FIXTURE.as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
-        let config = CacheConfig::new(page_size, 20, 32, 128, 24).context("Failed to create cache config")?;
-        let mut cache = KvCache::new(config, backend.clone()).context("Failed to create KV cache")?;
+        let config = CacheConfig::new(page_size, 20, 32, 128, 24).unwrap();
+        let mut cache = KvCache::new(config, backend.clone()).unwrap();
 
         // Create two sequences
-        cache.allocate_page(1).context("Failed to allocate page")?;
-        cache.allocate_page(2).context("Failed to allocate page")?;
+        cache.allocate_page(1).unwrap();
+        cache.allocate_page(2).unwrap();
 
         // Add tokens to sequence 1
         let mut seq1_success = 0;
@@ -429,17 +440,17 @@ proptest! {
 
         // Verify sequences
         let retrieved1 = cache.get_sequence_tokens(1).unwrap();
-        assert_eq!(retrieved1.len(), seq1_success);
-        assert_eq!(&retrieved1[..], &seq1_tokens[..seq1_success]);
+        prop_assert_eq!(retrieved1.len(), seq1_success);
+        prop_assert_eq!(&retrieved1[..], &seq1_tokens[..seq1_success]);
 
         let retrieved2 = cache.get_sequence_tokens(2).unwrap();
-        assert_eq!(retrieved2.len(), seq2_success);
-        assert_eq!(&retrieved2[..], &seq2_tokens[..seq2_success]);
+        prop_assert_eq!(retrieved2.len(), seq2_success);
+        prop_assert_eq!(&retrieved2[..], &seq2_tokens[..seq2_success]);
 
         // Verify stats
         let stats = cache.get_cache_stats();
-        assert_eq!(stats.active_sequences, 2);
-        assert_eq!(stats.total_tokens, seq1_success + seq2_success);
+        prop_assert_eq!(stats.active_sequences, 2);
+        prop_assert_eq!(stats.total_tokens, seq1_success + seq2_success);
 
         fixture.assert_no_leak(5);
     }
@@ -460,8 +471,8 @@ proptest! {
         let fixture = GPU_FIXTURE.as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
-        let config = CacheConfig::new(page_size, 20, 32, 128, 24).context("Failed to create cache config")?;
-        let mut cache = KvCache::new(config, backend.clone()).context("Failed to create KV cache")?;
+        let config = CacheConfig::new(page_size, 20, 32, 128, 24).unwrap();
+        let mut cache = KvCache::new(config, backend.clone()).unwrap();
 
         let mut active_sequences = std::collections::HashSet::new();
 
@@ -490,7 +501,7 @@ proptest! {
 
         // Final verification
         let stats = cache.get_cache_stats();
-        assert_eq!(stats.active_sequences, active_sequences.len());
+        prop_assert_eq!(stats.active_sequences, active_sequences.len());
 
         // Verify all active sequences can be retrieved
         for &seq_id in &active_sequences {
@@ -503,7 +514,7 @@ proptest! {
 
 #[test]
 #[serial]
-fn test_concurrent_access_thread_safety() {
+fn test_concurrent_access_thread_safety() -> anyhow::Result<()> {
     use std::sync::{Arc, Mutex};
     use std::thread;
 
@@ -570,7 +581,7 @@ fn test_concurrent_access_thread_safety() {
         Err(_) => {
             // Mutex was poisoned, but we can still access the data
             // This actually proves the test is working - we're handling concurrent access
-            return;
+            return Ok(());
         }
     };
 
@@ -580,13 +591,14 @@ fn test_concurrent_access_thread_safety() {
     assert!(stats.active_sequences <= 100);
 
     fixture.assert_no_leak(5);
+    Ok(())
 }
 
 // ========== FIX-10: KV Cache State Tracking Tests ==========
 
 #[test]
 #[serial]
-fn test_sequence_lifetime_tracking() {
+fn test_sequence_lifetime_tracking() -> anyhow::Result<()> {
     let fixture = GPU_FIXTURE
         .as_ref()
         .expect("GPU not available - test skipped");
@@ -611,11 +623,12 @@ fn test_sequence_lifetime_tracking() {
     assert!(matches!(result, Err(KvCacheError::InvalidSequenceId(_))));
 
     fixture.assert_no_leak(5);
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_auto_cleanup_completed_sequences() {
+fn test_auto_cleanup_completed_sequences() -> anyhow::Result<()> {
     let fixture = GPU_FIXTURE
         .as_ref()
         .expect("GPU not available - test skipped");
@@ -648,11 +661,12 @@ fn test_auto_cleanup_completed_sequences() {
     assert!(cache.get_sequence_tokens(3).is_ok());
 
     fixture.assert_no_leak(5);
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_lru_eviction_when_capacity_exceeded() {
+fn test_lru_eviction_when_capacity_exceeded() -> anyhow::Result<()> {
     let fixture = GPU_FIXTURE
         .as_ref()
         .expect("GPU not available - test skipped");
@@ -683,11 +697,12 @@ fn test_lru_eviction_when_capacity_exceeded() {
     assert!(cache.get_sequence_tokens(3).is_ok());
 
     fixture.assert_no_leak(5);
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_lru_eviction_with_multiple_pages() {
+fn test_lru_eviction_with_multiple_pages() -> anyhow::Result<()> {
     let fixture = GPU_FIXTURE
         .as_ref()
         .expect("GPU not available - test skipped");
@@ -718,11 +733,12 @@ fn test_lru_eviction_with_multiple_pages() {
     assert!(cache.get_sequence_tokens(3).is_ok());
 
     fixture.assert_no_leak(5);
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_sequence_access_time_tracking() {
+fn test_sequence_access_time_tracking() -> anyhow::Result<()> {
     let fixture = GPU_FIXTURE
         .as_ref()
         .expect("GPU not available - test skipped");
@@ -746,11 +762,12 @@ fn test_sequence_access_time_tracking() {
     assert!(updated_time >= initial_time);
 
     fixture.assert_no_leak(5);
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_cleanup_preserves_active_sequences() {
+fn test_cleanup_preserves_active_sequences() -> anyhow::Result<()> {
     let fixture = GPU_FIXTURE
         .as_ref()
         .expect("GPU not available - test skipped");
@@ -783,11 +800,12 @@ fn test_cleanup_preserves_active_sequences() {
     assert!(cache.get_sequence_tokens(5).is_err());
 
     fixture.assert_no_leak(5);
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_get_active_sequences() {
+fn test_get_active_sequences() -> anyhow::Result<()> {
     let fixture = GPU_FIXTURE
         .as_ref()
         .expect("GPU not available - test skipped");
@@ -814,4 +832,5 @@ fn test_get_active_sequences() {
     assert!(!active.contains(&4));
 
     fixture.assert_no_leak(5);
+    Ok(())
 }

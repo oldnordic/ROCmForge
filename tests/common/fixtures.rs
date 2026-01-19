@@ -4,8 +4,7 @@
 //! into a single location for easier maintenance.
 
 use rocmforge::backend::HipBackend;
-use rocmforge::loader::gguf::{GgufTensor, GgufTensorType};
-use rocmforge::loader::TensorShape;
+use rocmforge::loader::{gguf::GgufTensor, GgufTensorType, TensorShape};
 use std::fs::File;
 use std::io::{BufWriter, Seek, Write};
 use std::path::Path;

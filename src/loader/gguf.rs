@@ -9,6 +9,7 @@
 use crate::backend::hip_backend::{AsyncLoader, DeviceTensor, HipBackend, HipBuffer};
 use crate::loader::lazy_tensor::LazyTensor;
 use crate::loader::mmap::MmapGguf;
+use crate::loader::tensor_type::GgufTensorType;
 use crate::loader::TensorShape;
 use crate::model::config::ModelConfig;
 use anyhow::{anyhow, Result};
@@ -374,123 +375,6 @@ impl MxfpBlock {
             }
         }
         values
-    }
-}
-
-/// GGUF tensor types (ggml_type enum values from ggml.h)
-#[derive(Debug, Clone, PartialEq, Copy)]
-pub enum GgufTensorType {
-    F32 = 0,   // GGML_TYPE_F32
-    F16 = 1,   // GGML_TYPE_F16
-    Q4_0 = 2,  // GGML_TYPE_Q4_0
-    Q4_1 = 3,  // GGML_TYPE_Q4_1
-    Q5_0 = 6,  // GGML_TYPE_Q5_0
-    Q5_1 = 7,  // GGML_TYPE_Q5_1
-    Q8_0 = 8,  // GGML_TYPE_Q8_0
-    Q2_K = 10, // GGML_TYPE_Q2_K (K-quants)
-    Q3_K = 11, // GGML_TYPE_Q3_K
-    Q4_K = 12, // GGML_TYPE_Q4_K
-    Q5_K = 13, // GGML_TYPE_Q5_K
-    Q6_K = 14, // GGML_TYPE_Q6_K
-
-    // MXFP types (OCP MX Specification v1.0)
-    // Using enum values 20-22 to avoid conflicts with future ggml types
-    Mxfp4 = 20,     // OCP MXFP4-E2M1 (4-bit)
-    Mxfp6E2m3 = 21, // OCP MXFP6-E2M3 (6-bit, recommended)
-    Mxfp6E3m2 = 22, // OCP MXFP6-E3M2 (6-bit)
-}
-
-impl GgufTensorType {
-    pub fn from_u32(value: u32) -> Result<Self> {
-        match value {
-            0 => Ok(GgufTensorType::F32),
-            1 => Ok(GgufTensorType::F16),
-            2 => Ok(GgufTensorType::Q4_0),
-            3 => Ok(GgufTensorType::Q4_1),
-            6 => Ok(GgufTensorType::Q5_0),
-            7 => Ok(GgufTensorType::Q5_1),
-            8 => Ok(GgufTensorType::Q8_0),
-            10 => Ok(GgufTensorType::Q2_K),
-            11 => Ok(GgufTensorType::Q3_K),
-            12 => Ok(GgufTensorType::Q4_K),
-            13 => Ok(GgufTensorType::Q5_K),
-            14 => Ok(GgufTensorType::Q6_K),
-            20 => Ok(GgufTensorType::Mxfp4),
-            21 => Ok(GgufTensorType::Mxfp6E2m3),
-            22 => Ok(GgufTensorType::Mxfp6E3m2),
-            _ => Err(anyhow!("Unknown tensor type: {}", value)),
-        }
-    }
-
-    pub fn to_string(&self) -> &'static str {
-        match self {
-            GgufTensorType::F32 => "FP32",
-            GgufTensorType::F16 => "FP16",
-            GgufTensorType::Q4_0 => "Q4_0",
-            GgufTensorType::Q4_1 => "Q4_1",
-            GgufTensorType::Q5_0 => "Q5_0",
-            GgufTensorType::Q5_1 => "Q5_1",
-            GgufTensorType::Q8_0 => "Q8_0",
-            GgufTensorType::Q2_K => "Q2_K",
-            GgufTensorType::Q3_K => "Q3_K",
-            GgufTensorType::Q4_K => "Q4_K",
-            GgufTensorType::Q5_K => "Q5_K",
-            GgufTensorType::Q6_K => "Q6_K",
-            GgufTensorType::Mxfp4 => "MXFP4",
-            GgufTensorType::Mxfp6E2m3 => "MXFP6_E2M3",
-            GgufTensorType::Mxfp6E3m2 => "MXFP6_E3M2",
-        }
-    }
-
-    pub fn element_size(&self) -> usize {
-        match self {
-            GgufTensorType::F32 => 4,
-            GgufTensorType::F16 => 2,
-            GgufTensorType::Q4_0 => {
-                // Q4_0: block_size=32, each block has 1 scale (f32) + 32 quants (u8)
-                32
-            }
-            GgufTensorType::Q4_1 => {
-                // Q4_1: block_size=32, each block has scales + quants
-                32
-            }
-            GgufTensorType::Q5_0 => {
-                // Q5_0: block_size=32
-                32
-            }
-            GgufTensorType::Q5_1 => {
-                // Q5_1: block_size=32
-                32
-            }
-            GgufTensorType::Q8_0 => {
-                // Q8_0: block_size=32, each block has 1 scale (f32) + 32 quants (u8)
-                32
-            }
-            GgufTensorType::Q2_K => {
-                // Q2_K: block_size=256, uses super-block structure
-                256
-            }
-            GgufTensorType::Q3_K => {
-                // Q3_K: block_size=256
-                256
-            }
-            GgufTensorType::Q4_K => {
-                // Q4_K: block_size=256
-                256
-            }
-            GgufTensorType::Q5_K => {
-                // Q5_K: block_size=256
-                256
-            }
-            GgufTensorType::Q6_K => {
-                // Q6_K: block_size=256
-                256
-            }
-            GgufTensorType::Mxfp4 | GgufTensorType::Mxfp6E2m3 | GgufTensorType::Mxfp6E3m2 => {
-                // MXFP formats: block_size=32
-                32
-            }
-        }
     }
 }
 

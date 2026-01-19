@@ -419,7 +419,7 @@ mod test_dequantization_accuracy {
 /// Ensures MXFP types have correct enum values
 #[cfg(test)]
 mod test_gguf_tensor_types {
-    use crate::loader::gguf::GgufTensorType;
+    use crate::loader::GgufTensorType;
 
     #[test]
     fn test_mxfp_tensor_type_values() {

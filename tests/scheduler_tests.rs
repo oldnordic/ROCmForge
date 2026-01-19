@@ -3,6 +3,7 @@
 use rocmforge::scheduler::{
     Batch, GenerationRequest, RequestState, Scheduler, SchedulerConfig, SchedulerError,
 };
+use anyhow::Context;
 use std::time::Duration;
 
 #[test]
@@ -22,7 +23,7 @@ fn test_request_creation() {
 }
 
 #[test]
-fn test_request_state_transitions() {
+fn test_request_state_transitions() -> anyhow::Result<()> {
     let mut request = GenerationRequest::new(1, vec![1, 2, 3], 10, 0.8, 50, 0.9);
 
     // Initial state
@@ -53,10 +54,11 @@ fn test_request_state_transitions() {
     let processing_time = request.processing_time();
     assert!(processing_time.is_some());
     assert!(processing_time.unwrap() >= Duration::from_secs(0));
+    Ok(())
 }
 
 #[test]
-fn test_invalid_state_transitions() {
+fn test_invalid_state_transitions() -> anyhow::Result<()> {
     let mut request = GenerationRequest::new(1, vec![1], 10, 0.8, 50, 0.9);
 
     // Can't complete without starting
@@ -96,10 +98,11 @@ fn test_invalid_state_transitions() {
         result,
         Err(SchedulerError::InvalidStateTransition)
     ));
+    Ok(())
 }
 
 #[test]
-fn test_batch_creation() {
+fn test_batch_creation() -> anyhow::Result<()> {
     let mut batch = Batch::new(1);
 
     assert_eq!(batch.batch_id, 1);
@@ -124,10 +127,11 @@ fn test_batch_creation() {
     assert_eq!(batch.max_sequence_length(), 3);
     assert_eq!(batch.min_sequence_length(), 2);
     assert!(batch.length_variance() > 0.0);
+    Ok(())
 }
 
 #[test]
-fn test_batch_length_variance() {
+fn test_batch_length_variance() -> anyhow::Result<()> {
     let mut batch = Batch::new(1);
 
     // Add requests with similar lengths
@@ -151,6 +155,7 @@ fn test_batch_length_variance() {
 
     let variance2 = batch.length_variance();
     assert!(variance2 > variance); // Variance should increase
+    Ok(())
 }
 
 #[test]
@@ -168,7 +173,7 @@ fn test_scheduler_creation() {
 }
 
 #[test]
-fn test_request_submission() {
+fn test_request_submission() -> anyhow::Result<()> {
     let config = SchedulerConfig::default();
     let mut scheduler = Scheduler::new(config);
 
@@ -186,10 +191,11 @@ fn test_request_submission() {
     assert_eq!(stats.pending_requests, 2);
     assert_eq!(stats.processing_requests, 0);
     assert!(scheduler.has_pending_requests());
+    Ok(())
 }
 
 #[test]
-fn test_queue_capacity_limit() {
+fn test_queue_capacity_limit() -> anyhow::Result<()> {
     let config = SchedulerConfig {
         max_queue_size: 2,
         ..Default::default()
@@ -204,10 +210,11 @@ fn test_queue_capacity_limit() {
     let result = scheduler.submit_request(vec![3], 10, 0.8, 50, 0.9);
     assert!(result.is_err());
     assert!(matches!(result, Err(SchedulerError::QueueCapacityExceeded)));
+    Ok(())
 }
 
 #[test]
-fn test_cancel_pending_request() {
+fn test_cancel_pending_request() -> anyhow::Result<()> {
     let mut scheduler = Scheduler::new(SchedulerConfig::default());
     let request_id = scheduler
         .submit_request(vec![1, 2, 3], 10, 0.8, 50, 0.9)
@@ -221,10 +228,11 @@ fn test_cancel_pending_request() {
     let stats = scheduler.get_queue_stats();
     assert_eq!(stats.pending_requests, 0);
     assert_eq!(stats.completed_requests, 1);
+    Ok(())
 }
 
 #[test]
-fn test_cancel_processing_request() {
+fn test_cancel_processing_request() -> anyhow::Result<()> {
     let mut scheduler = Scheduler::new(SchedulerConfig::default());
     let request_id = scheduler
         .submit_request(vec![1, 2, 3], 10, 0.8, 50, 0.9)
@@ -239,10 +247,11 @@ fn test_cancel_processing_request() {
     let stats = scheduler.get_queue_stats();
     assert_eq!(stats.processing_requests, 0);
     assert_eq!(stats.completed_requests, 1);
+    Ok(())
 }
 
 #[test]
-fn test_batch_creation_with_scheduler() {
+fn test_batch_creation_with_scheduler() -> anyhow::Result<()> {
     let config = SchedulerConfig::default();
     let mut scheduler = Scheduler::new(config);
 
@@ -269,10 +278,11 @@ fn test_batch_creation_with_scheduler() {
     let stats = scheduler.get_queue_stats();
     assert_eq!(stats.pending_requests, 0);
     assert_eq!(stats.processing_requests, 3);
+    Ok(())
 }
 
 #[test]
-fn test_batch_update() {
+fn test_batch_update() -> anyhow::Result<()> {
     let config = SchedulerConfig::default();
     let mut scheduler = Scheduler::new(config);
 
@@ -295,10 +305,11 @@ fn test_batch_update() {
     let stats = scheduler.get_queue_stats();
     assert_eq!(stats.processing_requests, 0);
     assert_eq!(stats.completed_requests, 1);
+    Ok(())
 }
 
 #[test]
-fn test_request_retrieval() {
+fn test_request_retrieval() -> anyhow::Result<()> {
     let config = SchedulerConfig::default();
     let mut scheduler = Scheduler::new(config);
 
@@ -336,10 +347,11 @@ fn test_request_retrieval() {
     assert!(request.is_ok());
     let request = request.unwrap();
     assert_eq!(request.state, RequestState::Completed);
+    Ok(())
 }
 
 #[test]
-fn test_token_generation() {
+fn test_token_generation() -> anyhow::Result<()> {
     let config = SchedulerConfig::default();
     let mut scheduler = Scheduler::new(config);
 
@@ -358,10 +370,11 @@ fn test_token_generation() {
     let request = scheduler.get_request(request_id).context("Failed to get request")?;
     assert_eq!(request.generated_tokens.len(), 1);
     assert_eq!(request.generated_tokens[0], 42);
+    Ok(())
 }
 
 #[test]
-fn test_batch_size_limit() {
+fn test_batch_size_limit() -> anyhow::Result<()> {
     let config = SchedulerConfig {
         max_batch_size: 2,
         ..Default::default()
@@ -385,10 +398,11 @@ fn test_batch_size_limit() {
     let stats = scheduler.get_queue_stats();
     assert_eq!(stats.pending_requests, 3); // 5 - 2
     assert_eq!(stats.processing_requests, 2);
+    Ok(())
 }
 
 #[test]
-fn test_length_based_batching() {
+fn test_length_based_batching() -> anyhow::Result<()> {
     let config = SchedulerConfig::default();
     let mut scheduler = Scheduler::new(config);
 
@@ -415,6 +429,7 @@ fn test_length_based_batching() {
     let mut sorted_lengths = lengths.clone();
     sorted_lengths.sort();
     assert_eq!(lengths, sorted_lengths);
+    Ok(())
 }
 
 // Property-based tests
@@ -451,7 +466,7 @@ proptest! {
         let mut batch_count = 0;
 
         while scheduler.has_pending_requests() {
-            let batch = scheduler.create_batch().context("Failed to create batch")?;
+            let batch = scheduler.create_batch().unwrap();
             prop_assert!(batch.size() <= max_batch_size);
             total_processed += batch.size();
             batch_count += 1;
@@ -464,7 +479,7 @@ proptest! {
                 }
             }
 
-            scheduler.update_batch(updated_batch).context("Failed to update batch")?;
+            scheduler.update_batch(updated_batch).unwrap();
         }
 
         prop_assert_eq!(total_processed, num_requests);
@@ -491,7 +506,7 @@ proptest! {
         prop_assert!(!request.is_complete());
 
         // Start processing
-        request.start_processing().context("Failed to start processing")?;
+        request.start_processing().unwrap();
         prop_assert_eq!(request.state, RequestState::Processing);
         prop_assert!(request.started_at.is_some());
 

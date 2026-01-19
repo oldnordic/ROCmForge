@@ -2,9 +2,10 @@
 
 use rocmforge::loader::mmap_loader::{open_mmap_weights, MmapWeights};
 use std::io::Write;
+use anyhow::Context;
 
 #[test]
-fn test_f32_view_basic() {
+fn test_f32_view_basic() -> anyhow::Result<()> {
     // Create test data as f32 values
     let test_f32: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0];
     let test_bytes: Vec<u8> = test_f32
@@ -25,10 +26,11 @@ fn test_f32_view_basic() {
     for (i, &value) in f32_view.iter().enumerate() {
         assert_eq!(value, test_f32[i]);
     }
+    Ok(())
 }
 
 #[test]
-fn test_f32_view_partial_range() {
+fn test_f32_view_partial_range() -> anyhow::Result<()> {
     let test_f32: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
     let test_bytes: Vec<u8> = test_f32
         .iter()
@@ -48,10 +50,11 @@ fn test_f32_view_partial_range() {
     assert_eq!(f32_view[0], 3.0);
     assert_eq!(f32_view[1], 4.0);
     assert_eq!(f32_view[2], 5.0);
+    Ok(())
 }
 
 #[test]
-fn test_f32_view_alignment() {
+fn test_f32_view_alignment() -> anyhow::Result<()> {
     // Test with unaligned start (should work due to byte-level access)
     let test_f32: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
     let test_bytes: Vec<u8> = test_f32
@@ -70,10 +73,11 @@ fn test_f32_view_alignment() {
     assert_eq!(f32_view.len(), 2);
     assert_eq!(f32_view[0], 2.0);
     assert_eq!(f32_view[1], 3.0);
+    Ok(())
 }
 
 #[test]
-fn test_f32_view_empty_range() {
+fn test_f32_view_empty_range() -> anyhow::Result<()> {
     let test_f32: Vec<f32> = vec![1.0, 2.0, 3.0];
     let test_bytes: Vec<u8> = test_f32
         .iter()
@@ -89,10 +93,11 @@ fn test_f32_view_empty_range() {
     let f32_view = mmap_weights.view_f32(1..1);
 
     assert!(f32_view.is_empty());
+    Ok(())
 }
 
 #[test]
-fn test_f32_view_bounds_check() {
+fn test_f32_view_bounds_check() -> anyhow::Result<()> {
     let test_f32: Vec<f32> = vec![1.0, 2.0, 3.0];
     let test_bytes: Vec<u8> = test_f32
         .iter()
@@ -109,4 +114,5 @@ fn test_f32_view_bounds_check() {
 
     // Should either panic or return empty slice depending on implementation
     assert!(f32_view.len() <= 3);
+    Ok(())
 }

@@ -17,11 +17,11 @@ fn validate_matmul_dims(
     a_size: usize,
     b_size: usize,
     c_size: usize,
-) -> Result<(), String> {
+) -> anyhow::Result<()> {
     // Check A dimensions
     let expected_a_size = (m * k) as usize;
     if a_size != expected_a_size {
-        return Err(format!(
+        return Err(anyhow::anyhow!(
             "Matrix A size mismatch: expected {} elements (m={} * k={}), got {}",
             expected_a_size, m, k, a_size
         ));
@@ -30,7 +30,7 @@ fn validate_matmul_dims(
     // Check B dimensions
     let expected_b_size = (k * n) as usize;
     if b_size != expected_b_size {
-        return Err(format!(
+        return Err(anyhow::anyhow!(
             "Matrix B size mismatch: expected {} elements (k={} * n={}), got {}",
             expected_b_size, k, n, b_size
         ));
@@ -39,7 +39,7 @@ fn validate_matmul_dims(
     // Check C dimensions
     let expected_c_size = (m * n) as usize;
     if c_size != expected_c_size {
-        return Err(format!(
+        return Err(anyhow::anyhow!(
             "Matrix C size mismatch: expected {} elements (m={} * n={}), got {}",
             expected_c_size, m, n, c_size
         ));

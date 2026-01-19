@@ -3,6 +3,7 @@
 //! Test suite for GLM model loading and inference functionality.
 
 use serial_test::serial;
+use anyhow::Context;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -156,7 +157,7 @@ mod tests {
         create_synthetic_glm_model(&model_path)?;
 
         // Load model
-        let fixture = rocmforge::GPU_FIXTURE
+        let fixture = GPU_FIXTURE
             .as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
@@ -198,7 +199,7 @@ mod tests {
         create_synthetic_glm_model(&model_path)?;
 
         // Load model
-        let fixture = rocmforge::GPU_FIXTURE
+        let fixture = GPU_FIXTURE
             .as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
@@ -242,7 +243,7 @@ mod tests {
         create_synthetic_glm_model(&model_path)?;
 
         // Load model
-        let fixture = rocmforge::GPU_FIXTURE
+        let fixture = GPU_FIXTURE
             .as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
@@ -278,7 +279,7 @@ mod tests {
         create_synthetic_glm_model(&model_path)?;
 
         // Load model
-        let fixture = rocmforge::GPU_FIXTURE
+        let fixture = GPU_FIXTURE
             .as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
@@ -305,7 +306,7 @@ mod tests {
         create_synthetic_glm_model(&model_path)?;
 
         // Load model
-        let fixture = rocmforge::GPU_FIXTURE
+        let fixture = GPU_FIXTURE
             .as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();
@@ -335,7 +336,7 @@ mod tests {
         create_synthetic_glm_model(&model_path)?;
 
         // Load model
-        let fixture = rocmforge::GPU_FIXTURE
+        let fixture = GPU_FIXTURE
             .as_ref()
             .expect("GPU not available - test skipped");
         let backend = fixture.backend();

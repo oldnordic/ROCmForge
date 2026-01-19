@@ -1,12 +1,17 @@
 //! Comprehensive TDD tests for loader modules
 
+// Declare common module for test fixtures
+mod common;
+
 use rocmforge::loader::{
-    GgufLoader, GgufMetadata, GgufTensor, GgufTensorType, OnnxDataType, OnnxLoader, OnnxSession, OnnxTensor,
+    GgufLoader, GgufMetadata, GgufTensor, OnnxDataType, OnnxLoader, OnnxSession, OnnxTensor,
 };
+use rocmforge::loader::GgufTensorType;
 use std::io::Write;
+use anyhow::Context;
 
 // Use common fixtures
-use crate::common::{create_temp_file, create_test_gguf, create_test_gguf_with_f32, NamedTempFile};
+use common::{create_temp_file, create_test_gguf, create_test_gguf_with_f32, NamedTempFile};
 
 /// Rewrite of test_gguf_model_loading using current GgufLoader API.
 ///
@@ -271,7 +276,7 @@ fn test_onnx_inference_without_model() {
 }
 
 #[test]
-fn test_onnx_inference_empty_inputs() {
+fn test_onnx_inference_empty_inputs() -> anyhow::Result<()> {
     let mut loader = OnnxLoader::new();
 
     let temp_file = create_temp_file().context("Failed to create temp file")?;
@@ -279,6 +284,7 @@ fn test_onnx_inference_empty_inputs() {
 
     let result = loader.run_inference(&[]);
     assert!(result.is_err());
+    Ok(())
 }
 
 #[test]
@@ -337,7 +343,7 @@ proptest! {
         prop_assert!(matches!(tensor.data_type, OnnxDataType::F32));
         prop_assert_eq!(tensor.data.len(), total_elements * 4);
 
-        let converted = tensor.get_data_f32().context("Failed to get F32 data")?;
+        let converted = tensor.get_data_f32().unwrap();
         prop_assert_eq!(converted.len(), total_elements);
         prop_assert_eq!(converted, truncated_data);
     }

@@ -5,7 +5,7 @@
 //! only loading metadata upfront.
 
 use crate::backend::hip_backend::DeviceTensor;
-use crate::loader::gguf::GgufTensorType;
+use crate::loader::GgufTensorType;
 use std::sync::Arc;
 
 /// Tensor that may not be loaded yet
@@ -252,7 +252,7 @@ impl LazyTensor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::loader::gguf::GgufTensorType;
+    use crate::loader::GgufTensorType;
 
     #[test]
     fn test_lazy_tensor_unloaded() {

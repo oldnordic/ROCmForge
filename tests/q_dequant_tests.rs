@@ -4,10 +4,14 @@
 // Phase 8: Model Support - Task 8.1
 // TDD: Tests written FIRST, then implementation
 
-use rocmforge::loader::gguf::{GgufTensor, GgufTensorType};
+// Declare common module for test fixtures
+mod common;
+
+use rocmforge::loader::gguf::GgufTensor;
+use rocmforge::loader::GgufTensorType;
 
 // Use common fixtures
-use crate::common::create_test_tensor;
+use common::create_test_tensor;
 
 /// Helper to manually dequantize Q4_1 (reference implementation)
 fn dequantize_q4_1_reference(tensor: &GgufTensor) -> Vec<f32> {
@@ -174,7 +178,7 @@ mod q4_1_tests {
     use super::*;
 
     #[test]
-    fn test_q4_1_dequantize_single_block() {
+    fn test_q4_1_dequantize_single_block() -> anyhow::Result<()> {
         // Create a simple Q4_1 tensor with known values
         // Block structure: scale (4 bytes) + min (4 bytes) + 16 bytes of 4-bit packed values
 
@@ -217,10 +221,12 @@ mod q4_1_tests {
                 val
             );
         }
+
+        Ok(())
     }
 
     #[test]
-    fn test_q4_1_dequantize_multiple_blocks() {
+    fn test_q4_1_dequantize_multiple_blocks() -> anyhow::Result<()> {
         // Test with multiple blocks (64 elements = 2 blocks)
         let scale: f32 = 0.05;
         let min: f32 = -10.0;
@@ -278,10 +284,12 @@ mod q4_1_tests {
                 result[i]
             );
         }
+
+        Ok(())
     }
 
     #[test]
-    fn test_q4_1_dequantize_2d_tensor() {
+    fn test_q4_1_dequantize_2d_tensor() -> anyhow::Result<()> {
         // Test dequantization of a 2D tensor
         let scale: f32 = 0.1;
         let min: f32 = 1.0;
@@ -312,6 +320,8 @@ mod q4_1_tests {
                 val
             );
         }
+
+        Ok(())
     }
 }
 
@@ -320,7 +330,7 @@ mod q5_0_tests {
     use super::*;
 
     #[test]
-    fn test_q5_0_dequantize_single_block() {
+    fn test_q5_0_dequantize_single_block() -> anyhow::Result<()> {
         // Create a Q5_0 tensor
         // Block: scale (4) + qh (4) + quants (20)
 
@@ -368,10 +378,12 @@ mod q5_0_tests {
                 result[i]
             );
         }
+
+        Ok(())
     }
 
     #[test]
-    fn test_q5_0_dequantize_range() {
+    fn test_q5_0_dequantize_range() -> anyhow::Result<()> {
         // Test full range of Q5_0 (0-31)
         let scale: f32 = 1.0;
         let mut data = Vec::new();
@@ -405,10 +417,12 @@ mod q5_0_tests {
                 result[i]
             );
         }
+
+        Ok(())
     }
 
     #[test]
-    fn test_q5_0_dequantize_negative_scale() {
+    fn test_q5_0_dequantize_negative_scale() -> anyhow::Result<()> {
         // Test with negative scale
         let scale: f32 = -0.1;
         let mut data = Vec::new();
@@ -441,6 +455,8 @@ mod q5_0_tests {
                 result[i]
             );
         }
+
+        Ok(())
     }
 }
 
@@ -449,7 +465,7 @@ mod q5_1_tests {
     use super::*;
 
     #[test]
-    fn test_q5_1_dequantize_single_block() {
+    fn test_q5_1_dequantize_single_block() -> anyhow::Result<()> {
         // Create a Q5_1 tensor
         // Block: scale (4) + min (4) + qh (4) + quants (20)
 
@@ -500,10 +516,12 @@ mod q5_1_tests {
                 result[i]
             );
         }
+
+        Ok(())
     }
 
     #[test]
-    fn test_q5_1_dequantize_full_range() {
+    fn test_q5_1_dequantize_full_range() -> anyhow::Result<()> {
         // Test full 5-bit range (0-31)
         let scale: f32 = 0.5;
         let min: f32 = -10.0;
@@ -536,10 +554,12 @@ mod q5_1_tests {
                 result[i]
             );
         }
+
+        Ok(())
     }
 
     #[test]
-    fn test_q5_1_dequantize_multiple_blocks() {
+    fn test_q5_1_dequantize_multiple_blocks() -> anyhow::Result<()> {
         // Test with multiple blocks
         let mut data = Vec::new();
 
@@ -601,5 +621,7 @@ mod q5_1_tests {
                 result[i]
             );
         }
+
+        Ok(())
     }
 }

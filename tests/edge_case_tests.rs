@@ -10,6 +10,7 @@ use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
 use serial_test::serial;
 use rocmforge::kv_cache::{CacheConfig, KvCache, KvCacheError};
 use rocmforge::backend::hip_backend::HipBackend;
+use anyhow::Context;
 
 // ============================================================================
 // KV Cache Edge Cases
@@ -17,7 +18,7 @@ use rocmforge::backend::hip_backend::HipBackend;
 
 #[test]
 #[serial]
-fn test_kv_cache_empty_initial_state() {
+fn test_kv_cache_empty_initial_state() -> anyhow::Result<()> {
     // Test KV cache with no prior cached keys/values
     // Edge case: Cache should be properly initialized with zero state
     let fixture = GPU_FIXTURE.as_ref()
@@ -34,11 +35,12 @@ fn test_kv_cache_empty_initial_state() {
         "Cache should start with no active sequences"
     );
     assert_eq!(stats.total_tokens, 0, "Cache should start with no tokens");
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_kv_cache_single_token() {
+fn test_kv_cache_single_token() -> anyhow::Result<()> {
     // Test KV cache with single token (minimum meaningful operation)
     // Edge case: Smallest non-zero allocation
     let fixture = GPU_FIXTURE.as_ref()
@@ -58,11 +60,12 @@ fn test_kv_cache_single_token() {
         "Should have 1 page after single allocation"
     );
     assert_eq!(stats.active_sequences, 1, "Should have 1 active sequence");
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_kv_cache_eviction_at_capacity() {
+fn test_kv_cache_eviction_at_capacity() -> anyhow::Result<()> {
     // Test KV cache behavior when reaching max capacity
     // Edge case: Boundary between acceptable and over-capacity
     let fixture = GPU_FIXTURE.as_ref()
@@ -109,11 +112,12 @@ fn test_kv_cache_eviction_at_capacity() {
             panic!("Should not succeed when cache is full");
         }
     }
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_kv_cache_cross_sequence_isolation() {
+fn test_kv_cache_cross_sequence_isolation() -> anyhow::Result<()> {
     // Test that different sequences are properly isolated in the cache
     // Edge case: Multiple concurrent sequences should not interfere
     let fixture = GPU_FIXTURE.as_ref()
@@ -137,11 +141,12 @@ fn test_kv_cache_cross_sequence_isolation() {
     let stats = cache.get_cache_stats();
     assert_eq!(stats.total_pages, 3, "Should have 3 total pages");
     assert_eq!(stats.active_sequences, 2, "Should have 2 active sequences");
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_kv_cache_sequence_reuse() {
+fn test_kv_cache_sequence_reuse() -> anyhow::Result<()> {
     // Test that allocating for same sequence increases page count
     // Edge case: Same sequence ID with multiple allocations
     let fixture = GPU_FIXTURE.as_ref()
@@ -166,6 +171,7 @@ fn test_kv_cache_sequence_reuse() {
         stats.active_sequences, 1,
         "Should still have 1 active sequence"
     );
+    Ok(())
 }
 
 // ============================================================================
@@ -274,7 +280,7 @@ fn test_cache_config_zero_layers() {
 
 #[test]
 #[serial]
-fn test_cache_config_minimum_valid_values() {
+fn test_cache_config_minimum_valid_values() -> anyhow::Result<()> {
     // Test edge case: All minimum valid values (1)
     // This tests the lower boundary of valid configurations
     let config = CacheConfig::new(1, 1, 1, 1, 1);
@@ -289,11 +295,12 @@ fn test_cache_config_minimum_valid_values() {
     assert_eq!(config.num_heads, 1);
     assert_eq!(config.head_dim, 1);
     assert_eq!(config.num_layers, 1);
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_cache_config_large_values() {
+fn test_cache_config_large_values() -> anyhow::Result<()> {
     // Test edge case: Large but still valid values
     // This tests the upper boundary before resource limits
     let config = CacheConfig::new(65536, 10000, 128, 256, 100);
@@ -305,4 +312,5 @@ fn test_cache_config_large_values() {
     assert_eq!(config.num_heads, 128);
     assert_eq!(config.head_dim, 256);
     assert_eq!(config.num_layers, 100);
+    Ok(())
 }

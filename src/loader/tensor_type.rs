@@ -94,6 +94,29 @@ impl GgufTensorType {
     pub fn is_quantized(&self) -> bool {
         !matches!(self, GgufTensorType::F32 | GgufTensorType::F16)
     }
+
+    /// Get the element size in bytes for this tensor type.
+    /// For block-quantized types, returns the block size.
+    pub fn element_size(&self) -> usize {
+        match self {
+            GgufTensorType::F32 => 4,
+            GgufTensorType::F16 => 2,
+            // Block-based quantization types return their block size
+            GgufTensorType::Q4_0 => 32,
+            GgufTensorType::Q4_1 => 32,
+            GgufTensorType::Q5_0 => 32,
+            GgufTensorType::Q5_1 => 32,
+            GgufTensorType::Q8_0 => 32,
+            GgufTensorType::Q2_K => 256,
+            GgufTensorType::Q3_K => 256,
+            GgufTensorType::Q4_K => 256,
+            GgufTensorType::Q5_K => 256,
+            GgufTensorType::Q6_K => 256,
+            GgufTensorType::Mxfp4 => 32,
+            GgufTensorType::Mxfp6E2m3 => 32,
+            GgufTensorType::Mxfp6E3m2 => 32,
+        }
+    }
 }
 
 impl fmt::Display for GgufTensorType {
