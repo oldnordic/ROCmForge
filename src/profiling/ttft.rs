@@ -175,7 +175,7 @@ impl TtftBreakdown {
             component = "h2d_transfer";
         }
         if self.d2h_transfer_ms > max_time {
-            max_time = self.d2h_transfer_ms;
+            let _ = self.d2h_transfer_ms; // Value exceeds previous max, but we only need the component name
             component = "d2h_transfer";
         }
 
