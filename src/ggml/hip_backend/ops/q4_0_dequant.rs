@@ -30,7 +30,7 @@ const Q4_0_ELEMENTS_PER_BLOCK: usize = 32;
 
 /// Cached kernel modules and functions for Q4_0 dequantization
 #[derive(Debug)]
-struct Q4_0DequantCache {
+pub struct Q4_0DequantCache {
     module: Option<HipModule>,
     kernel: Option<HipKernel>,
 }
