@@ -115,14 +115,46 @@ Explicitly excluded from v1.2.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| HYGIENE-01 | Phase 14-01 | Pending |
-| HYGIENE-02 through HYGIENE-07 | Phase 14-05 | Pending |
-| SAMPLING-01 through SAMPLING-06 | Phase 14-02 | Pending |
-| ROPE-01 through ROPE-06 | Phase 14-03 | Pending |
-| QUANT-01 through QUANT-06 | Phase 14-04 | Pending |
-| ATTENTION-01 through ATTENTION-05 | Phase 14-04 | Pending |
-| TEST-01 through TEST-06 | Phase 14-06 | Pending |
-| PERF-01 through PERF-04 | Phase 14-06 | Pending |
+| HYGIENE-01 | Phase 14 | Pending |
+| HYGIENE-02 | Phase 19 | Pending |
+| HYGIENE-03 | Phase 19 | Pending |
+| HYGIENE-04 | Phase 19 | Pending |
+| HYGIENE-05 | Phase 19 | Pending |
+| HYGIENE-06 | Phase 19 | Pending |
+| HYGIENE-07 | Phase 19 | Pending |
+| SAMPLING-01 | Phase 15 | Pending |
+| SAMPLING-02 | Phase 15 | Pending |
+| SAMPLING-03 | Phase 15 | Pending |
+| SAMPLING-04 | Phase 15 | Pending |
+| SAMPLING-05 | Phase 15 | Pending |
+| SAMPLING-06 | Phase 15 | Pending |
+| ROPE-01 | Phase 16 | Pending |
+| ROPE-02 | Phase 16 | Pending |
+| ROPE-03 | Phase 16 | Pending |
+| ROPE-04 | Phase 16 | Pending |
+| ROPE-05 | Phase 16 | Pending |
+| ROPE-06 | Phase 16 | Pending |
+| QUANT-01 | Phase 17 | Pending |
+| QUANT-02 | Phase 17 | Pending |
+| QUANT-03 | Phase 17 | Pending |
+| QUANT-04 | Phase 17 | Pending |
+| QUANT-05 | Phase 17 | Pending |
+| QUANT-06 | Phase 17 | Pending |
+| ATTENTION-01 | Phase 18 | Pending |
+| ATTENTION-02 | Phase 18 | Pending |
+| ATTENTION-03 | Phase 18 | Pending |
+| ATTENTION-04 | Phase 18 | Pending |
+| ATTENTION-05 | Phase 18 | Pending |
+| TEST-01 | Phase 20 | Pending |
+| TEST-02 | Phase 20 | Pending |
+| TEST-03 | Phase 20 | Pending |
+| TEST-04 | Phase 20 | Pending |
+| TEST-05 | Phase 20 | Pending |
+| TEST-06 | Phase 20 | Pending |
+| PERF-01 | Phase 20 | Pending |
+| PERF-02 | Phase 20 | Pending |
+| PERF-03 | Phase 20 | Pending |
+| PERF-04 | Phase 20 | Pending |
 
 **Coverage:**
 - v1 requirements: 37 total
@@ -132,4 +164,4 @@ Explicitly excluded from v1.2.
 ---
 
 *Requirements defined: 2026-01-19*
-*Last updated: 2026-01-19 after initial definition*
+*Last updated: 2026-01-19 after roadmap creation*

@@ -5,20 +5,21 @@
 See: .planning/PROJECT.md (updated 2026-01-19)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** v1.1 milestone complete — ready for next milestone
+**Current focus:** Phase 14 - Scheduler Clone Bug Fix
 
 ## Current Position
 
-Phase: Milestone v1.1 COMPLETE
-Status: Ready for next milestone
-Last activity: 2026-01-19 — v1.1 milestone archived
+Phase: 14 of 20 (Scheduler Clone Bug Fix)
+Plan: 0/? in current phase
+Status: Ready to plan
+Last activity: 2026-01-19 — v1.2 roadmap created
 
-Progress: [████████████████████████████] 100% (101/101 v1.0+v1.1 plans complete)
+Progress: [████░░░░░░░░░░░░░░░░░░░░] 14% (14 phases of 20 planned)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 101
+- Total plans completed: 101 (v1.0 + v1.1)
 - Average duration: ~45 min
 - Total execution time: ~73 hours
 
@@ -56,13 +57,10 @@ Progress: [███████████████████████
 
 Decisions are logged in PROJECT.md Key Decisions table.
 
-Recent decisions affecting v1.1:
+Recent decisions affecting v1.2:
 
-- **Phase 10**: Selective memory pooling implemented to avoid MES firmware hang at 180s (not ROCm D2H bug)
-- **v1.1 Research**: Qwen2 bug root cause is `head_dim = 0` from missing GGUF key, not D2H issue
-- **v1.1 Fix Strategy**: Calculate `head_dim = hidden_size / num_heads` before GGUF parsing (llama.cpp pattern)
-- **Phase 13-01**: Implemented calculate_default_head_dim() method; fixed rope.dimension_count parsing to use safe if-let instead of unwrap_or(0); preserves calculated defaults when GGUF values are invalid/missing
-- **Phase 13-02**: Documented that selective memory pooling was NEVER IMPLEMENTED despite "Status: COMPLETE" in research doc; verified current direct-allocation approach avoids D2H bug (no sub-buffers exist)
+- **v1.1 Complete**: Qwen2 head_dim fixed via `calculate_default_head_dim()`; selective pooling documented as never implemented
+- **v1.2 Strategy**: Fix scheduler clone bug first (critical, isolated), then GPU kernels (build performance), then warnings (do after feature work)
 
 ### Pending Todos
 
@@ -70,60 +68,19 @@ None yet.
 
 ### Blockers/Concerns
 
-- **Code quality note**: Duplicate `GgufMetadata` structs exist (one in metadata.rs, one in gguf.rs) - pre-existing technical debt addressed in Phase 13-01 by duplicating calculate_default_head_dim() method
-- **Pre-existing test failures**: decode_step_integration_tests and edge_case_tests::test_kv_cache_eviction_at_capacity fail (unrelated to memory allocation)
-- **10 tests marked as #[ignore]**: Tests using deprecated `ExecutionPlan::new()` need rewriting to use `ExecutionPlan::from_gguf()` with actual GGUF test files
-- **DeviceTensor::to_host_vec() migration needed**: 100+ usages remain across codebase; deprecated but widely used
+- **Scheduler Clone Bug**: `update_iteration_batch` overwrites scheduler state with stale batch clones; test exists at scheduler.rs:988-1030
+- **GPU Sampling Kernels**: Need verification if existing `topk_sampling.hip` and `topp_sampling.hip` kernels are functional
+- **Code quality note**: 27 lib warnings remain from v1.1; duplicate `GgufMetadata` structs exist (pre-existing technical debt)
 
 ### Completed Work
 
 **v1.1 Milestone (2026-01-19):**
-
-**Phase 13-01:**
-- Added `calculate_default_head_dim()` method to both `GgufMetadata` structs
-- Fixed `rope.dimension_count` parsing in 4 locations using safe if-let pattern
-- Integrated default calculation call in `load_from_disk()`
-- Added 8 unit tests for head_dim calculation
-- Verification: 5/5 must_haves passed
-- Commits: 651c25c, 3ea7e0b, ebb9be7, d9b87fc
-
-**Phase 13-02:**
-- Verified selective memory pooling was NEVER IMPLEMENTED (no LARGE_TENSOR_THRESHOLD, from_pool() never called)
-- Added status update section to ROCM_D2H_ERROR_RESEARCH.md with verification evidence
-- Changed misleading "Status: COMPLETE" to "Status: DESIGN ONLY - NOT IMPLEMENTED"
-- Created MEMORY_ARCHITECTURE.md documenting actual direct-allocation implementation
-- Verified current approach avoids D2H bug (no sub-buffers exist)
-- Commits: cf575b4, 89cc4d8, a3b8240
-
-**Phase 13-03:**
-- Removed 4 unused functions/constants: transpose_in_place_gpu, LayerPlan::new, _legacy_try_gpu_attention, ATTENTION_MASK_KERNEL
-- Fixed 4 incorrect #[allow(dead_code)] markers (InferenceServer impl, ExecutionPlan impl, HTTP server)
-- Added #[allow(non_camel_case_types)] to GgufTensorType enum for GGUF spec compliance
-- Documented FFI declarations are actively used (not dead code) with explanatory comment
-- Reduced #[allow(dead_code)] markers from 8 to 3 (FFI block + 2 TODO fields)
-- Replaced 30+ direct `copy_to_host()` calls with `copy_from_device_safe()`
-- Updated `matmul_f32()` signature to require backend parameter
-- Fixed 15+ call sites across src/ and tests/
-- Deprecated `DeviceTensor::to_host_vec()` method
-- Fixed test `copy_to_host` calls in 5 test files
-- Marked 10 tests using `ExecutionPlan::new()` as #[ignore]
-- Resolved all `copy_to_host` deprecation warnings in src/
-- Ran `cargo fix` + manual cleanup. Removed 93 unused import warnings.
-- Manually removed remaining unused imports from 39 test/benchmark files
-- Fixed cfg-gated imports in build.rs
-- Added missing test imports (Duration, thread) where needed
-- Reduced unused import warnings from 93 to 0
-- Removed unused variables and unnecessary mut keywords across src/ and tests/
-- Fixed test compilation errors from previous plan's import removal
-- Suppressed deprecated to_host_vec warnings with #[allow(deprecated)] + TODO comments
-- Added #[allow(dead_code)] to kernel cache infrastructure (reserved for future)
-- Added #[allow(non_camel_case_types)] to Q4_K/Q6_K enum variants matching GGUF spec
-- Lib warnings reduced to 27 (from original 406 baseline)
-- All 572 lib tests passing
-- Commits: 82fc1a0, b9c469f, a1acb8e, 8c80260, 3b4fd67, 73c23ee, 4f4a7d6, 8224317, 430a297, eeef489, 9098943, 81513ab, a65ddc2, 0dc684a, eae4c2c, 5ef03db, 8026994, e6cc136, 9ce929b, cc74072, 67094a0
+- Phase 13-01: Qwen2 head_dim fix
+- Phase 13-02: Memory pooling documentation
+- Phase 13-03: Dead code removal (93% warning reduction)
 
 ## Session Continuity
 
 Last session: 2026-01-19
-Stopped at: v1.1 milestone archived — ready for next milestone
+Stopped at: v1.2 roadmap created — ready for Phase 14 planning
 Resume file: None
