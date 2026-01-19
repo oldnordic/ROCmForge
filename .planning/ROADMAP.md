@@ -121,11 +121,12 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 4. RoPE kernel is added to build.rs compilation list
 5. CPU-GPU transfer overhead is eliminated (no round-trip)
 
-**Plans**: 1 plan
+**Plans**: 2 plans in 1 wave
 
-- [ ] 16-01-PLAN.md — Verify GPU RoPE implementation satisfies ROPE-01 through ROPE-06
+- [ ] 16-01-PLAN.md — Verify RoPE kernel compilation and GPU path purity (ROPE-01, ROPE-04, ROPE-06)
+- [ ] 16-02-PLAN.md — Add comprehensive RoPE GPU tests (ROPE-02, ROPE-03, ROPE-05)
 
-**Summary:** RoPE GPU kernels already exist (rope.hip, position_embeddings.hip). This plan verifies correctness, adds long context tests, and confirms no CPU round-trip overhead.
+**Summary:** RoPE GPU kernels already exist (rope.hip, position_embeddings.hip). Plan 01 verifies compilation and confirms no CPU round-trip. Plan 02 adds long context and multi-head tests, verifies existing tests pass.
 
 ---
 
@@ -234,10 +235,10 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 | 13-03. Dead Code Removal | v1.1 | 4/4 | Complete | 2026-01-19 |
 | 14. Scheduler Clone Bug Fix | v1.2 | 2/2 | Complete | 2026-01-19 |
 | 15. GPU Sampling Kernels | v1.2 | 7/7 | Complete | 2026-01-19 |
-| 16. GPU RoPE Implementation | v1.2 | 0/1 | Not started | - |
+| 16. GPU RoPE Implementation | v1.2 | 0/2 | Not started | - |
 | 17. GPU Quantization | v1.2 | 0/? | Not started | - |
 | 18. GPU Attention Completion | v1.2 | 0/? | Not started | - |
 | 19. Code Hygiene Completion | v1.2 | 0/? | Not started | - |
 | 20. Test Health & Performance | v1.2 | 0/? | Not started | - |
 
-**Total Progress:** 117/117 v1.0+v1.1+v1.2 plans complete (100%)
+**Total Progress:** 117/119 v1.0+v1.1+v1.2 plans complete (98%)
