@@ -121,7 +121,11 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 4. RoPE kernel is added to build.rs compilation list
 5. CPU-GPU transfer overhead is eliminated (no round-trip)
 
-**Plans**: TBD
+**Plans**: 1 plan
+
+- [ ] 16-01-PLAN.md — Verify GPU RoPE implementation satisfies ROPE-01 through ROPE-06
+
+**Summary:** RoPE GPU kernels already exist (rope.hip, position_embeddings.hip). This plan verifies correctness, adds long context tests, and confirms no CPU round-trip overhead.
 
 ---
 
@@ -230,7 +234,7 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 | 13-03. Dead Code Removal | v1.1 | 4/4 | Complete | 2026-01-19 |
 | 14. Scheduler Clone Bug Fix | v1.2 | 2/2 | Complete | 2026-01-19 |
 | 15. GPU Sampling Kernels | v1.2 | 7/7 | Complete | 2026-01-19 |
-| 16. GPU RoPE Implementation | v1.2 | 0/? | Not started | - |
+| 16. GPU RoPE Implementation | v1.2 | 0/1 | Not started | - |
 | 17. GPU Quantization | v1.2 | 0/? | Not started | - |
 | 18. GPU Attention Completion | v1.2 | 0/? | Not started | - |
 | 19. Code Hygiene Completion | v1.2 | 0/? | Not started | - |
