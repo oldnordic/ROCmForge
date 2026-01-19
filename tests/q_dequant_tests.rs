@@ -632,28 +632,29 @@ mod q5_1_tests {
 #[cfg(test)]
 mod gpu_q4_0_tests {
     use super::*;
-    use rocmforge::backend::HipBackend;
     use rocmforge::ggml::hip_backend::ops::q4_0_dequant::{
         dequantize_q4_0_kernel_cached, dequantize_q4_0_cpu,
     };
+    // Use shared GPU fixture to avoid creating multiple backends
+    use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
+    use serial_test::serial;
 
     /// Test GPU Q4_0 dequantization produces bit-exact results matching CPU reference
     ///
     /// This test runs in CI (no #[ignore]) and verifies bit-exact GPU output.
     /// It will be skipped if GPU is not available via runtime check, not a test failure.
     #[test]
-    #[cfg(feature = "rocm")]
+    #[serial]
     fn test_gpu_q4_0_bit_exact() {
-        // This test runs in CI (no #[ignore]) and verifies bit-exact GPU output
-        // It will be skipped if GPU is not available via runtime check, not a test failure
-
-        let backend = match HipBackend::new() {
-            Ok(b) => b,
-            Err(_) => {
+        // Use shared GPU fixture to avoid creating multiple backends
+        let fixture = match GPU_FIXTURE.as_ref() {
+            Some(f) => f,
+            None => {
                 println!("GPU not available - skipping test (not a failure)");
                 return;
             }
         };
+        let backend = fixture.backend();
 
         // Create test data: 1 block with scale=1.0, values 0-15
         let mut data = vec![0u8; 20];
@@ -687,15 +688,16 @@ mod gpu_q4_0_tests {
 
     /// Test GPU Q4_0 dequantization with multiple blocks
     #[test]
-    #[cfg(feature = "rocm")]
+    #[serial]
     fn test_gpu_q4_0_bit_exact_multiple_blocks() {
-        let backend = match HipBackend::new() {
-            Ok(b) => b,
-            Err(_) => {
+        let fixture = match GPU_FIXTURE.as_ref() {
+            Some(f) => f,
+            None => {
                 println!("GPU not available - skipping test (not a failure)");
                 return;
             }
         };
+        let backend = fixture.backend();
 
         // Create test data: 2 blocks with different scales
         let n_elements = 64;
@@ -740,15 +742,16 @@ mod gpu_q4_0_tests {
 
     /// Test GPU Q4_0 dequantization with negative scale
     #[test]
-    #[cfg(feature = "rocm")]
+    #[serial]
     fn test_gpu_q4_0_bit_exact_negative_scale() {
-        let backend = match HipBackend::new() {
-            Ok(b) => b,
-            Err(_) => {
+        let fixture = match GPU_FIXTURE.as_ref() {
+            Some(f) => f,
+            None => {
                 println!("GPU not available - skipping test (not a failure)");
                 return;
             }
         };
+        let backend = fixture.backend();
 
         // Create test data with negative scale
         let mut data = vec![0u8; 20];
@@ -782,15 +785,16 @@ mod gpu_q4_0_tests {
 
     /// Test GPU Q4_0 dequantization with partial block (non-multiple of 32)
     #[test]
-    #[cfg(feature = "rocm")]
+    #[serial]
     fn test_gpu_q4_0_bit_exact_partial_block() {
-        let backend = match HipBackend::new() {
-            Ok(b) => b,
-            Err(_) => {
+        let fixture = match GPU_FIXTURE.as_ref() {
+            Some(f) => f,
+            None => {
                 println!("GPU not available - skipping test (not a failure)");
                 return;
             }
         };
+        let backend = fixture.backend();
 
         // Create test data with only 10 elements
         let mut data = vec![0u8; 20];
@@ -831,10 +835,12 @@ mod gpu_q4_0_tests {
 #[cfg(test)]
 mod gpu_q4_k_tests {
     use super::*;
-    use rocmforge::backend::HipBackend;
     use rocmforge::ggml::hip_backend::ops::q4_k_dequant::{
         dequantize_q4_k_gpu_kernel, dequantize_q4_k_cpu,
     };
+    // Use shared GPU fixture to avoid creating multiple backends
+    use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
+    use serial_test::serial;
 
     /// Test GPU Q4_K dequantization produces bit-exact results matching CPU reference
     ///
@@ -842,15 +848,16 @@ mod gpu_q4_k_tests {
     /// This test runs in CI (no #[ignore]) and verifies bit-exact GPU output.
     /// It will be skipped if GPU is not available via runtime check, not a test failure.
     #[test]
-    #[cfg(feature = "rocm")]
+    #[serial]
     fn test_gpu_q4_k_bit_exact() {
-        let backend = match HipBackend::new() {
-            Ok(b) => b,
-            Err(_) => {
+        let fixture = match GPU_FIXTURE.as_ref() {
+            Some(f) => f,
+            None => {
                 println!("GPU not available - skipping test (not a failure)");
                 return;
             }
         };
+        let backend = fixture.backend();
 
         // Create test data: 1 super-block with varying scales and values
         let mut data = vec![0u8; 256];  // Q4_K super-block size
@@ -907,10 +914,12 @@ mod gpu_q4_k_tests {
 #[cfg(test)]
 mod gpu_q6_k_tests {
     use super::*;
-    use rocmforge::backend::HipBackend;
     use rocmforge::ggml::hip_backend::ops::q6_k_dequant::{
         dequantize_q6_k_gpu_kernel, dequantize_q6_k_cpu,
     };
+    // Use shared GPU fixture to avoid creating multiple backends
+    use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
+    use serial_test::serial;
 
     /// Test GPU Q6_K dequantization produces bit-exact results matching CPU reference
     ///
@@ -918,15 +927,16 @@ mod gpu_q6_k_tests {
     /// This test runs in CI (no #[ignore]) and verifies bit-exact GPU output.
     /// It will be skipped if GPU is not available via runtime check, not a test failure.
     #[test]
-    #[cfg(feature = "rocm")]
+    #[serial]
     fn test_gpu_q6_k_bit_exact() {
-        let backend = match HipBackend::new() {
-            Ok(b) => b,
-            Err(_) => {
+        let fixture = match GPU_FIXTURE.as_ref() {
+            Some(f) => f,
+            None => {
                 println!("GPU not available - skipping test (not a failure)");
                 return;
             }
         };
+        let backend = fixture.backend();
 
         // Create test data: 1 block with Q6_K format
         let mut data = vec![0u8; 256];  // Q6_K block size
@@ -978,27 +988,30 @@ mod gpu_q6_k_tests {
 #[cfg(test)]
 mod gpu_quantized_matmul_tests {
     use super::*;
+    // Use shared GPU fixture to avoid creating multiple backends
+    use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
+    use serial_test::serial;
 
     /// Test Q4_0 fused matmul produces results matching CPU reference
     ///
     /// This test verifies that the fused dequant+matmul kernel produces
     /// the same results as CPU dequantization followed by matmul.
     #[test]
-    #[cfg(feature = "rocm")]
+    #[serial]
     #[ignore] // Requires GPU hardware and HSACO files
     fn test_gpu_quantized_matmul_q4_0() {
-        use rocmforge::backend::HipBackend;
         use rocmforge::ggml::hip_backend::ops::quantized_matmul::{
             matmul_q4_0, matmul_q4_0_cpu_fallback, dequantize_q4_0,
         };
 
-        let backend = match HipBackend::new() {
-            Ok(b) => b,
-            Err(_) => {
+        let fixture = match GPU_FIXTURE.as_ref() {
+            Some(f) => f,
+            None => {
                 println!("GPU not available - skipping test (not a failure)");
                 return;
             }
         };
+        let backend = fixture.backend();
 
         // Test dimensions: small for quick testing
         // input: [1 x 4], weights: [4 x 4], output: [1 x 4]
@@ -1083,22 +1096,22 @@ mod gpu_quantized_matmul_tests {
 
     /// Test Q4_K fused matmul produces results matching CPU reference
     #[test]
-    #[cfg(feature = "rocm")]
+    #[serial]
     #[ignore] // Requires GPU hardware and HSACO files
     fn test_gpu_quantized_matmul_q4_k() {
-        use rocmforge::backend::HipBackend;
         use rocmforge::ggml::hip_backend::ops::quantized_matmul::{
             matmul_q4_k, dequantize_q4_k,
         };
         use rocmforge::ggml::hip_backend::ops::matmul;
 
-        let backend = match HipBackend::new() {
-            Ok(b) => b,
-            Err(_) => {
+        let fixture = match GPU_FIXTURE.as_ref() {
+            Some(f) => f,
+            None => {
                 println!("GPU not available - skipping test (not a failure)");
                 return;
             }
         };
+        let backend = fixture.backend();
 
         // Test dimensions: [1 x 4] input, [4 x 4] weights, [1 x 4] output
         let n_rows = 4;
@@ -1199,22 +1212,22 @@ mod gpu_quantized_matmul_tests {
 
     /// Test Q6_K fused matmul produces results matching CPU reference
     #[test]
-    #[cfg(feature = "rocm")]
+    #[serial]
     #[ignore] // Requires GPU hardware and HSACO files
     fn test_gpu_quantized_matmul_q6_k() {
-        use rocmforge::backend::HipBackend;
         use rocmforge::ggml::hip_backend::ops::quantized_matmul::{
             matmul_q6_k, dequantize_q6_k,
         };
         use rocmforge::ggml::hip_backend::ops::matmul;
 
-        let backend = match HipBackend::new() {
-            Ok(b) => b,
-            Err(_) => {
+        let fixture = match GPU_FIXTURE.as_ref() {
+            Some(f) => f,
+            None => {
                 println!("GPU not available - skipping test (not a failure)");
                 return;
             }
         };
+        let backend = fixture.backend();
 
         // Test dimensions: [1 x 4] input, [4 x 4] weights, [1 x 4] output
         let n_rows = 4;
@@ -1309,21 +1322,21 @@ mod gpu_quantized_matmul_tests {
 
     /// Test Q4_0 matmul with varying weight values
     #[test]
-    #[cfg(feature = "rocm")]
+    #[serial]
     #[ignore] // Requires GPU hardware and HSACO files
     fn test_gpu_quantized_matmul_q4_0_varying_weights() {
-        use rocmforge::backend::HipBackend;
         use rocmforge::ggml::hip_backend::ops::quantized_matmul::{
             matmul_q4_0, matmul_q4_0_cpu_fallback,
         };
 
-        let backend = match HipBackend::new() {
-            Ok(b) => b,
-            Err(_) => {
+        let fixture = match GPU_FIXTURE.as_ref() {
+            Some(f) => f,
+            None => {
                 println!("GPU not available - skipping test (not a failure)");
                 return;
             }
         };
+        let backend = fixture.backend();
 
         let n_rows = 4;
         let n_cols = 4;

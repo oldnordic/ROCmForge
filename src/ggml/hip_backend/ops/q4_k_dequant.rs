@@ -20,6 +20,9 @@ use std::sync::Mutex;
 
 use crate::backend::{HipBackend, HipKernel, HipModule};
 
+#[cfg(test)]
+use half::f16;
+
 /// Result type for Q4_K dequantization operations
 pub type Q4_KDequantResult<T> = Result<T, String>;
 
@@ -283,7 +286,7 @@ mod tests {
 
         // Set scales (8 half-precision values at offset 0)
         for i in 0..8 {
-            let scale_bits = 1.0f32.to_f16().to_bits();
+            let scale_bits = f16::from_f32(1.0).to_bits();
             let scale_bytes = scale_bits.to_le_bytes();
             data[i * 2] = scale_bytes[0];
             data[i * 2 + 1] = scale_bytes[1];
@@ -296,7 +299,7 @@ mod tests {
 
         // Set quantized values (8 * 28 = 224 bytes at offset 32)
         for i in 0..224 {
-            data[32 + i] = ((i % 16) << 4) | (i % 16);
+            data[32 + i] = (((i % 16) << 4) | (i % 16)) as u8;
         }
 
         let result = dequantize_q4_k_cpu(&data, 256);
@@ -328,7 +331,7 @@ mod tests {
 
         // Set scales
         for i in 0..8 {
-            let scale_bits = 1.0f32.to_f16().to_bits();
+            let scale_bits = f16::from_f32(1.0).to_bits();
             let scale_bytes = scale_bits.to_le_bytes();
             data[i * 2] = scale_bytes[0];
             data[i * 2 + 1] = scale_bytes[1];

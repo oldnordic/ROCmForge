@@ -52,6 +52,36 @@ struct KernelCache {
 #[allow(dead_code)] // Reserved for future kernel caching optimization
 static GLOBAL_CACHE: Mutex<Option<KernelCache>> = Mutex::new(None);
 
+// MQA-specific kernel cache (separate for lazy loading)
+#[cfg(feature = "rocm")]
+static MQA_KERNEL_CACHE: Mutex<Option<MqaKernelCache>> = Mutex::new(None);
+
+// Minimal attention kernel cache (for basic attention without all kernels)
+#[cfg(feature = "rocm")]
+static ATTENTION_KERNEL_CACHE: Mutex<Option<AttentionKernelCache>> = Mutex::new(None);
+
+/// MQA-specific kernel cache (lazy loaded)
+#[cfg(feature = "rocm")]
+#[derive(Debug)]
+struct MqaKernelCache {
+    backend: Arc<HipBackend>,
+    mqa_kv_replicate_module: HipModule,
+    mqa_kv_replicate_kernel: HipKernel,
+}
+
+/// Minimal attention kernel cache (only QK^T, softmax, weighted matmul)
+#[cfg(feature = "rocm")]
+#[derive(Debug)]
+struct AttentionKernelCache {
+    backend: Arc<HipBackend>,
+    qkt_matmul_module: HipModule,
+    qkt_matmul_kernel: HipKernel,
+    softmax_module: HipModule,
+    softmax_kernel: HipKernel,
+    weighted_matmul_module: HipModule,
+    weighted_matmul_kernel: HipKernel,
+}
+
 /// Get or initialize the global kernel cache
 #[allow(dead_code)] // Reserved for future kernel caching optimization
 fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> {
@@ -309,6 +339,178 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
     Ok(&GLOBAL_CACHE)
 }
 
+/// Get or initialize the MQA-specific kernel cache
+///
+/// This is a minimal cache that only loads the MQA KV replication kernel,
+/// avoiding dependency on other kernels that may not be compiled.
+#[cfg(feature = "rocm")]
+fn get_mqa_kernel_and_backend() -> Result<(Arc<HipBackend>, *mut c_void), HipError> {
+    // First check if already initialized
+    {
+        let cache = MQA_KERNEL_CACHE
+            .lock()
+            .map_err(|e| HipError::LockPoisoned(format!("MQA_KERNEL_CACHE lock poisoned: {}", e)))?;
+        if let Some(ref c) = *cache {
+            return Ok((c.backend.clone(), c.mqa_kv_replicate_kernel.as_ptr()));
+        }
+    }
+
+    // Need to initialize - drop the read lock first
+    let mut cache = MQA_KERNEL_CACHE
+        .lock()
+        .map_err(|e| HipError::LockPoisoned(format!("MQA_KERNEL_CACHE lock poisoned: {}", e)))?;
+
+    // Double-check in case another thread initialized while we waited
+    if let Some(ref c) = *cache {
+        return Ok((c.backend.clone(), c.mqa_kv_replicate_kernel.as_ptr()));
+    }
+
+    // Create backend
+    let backend = HipBackend::new().map_err(|e| {
+        HipError::InitializationFailed(format!("Failed to create HipBackend: {}", e))
+    })?;
+
+    // Load MQA KV replication kernel
+    let mqa_kv_replicate_path = std::env::var("MQA_KV_REPLICATE_HSACO")
+        .ok()
+        .ok_or_else(|| HipError::KernelLoadFailed("MQA_KV_REPLICATE_HSACO env var not set".to_string()))?;
+
+    if !Path::new(&mqa_kv_replicate_path).exists() {
+        return Err(HipError::KernelLoadFailed(format!(
+            "HSACO not found: {}",
+            mqa_kv_replicate_path
+        )));
+    }
+
+    let mqa_kv_replicate_module = backend.load_module(&mqa_kv_replicate_path)?;
+    let mqa_kv_replicate_kernel =
+        backend.get_kernel_function(&mqa_kv_replicate_module, "mqa_kv_replicate_fused_kernel")?;
+
+    let kernel_ptr = mqa_kv_replicate_kernel.as_ptr();
+    let backend_arc = backend.clone();
+    *cache = Some(MqaKernelCache {
+        backend,
+        mqa_kv_replicate_module,
+        mqa_kv_replicate_kernel,
+    });
+
+    Ok((backend_arc, kernel_ptr))
+}
+
+/// Get or initialize the minimal attention kernel cache
+///
+/// This cache only loads the kernels needed for basic attention computation:
+/// - QK^T matmul
+/// - Softmax
+/// - Weighted matmul
+#[cfg(feature = "rocm")]
+fn get_attention_kernels() -> Result<(Arc<HipBackend>, (*mut c_void, *mut c_void, *mut c_void)), HipError> {
+    // First check if already initialized
+    {
+        let cache = ATTENTION_KERNEL_CACHE
+            .lock()
+            .map_err(|e| HipError::LockPoisoned(format!("ATTENTION_KERNEL_CACHE lock poisoned: {}", e)))?;
+        if let Some(ref c) = *cache {
+            return Ok((
+                c.backend.clone(),
+                (
+                    c.qkt_matmul_kernel.as_ptr(),
+                    c.softmax_kernel.as_ptr(),
+                    c.weighted_matmul_kernel.as_ptr(),
+                ),
+            ));
+        }
+    }
+
+    // Need to initialize
+    let mut cache = ATTENTION_KERNEL_CACHE
+        .lock()
+        .map_err(|e| HipError::LockPoisoned(format!("ATTENTION_KERNEL_CACHE lock poisoned: {}", e)))?;
+
+    // Double-check in case another thread initialized while we waited
+    if let Some(ref c) = *cache {
+        return Ok((
+            c.backend.clone(),
+            (
+                c.qkt_matmul_kernel.as_ptr(),
+                c.softmax_kernel.as_ptr(),
+                c.weighted_matmul_kernel.as_ptr(),
+            ),
+        ));
+    }
+
+    // Create backend
+    let backend = HipBackend::new().map_err(|e| {
+        HipError::InitializationFailed(format!("Failed to create HipBackend: {}", e))
+    })?;
+
+    // Load QK^T matmul kernel
+    let qkt_matmul_path = std::env::var("QKT_MATMUL_HSACO")
+        .ok()
+        .ok_or_else(|| HipError::KernelLoadFailed("QKT_MATMUL_HSACO env var not set".to_string()))?;
+
+    if !Path::new(&qkt_matmul_path).exists() {
+        return Err(HipError::KernelLoadFailed(format!(
+            "HSACO not found: {}",
+            qkt_matmul_path
+        )));
+    }
+
+    let qkt_matmul_module = backend.load_module(&qkt_matmul_path)?;
+    let qkt_matmul_kernel =
+        backend.get_kernel_function(&qkt_matmul_module, "qkt_matmul_kernel")?;
+
+    // Load softmax kernel
+    let softmax_path = std::env::var("SOFTMAX_HSACO")
+        .ok()
+        .ok_or_else(|| HipError::KernelLoadFailed("SOFTMAX_HSACO env var not set".to_string()))?;
+
+    if !Path::new(&softmax_path).exists() {
+        return Err(HipError::KernelLoadFailed(format!(
+            "HSACO not found: {}",
+            softmax_path
+        )));
+    }
+
+    let softmax_module = backend.load_module(&softmax_path)?;
+    let softmax_kernel = backend.get_kernel_function(&softmax_module, "softmax_kernel")?;
+
+    // Load weighted matmul kernel
+    let weighted_matmul_path = std::env::var("WEIGHTED_MATMUL_HSACO")
+        .ok()
+        .ok_or_else(|| {
+            HipError::KernelLoadFailed("WEIGHTED_MATMUL_HSACO env var not set".to_string())
+        })?;
+
+    if !Path::new(&weighted_matmul_path).exists() {
+        return Err(HipError::KernelLoadFailed(format!(
+            "HSACO not found: {}",
+            weighted_matmul_path
+        )));
+    }
+
+    let weighted_matmul_module = backend.load_module(&weighted_matmul_path)?;
+    let weighted_matmul_kernel =
+        backend.get_kernel_function(&weighted_matmul_module, "weighted_matmul_kernel")?;
+
+    let backend_arc = backend.clone();
+    let qkt_ptr = qkt_matmul_kernel.as_ptr();
+    let softmax_ptr = softmax_kernel.as_ptr();
+    let weighted_ptr = weighted_matmul_kernel.as_ptr();
+
+    *cache = Some(AttentionKernelCache {
+        backend,
+        qkt_matmul_module,
+        qkt_matmul_kernel,
+        softmax_module,
+        softmax_kernel,
+        weighted_matmul_module,
+        weighted_matmul_kernel,
+    });
+
+    Ok((backend_arc, (qkt_ptr, softmax_ptr, weighted_ptr)))
+}
+
 /// GPU kernel for applying scaling factor to attention scores
 ///
 /// # Safety
@@ -430,20 +632,10 @@ pub unsafe fn mask_gpu_kernel(
 /// - No other threads are accessing the same memory concurrently
 #[cfg(feature = "rocm")]
 pub unsafe fn softmax_gpu_kernel(mut scores: *mut f32, batch_size: u32, seq_len: u32) -> i32 {
-    match get_or_init_cache() {
-        Ok(cache_ref) => {
-            let cache = cache_ref
-                .lock()
-                .expect("GLOBAL_CACHE lock poisoned in softmax_gpu_kernel");
-            let cache_ref = cache
-                .as_ref()
-                .expect("KernelCache not initialized in softmax_gpu_kernel");
-
-            let kernel = cache_ref
-                .softmax_kernel
-                .as_ref()
-                .expect("softmax_kernel not initialized");
-            let backend = &cache_ref.backend;
+    match get_attention_kernels() {
+        Ok((backend, (_qkt_ptr, softmax_ptr, _weighted_ptr))) => {
+            // Reconstruct HipKernel from pointer
+            let kernel = HipKernel::from_ptr(softmax_ptr);
 
             // One block per row
             let total_rows = batch_size * seq_len;
@@ -464,7 +656,7 @@ pub unsafe fn softmax_gpu_kernel(mut scores: *mut f32, batch_size: u32, seq_len:
             ];
 
             match backend.launch_kernel_with_module_shared(
-                kernel,
+                &kernel,
                 grid_dim,
                 block_dim,
                 args,
@@ -608,64 +800,52 @@ pub unsafe fn qkt_matmul_gpu_kernel_scaled(
     head_dim: u32,
     scale: f32,
 ) -> Result<(), String> {
-    match get_or_init_cache() {
-        Ok(cache_ref) => {
-            let cache = cache_ref
-                .lock()
-                .map_err(|e| format!("GLOBAL_CACHE lock poisoned: {}", e))?;
-            let cache_ref = cache
-                .as_ref()
-                .ok_or_else(|| "KernelCache not initialized".to_string())?;
+    let (backend, (qkt_ptr, _softmax_ptr, _weighted_ptr)) = get_attention_kernels()
+        .map_err(|e| format!("Failed to get attention kernels: {:?}", e))?;
 
-            let kernel = cache_ref
-                .qkt_matmul_kernel
-                .as_ref()
-                .ok_or_else(|| "qkt_matmul_kernel not loaded".to_string())?;
-            let backend = &cache_ref.backend;
+    // Reconstruct HipKernel from pointer
+    let kernel = HipKernel::from_ptr(qkt_ptr);
 
-            // Grid: (seq_q, num_heads, batch_size)
-            // Each block processes one query position for one head in one batch
-            let grid_dim = (seq_q, num_heads, batch_size);
-            let block_dim = (WARP_SIZE, 1, 1);
+    // Grid: (seq_q, num_heads, batch_size)
+    // Each block processes one query position for one head in one batch
+    let grid_dim = (seq_q, num_heads, batch_size);
+    let block_dim = (WARP_SIZE, 1, 1);
 
-            // Shared memory: WARP_SIZE floats for wave32 reduction
-            let shared_mem_bytes = WARP_SIZE * std::mem::size_of::<f32>() as u32;
+    // Shared memory: WARP_SIZE floats for wave32 reduction
+    let shared_mem_bytes = WARP_SIZE * std::mem::size_of::<f32>() as u32;
 
-            // Prepare kernel arguments
-            let mut q_arg = q as *mut f32;
-            let mut k_arg = k as *mut f32;
-            let mut output_arg = output;
-            let mut scale_arg = scale;
-            let mut batch_size_arg = batch_size;
-            let mut seq_q_arg = seq_q;
-            let mut seq_k_arg = seq_k;
-            let mut num_heads_arg = num_heads;
-            let mut head_dim_arg = head_dim;
+    // Prepare kernel arguments
+    let mut q_arg = q as *mut f32;
+    let mut k_arg = k as *mut f32;
+    let mut output_arg = output;
+    let mut scale_arg = scale;
+    let mut batch_size_arg = batch_size;
+    let mut seq_q_arg = seq_q;
+    let mut seq_k_arg = seq_k;
+    let mut num_heads_arg = num_heads;
+    let mut head_dim_arg = head_dim;
 
-            let args: &[*mut c_void] = &[
-                &mut q_arg as *mut _ as *mut c_void,
-                &mut k_arg as *mut _ as *mut c_void,
-                &mut output_arg as *mut _ as *mut c_void,
-                &mut scale_arg as *mut _ as *mut c_void,
-                &mut batch_size_arg as *mut _ as *mut c_void,
-                &mut seq_q_arg as *mut _ as *mut c_void,
-                &mut seq_k_arg as *mut _ as *mut c_void,
-                &mut num_heads_arg as *mut _ as *mut c_void,
-                &mut head_dim_arg as *mut _ as *mut c_void,
-            ];
+    let args: &[*mut c_void] = &[
+        &mut q_arg as *mut _ as *mut c_void,
+        &mut k_arg as *mut _ as *mut c_void,
+        &mut output_arg as *mut _ as *mut c_void,
+        &mut scale_arg as *mut _ as *mut c_void,
+        &mut batch_size_arg as *mut _ as *mut c_void,
+        &mut seq_q_arg as *mut _ as *mut c_void,
+        &mut seq_k_arg as *mut _ as *mut c_void,
+        &mut num_heads_arg as *mut _ as *mut c_void,
+        &mut head_dim_arg as *mut _ as *mut c_void,
+    ];
 
-            backend
-                .launch_kernel_with_module_shared(
-                    kernel,
-                    grid_dim,
-                    block_dim,
-                    args,
-                    shared_mem_bytes,
-                )
-                .map_err(|e| format!("Kernel launch failed: {:?}", e))
-        }
-        Err(e) => Err(format!("Failed to get cache: {:?}", e)),
-    }
+    backend
+        .launch_kernel_with_module_shared(
+            &kernel,
+            grid_dim,
+            block_dim,
+            args,
+            shared_mem_bytes,
+        )
+        .map_err(|e| format!("Kernel launch failed: {:?}", e))
 }
 
 /// GPU kernel for weighted × V matrix multiplication (softmax weights × V)
@@ -692,62 +872,50 @@ pub unsafe fn weighted_matmul_gpu_kernel(
     num_heads: u32,
     head_dim: u32,
 ) -> Result<(), String> {
-    match get_or_init_cache() {
-        Ok(cache_ref) => {
-            let cache = cache_ref
-                .lock()
-                .map_err(|e| format!("GLOBAL_CACHE lock poisoned: {}", e))?;
-            let cache_ref = cache
-                .as_ref()
-                .ok_or_else(|| "KernelCache not initialized".to_string())?;
+    let (backend, (_qkt_ptr, _softmax_ptr, weighted_ptr)) = get_attention_kernels()
+        .map_err(|e| format!("Failed to get attention kernels: {:?}", e))?;
 
-            let kernel = cache_ref
-                .weighted_matmul_kernel
-                .as_ref()
-                .ok_or_else(|| "weighted_matmul_kernel not loaded".to_string())?;
-            let backend = &cache_ref.backend;
+    // Reconstruct HipKernel from pointer
+    let kernel = HipKernel::from_ptr(weighted_ptr);
 
-            // Grid: (seq_q, num_heads, batch_size)
-            // Each block processes one query position for one head in one batch
-            let grid_dim = (seq_q, num_heads, batch_size);
-            let block_dim = (WARP_SIZE, 1, 1);
+    // Grid: (seq_q, num_heads, batch_size)
+    // Each block processes one query position for one head in one batch
+    let grid_dim = (seq_q, num_heads, batch_size);
+    let block_dim = (WARP_SIZE, 1, 1);
 
-            // Shared memory: WARP_SIZE floats for wave32 reduction
-            let shared_mem_bytes = WARP_SIZE * std::mem::size_of::<f32>() as u32;
+    // Shared memory: WARP_SIZE floats for wave32 reduction
+    let shared_mem_bytes = WARP_SIZE * std::mem::size_of::<f32>() as u32;
 
-            // Prepare kernel arguments
-            let mut weights_arg = weights as *mut f32;
-            let mut v_arg = v as *mut f32;
-            let mut output_arg = output;
-            let mut batch_size_arg = batch_size;
-            let mut seq_q_arg = seq_q;
-            let mut seq_k_arg = seq_k;
-            let mut num_heads_arg = num_heads;
-            let mut head_dim_arg = head_dim;
+    // Prepare kernel arguments
+    let mut weights_arg = weights as *mut f32;
+    let mut v_arg = v as *mut f32;
+    let mut output_arg = output;
+    let mut batch_size_arg = batch_size;
+    let mut seq_q_arg = seq_q;
+    let mut seq_k_arg = seq_k;
+    let mut num_heads_arg = num_heads;
+    let mut head_dim_arg = head_dim;
 
-            let args: &[*mut c_void] = &[
-                &mut weights_arg as *mut _ as *mut c_void,
-                &mut v_arg as *mut _ as *mut c_void,
-                &mut output_arg as *mut _ as *mut c_void,
-                &mut batch_size_arg as *mut _ as *mut c_void,
-                &mut seq_q_arg as *mut _ as *mut c_void,
-                &mut seq_k_arg as *mut _ as *mut c_void,
-                &mut num_heads_arg as *mut _ as *mut c_void,
-                &mut head_dim_arg as *mut _ as *mut c_void,
-            ];
+    let args: &[*mut c_void] = &[
+        &mut weights_arg as *mut _ as *mut c_void,
+        &mut v_arg as *mut _ as *mut c_void,
+        &mut output_arg as *mut _ as *mut c_void,
+        &mut batch_size_arg as *mut _ as *mut c_void,
+        &mut seq_q_arg as *mut _ as *mut c_void,
+        &mut seq_k_arg as *mut _ as *mut c_void,
+        &mut num_heads_arg as *mut _ as *mut c_void,
+        &mut head_dim_arg as *mut _ as *mut c_void,
+    ];
 
-            backend
-                .launch_kernel_with_module_shared(
-                    kernel,
-                    grid_dim,
-                    block_dim,
-                    args,
-                    shared_mem_bytes,
-                )
-                .map_err(|e| format!("Kernel launch failed: {:?}", e))
-        }
-        Err(e) => Err(format!("Failed to get cache: {:?}", e)),
-    }
+    backend
+        .launch_kernel_with_module_shared(
+            &kernel,
+            grid_dim,
+            block_dim,
+            args,
+            shared_mem_bytes,
+        )
+        .map_err(|e| format!("Kernel launch failed: {:?}", e))
 }
 
 /// GPU kernel for FlashAttention (non-causal) - fused attention computation
@@ -1183,53 +1351,41 @@ pub unsafe fn mqa_kv_replicate_gpu_kernel(
     num_q_heads: u32,
     head_dim: u32,
 ) -> Result<(), String> {
-    match get_or_init_cache() {
-        Ok(cache_ref) => {
-            let cache = cache_ref
-                .lock()
-                .map_err(|e| format!("GLOBAL_CACHE lock poisoned: {}", e))?;
-            let cache_ref = cache
-                .as_ref()
-                .ok_or_else(|| "KernelCache not initialized".to_string())?;
+    let (backend, kernel_ptr) = get_mqa_kernel_and_backend()
+        .map_err(|e| format!("Failed to get MQA kernel: {:?}", e))?;
 
-            let kernel = cache_ref
-                .mqa_kv_replicate_kernel
-                .as_ref()
-                .ok_or_else(|| "mqa_kv_replicate_kernel not loaded".to_string())?;
-            let backend = &cache_ref.backend;
+    // Calculate grid dimensions
+    let total_elements = batch_size * seq_len * num_q_heads * head_dim;
+    let grid_dim = (total_elements.div_ceil(BLOCK_SIZE), 1, 1);
+    let block_dim = (BLOCK_SIZE, 1, 1);
 
-            // Calculate grid dimensions
-            let total_elements = batch_size * seq_len * num_q_heads * head_dim;
-            let grid_dim = (total_elements.div_ceil(BLOCK_SIZE), 1, 1);
-            let block_dim = (BLOCK_SIZE, 1, 1);
+    // Prepare kernel arguments
+    let mut k_arg = k as *mut f32;
+    let mut v_arg = v as *mut f32;
+    let mut k_expanded_arg = k_expanded;
+    let mut v_expanded_arg = v_expanded;
+    let mut batch_size_arg = batch_size;
+    let mut seq_len_arg = seq_len;
+    let mut num_kv_heads_arg = num_kv_heads;
+    let mut num_q_heads_arg = num_q_heads;
+    let mut head_dim_arg = head_dim;
 
-            // Prepare kernel arguments
-            let mut k_arg = k as *mut f32;
-            let mut v_arg = v as *mut f32;
-            let mut k_expanded_arg = k_expanded;
-            let mut v_expanded_arg = v_expanded;
-            let mut batch_size_arg = batch_size;
-            let mut seq_len_arg = seq_len;
-            let mut num_kv_heads_arg = num_kv_heads;
-            let mut num_q_heads_arg = num_q_heads;
-            let mut head_dim_arg = head_dim;
+    let args: &[*mut c_void] = &[
+        &mut k_arg as *mut _ as *mut c_void,
+        &mut v_arg as *mut _ as *mut c_void,
+        &mut k_expanded_arg as *mut _ as *mut c_void,
+        &mut v_expanded_arg as *mut _ as *mut c_void,
+        &mut batch_size_arg as *mut _ as *mut c_void,
+        &mut seq_len_arg as *mut _ as *mut c_void,
+        &mut num_kv_heads_arg as *mut _ as *mut c_void,
+        &mut num_q_heads_arg as *mut _ as *mut c_void,
+        &mut head_dim_arg as *mut _ as *mut c_void,
+    ];
 
-            let args: &[*mut c_void] = &[
-                &mut k_arg as *mut _ as *mut c_void,
-                &mut v_arg as *mut _ as *mut c_void,
-                &mut k_expanded_arg as *mut _ as *mut c_void,
-                &mut v_expanded_arg as *mut _ as *mut c_void,
-                &mut batch_size_arg as *mut _ as *mut c_void,
-                &mut seq_len_arg as *mut _ as *mut c_void,
-                &mut num_kv_heads_arg as *mut _ as *mut c_void,
-                &mut num_q_heads_arg as *mut _ as *mut c_void,
-                &mut head_dim_arg as *mut _ as *mut c_void,
-            ];
+    // Reconstruct HipKernel from pointer for launch_kernel_with_module_shared
+    let kernel = HipKernel::from_ptr(kernel_ptr);
 
-            backend
-                .launch_kernel_with_module_shared(kernel, grid_dim, block_dim, args, 0)
-                .map_err(|e| format!("Kernel launch failed: {:?}", e))
-        }
-        Err(e) => Err(format!("Failed to get cache: {:?}", e)),
-    }
+    backend
+        .launch_kernel_with_module_shared(&kernel, grid_dim, block_dim, args, 0)
+        .map_err(|e| format!("Kernel launch failed: {:?}", e))
 }

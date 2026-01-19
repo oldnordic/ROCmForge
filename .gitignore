@@ -144,6 +144,7 @@ htmlcov/
 # Development tools and databases (local only)
 # =============================================================================
 .codemcp/
+.planning/
 .fastembed_cache/
 .odincode/
 .splice-backup/

@@ -20,6 +20,12 @@ use rocmforge::loader::GgufTensorType;
 use rocmforge::tensor::matmul::{cpu_matmul_f32, matmul_f32};
 use std::collections::HashMap;
 
+// GPU test imports - only available when rocm feature is enabled
+#[cfg(feature = "rocm")]
+use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
+#[cfg(feature = "rocm")]
+use serial_test::serial;
+
 // Use common fixtures
 use common::{create_temp_file, create_embedding_gguf};
 
@@ -146,8 +152,15 @@ fn test_token_embedding_shape_validation() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn test_token_embedding_gpu_upload() -> anyhow::Result<()> {
+    // Use shared GPU fixture to avoid creating multiple backends
+    let fixture = GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
+
     // Create test GGUF with embeddings
     let temp_file = create_temp_file()?;
     let vocab_size = 1000;
@@ -157,9 +170,8 @@ fn test_token_embedding_gpu_upload() -> anyhow::Result<()> {
 
     // Load to GPU
     let loader = GgufLoader::new(temp_file.path().to_str().unwrap())?;
-    let backend = HipBackend::new()?;
 
-    let gpu_tensors = loader.load_to_gpu(&backend)?;
+    let gpu_tensors = loader.load_to_gpu(backend)?;
 
     // Verify GPU tensor is valid
     let token_embd_gpu = gpu_tensors.get("token_embd.weight").unwrap();
@@ -172,6 +184,14 @@ fn test_token_embedding_gpu_upload() -> anyhow::Result<()> {
     assert!(token_embd_gpu.buffer().size() > 0);
 
     Ok(())
+}
+
+// CPU-only fallback for when rocm feature is not enabled
+#[cfg(not(feature = "rocm"))]
+#[test]
+fn test_token_embedding_gpu_upload() {
+    // Skip gracefully when GPU not available
+    eprintln!("SKIP: test_token_embedding_gpu_upload requires 'rocm' feature");
 }
 
 // ============================================================================
@@ -258,8 +278,15 @@ fn test_lm_head_matmul_correctness() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn test_lm_head_gpu_cpu_parity() -> anyhow::Result<()> {
+    // Use shared GPU fixture to avoid creating multiple backends
+    let fixture = GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
+
     // Create same input for CPU and GPU
     let m = 4; // batch*seq_len
     let n = 3; // vocab_size
@@ -272,7 +299,6 @@ fn test_lm_head_gpu_cpu_parity() -> anyhow::Result<()> {
     let cpu_result = cpu_matmul_f32(&a, &b, m, n, k);
 
     // Compute on GPU
-    let backend = HipBackend::new()?;
     let handle = HipBlasHandle::new()?;
 
     let a_gpu = HipBuffer::new(a.len() * 4)?;
@@ -281,7 +307,7 @@ fn test_lm_head_gpu_cpu_parity() -> anyhow::Result<()> {
     let b_gpu = HipBuffer::new(b.len() * 4)?;
     b_gpu.copy_from_host(&b)?;
 
-    let c_gpu = matmul_f32(&backend, &handle, &a_gpu, &b_gpu, m as i32, n as i32, k as i32)?;
+    let c_gpu = matmul_f32(backend, &handle, &a_gpu, &b_gpu, m as i32, n as i32, k as i32)?;
 
     let mut gpu_result = vec![0.0f32; cpu_result.len()];
     backend.copy_from_device_safe(&c_gpu, &mut gpu_result)?;
@@ -301,12 +327,27 @@ fn test_lm_head_gpu_cpu_parity() -> anyhow::Result<()> {
     Ok(())
 }
 
+// CPU-only fallback for when rocm feature is not enabled
+#[cfg(not(feature = "rocm"))]
+#[test]
+fn test_lm_head_gpu_cpu_parity() {
+    // Skip gracefully when GPU not available
+    eprintln!("SKIP: test_lm_head_gpu_cpu_parity requires 'rocm' feature");
+}
+
 // ============================================================================
 // Task 5: End-to-End Pipeline Tests
 // ============================================================================
 
+#[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn test_embedding_to_lmhead_pipeline() -> anyhow::Result<()> {
+    // Use shared GPU fixture to avoid creating multiple backends
+    let fixture = GPU_FIXTURE.as_ref()
+        .expect("GPU not available - test skipped");
+    let backend = fixture.backend();
+
     // Full pipeline test:
     // 1. Load token embeddings
     // 2. Look up tokens [1, 2, 3]
@@ -349,7 +390,6 @@ fn test_embedding_to_lmhead_pipeline() -> anyhow::Result<()> {
     }
 
     // For each token, compute logits and find argmax
-    let backend = HipBackend::new()?;
     let handle = HipBlasHandle::new()?;
 
     for (i, _token_id) in tokens.iter().enumerate() {
@@ -361,7 +401,7 @@ fn test_embedding_to_lmhead_pipeline() -> anyhow::Result<()> {
         lm_head_gpu.copy_from_host(&lm_head)?;
 
         let logits_gpu = matmul_f32(
-            &backend,
+            backend,
             &handle,
             &hidden_gpu,      // [1, hidden_size]
             &lm_head_gpu,     // [vocab_size, hidden_size]
@@ -390,6 +430,14 @@ fn test_embedding_to_lmhead_pipeline() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+// CPU-only fallback for when rocm feature is not enabled
+#[cfg(not(feature = "rocm"))]
+#[test]
+fn test_embedding_to_lmhead_pipeline() {
+    // Skip gracefully when GPU not available
+    eprintln!("SKIP: test_embedding_to_lmhead_pipeline requires 'rocm' feature");
 }
 
 #[test]

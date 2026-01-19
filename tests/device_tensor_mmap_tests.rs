@@ -1,6 +1,8 @@
 //! Tests for DeviceTensor::from_mmap functionality
 
 #[cfg(feature = "rocm")]
+use anyhow::Context;
+#[cfg(feature = "rocm")]
 use serial_test::serial;
 #[cfg(feature = "rocm")]
 use rocmforge::backend::gpu_test_common::GPU_FIXTURE;

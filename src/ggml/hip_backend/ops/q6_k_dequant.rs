@@ -21,6 +21,9 @@ use std::sync::Mutex;
 
 use crate::backend::{HipBackend, HipKernel, HipModule};
 
+#[cfg(test)]
+use half::f16;
+
 /// Result type for Q6_K dequantization operations
 pub type Q6_KDequantResult<T> = Result<T, String>;
 
@@ -275,7 +278,7 @@ mod tests {
 
         // Set scales (16 half-precision values at offset 0)
         for i in 0..16 {
-            let scale_bits = 1.0f32.to_f16().to_bits();
+            let scale_bits = f16::from_f32(1.0).to_bits();
             let scale_bytes = scale_bits.to_le_bytes();
             data[i * 2] = scale_bytes[0];
             data[i * 2 + 1] = scale_bytes[1];
@@ -284,7 +287,7 @@ mod tests {
         // Set quantized values (192 bytes at offset 32)
         // Values 0-63 packed as 6-bit
         for i in 0..192 {
-            data[32 + i] = (i % 64) * 4; // Valid 6-bit values
+            data[32 + i] = ((i % 64) * 4) as u8; // Valid 6-bit values
         }
 
         let result = dequantize_q6_k_cpu(&data, 256);
@@ -311,7 +314,7 @@ mod tests {
 
         // Set scales
         for i in 0..16 {
-            let scale_bits = 2.0f32.to_f16().to_bits();
+            let scale_bits = f16::from_f32(2.0).to_bits();
             let scale_bytes = scale_bits.to_le_bytes();
             data[i * 2] = scale_bytes[0];
             data[i * 2 + 1] = scale_bytes[1];
@@ -342,7 +345,7 @@ mod tests {
 
         // Set scales
         for i in 0..16 {
-            let scale_bits = 1.0f32.to_f16().to_bits();
+            let scale_bits = f16::from_f32(1.0).to_bits();
             let scale_bytes = scale_bits.to_le_bytes();
             data[i * 2] = scale_bytes[0];
             data[i * 2 + 1] = scale_bytes[1];

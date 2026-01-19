@@ -439,3 +439,45 @@ None. All research is from direct code inspection.
 - `kernels/flash_attention.hip` - FlashAttention kernel
 - `kernels/mqa_kv_replicate.hip` - MQA KV replication kernel
 - `.planning/REQUIREMENTS.md` - Phase requirements
+
+---
+
+## Observations from Phase 18 Execution
+
+### GPU Reset Issue Fixed
+
+**Problem Identified (2026-01-19):**
+Multiple test files were calling `HipBackend::new()` directly instead of using the shared `GPU_FIXTURE` singleton. This caused:
+- Multiple GPU backend instances to be created
+- GPU watchdog timeouts
+- Desktop crashes when running `cargo test`
+
+**Files Fixed:**
+1. `tests/embedding_to_lmhead_tests.rs` - 3 tests fixed
+2. `tests/hip_blas_matmul_tests.rs` - 5 tests fixed
+3. `tests/q_dequant_tests.rs` - 10 tests fixed (across 4 modules)
+4. `src/ops/causal_mask_tests.rs` - 7 tests fixed
+
+**Fix Applied:**
+```rust
+// OLD (dangerous - causes GPU resets):
+let backend = match HipBackend::new() {
+    Ok(b) => b,
+    Err(_) => { return; }
+};
+
+// NEW (safe - uses shared singleton):
+let fixture = match GPU_FIXTURE.as_ref() {
+    Some(f) => f,
+    None => { return; }
+};
+let backend = fixture.backend();
+```
+
+**Additional Requirements:**
+- Added `#[serial]` attribute to all GPU tests to prevent parallel execution
+- Added `use rocmforge::backend::gpu_test_common::GPU_FIXTURE;` imports
+- Added `use serial_test::serial;` imports
+
+**Lesson for Future Tests:**
+NEVER call `HipBackend::new()` directly in tests. Always use `GPU_FIXTURE` to avoid GPU resets.

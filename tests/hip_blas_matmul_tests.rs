@@ -2,6 +2,13 @@
 //! Tests GPU matmul against CPU reference implementation
 
 use anyhow::Context;
+
+// GPU test imports - only available when rocm feature is enabled
+#[cfg(feature = "rocm")]
+use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
+#[cfg(feature = "rocm")]
+use serial_test::serial;
+
 use rocmforge::backend::hip_backend::{HipBackend, HipBuffer};
 use rocmforge::backend::hip_blas::HipBlasHandle;
 use rocmforge::tensor::matmul::{cpu_matmul_f32, matmul_f32};
@@ -52,6 +59,7 @@ fn validate_matmul_dims(
 mod tests {
     use super::*;
 
+    // CPU-only tests (don't need GPU)
     #[test]
     fn test_hip_blas_handle_creation_and_drop() -> anyhow::Result<()> {
         // Test that we can create and destroy a hipBLAS handle
@@ -64,11 +72,16 @@ mod tests {
         Ok(())
     }
 
+    // GPU tests - use shared fixture and run serially
+    #[cfg(feature = "rocm")]
     #[test]
+    #[serial]
     fn test_hipblas_sgemm_simple() -> anyhow::Result<()> {
-        // Test hipBLAS SGEMM with minimal parameters to check if it's working
-        let backend = HipBackend::new()
-            .context("Failed to create HIP backend")?;
+        // Use shared GPU fixture to avoid creating multiple backends
+        let fixture = GPU_FIXTURE.as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
+
         let handle = HipBlasHandle::new()
             .context("Failed to create hipBLAS handle")?;
 
@@ -94,7 +107,7 @@ mod tests {
             .context("Dimension validation failed")?;
 
         // Simple 1x1 * 1x1 = 1x1 matrix multiplication
-        let gpu_c = matmul_f32(&backend, &handle, &gpu_a, &gpu_b, m, k, n)
+        let gpu_c = matmul_f32(backend, &handle, &gpu_a, &gpu_b, m, k, n)
             .context("Simple 1x1 matmul failed")?;
 
         let mut host_result = vec![0.0f32; 1];
@@ -110,8 +123,21 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(not(feature = "rocm"))]
     #[test]
+    fn test_hipblas_sgemm_simple() {
+        eprintln!("SKIP: test_hipblas_sgemm_simple requires 'rocm' feature");
+    }
+
+    #[cfg(feature = "rocm")]
+    #[test]
+    #[serial]
     fn test_gpu_matmul_matches_cpu_small() -> anyhow::Result<()> {
+        // Use shared GPU fixture to avoid creating multiple backends
+        let fixture = GPU_FIXTURE.as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
+
         // Test 2x2 * 2x2 case
         let m = 2;
         let n = 2;
@@ -143,9 +169,7 @@ mod tests {
             );
         }
 
-        // Test GPU matmul (will fail until implemented)
-        let backend = HipBackend::new()
-            .context("Failed to create HIP backend")?;
+        // Test GPU matmul
         let handle = HipBlasHandle::new()
             .context("Failed to create hipBLAS handle")?;
 
@@ -161,7 +185,7 @@ mod tests {
             .context("Failed to copy matrix B to GPU")?;
 
         // Perform GPU matmul
-        let gpu_c = matmul_f32(&backend, &handle, &gpu_a, &gpu_b, m as i32, n as i32, k as i32)
+        let gpu_c = matmul_f32(backend, &handle, &gpu_a, &gpu_b, m as i32, n as i32, k as i32)
             .context("GPU matmul operation failed")?;
 
         // Copy result back from GPU
@@ -184,8 +208,21 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(not(feature = "rocm"))]
     #[test]
+    fn test_gpu_matmul_matches_cpu_small() {
+        eprintln!("SKIP: test_gpu_matmul_matches_cpu_small requires 'rocm' feature");
+    }
+
+    #[cfg(feature = "rocm")]
+    #[test]
+    #[serial]
     fn test_gpu_matmul_larger_matrix() -> anyhow::Result<()> {
+        // Use shared GPU fixture to avoid creating multiple backends
+        let fixture = GPU_FIXTURE.as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
+
         // Test 4x3 * 3x2 case
         let m = 4;
         let n = 2;
@@ -212,8 +249,6 @@ mod tests {
         assert_eq!(cpu_result.len(), (m * n) as usize);
 
         // Test GPU matmul
-        let backend = HipBackend::new()
-            .context("Failed to create HIP backend")?;
         let handle = HipBlasHandle::new()
             .context("Failed to create hipBLAS handle")?;
 
@@ -229,7 +264,7 @@ mod tests {
             .context("Failed to copy matrix B to GPU")?;
 
         // Perform GPU matmul
-        let gpu_c = matmul_f32(&backend, &handle, &gpu_a, &gpu_b, m as i32, n as i32, k as i32)
+        let gpu_c = matmul_f32(backend, &handle, &gpu_a, &gpu_b, m as i32, n as i32, k as i32)
             .context("GPU matmul operation failed")?;
 
         // Copy result back from GPU
@@ -252,16 +287,27 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(not(feature = "rocm"))]
     #[test]
+    fn test_gpu_matmul_larger_matrix() {
+        eprintln!("SKIP: test_gpu_matmul_larger_matrix requires 'rocm' feature");
+    }
+
+    #[cfg(feature = "rocm")]
+    #[test]
+    #[serial]
     fn test_matmul_invalid_dims_error() -> anyhow::Result<()> {
+        // Use shared GPU fixture to avoid creating multiple backends
+        let fixture = GPU_FIXTURE.as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
+
         // Test dimension mismatch: 2x3 * 4x2 (k=3 vs k'=4)
         let m = 2;
         let n = 2;
         let k = 3;
         let k_prime = 4; // Mismatched inner dimension
 
-        let backend = HipBackend::new()
-            .context("Failed to create HIP backend")?;
         let handle = HipBlasHandle::new()
             .context("Failed to create hipBLAS handle")?;
 
@@ -288,7 +334,7 @@ mod tests {
         );
 
         // This should fail due to dimension mismatch
-        let result = matmul_f32(&backend, &handle, &gpu_a, &gpu_b, m as i32, n as i32, k as i32);
+        let result = matmul_f32(backend, &handle, &gpu_a, &gpu_b, m as i32, n as i32, k as i32);
 
         // Expect error due to dimension mismatch
         match result {
@@ -299,6 +345,12 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(not(feature = "rocm"))]
+    #[test]
+    fn test_matmul_invalid_dims_error() {
+        eprintln!("SKIP: test_matmul_invalid_dims_error requires 'rocm' feature");
+    }
+
     /// TDD TEST: GGML matmul wrapper with synchronization
     ///
     /// This test verifies that the GGML matmul wrapper properly synchronizes
@@ -306,13 +358,17 @@ mod tests {
     ///
     /// BUG: Without synchronization, copy_from_buffer may read incomplete data.
     /// FIX: Add backend.synchronize() after matmul_f32 before copy_from_buffer.
+    #[cfg(feature = "rocm")]
     #[test]
+    #[serial]
     fn test_ggml_matmul_wrapper_synchronization() {
         use rocmforge::backend::HipBackend;
         use rocmforge::ggml::hip_backend::ops::matmul::matmul as ggml_matmul;
 
-        // Initialize backend
-        let backend = HipBackend::new().expect("Failed to create HIP backend");
+        // Use shared GPU fixture to avoid creating multiple backends
+        let fixture = GPU_FIXTURE.as_ref()
+            .expect("GPU not available - test skipped");
+        let backend = fixture.backend();
 
         // Test 2x2 * 2x2 case
         let m = 2;
@@ -342,7 +398,7 @@ mod tests {
         gpu_b.copy_from_host(b_slice).expect("Failed to copy B to GPU");
 
         // Perform GGML matmul (this should synchronize properly)
-        ggml_matmul(&backend, &gpu_a, &gpu_b, m as i32, n as i32, k as i32, &gpu_output)
+        ggml_matmul(backend, &gpu_a, &gpu_b, m as i32, n as i32, k as i32, &gpu_output)
             .expect("GGML matmul failed");
 
         // Copy result back from GPU
@@ -360,5 +416,11 @@ mod tests {
                 actual
             );
         }
+    }
+
+    #[cfg(not(feature = "rocm"))]
+    #[test]
+    fn test_ggml_matmul_wrapper_synchronization() {
+        eprintln!("SKIP: test_ggml_matmul_wrapper_synchronization requires 'rocm' feature");
     }
 }

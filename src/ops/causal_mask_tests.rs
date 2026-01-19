@@ -7,6 +7,12 @@
 
 // Note: Types are already in scope from parent module
 
+// Use shared GPU fixture to avoid creating multiple backends (prevents GPU resets)
+#[cfg(test)]
+use crate::backend::gpu_test_common::GPU_FIXTURE;
+#[cfg(test)]
+use serial_test::serial;
+
 /// Test helper: Create CPU causal mask reference
 fn create_cpu_causal_mask(seq_len: usize) -> Vec<f32> {
     let mut mask = vec![0.0f32; seq_len * seq_len];
@@ -23,6 +29,7 @@ fn create_cpu_causal_mask(seq_len: usize) -> Vec<f32> {
 /// Test 1: Correct mask application (upper triangle set to -inf)
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn test_gpu_causal_mask_upper_triangle() {
     use crate::ops::attention_gpu::HipAttentionKernels;
 
@@ -31,14 +38,15 @@ fn test_gpu_causal_mask_upper_triangle() {
     let num_heads = 4;
     let batch_size = 2;
 
-    // Create HIP backend
-    let backend = match HipBackend::new() {
-        Ok(b) => b,
-        Err(_) => {
+    // Use shared GPU fixture to avoid creating multiple backends (prevents GPU resets)
+    let fixture = match GPU_FIXTURE.as_ref() {
+        Some(f) => f,
+        None => {
             println!("Warning: No GPU available, skipping GPU causal mask test");
             return;
         }
     };
+    let backend = fixture.backend();
 
     // Create attention tensor [batch, num_heads, seq_len, seq_len]
     let mut attention_host = vec![1.0f32; batch_size * num_heads * seq_len * seq_len];
@@ -90,6 +98,7 @@ fn test_gpu_causal_mask_upper_triangle() {
 /// Test 2: Lower triangle preserved
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn test_gpu_causal_mask_lower_triangle_preserved() {
     use crate::ops::attention_gpu::HipAttentionKernels;
 
@@ -97,13 +106,15 @@ fn test_gpu_causal_mask_lower_triangle_preserved() {
     let num_heads = 8;
     let batch_size = 1;
 
-    let backend = match HipBackend::new() {
-        Ok(b) => b,
-        Err(_) => {
+    // Use shared GPU fixture to avoid creating multiple backends (prevents GPU resets)
+    let fixture = match GPU_FIXTURE.as_ref() {
+        Some(f) => f,
+        None => {
             println!("Warning: No GPU available, skipping GPU causal mask test");
             return;
         }
     };
+    let backend = fixture.backend();
 
     // Create attention with varying values
     let mut attention_host = Vec::with_capacity(batch_size * num_heads * seq_len * seq_len);
@@ -152,6 +163,7 @@ fn test_gpu_causal_mask_lower_triangle_preserved() {
 /// Test 3: Batch dimension handled correctly
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn test_gpu_causal_mask_batch_dimension() {
     use crate::ops::attention_gpu::HipAttentionKernels;
 
@@ -159,13 +171,15 @@ fn test_gpu_causal_mask_batch_dimension() {
     let num_heads = 4;
     let batch_sizes = vec![1, 2, 4, 8];
 
-    let backend = match HipBackend::new() {
-        Ok(b) => b,
-        Err(_) => {
+    // Use shared GPU fixture to avoid creating multiple backends (prevents GPU resets)
+    let fixture = match GPU_FIXTURE.as_ref() {
+        Some(f) => f,
+        None => {
             println!("Warning: No GPU available, skipping GPU causal mask test");
             return;
         }
     };
+    let backend = fixture.backend();
 
     for batch_size in batch_sizes {
         let attention_host = vec![1.0f32; batch_size * num_heads * seq_len * seq_len];
@@ -206,6 +220,7 @@ fn test_gpu_causal_mask_batch_dimension() {
 /// Test 4: Multiple heads handled correctly
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn test_gpu_causal_mask_multiple_heads() {
     use crate::ops::attention_gpu::HipAttentionKernels;
 
@@ -213,13 +228,15 @@ fn test_gpu_causal_mask_multiple_heads() {
     let head_counts = vec![1, 2, 4, 8, 16, 32];
     let batch_size = 2;
 
-    let backend = match HipBackend::new() {
-        Ok(b) => b,
-        Err(_) => {
+    // Use shared GPU fixture to avoid creating multiple backends (prevents GPU resets)
+    let fixture = match GPU_FIXTURE.as_ref() {
+        Some(f) => f,
+        None => {
             println!("Warning: No GPU available, skipping GPU causal mask test");
             return;
         }
     };
+    let backend = fixture.backend();
 
     for num_heads in head_counts {
         let attention_host = vec![1.0f32; batch_size * num_heads * seq_len * seq_len];
@@ -260,6 +277,7 @@ fn test_gpu_causal_mask_multiple_heads() {
 /// Test 5: Comparison with CPU implementation (accuracy)
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn test_gpu_causal_mask_matches_cpu() {
     use crate::ops::attention_gpu::HipAttentionKernels;
 
@@ -267,13 +285,15 @@ fn test_gpu_causal_mask_matches_cpu() {
     let num_heads = 8;
     let batch_size = 4;
 
-    let backend = match HipBackend::new() {
-        Ok(b) => b,
-        Err(_) => {
+    // Use shared GPU fixture to avoid creating multiple backends (prevents GPU resets)
+    let fixture = match GPU_FIXTURE.as_ref() {
+        Some(f) => f,
+        None => {
             println!("Warning: No GPU available, skipping GPU causal mask test");
             return;
         }
     };
+    let backend = fixture.backend();
 
     // Create CPU reference
     let cpu_mask = create_cpu_causal_mask(seq_len);
@@ -335,6 +355,7 @@ fn test_gpu_causal_mask_matches_cpu() {
 /// Test 6: Edge case - seq_len = 1
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn test_gpu_causal_mask_single_element() {
     use crate::ops::attention_gpu::HipAttentionKernels;
 
@@ -342,13 +363,15 @@ fn test_gpu_causal_mask_single_element() {
     let num_heads = 4;
     let batch_size = 2;
 
-    let backend = match HipBackend::new() {
-        Ok(b) => b,
-        Err(_) => {
+    // Use shared GPU fixture to avoid creating multiple backends (prevents GPU resets)
+    let fixture = match GPU_FIXTURE.as_ref() {
+        Some(f) => f,
+        None => {
             println!("Warning: No GPU available, skipping GPU causal mask test");
             return;
         }
     };
+    let backend = fixture.backend();
 
     let attention_host = vec![1.0f32; batch_size * num_heads * seq_len * seq_len];
     let attention_shape = TensorShape::from_dims(&[batch_size, num_heads, seq_len, seq_len]);
@@ -375,6 +398,7 @@ fn test_gpu_causal_mask_single_element() {
 /// Test 7: Large sequence performance test
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn test_gpu_causal_mask_large_sequence() {
     use crate::ops::attention_gpu::HipAttentionKernels;
     use std::time::Instant;
@@ -383,13 +407,15 @@ fn test_gpu_causal_mask_large_sequence() {
     let num_heads = 32;
     let batch_size = 4;
 
-    let backend = match HipBackend::new() {
-        Ok(b) => b,
-        Err(_) => {
+    // Use shared GPU fixture to avoid creating multiple backends (prevents GPU resets)
+    let fixture = match GPU_FIXTURE.as_ref() {
+        Some(f) => f,
+        None => {
             println!("Warning: No GPU available, skipping GPU causal mask test");
             return;
         }
     };
+    let backend = fixture.backend();
 
     let attention_host = vec![1.0f32; batch_size * num_heads * seq_len * seq_len];
     let attention_shape = TensorShape::from_dims(&[batch_size, num_heads, seq_len, seq_len]);
