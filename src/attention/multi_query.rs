@@ -291,7 +291,7 @@ impl MultiQueryAttention {
         use crate::attention::kernels::{
             qkt_matmul_gpu_kernel_scaled, softmax_gpu_kernel, weighted_matmul_gpu_kernel,
         };
-        use crate::backend::hip_backend::{HipBackend, HipError};
+        use crate::backend::hip_backend::HipBackend;
 
         let backend = HipBackend::new().map_err(|e| {
             AttentionError::HandleCreation(format!("Failed to create HIP backend: {}", e))

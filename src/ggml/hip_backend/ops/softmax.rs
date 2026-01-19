@@ -1,6 +1,6 @@
 //! HIP softmax op using existing softmax kernel.
 
-use crate::backend::{HipBackend, HipError, HipResult, HipBuffer};
+use crate::backend::{HipBackend, HipResult, HipBuffer};
 
 pub fn softmax(
     backend: &HipBackend,

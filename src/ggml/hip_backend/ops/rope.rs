@@ -1,6 +1,6 @@
 //! HIP RoPE op using existing RoPE kernel.
 
-use crate::backend::{HipBackend, HipError, HipResult, HipBuffer};
+use crate::backend::{HipBackend, HipResult, HipBuffer};
 
 pub fn rope(
     _backend: &HipBackend,

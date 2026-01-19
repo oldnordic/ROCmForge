@@ -1,6 +1,6 @@
 //! HIP mask op using existing causal mask kernel.
 
-use crate::backend::{HipBackend, HipError, HipResult, HipBuffer};
+use crate::backend::{HipBackend, HipResult, HipBuffer};
 
 pub fn mask(
     backend: &HipBackend,

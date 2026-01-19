@@ -1,6 +1,6 @@
 //! HIP SwiGLU op using existing SwiGLU kernel.
 
-use crate::backend::{HipBackend, HipError, HipResult, HipBuffer};
+use crate::backend::{HipBackend, HipResult, HipBuffer};
 
 pub fn swiglu(
     _backend: &HipBackend,
