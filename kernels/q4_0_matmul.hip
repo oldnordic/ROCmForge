@@ -112,7 +112,7 @@ __device__ __forceinline__ float wave_reduce_sum(float partial) {
     #else
         // Fallback: manual reduction
         for (int stride = 16; stride > 0; stride >>= 1) {
-            partial += __shfl_down_f32(partial, stride, WARP_SIZE);
+            partial += __shfl_down(partial, stride);
         }
     #endif
 #else
@@ -121,7 +121,7 @@ __device__ __forceinline__ float wave_reduce_sum(float partial) {
         partial = __builtin_amdgcn_wave_reduce_fadd(partial);
     #else
         for (int stride = 32; stride > 0; stride >>= 1) {
-            partial += __shfl_down_f32(partial, stride, WARP_SIZE);
+            partial += __shfl_down(partial, stride);
         }
     #endif
 #endif
