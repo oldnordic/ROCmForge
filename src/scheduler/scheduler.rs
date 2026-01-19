@@ -1029,6 +1029,16 @@ mod tests {
         assert_eq!(req.generated_tokens, vec![100, 101]);
     }
 
+    /// Test alias matching HYGIENE-01 requirement naming
+    ///
+    /// This test is an alias for `test_stale_batch_clone_does_not_overwrite_scheduler`
+    /// to satisfy the HYGIENE-01 requirement which specifies this exact test name.
+    #[test]
+    fn test_update_iteration_batch_cannot_clobber_new_tokens() {
+        // Delegate to the main test with the descriptive name
+        test_stale_batch_clone_does_not_overwrite_scheduler();
+    }
+
     // Property tests
     use proptest::prelude::*;
 
