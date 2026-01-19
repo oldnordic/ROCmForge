@@ -709,21 +709,17 @@ impl KvCache {
     }
 
     pub fn allocate_page(&mut self, sequence_id: u32) -> KvCacheResult<u32> {
-        // Check if we need to evict LRU sequences first
-        let current_pages = self.pages.read()?.len();
-        let has_free_page = self.free_pages.read()?.is_empty();
-
-        if current_pages >= self.config.max_pages && has_free_page {
-            // Try LRU eviction to free up space
-            self.evict_lru_sequences(1)?;
-        }
-
         // Try to reuse a free page first
         let page_id = if let Some(free_id) = self.free_pages.write()?.pop() {
+            // Reuse existing free page
             free_id
-        } else if self.pages.read()?.len() >= self.config.max_pages {
-            return Err(KvCacheError::CapacityExceeded);
         } else {
+            // No free pages - check if we can allocate a new page
+            let current_pages = self.pages.read()?.len();
+            if current_pages >= self.config.max_pages {
+                return Err(KvCacheError::CapacityExceeded);
+            }
+            // Allocate new page ID
             let mut next_id = self.next_page_id.write()?;
             let id = *next_id;
             *next_id += 1;
@@ -1712,7 +1708,7 @@ mod tests {
     #[test]
     fn test_token_appending() {
         let backend = HipBackend::new().unwrap();
-        // FIX-10: With LRU eviction, max_pages=1 allows unlimited tokens via eviction
+        // FIX-21-02: Strict capacity enforcement - no LRU eviction in allocate_page
         let config = CacheConfig::new(4, 1, 32, 128, 24).unwrap();
         let mut cache = KvCache::new(config, backend).unwrap();
 
@@ -1725,9 +1721,10 @@ mod tests {
             assert!(result.is_ok());
         }
 
-        // FIX-10: With LRU eviction, the 5th token triggers eviction and reallocation
+        // FIX-21-02: 5th token exceeds page capacity and no free pages
+        // allocate_page would be called but cache is at max_pages
         let result = cache.append_token(1, 5);
-        assert!(result.is_ok()); // Now succeeds due to LRU eviction
+        assert!(result.is_err()); // Should fail - cache at capacity
     }
 
     #[test]
@@ -1780,12 +1777,15 @@ mod tests {
         cache.allocate_page(1).unwrap();
         cache.allocate_page(2).unwrap();
 
-        // FIX-10: With LRU eviction, third allocation should succeed by evicting LRU sequence
+        // FIX-21-02: Strict capacity enforcement - no LRU eviction
+        // Third allocation should fail with CapacityExceeded
         let result = cache.allocate_page(3);
-        assert!(result.is_ok()); // Now succeeds due to LRU eviction
+        assert!(result.is_err());
+        assert!(matches!(result, Err(KvCacheError::CapacityExceeded)));
 
-        // Sequence 1 should have been evicted (LRU)
-        assert!(cache.get_sequence_tokens(1).is_err());
+        // Both sequences should still be present (no eviction occurred)
+        assert!(cache.get_sequence_tokens(1).is_ok());
+        assert!(cache.get_sequence_tokens(2).is_ok());
     }
 
     // ========== PagedAttention Tests ==========
