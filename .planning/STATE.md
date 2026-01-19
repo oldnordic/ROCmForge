@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-19)
 ## Current Position
 
 Phase: 20 of 20 (Code Hygiene Completion)
-Plan: 5 of 8 in current phase
+Plan: 4 of 8 in current phase
 Status: In progress
-Last activity: 2026-01-19 — Completed Phase 20-05: Fix unused mut and unused assignment warnings
+Last activity: 2026-01-19 — Completed Phase 20-04: Replace deprecated copy_to_host and to_host_vec methods
 
 Progress: [█████████░░░░░░░░░░░░] 30% (19.25 of 20 phases complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 134 (v1.0 + v1.1 + v1.2 through 20-05)
+- Total plans completed: 135 (v1.0 + v1.1 + v1.2 through 20-04)
 - Average duration: ~44 min
-- Total execution time: ~80 hours
+- Total execution time: ~81 hours
 
 **By Phase:**
 
@@ -66,6 +66,7 @@ Progress: [█████████░░░░░░░░░░░░] 30% 
 | 19-03 | 1 | ~1min | 1 min |
 | 19-04 | 1 | ~15min | 15 min |
 | 20-01 | 1 | ~4min | 4 min |
+| 20-04 | 1 | ~7min | 7 min |
 | 20-05 | 1 | ~3min | 3 min |
 
 **Recent Trend:**
@@ -103,6 +104,7 @@ Recent decisions affecting v1.2:
 - **19-03 Fused RMSNorm CUDA Intrinsics Removal**: Corrected WARP_SIZE from 32 to 64 in fused_dequant_rmsnorm.hip; replaced final CUDA `__shfl_down_f32` with HIP `__shfl_down`; all 4 quantized kernels (Q4_0, Q4_K, Q6_K, fused RMSNorm) are now CUDA-intrinsic-free
 - **19-04 HIP Kernel Compilation and Validation**: Compiled all 4 quantized matmul kernels for gfx1100 (q4_0_matmul.hsaco, q4_k_matmul.hsaco, q6_k_matmul.hsaco, fused_q4_0_rmsnorm.hsaco); replaced invalid `__builtin_amdgcn_wave_reduce_fadd` with manual `__shfl_down` reduction; fixed Q4_K and Q6_K CPU test bugs (bit_pos calculation and 6-bit extraction); validated 12 CPU dequantization tests passing; verified WARP_SIZE=64 and zero CUDA intrinsics across all kernels
 - **20-01 Hygiene Baseline**: Fixed unreachable pattern warnings (removed catch-all _ from execute_op match, removed duplicate yi.rms_norm_eps); fixed unexpected_cfg warnings (replaced invalid cfg(feature = "std") with cfg(feature = "rocm")); reduced warnings from 64 to 59
+- **20-04 Deprecated API Replacement**: Replaced all 19 deprecated HipBuffer::copy_to_host and DeviceTensor::to_host_vec calls with HipBackend::copy_from_device_safe; eliminated all deprecated method warnings (0 remaining); total warnings reduced from 59 to 38
 - **20-05 Simple Hygiene Fixes**: Fixed unused mut warnings (removed mut from scores and output in multi_query.rs); fixed unused assignment warning (replaced unused max_time assignment with explicit let _); verified Q4_0DequantCache already pub from 20-02; HYGIENE-05 satisfied
 
 ### Pending Todos
@@ -150,10 +152,11 @@ None yet.
 - Phase 19-03: Fused RMSNorm CUDA intrinsics removal; corrected WARP_SIZE to 64; replaced __shfl_down_f32 with __shfl_down; all 4 quantized kernels are CUDA-intrinsic-free
 - Phase 19-04: Compile and validate HIP quantized kernels; compiled 4 HSACO files for gfx1100; replaced invalid __builtin_amdgcn_wave_reduce_fadd; fixed Q4_K and Q6_K CPU test bugs; validated all 12 CPU dequantization tests
 - Phase 20-01: Fix unreachable pattern and cfg warnings; removed catch-all _ from execute_op match; removed duplicate yi.rms_norm_eps; replaced cfg(feature = "std") with cfg(feature = "rocm"); HYGIENE-02 and HYGIENE-06 satisfied
+- Phase 20-04: Replace deprecated copy_to_host and to_host_vec methods; replaced all 19 deprecated calls with HipBackend::copy_from_device_safe; eliminated all deprecated method warnings; total warnings reduced from 59 to 38
 - Phase 20-05: Fix unused mut and unused assignment warnings; removed mut from scores and output variables; replaced unused max_time assignment with explicit let _; HYGIENE-05 satisfied
 
 ## Session Continuity
 
 Last session: 2026-01-19
-Stopped at: Completed 20-05 — Fixed unused mut and unused assignment warnings
+Stopped at: Completed 20-04 — Replaced deprecated copy_to_host and to_host_vec methods
 Resume file: None
