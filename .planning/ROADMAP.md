@@ -240,7 +240,7 @@ Plans:
 5. All unexpected_cfg warnings are resolved (feature name fixes)
 6. Zero compiler warnings baseline achieved (`cargo check` passes clean)
 
-**Plans:** 6 plans in 3 waves
+**Plans:** 8 plans in 4 waves
 
 Plans:
 - [ ] 20-01-PLAN.md — Fix unreachable patterns and unexpected_cfg warnings (HYGIENE-02, HYGIENE-06)
@@ -248,12 +248,15 @@ Plans:
 - [ ] 20-03-PLAN.md — Remove unused imports (8 imports across 6 files)
 - [ ] 20-04-PLAN.md — Replace deprecated methods (18 calls to to_host_vec/copy_to_host)
 - [ ] 20-05-PLAN.md — Fix unused mut, unused assignment, and privacy warnings
-- [ ] 20-06-PLAN.md — Review and resolve all dead_code warnings
+- [ ] 20-06-PLAN.md — Categorize dead code warnings and fix unused fields
+- [ ] 20-07-PLAN.md — Review and fix unused functions, methods, constants
+- [ ] 20-08-PLAN.md — Review #[allow(dead_code)] markers and verify zero baseline
 
 **Wave Structure:**
 - Wave 1: 20-01 (unreachable/cfg), 20-02 (naming), 20-03 (imports) — parallel execution
-- Wave 2: 20-04 (deprecated methods)
-- Wave 3: 20-05 (simple hygiene), 20-06 (dead code review) — parallel execution
+- Wave 2: 20-04 (deprecated methods), 20-05 (simple hygiene) — parallel execution
+- Wave 3: 20-06 (dead code categorization + unused fields)
+- Wave 4: 20-07 (functions/constants), 20-08 (#[allow] review + verify baseline) — parallel execution
 
 ---
 
@@ -308,10 +311,10 @@ Plans:
 | 17. GPU Quantization | v1.2 | 3/3 | Complete | 2026-01-19 |
 | 18. GPU Attention Completion | v1.2 | 3/3 | Complete | 2026-01-19 |
 | 19. Wavefront-Native Quantized Matmul | v1.3 | 4/4 | Complete | 2026-01-19 |
-| 20. Code Hygiene Completion | v1.3 | 0/6 | Not started | - |
+| 20. Code Hygiene Completion | v1.3 | 0/8 | Not started | - |
 | 21. Test Health & Performance | v1.3 | 0/? | Not started | - |
 
-**Total Progress:** 129/137 v1.0+v1.1+v1.2+v1.3 plans complete (94%)
+**Total Progress:** 129/139 v1.0+v1.1+v1.2+v1.3 plans complete (93%)
 
 ---
 
