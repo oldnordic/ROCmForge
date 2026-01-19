@@ -45,7 +45,7 @@
 #endif
 
 #ifndef WARP_SIZE
-    #define WARP_SIZE 32    // Default: RDNA3 wavefront size
+    #define WARP_SIZE 64    // Default: RDNA3 wavefront size (wave64)
 #endif
 
 #ifndef TILE_SIZE_K
