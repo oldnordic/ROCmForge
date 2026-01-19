@@ -8,6 +8,61 @@
 
 ---
 
+## Implementation Status Update (2026-01-19)
+
+**Status: NOT IMPLEMENTED**
+
+The selective memory pooling design described below was never implemented in the codebase.
+Current implementation uses direct allocation (`from_host_vec()`) for all tensors.
+
+### Verification Evidence
+
+| Component | Documented | Actual | Search Result |
+|-----------|------------|--------|---------------|
+| `LARGE_TENSOR_THRESHOLD` constant | Defined in design | **Not found** | `grep -r "LARGE_TENSOR_THRESHOLD" src/` → No matches |
+| `from_pool()` usage | Used for ~200 tensors | **Never called** | `grep -r "from_pool" src/` → Only definition in backend.rs |
+| Tensor classification logic | `needs_transpose`, `is_qkv`, `is_large` | **Not found** | No classification code exists |
+| Memory pools | 3 × 1 GB pools created | **0 pools** | No pool allocation code in tensor loading paths |
+
+### Current Implementation (Actual Code)
+
+All tensors are allocated using `DeviceTensor::from_host_vec()`:
+
+```rust
+// From src/loader/gguf.rs:861
+let device_tensor = DeviceTensor::from_host_vec(backend, f32_data, shape)
+    .map_err(|e| anyhow!("Failed to upload tensor '{}' to GPU: {}", name, e))?;
+```
+
+**Characteristics of current approach:**
+- Each tensor gets its own `hipMalloc()` allocation (independent buffers)
+- No sub-buffer views are created
+- D2H operations (if needed) operate on directly-allocated tensors with offset=0
+- This avoids the ROCm 7.1 D2H bug because no sub-buffers exist
+
+### Why This Works
+
+The ROCm 7.1 `hipMemcpyDtoH` bug only occurs when:
+1. A sub-buffer view is created (offset > 0 in a parent allocation)
+2. That sub-buffer is read back to host
+
+Direct allocation avoids both conditions:
+- No sub-buffer views exist (all tensors have offset=0)
+- All D2H operations use base buffers
+
+### D2H Operations (Current Safe Path)
+
+| Tensor Type | Operation | D2H Safe? |
+|-------------|-----------|-----------|
+| token_embd.weight | Transpose during mapping | Yes (direct alloc, offset=0) |
+| lm_head.weight | Transpose during mapping | Yes (direct alloc, offset=0) |
+| Separate QKV weights | Concatenate during mapping | Yes (direct alloc, offset=0) |
+
+These operations call `transpose_2d_tensor()` and `concatenate_qkv_tensors()` in
+`src/model/execution_plan/execution_plan_src.rs`, which use `to_host_vec()` → `copy_to_host()`.
+
+---
+
 ## Problem Description
 
 ### Error Details
