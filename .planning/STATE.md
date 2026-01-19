@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-19)
 ## Current Position
 
 Phase: 19 of 20 (Wavefront-Native Quantized Matmul Kernels)
-Plan: 3/3 in current phase
+Plan: 4/4 in current phase
 Status: Phase complete
-Last activity: 2026-01-19 — Completed Phase 19-03: Fused RMSNorm CUDA intrinsics removal
+Last activity: 2026-01-19 — Completed Phase 19-04: Compile and validate HIP quantized kernels
 
-Progress: [███████░░░░░░░░░░░░░░░] 27% (18.5 of 20 phases complete)
+Progress: [███████░░░░░░░░░░░░░░░] 28% (19 of 20 phases complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 128 (v1.0 + v1.1 + v1.2 through 19-03)
+- Total plans completed: 132 (v1.0 + v1.1 + v1.2 through 19-04)
 - Average duration: ~44 min
-- Total execution time: ~78 hours
+- Total execution time: ~79 hours
 
 **By Phase:**
 
@@ -64,6 +64,7 @@ Progress: [███████░░░░░░░░░░░░░░░] 2
 | 19-01 | 1 | ~1min | 1 min |
 | 19-02 | 1 | ~3min | 3 min |
 | 19-03 | 1 | ~1min | 1 min |
+| 19-04 | 1 | ~15min | 15 min |
 
 **Recent Trend:**
 - Last 5 phases: Stable (3-13 min/plan)
@@ -98,6 +99,7 @@ Recent decisions affecting v1.2:
 - **19-01 Quantization Format Analysis**: Documented Q4_0 (32 elements/block, 20 bytes, scale + 4-bit signed values), Q4_K (256-element super-blocks, 8 sub-blocks with scale/min), Q6_K (256-element blocks, 16 f16 scales, 6-bit signed values); CPU references verified as ground truth for GPU kernel numerical validation
 - **19-02 HIP Intrinsics Replacement**: Corrected WARP_SIZE from 32 to 64 for RDNA3 wavefront alignment; replaced CUDA `__shfl_down_f32` with HIP `__shfl_down` in Q4_0, Q4_K, Q6_K matmul kernels (6 occurrences); TILE_SIZE_K/N=32 documented as not wave64-aligned (deferred optimization)
 - **19-03 Fused RMSNorm CUDA Intrinsics Removal**: Corrected WARP_SIZE from 32 to 64 in fused_dequant_rmsnorm.hip; replaced final CUDA `__shfl_down_f32` with HIP `__shfl_down`; all 4 quantized kernels (Q4_0, Q4_K, Q6_K, fused RMSNorm) are now CUDA-intrinsic-free
+- **19-04 HIP Kernel Compilation and Validation**: Compiled all 4 quantized matmul kernels for gfx1100 (q4_0_matmul.hsaco, q4_k_matmul.hsaco, q6_k_matmul.hsaco, fused_q4_0_rmsnorm.hsaco); replaced invalid `__builtin_amdgcn_wave_reduce_fadd` with manual `__shfl_down` reduction; fixed Q4_K and Q6_K CPU test bugs (bit_pos calculation and 6-bit extraction); validated 12 CPU dequantization tests passing; verified WARP_SIZE=64 and zero CUDA intrinsics across all kernels
 
 ### Pending Todos
 
@@ -142,9 +144,10 @@ None yet.
 - Phase 19-01: Quantization format analysis; documented Q4_0, Q4_K, Q6_K bit-packing layouts; CPU references validated as ground truth
 - Phase 19-02: HIP intrinsics replacement; corrected WARP_SIZE to 64 for wave64; replaced __shfl_down_f32 with __shfl_down; documented tile size alignment
 - Phase 19-03: Fused RMSNorm CUDA intrinsics removal; corrected WARP_SIZE to 64; replaced __shfl_down_f32 with __shfl_down; all 4 quantized kernels are CUDA-intrinsic-free
+- Phase 19-04: Compile and validate HIP quantized kernels; compiled 4 HSACO files for gfx1100; replaced invalid __builtin_amdgcn_wave_reduce_fadd; fixed Q4_K and Q6_K CPU test bugs; validated all 12 CPU dequantization tests
 
 ## Session Continuity
 
 Last session: 2026-01-19
-Stopped at: Completed 19-03 — Phase 19 complete, all quantized kernels are CUDA-intrinsic-free
+Stopped at: Completed 19-04 — Phase 19 complete, all 4 quantized kernels compiled and validated
 Resume file: None
