@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-19)
 ## Current Position
 
 Phase: 21 of 21 (Test Health and Performance Validation)
-Plan: 2 of 6 in current phase
+Plan: 3 of 6 in current phase
 Status: In progress
-Last activity: 2026-01-20 — Completed Phase 21-02: KV cache capacity enforcement fix
+Last activity: 2026-01-20 — Completed Phase 21-03: Decode step integration tests fix
 
-Progress: [████████████████████░░] 95% (20 of 21 phases complete, 2 plans done in Phase 21)
+Progress: [████████████████████░░] 95% (20 of 21 phases complete, 3 plans done in Phase 21)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 141 (v1.0 + v1.1 + v1.2 through 21-02)
+- Total plans completed: 142 (v1.0 + v1.1 + v1.2 through 21-03)
 - Average duration: ~44 min
-- Total execution time: ~83.5 hours
+- Total execution time: ~83.6 hours
 
 **By Phase:**
 
@@ -73,6 +73,7 @@ Progress: [████████████████████░░] 9
 | 20-08 | 1 | ~8min | 8 min |
 | 21-01 | 1 | ~3min | 3 min |
 | 21-02 | 1 | ~7min | 7 min |
+| 21-03 | 1 | ~4min | 4 min |
 
 **Recent Trend:**
 - Last 5 phases: Stable (3-13 min/plan)
@@ -115,6 +116,7 @@ Recent decisions affecting v1.2:
 - **20-08 Dead Code Marker Review and Zero Warnings Baseline**: Reviewed all #[allow(dead_code)] markers and added explanatory comments; added #[allow(dead_code)] with comments to 23 items across 16 files; verified zero Rust compiler warnings (HYGIENE-03 and HYGIENE-07 satisfied)
 - **21-01 cfg(feature) Gates Fix**: Added #[cfg(feature = "rocm")] gates to GPU-only dequantization exports in mod.rs; split Q4_0 exports into CPU-only (un-gated) and GPU-only (cfg-gated); gated imports in gguf.rs; fixed compilation errors when building without --features rocm flag (TEST-01 prerequisite satisfied)
 - **21-02 KV Cache Capacity Enforcement**: Fixed allocate_page to strictly enforce max_pages limit by removing automatic LRU eviction; when at capacity with no free pages, allocate_page now returns CapacityExceeded error; updated test_token_appending and test_capacity_limit to expect strict enforcement; TEST-02 satisfied
+- **21-03 Decode Step Integration Tests Fix**: Removed synthetic GGUF file creation (causing memory allocation crashes); added serial test attributes to all tests; tests now use real GGUF model from ROCFORGE_TEST_MODEL env var; added graceful skip when GPU or model unavailable; replaced "TODO: add error context" with actual context messages
 
 ### Pending Todos
 
@@ -172,9 +174,10 @@ None yet.
 **Phase 21 Progress:**
 - Phase 21-01: cfg(feature) gates fix for GPU dequant exports; split Q4_0 exports into CPU-only and GPU-only; gated imports in gguf.rs; TEST-01 prerequisite satisfied
 - Phase 21-02: KV cache capacity enforcement fix; removed automatic LRU eviction from allocate_page; strict max_pages limit enforced; TEST-02 satisfied
+- Phase 21-03: Decode step integration tests fix; removed synthetic GGUF creation causing memory crashes; added serial test attributes; graceful skip for GPU/model unavailable; TEST-01 satisfied
 
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed 21-02 — KV cache capacity enforcement fix
+Stopped at: Completed 21-03 — Decode step integration tests fix
 Resume file: None
