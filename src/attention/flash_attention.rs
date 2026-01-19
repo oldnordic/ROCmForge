@@ -15,7 +15,7 @@ use crate::attention::{
 };
 
 #[cfg(feature = "rocm")]
-use crate::backend::{HipBuffer, HipBlasHandle};
+use crate::backend::{HipBuffer, HipBackend, HipBlasHandle};
 #[cfg(feature = "rocm")]
 use crate::backend::hip_backend::synchronize_device;
 
@@ -217,9 +217,11 @@ impl FlashAttentionBackend {
         synchronize_device()
             .map_err(|e| AttentionBackendError::OperationFailed(format!("GPU synchronization failed: {}", e)))?;
 
-        // Copy output back to host
+        // Copy output back to host using HipBackend for safe copy
+        let backend = HipBackend::new()
+            .map_err(|e| AttentionBackendError::OperationFailed(format!("Failed to create HIP backend: {}", e)))?;
         let mut output = vec![0.0f32; q.len()];
-        output_gpu.copy_to_host(&mut output)
+        backend.copy_from_device_safe(&output_gpu, &mut output)
             .map_err(|e| AttentionBackendError::OperationFailed(format!("Failed to copy output to host: {}", e)))?;
 
         Ok(output)
@@ -287,9 +289,11 @@ impl FlashAttentionBackend {
         synchronize_device()
             .map_err(|e| AttentionBackendError::OperationFailed(format!("GPU synchronization failed: {}", e)))?;
 
-        // Copy output back to host
+        // Copy output back to host using HipBackend for safe copy
+        let backend = HipBackend::new()
+            .map_err(|e| AttentionBackendError::OperationFailed(format!("Failed to create HIP backend: {}", e)))?;
         let mut output = vec![0.0f32; q.len()];
-        output_gpu.copy_to_host(&mut output)
+        backend.copy_from_device_safe(&output_gpu, &mut output)
             .map_err(|e| AttentionBackendError::OperationFailed(format!("Failed to copy output to host: {}", e)))?;
 
         Ok(output)

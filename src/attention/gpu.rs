@@ -137,7 +137,7 @@ impl GpuBackend {
 
                 // Copy batch result to correct location in scores buffer
                 let mut batch_scores = vec![0.0f32; seq_len * seq_len];
-                scores_batch.copy_to_host(&mut batch_scores).map_err(|e| {
+                backend.copy_from_device_safe(&scores_batch, &mut batch_scores).map_err(|e| {
                     AttentionError::MemoryCopy(format!("Failed to copy batch scores: {}", e))
                 })?;
 
@@ -178,6 +178,10 @@ impl GpuBackend {
 
             // Apply masking on GPU
             {
+                let backend = HipBackend::new().map_err(|e| {
+                    AttentionError::HandleCreation(format!("Failed to create HIP backend: {}", e))
+                })?;
+
                 let scores_gpu = HipBuffer::new(scores.len() * std::mem::size_of::<f32>())
                     .map_err(|e| {
                         AttentionError::MemoryAllocation(format!(
@@ -221,7 +225,7 @@ impl GpuBackend {
                     )));
                 }
 
-                scores_gpu.copy_to_host(&mut scores).map_err(|e| {
+                backend.copy_from_device_safe(&scores_gpu, &mut scores).map_err(|e| {
                     AttentionError::MemoryCopy(format!(
                         "Failed to copy masked scores to host: {}",
                         e
