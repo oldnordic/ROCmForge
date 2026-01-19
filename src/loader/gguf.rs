@@ -7,7 +7,9 @@
 //! - GPU memory allocation via DeviceTensor
 
 use crate::backend::hip_backend::{AsyncLoader, DeviceTensor, HipBackend, HipBuffer};
-use crate::ggml::hip_backend::ops::q4_0_dequant::dequantize_q4_0_with_fallback;
+use crate::ggml::hip_backend::ops::q4_0_dequant::dequantize_q4_0_kernel_cached;
+use crate::ggml::hip_backend::ops::q4_k_dequant::dequantize_q4_k_gpu_kernel;
+use crate::ggml::hip_backend::ops::q6_k_dequant::dequantize_q6_k_gpu_kernel;
 use crate::loader::lazy_tensor::LazyTensor;
 use crate::loader::mmap::MmapGguf;
 use crate::loader::tensor_type::GgufTensorType;
@@ -717,20 +719,37 @@ impl GgufLoader {
             .get_slice(offset, size)
             .map_err(|e| anyhow!("Failed to read tensor '{}' from mmap: {}", name, e))?;
 
-        // Check if this is a Q4_0 tensor that can use GPU dequantization
-        // Q4_0: Upload quantized bytes directly, dequantize on GPU
+        // Check if this is a Q4_0, Q4_K, or Q6_K tensor that can use GPU dequantization
+        // Upload quantized bytes directly, dequantize on GPU
         let needs_transpose = Self::is_fused_qkv_weight(name);
-        if tensor_type == GgufTensorType::Q4_0 && !needs_transpose {
-            // GPU dequantization path for Q4_0
+        if (tensor_type == GgufTensorType::Q4_0
+            || tensor_type == GgufTensorType::Q4_K
+            || tensor_type == GgufTensorType::Q6_K) && !needs_transpose {
+            // GPU dequantization path for Q4_0/Q4_K/Q6_K
             // Allocate output buffer for FP32 data
             let num_elements = shape.total_elements();
             let output_buffer = backend
                 .allocate_buffer(num_elements * 4)
                 .map_err(|e| anyhow!("Failed to allocate output buffer for '{}': {}", name, e))?;
 
-            // Call GPU dequantization with CPU fallback
-            dequantize_q4_0_with_fallback(backend, tensor_bytes, &output_buffer, num_elements)
-                .map_err(|e| anyhow!("GPU dequantization failed for '{}': {}", name, e))?;
+            // Call GPU dequantization - NO CPU fallback for GPU tensors
+            // QUANT-06: CPU dequantization fallback removed for GPU tensors
+            // If GPU dequantization fails, fail fast with clear error message
+            match tensor_type {
+                GgufTensorType::Q4_0 => {
+                    dequantize_q4_0_kernel_cached(backend, tensor_bytes, &output_buffer, num_elements)
+                        .map_err(|e| anyhow!("GPU dequantization failed for '{}': {}. If GPU is unavailable, use CPU tensors instead.", name, e))?;
+                }
+                GgufTensorType::Q4_K => {
+                    dequantize_q4_k_gpu_kernel(backend, tensor_bytes, &output_buffer, num_elements)
+                        .map_err(|e| anyhow!("GPU dequantization failed for '{}': {}. If GPU is unavailable, use CPU tensors instead.", name, e))?;
+                }
+                GgufTensorType::Q6_K => {
+                    dequantize_q6_k_gpu_kernel(backend, tensor_bytes, &output_buffer, num_elements)
+                        .map_err(|e| anyhow!("GPU dequantization failed for '{}': {}. If GPU is unavailable, use CPU tensors instead.", name, e))?;
+                }
+                _ => unreachable!(),
+            };
 
             eprintln!(
                 ">>> load_tensor_to_gpu: '{}' GPU dequantization complete, {} f32 values ({} MB)",
@@ -767,7 +786,7 @@ impl GgufLoader {
             return Ok(device_tensor_arc);
         }
 
-        // CPU dequantization path (for non-Q4_0 or Q4_0 with transpose requirement)
+        // CPU dequantization path (for types without GPU dequantization or with transpose requirement)
         // Dequantize based on tensor type
         let mut f32_data: Vec<f32> = match tensor_type {
             GgufTensorType::F32 => tensor_bytes
