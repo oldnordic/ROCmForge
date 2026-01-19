@@ -13,7 +13,7 @@
 
 Requirements for eliminating technical debt and establishing a clean codebase baseline.
 
-- [ ] **HYGIENE-01**: Scheduler clone bug is fixed — `update_iteration_batch` no longer overwrites with stale clones
+- [x] **HYGIENE-01**: Scheduler clone bug is fixed — `update_iteration_batch` no longer overwrites with stale clones
 - [ ] **HYGIENE-02**: All unreachable pattern warnings are eliminated (2 locations)
 - [ ] **HYGIENE-03**: All `#[allow(dead_code)]` markers are reviewed and resolved
 - [ ] **HYGIENE-04**: All unused import warnings are eliminated
@@ -115,7 +115,7 @@ Explicitly excluded from v1.2.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| HYGIENE-01 | Phase 14 | Pending |
+| HYGIENE-01 | Phase 14 | Complete |
 | HYGIENE-02 | Phase 19 | Pending |
 | HYGIENE-03 | Phase 19 | Pending |
 | HYGIENE-04 | Phase 19 | Pending |
