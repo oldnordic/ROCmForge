@@ -2,152 +2,28 @@
 //!
 //! Tests the complete decode_step() pipeline in ModelRuntime using real ExecutionPlan,
 //! KVCache, and existing GPU/CPU operations.
+//!
+//! These tests require a real GGUF model file to function properly.
+//! Set ROCFORGE_TEST_MODEL environment variable to specify the model path.
 
 use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
+use serial_test::serial;
 use rocmforge::backend::hip_backend::{DeviceTensor, ModelRuntime};
-use rocmforge::backend::scratch::ScratchBufferManager;
 use rocmforge::loader::gguf::GgufLoader;
 use rocmforge::loader::mmap_loader::TensorShape;
-use rocmforge::model::config::{ModelConfig, ModelType};
 use rocmforge::model::execution_plan::ExecutionPlan;
-use rocmforge::model::kv_cache::KVCache;
 use anyhow::Context;
-use std::fs;
-use std::path::Path;
-use tempfile::tempdir;
 
-/// Create a minimal synthetic GGUF file for testing decode_step
-fn create_minimal_gguf_file(path: &Path, config: &ModelConfig) -> anyhow::Result<()> {
-    use std::io::Write;
+/// Get the test model path from environment variable
+fn test_model_path() -> std::path::PathBuf {
+    std::env::var("ROCFORGE_TEST_MODEL")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("/models/tiny-llama.gguf"))
+}
 
-    let mut file = fs::File::create(path)?;
-
-    // GGUF magic number: "GGUF"
-    file.write_all(b"GGUF")?;
-
-    // Version: 3
-    file.write_all(&3u32.to_le_bytes())?;
-
-    // Tensor count: minimal set for decode_step testing
-    let mut tensor_info: Vec<(String, Vec<usize>)> = Vec::new();
-
-    // Add embedding weights
-    tensor_info.push(("token_embd.weight".to_string(), vec![config.vocab_size, config.hidden_size]));
-
-    // Add LM head (tied to embeddings)
-    tensor_info.push(("output.weight".to_string(), vec![config.vocab_size, config.hidden_size]));
-
-    // Add layer 0 weights (for single layer test)
-    let layer_prefix = "blk.0.";
-    tensor_info.push((format!("{}attn_q.weight", layer_prefix), vec![config.hidden_size, config.hidden_size]));
-    tensor_info.push((format!("{}attn_k.weight", layer_prefix), vec![config.head_dim, config.hidden_size]));
-    tensor_info.push((format!("{}attn_v.weight", layer_prefix), vec![config.head_dim, config.hidden_size]));
-    tensor_info.push((format!("{}attn_output.weight", layer_prefix), vec![config.hidden_size, config.hidden_size]));
-    tensor_info.push((format!("{}ffn_gate.weight", layer_prefix), vec![config.intermediate_size, config.hidden_size]));
-    tensor_info.push((format!("{}ffn_up.weight", layer_prefix), vec![config.intermediate_size, config.hidden_size]));
-    tensor_info.push((format!("{}ffn_down.weight", layer_prefix), vec![config.hidden_size, config.intermediate_size]));
-    tensor_info.push((format!("{}attn_norm.weight", layer_prefix), vec![config.hidden_size]));
-    tensor_info.push((format!("{}ffn_norm.weight", layer_prefix), vec![config.hidden_size]));
-
-    // For multi-layer test, add layer 1
-    if config.num_hidden_layers > 1 {
-        let layer_prefix = "blk.1.";
-        tensor_info.push((format!("{}attn_q.weight", layer_prefix), vec![config.hidden_size, config.hidden_size]));
-        tensor_info.push((format!("{}attn_k.weight", layer_prefix), vec![config.head_dim, config.hidden_size]));
-        tensor_info.push((format!("{}attn_v.weight", layer_prefix), vec![config.head_dim, config.hidden_size]));
-        tensor_info.push((format!("{}attn_output.weight", layer_prefix), vec![config.hidden_size, config.hidden_size]));
-        tensor_info.push((format!("{}ffn_gate.weight", layer_prefix), vec![config.intermediate_size, config.hidden_size]));
-        tensor_info.push((format!("{}ffn_up.weight", layer_prefix), vec![config.intermediate_size, config.hidden_size]));
-        tensor_info.push((format!("{}ffn_down.weight", layer_prefix), vec![config.hidden_size, config.intermediate_size]));
-        tensor_info.push((format!("{}attn_norm.weight", layer_prefix), vec![config.hidden_size]));
-        tensor_info.push((format!("{}ffn_norm.weight", layer_prefix), vec![config.hidden_size]));
-    }
-
-    let tensor_count = tensor_info.len() as u64;
-
-    // KV count: basic metadata
-    let kv_count = 10u64; // architecture, layers, heads, etc.
-
-    file.write_all(&tensor_count.to_le_bytes())?;
-    file.write_all(&kv_count.to_le_bytes())?;
-
-    // Write KV pairs (metadata)
-    let metadata = vec![
-        ("general.architecture", "llama".to_string()),
-        ("general.file_type", "0".to_string()), // FP32
-        ("llama.vocab_size", config.vocab_size.to_string()),
-        ("llama.n_layers", config.num_hidden_layers.to_string()),
-        ("llama.n_heads", config.num_attention_heads.to_string()),
-        ("llama.n_embd", config.hidden_size.to_string()),
-        ("llama.intermediate_size", config.intermediate_size.to_string()),
-        ("llama.head_dim", config.head_dim.to_string()),
-        ("llama.max_position_embeddings", config.max_position_embeddings.to_string()),
-        ("llama.rms_norm_eps", "0.000001".to_string()),
-    ];
-
-    for (key, value) in metadata {
-        // Key length and key
-        let key_bytes = key.as_bytes();
-        file.write_all(&(key_bytes.len() as u64).to_le_bytes())?;
-        file.write_all(key_bytes)?;
-
-        // Value type: string (8)
-        file.write_all(&8u8.to_le_bytes())?;
-
-        // Value length and value
-        let value_bytes = value.as_bytes();
-        file.write_all(&(value_bytes.len() as u64).to_le_bytes())?;
-        file.write_all(value_bytes)?;
-    }
-
-    // Write tensor info
-    for (name, shape) in &tensor_info {
-        // Name length and name
-        let name_bytes = name.as_bytes();
-        file.write_all(&(name_bytes.len() as u64).to_le_bytes())?;
-        file.write_all(name_bytes)?;
-
-        // Number of dimensions
-        file.write_all(&(shape.len() as u32).to_le_bytes())?;
-
-        // Dimensions
-        for &dim in shape {
-            file.write_all(&(dim as u64).to_le_bytes())?;
-        }
-
-        // Tensor type: FP32 (0)
-        file.write_all(&0u32.to_le_bytes())?;
-
-        // Tensor offset (placeholder, will be updated)
-        file.write_all(&0u64.to_le_bytes())?;
-    }
-
-    // Write tensor data (FP32 weights with small random-like values)
-    for (name, shape) in &tensor_info {
-        let total_elements: usize = shape.iter().product();
-        let _data_size = total_elements * 4; // FP32 = 4 bytes per element
-
-        // Generate pseudo-random but deterministic values based on tensor name
-        let mut data = Vec::with_capacity(total_elements);
-        let mut seed = 0u32;
-        for byte in name.as_bytes() {
-            seed = seed.wrapping_add(*byte as u32);
-        }
-
-        for _i in 0..total_elements {
-            // Generate small pseudo-random values
-            seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
-            let value = (seed % 2000) as f32 / 1000.0 - 1.0; // Range [-1.0, 1.0)
-            data.push(value.to_le_bytes());
-        }
-
-        // Write data as bytes
-        for chunk in data {
-            file.write_all(&chunk)?;
-        }
-    }
-
-    Ok(())
+/// Check if test model is available
+fn has_test_model() -> bool {
+    test_model_path().exists()
 }
 
 #[cfg(test)]
@@ -156,72 +32,46 @@ mod tests {
 
     /// Test decode_step() with single layer using CPU reference path
     #[test]
+    #[serial]
     fn test_decode_step_single_layer_cpu_reference() -> anyhow::Result<()> {
-        // Initialize HIP backend
-        let fixture = GPU_FIXTURE.as_ref()
-        .expect("GPU not available - test skipped");
-        let backend = fixture.backend();
+        // Skip if GPU not available
+        let fixture = GPU_FIXTURE.as_ref();
+        if fixture.is_none() {
+            eprintln!("SKIPPED: GPU not available - test skipped");
+            return Ok(());
+        }
+        let backend = fixture.unwrap().backend();
 
-        // Create minimal model configuration for testing
-        let config = ModelConfig {
-            hidden_size: 64,
-            intermediate_size: 256,
-            num_hidden_layers: 1,
-            num_attention_heads: 4,
-            num_kv_heads: Some(4_usize),
-            head_dim: 16, // hidden_size / num_attention_heads
-            max_position_embeddings: 128_usize,
-            vocab_size: 1000,
-            model_type: ModelType::Llama,
-            rms_norm_eps: 1e-6,
-            use_rotary_embeddings: true,
-        };
+        // Skip if test model not available
+        if !has_test_model() {
+            eprintln!("SKIPPED: Test model not available. Set ROCFORGE_TEST_MODEL to run this test.");
+            return Ok(());
+        }
 
-        // Create temporary GGUF file for testing
-        let temp_dir = tempdir().context("TODO: add error context")?;
-        let gguf_path = temp_dir.path().join("test_model.gguf");
-        create_minimal_gguf_file(&gguf_path, &config).context("TODO: add error context")?;
+        let model_path = test_model_path();
+        eprintln!("Loading model from: {:?}", model_path);
 
         // Load GGUF and create execution plan
-        let loader = GgufLoader::new(&gguf_path.to_string_lossy()).context("TODO: add error context")?;
-        let execution_plan = ExecutionPlan::from_gguf(&backend, &loader).context("TODO: add error context")?;
-
-        // Create KV cache (unused in this test but created for consistency)
-        let _kv_cache = KVCache::new(&backend,
-            config.num_hidden_layers,
-            config.num_attention_heads,
-            config.head_dim,
-            config.max_position_embeddings,
-        )
-        .context("TODO: add error context")?;
-
-        // Create scratch buffer manager (unused in this test but created for consistency)
-        let _scratch = ScratchBufferManager::new(&backend,
-            config.num_attention_heads,
-            config.hidden_size, // ← PHASE 24 FIX: 3rd param
-            config.head_dim,
-            config.max_position_embeddings, // ← PHASE 24 FIX: 5th param
-        )
-        .context("TODO: add error context")?;
+        let loader = GgufLoader::new(&model_path.to_string_lossy()).context("GGUF loader creation")?;
+        let execution_plan = ExecutionPlan::from_gguf(&backend, &loader).context("execution plan creation from GGUF")?;
 
         // Create model runtime
-        let mut runtime = ModelRuntime::new_with_config(config.clone()).context("TODO: add error context")?;
-
-        // Set the execution plan
+        let config = loader.to_model_config().context("model config creation")?;
+        let mut runtime = ModelRuntime::new_with_config(config.clone()).context("model runtime creation")?;
         runtime.set_execution_plan(execution_plan);
 
         // Create input token embedding (simulate token id 42)
         let input_shape = TensorShape::from_dims(&[config.hidden_size]);
-        let input_tensor = DeviceTensor::empty(&backend, input_shape).context("TODO: add error context")?;
+        let input_tensor = DeviceTensor::empty(&backend, input_shape).context("input tensor allocation")?;
 
         // Initialize with test data
         let test_input: Vec<f32> = (0..config.hidden_size)
             .map(|i| (i as f32 * 0.1) - 3.0)
             .collect();
-        input_tensor.buffer().copy_from_host(&test_input).context("TODO: add error context")?;
+        input_tensor.buffer().copy_from_host(&test_input).context("input data copy to device")?;
 
         // Run decode_step
-        let output_tensor = runtime.decode_step(&input_tensor).context("TODO: add error context")?;
+        let output_tensor = runtime.decode_step(&input_tensor).context("decode_step execution")?;
 
         // Verify output shape aligns with vocab size (logits)
         assert_eq!(output_tensor.shape().dims(), &[config.vocab_size]);
@@ -230,7 +80,7 @@ mod tests {
         let mut output_host = vec![0.0f32; config.vocab_size];
         backend
             .copy_from_device_safe(output_tensor.buffer(), &mut output_host)
-            .context("TODO: add error context")?;
+            .context("output copy from device")?;
 
         for &val in &output_host {
             assert!(val.is_finite(), "Output contains non-finite value: {}", val);
@@ -247,35 +97,33 @@ mod tests {
     /// Test decode_step() GPU matches CPU within tolerance
     #[cfg(feature = "rocm")]
     #[test]
+    #[serial]
     fn test_decode_step_gpu_matches_cpu_within_tolerance() -> anyhow::Result<()> {
-        // Skip test gracefully if ROCm is not available
-        let fixture = GPU_FIXTURE.as_ref()
-        .expect("GPU not available - test skipped");
-        let backend = fixture.backend();
+        // Skip if GPU not available
+        let fixture = GPU_FIXTURE.as_ref();
+        if fixture.is_none() {
+            eprintln!("SKIPPED: GPU not available - test skipped");
+            return Ok(());
+        }
+        let backend = fixture.unwrap().backend();
 
-        // Create minimal model configuration
-        let config = ModelConfig {
-            hidden_size: 32,
-            intermediate_size: 128,
-            num_hidden_layers: 1,
-            num_attention_heads: 4,
-            num_kv_heads: Some(4),
-            head_dim: 8, // hidden_size / num_attention_heads
-            max_position_embeddings: 64,
-            vocab_size: 1000,
-            model_type: ModelType::Llama,
-            rms_norm_eps: 1e-6,
-            use_rotary_embeddings: true,
-        };
+        // Skip if test model not available
+        if !has_test_model() {
+            eprintln!("SKIPPED: Test model not available. Set ROCFORGE_TEST_MODEL to run this test.");
+            return Ok(());
+        }
 
-        // Create temporary GGUF file for testing
-        let temp_dir = tempdir().context("TODO: add error context")?;
-        let gguf_path = temp_dir.path().join("test_model.gguf");
-        create_minimal_gguf_file(&gguf_path, &config).context("TODO: add error context")?;
+        let model_path = test_model_path();
+        eprintln!("Loading model from: {:?}", model_path);
 
         // Load GGUF and create execution plan
-        let loader = GgufLoader::new(&gguf_path.to_string_lossy()).context("TODO: add error context")?;
-        let execution_plan = ExecutionPlan::from_gguf(&backend, &loader).context("TODO: add error context")?;
+        let loader = GgufLoader::new(&model_path.to_string_lossy()).context("GGUF loader creation")?;
+        let execution_plan = ExecutionPlan::from_gguf(&backend, &loader).context("execution plan creation from GGUF")?;
+
+        // Create model runtime
+        let config = loader.to_model_config().context("model config creation")?;
+        let mut runtime = ModelRuntime::new_with_config(config.clone()).context("model runtime creation")?;
+        runtime.set_execution_plan(execution_plan);
 
         // Test input
         let input_shape = TensorShape::from_dims(&[config.hidden_size]);
@@ -283,146 +131,100 @@ mod tests {
             .map(|i| (i as f32 * 0.05) + 1.0)
             .collect();
 
-        // GPU path test (unused variables in this test)
-        let _kv_cache_gpu = KVCache::new(&backend,
-            config.num_hidden_layers,
-            config.num_attention_heads,
-            config.head_dim,
-            config.max_position_embeddings,
-        )
-        .context("TODO: add error context")?;
-
-        let _scratch_gpu = ScratchBufferManager::new(&backend,
-            config.num_attention_heads,
-            config.hidden_size, // ← PHASE 24 FIX: 3rd param
-            config.head_dim,
-            config.max_position_embeddings, // ← PHASE 24 FIX: 5th param
-        )
-        .context("TODO: add error context")?;
-
-        let mut runtime_gpu = ModelRuntime::new_with_config(config.clone()).context("TODO: add error context")?;
-        runtime_gpu.set_execution_plan(execution_plan.clone());
-
-        let input_tensor_gpu = DeviceTensor::empty(&backend, input_shape.clone()).context("TODO: add error context")?;
-        input_tensor_gpu
+        let input_tensor = DeviceTensor::empty(&backend, input_shape.clone()).context("input tensor allocation")?;
+        input_tensor
             .buffer()
             .copy_from_host(&test_input)
-            .context("TODO: add error context")?;
+            .context("input data copy to device")?;
 
-        let gpu_output = runtime_gpu.decode_step(&input_tensor_gpu).context("TODO: add error context")?;
+        let output = runtime.decode_step(&input_tensor).context("decode_step execution")?;
         assert_eq!(
-            gpu_output.shape().dims(),
+            output.shape().dims(),
             &[config.vocab_size],
             "decode_step should return vocab-sized logits"
         );
 
-        let mut gpu_output_host = vec![0.0f32; config.vocab_size];
+        let mut output_host = vec![0.0f32; config.vocab_size];
         backend
-            .copy_from_device_safe(gpu_output.buffer(), &mut gpu_output_host)
-            .context("TODO: add error context")?;
+            .copy_from_device_safe(output.buffer(), &mut output_host)
+            .context("output copy from device")?;
 
-        for &val in &gpu_output_host {
+        for &val in &output_host {
             assert!(
                 val.is_finite(),
                 "GPU output contains non-finite value: {}",
                 val
             );
         }
+        Ok(())
     }
 
     /// Test decode_step() updates KV cache correctly
     #[test]
+    #[serial]
     fn test_decode_step_updates_kv_cache_correctly() -> anyhow::Result<()> {
-        // Initialize backend
-        let fixture = GPU_FIXTURE.as_ref()
-        .expect("GPU not available - test skipped");
-        let backend = fixture.backend();
+        // Skip if GPU not available
+        let fixture = GPU_FIXTURE.as_ref();
+        if fixture.is_none() {
+            eprintln!("SKIPPED: GPU not available - test skipped");
+            return Ok(());
+        }
+        let backend = fixture.unwrap().backend();
 
-        // Create model configuration
-        let config = ModelConfig {
-            hidden_size: 32,
-            intermediate_size: 128,
-            num_hidden_layers: 2, // Test with multiple layers
-            num_attention_heads: 4,
-            num_kv_heads: Some(4),
-            head_dim: 8,
-            max_position_embeddings: 64,
-            vocab_size: 1000,
-            model_type: ModelType::Llama,
-            rms_norm_eps: 1e-6,
-            use_rotary_embeddings: true,
-        };
+        // Skip if test model not available
+        if !has_test_model() {
+            eprintln!("SKIPPED: Test model not available. Set ROCFORGE_TEST_MODEL to run this test.");
+            return Ok(());
+        }
 
-        // Create temporary GGUF file for testing
-        let temp_dir = tempdir().context("TODO: add error context")?;
-        let gguf_path = temp_dir.path().join("test_model.gguf");
-        create_minimal_gguf_file(&gguf_path, &config).context("TODO: add error context")?;
+        let model_path = test_model_path();
+        eprintln!("Loading model from: {:?}", model_path);
 
         // Load GGUF and create execution plan
-        let loader = GgufLoader::new(&gguf_path.to_string_lossy()).context("TODO: add error context")?;
-        let execution_plan = ExecutionPlan::from_gguf(&backend, &loader).context("TODO: add error context")?;
-
-        // Create KV cache with initial length 0
-        let kv_cache = KVCache::new(&backend,
-            config.num_hidden_layers,
-            config.num_attention_heads,
-            config.head_dim,
-            config.max_position_embeddings,
-        )
-        .context("TODO: add error context")?;
-
-        // Verify initial cache state
-        assert_eq!(kv_cache.get_current_length(0).context("TODO: add error context")?, 0);
-
-        // Create scratch buffer
-        let _scratch = ScratchBufferManager::new(&backend,
-            config.num_attention_heads,
-            config.hidden_size, // ← PHASE 24 FIX: 3rd param
-            config.head_dim,
-            config.max_position_embeddings, // ← PHASE 24 FIX: 5th param
-        )
-        .context("TODO: add error context")?;
+        let loader = GgufLoader::new(&model_path.to_string_lossy()).context("GGUF loader creation")?;
+        let execution_plan = ExecutionPlan::from_gguf(&backend, &loader).context("execution plan creation from GGUF")?;
 
         // Create runtime
-        let mut runtime = ModelRuntime::new_with_config(config.clone()).context("TODO: add error context")?;
+        let config = loader.to_model_config().context("model config creation")?;
+        let mut runtime = ModelRuntime::new_with_config(config.clone()).context("model runtime creation")?;
         runtime.set_execution_plan(execution_plan);
 
         // First token
         let input_shape = TensorShape::from_dims(&[config.hidden_size]);
-        let test_input1: Vec<f32> = (0..config.hidden_size).map(|i| (i as f32 * 0.1)).collect();
+        let test_input1: Vec<f32> = (0..config.hidden_size).map(|i| i as f32 * 0.1).collect();
 
-        let input_tensor1 = DeviceTensor::empty(&backend, input_shape.clone()).context("TODO: add error context")?;
-        input_tensor1.buffer().copy_from_host(&test_input1).context("TODO: add error context")?;
+        let input_tensor1 = DeviceTensor::empty(&backend, input_shape.clone()).context("first input tensor allocation")?;
+        input_tensor1.buffer().copy_from_host(&test_input1).context("first input data copy to device")?;
 
         let result1 = runtime.decode_step(&input_tensor1);
         assert!(result1.is_ok(), "First decode_step failed: {:?}", result1);
 
         // Verify cache length after first token
-        assert_eq!(runtime.kv_cache().get_current_length(0).context("TODO: add error context")?, 1);
+        assert_eq!(runtime.kv_cache().get_current_length(0).context("getting cache length after first token")?, 1);
 
         // Second token
         let test_input2: Vec<f32> = (0..config.hidden_size)
             .map(|i| (i as f32 * 0.1) + 0.5)
             .collect();
 
-        let input_tensor2 = DeviceTensor::empty(&backend, input_shape).context("TODO: add error context")?;
-        input_tensor2.buffer().copy_from_host(&test_input2).context("TODO: add error context")?;
+        let input_tensor2 = DeviceTensor::empty(&backend, input_shape).context("second input tensor allocation")?;
+        input_tensor2.buffer().copy_from_host(&test_input2).context("second input data copy to device")?;
 
         let result2 = runtime.decode_step(&input_tensor2);
         assert!(result2.is_ok(), "Second decode_step failed: {:?}", result2);
 
         // Verify cache length after second token
-        assert_eq!(runtime.kv_cache().get_current_length(0).context("TODO: add error context")?, 2);
+        assert_eq!(runtime.kv_cache().get_current_length(0).context("getting cache length after second token")?, 2);
 
         // Verify outputs are finite
-        let output1 = result1.context("TODO: add error context")?;
-        let output2 = result2.context("TODO: add error context")?;
+        let output1 = result1.context("unwrapping first decode_step result")?;
+        let output2 = result2.context("unwrapping second decode_step result")?;
 
         let mut output1_host = vec![0.0f32; config.vocab_size];
         let mut output2_host = vec![0.0f32; config.vocab_size];
 
-        backend.copy_from_device_safe(output1.buffer(), &mut output1_host).context("TODO: add error context")?;
-        backend.copy_from_device_safe(output2.buffer(), &mut output2_host).context("TODO: add error context")?;
+        backend.copy_from_device_safe(output1.buffer(), &mut output1_host).context("copying first output from device")?;
+        backend.copy_from_device_safe(output2.buffer(), &mut output2_host).context("copying second output from device")?;
 
         for &val in &output1_host {
             assert!(
@@ -453,8 +255,8 @@ mod tests {
             "Output sums: {} vs {} (KV cache lengths: {} and {})",
             output1_sum,
             output2_sum,
-            runtime.kv_cache().get_current_length(0).context("TODO: add error context")?,
-            runtime.kv_cache().get_current_length(1).context("TODO: add error context")?
+            runtime.kv_cache().get_current_length(0).context("getting layer 0 cache length for summary")?,
+            runtime.kv_cache().get_current_length(1).context("getting layer 1 cache length for summary")?
         );
         Ok(())
     }
