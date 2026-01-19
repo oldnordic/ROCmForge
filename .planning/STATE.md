@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-01-19)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Phase 19 - Wavefront-Native Quantized Matmul Kernels
+**Current focus:** Phase 20 - Code Hygiene Completion
 
 ## Current Position
 
-Phase: 19 of 20 (Wavefront-Native Quantized Matmul Kernels)
-Plan: 4/4 in current phase
-Status: Phase complete
-Last activity: 2026-01-19 — Completed Phase 19-04: Compile and validate HIP quantized kernels
+Phase: 20 of 20 (Code Hygiene Completion)
+Plan: 3 of 4 in current phase
+Status: In progress
+Last activity: 2026-01-19 — Completed Phase 20-03: Remove unused imports across 8 files
 
-Progress: [███████░░░░░░░░░░░░░░░] 28% (19 of 20 phases complete)
+Progress: [█████████░░░░░░░░░░░░] 29% (19.75 of 20 phases complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 132 (v1.0 + v1.1 + v1.2 through 19-04)
+- Total plans completed: 135 (v1.0 + v1.1 + v1.2 through 20-03)
 - Average duration: ~44 min
-- Total execution time: ~79 hours
+- Total execution time: ~80 hours
 
 **By Phase:**
 
@@ -65,6 +65,9 @@ Progress: [███████░░░░░░░░░░░░░░░] 2
 | 19-02 | 1 | ~3min | 3 min |
 | 19-03 | 1 | ~1min | 1 min |
 | 19-04 | 1 | ~15min | 15 min |
+| 20-01 | 1 | ~2min | 2 min |
+| 20-02 | 1 | ~2min | 2 min |
+| 20-03 | 1 | ~3min | 3 min |
 
 **Recent Trend:**
 - Last 5 phases: Stable (3-13 min/plan)
@@ -145,9 +148,12 @@ None yet.
 - Phase 19-02: HIP intrinsics replacement; corrected WARP_SIZE to 64 for wave64; replaced __shfl_down_f32 with __shfl_down; documented tile size alignment
 - Phase 19-03: Fused RMSNorm CUDA intrinsics removal; corrected WARP_SIZE to 64; replaced __shfl_down_f32 with __shfl_down; all 4 quantized kernels are CUDA-intrinsic-free
 - Phase 19-04: Compile and validate HIP quantized kernels; compiled 4 HSACO files for gfx1100; replaced invalid __builtin_amdgcn_wave_reduce_fadd; fixed Q4_K and Q6_K CPU test bugs; validated all 12 CPU dequantization tests
+- Phase 20-01: Removed duplicate GgufMetadata struct from ggml.rs; consolidated to single definition in loader.rs
+- Phase 20-02: Renamed Q6_K type aliases (Q6_KBlock, Q6_KKernelCache, Q6_K_CACHE) to match naming conventions; made Q4_0DequantCache public
+- Phase 20-03: Removed 8 unused imports (6 HipError, 2 KernelTimer) across hip_backend ops modules; eliminated all unused import warnings
 
 ## Session Continuity
 
 Last session: 2026-01-19
-Stopped at: Completed 19-04 — Phase 19 complete, all 4 quantized kernels compiled and validated
+Stopped at: Completed 20-03 — Removed unused imports, HYGIENE-04 satisfied
 Resume file: None
