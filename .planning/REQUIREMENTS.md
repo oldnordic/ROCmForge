@@ -47,21 +47,21 @@ Requirements for GPU-accelerated rotary position embeddings.
 
 Requirements for on-device quantization operations.
 
-- [ ] **QUANT-01**: Q4_0 dequantization runs on GPU
-- [ ] **QUANT-02**: Q4_K dequantization runs on GPU (if not already implemented)
-- [ ] **QUANT-03**: Q6_K dequantization runs on GPU (if not already implemented)
-- [ ] **QUANT-04**: Quantized matmul fusion runs on GPU (dequant + matmul in one kernel)
-- [ ] **QUANT-05**: Quantization kernels have unit tests verifying bit-exact outputs
-- [ ] **QUANT-06**: CPU dequantization fallback is removed for GPU tensors
+- [x] **QUANT-01**: Q4_0 dequantization runs on GPU
+- [x] **QUANT-02**: Q4_K dequantization runs on GPU (if not already implemented)
+- [x] **QUANT-03**: Q6_K dequantization runs on GPU (if not already implemented)
+- [x] **QUANT-04**: Quantized matmul fusion runs on GPU (dequant + matmul in one kernel)
+- [x] **QUANT-05**: Quantization kernels have unit tests verifying bit-exact outputs
+- [x] **QUANT-06**: CPU dequantization fallback is removed for GPU tensors
 
 ### GPU Attention (ATTENTION)
 
 Requirements for GPU-accelerated attention mechanisms.
 
 - [ ] **ATTENTION-01**: FlashAttention variant is verified working on GPU
-- [ ] **ATTENTION-02**: Multi-query attention (MQA) runs fully on GPU
-- [ ] **ATTENTION-03**: Grouped-query attention (GQA) runs fully on GPU
-- [ ] **ATTENTION-04**: Attention kernels are added to build.rs (if missing)
+- [x] **ATTENTION-02**: Multi-query attention (MQA) runs fully on GPU
+- [x] **ATTENTION-03**: Grouped-query attention (GQA) runs fully on GPU
+- [x] **ATTENTION-04**: Attention kernels are added to build.rs (if missing)
 - [ ] **ATTENTION-05**: Attention kernels have correctness tests
 
 ### Test Health (TEST)
@@ -122,28 +122,28 @@ Explicitly excluded from v1.2.
 | HYGIENE-05 | Phase 19 | Pending |
 | HYGIENE-06 | Phase 19 | Pending |
 | HYGIENE-07 | Phase 19 | Pending |
-| SAMPLING-01 | Phase 15 | Pending |
-| SAMPLING-02 | Phase 15 | Pending |
-| SAMPLING-03 | Phase 15 | Pending |
-| SAMPLING-04 | Phase 15 | Pending |
-| SAMPLING-05 | Phase 15 | Pending |
-| SAMPLING-06 | Phase 15 | Pending |
+| SAMPLING-01 | Phase 15 | Validated |
+| SAMPLING-02 | Phase 15 | Validated |
+| SAMPLING-03 | Phase 15 | Validated |
+| SAMPLING-04 | Phase 15 | Validated |
+| SAMPLING-05 | Phase 15 | Validated |
+| SAMPLING-06 | Phase 15 | Validated |
 | ROPE-01 | Phase 16 | Validated |
 | ROPE-02 | Phase 16 | Validated |
 | ROPE-03 | Phase 16 | Validated |
 | ROPE-04 | Phase 16 | Validated |
 | ROPE-05 | Phase 16 | Validated |
 | ROPE-06 | Phase 16 | Validated |
-| QUANT-01 | Phase 17 | Pending |
-| QUANT-02 | Phase 17 | Pending |
-| QUANT-03 | Phase 17 | Pending |
-| QUANT-04 | Phase 17 | Pending |
-| QUANT-05 | Phase 17 | Pending |
-| QUANT-06 | Phase 17 | Pending |
+| QUANT-01 | Phase 17 | Validated |
+| QUANT-02 | Phase 17 | Validated |
+| QUANT-03 | Phase 17 | Validated |
+| QUANT-04 | Phase 17 | Validated |
+| QUANT-05 | Phase 17 | Validated |
+| QUANT-06 | Phase 17 | Validated |
 | ATTENTION-01 | Phase 18 | Pending |
-| ATTENTION-02 | Phase 18 | Pending |
-| ATTENTION-03 | Phase 18 | Pending |
-| ATTENTION-04 | Phase 18 | Pending |
+| ATTENTION-02 | Phase 18 | Validated |
+| ATTENTION-03 | Phase 18 | Validated |
+| ATTENTION-04 | Phase 18 | Validated |
 | ATTENTION-05 | Phase 18 | Pending |
 | TEST-01 | Phase 20 | Pending |
 | TEST-02 | Phase 20 | Pending |

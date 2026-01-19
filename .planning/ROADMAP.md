@@ -147,9 +147,9 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 
 **Plans:** 3 plans in 2 waves
 
-- [ ] 17-01-PLAN.md — Implement Q4_0 GPU dequantization kernel wrapper
-- [ ] 17-02-PLAN.md — Implement Q4_K and Q6_K GPU dequantization kernel wrappers
-- [ ] 17-03-PLAN.md — Integrate fused matmul kernels and remove CPU fallback
+- [x] 17-01-PLAN.md — Implement Q4_0 GPU dequantization kernel wrapper
+- [x] 17-02-PLAN.md — Implement Q4_K and Q6_K GPU dequantization kernel wrappers
+- [x] 17-03-PLAN.md — Integrate fused matmul kernels and remove CPU fallback
 
 **Wave Structure:**
 - Wave 1: 17-01 (Q4_0 dequant), 17-02 (Q4_K/Q6_K dequant) — parallel execution
@@ -172,7 +172,16 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 4. Attention kernels are added to build.rs (if missing)
 5. Attention kernels have correctness tests
 
-**Plans**: TBD
+**Plans:** 3 plans in 2 waves
+
+Plans:
+- [x] 18-01-PLAN.md — Verify FlashAttention GPU kernels (generic, causal, non-causal)
+- [x] 18-02-PLAN.md — Verify MQA/GQA KV replication and GPU execution path
+- [ ] 18-03-PLAN.md — Create integration tests and verify all ATTENTION requirements
+
+**Wave Structure:**
+- Wave 1: 18-01 (FlashAttention), 18-02 (MQA/GQA) — parallel execution
+- Wave 2: 18-03 (integration tests, depends on 01 and 02)
 
 ---
 
@@ -244,9 +253,9 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 | 14. Scheduler Clone Bug Fix | v1.2 | 2/2 | Complete | 2026-01-19 |
 | 15. GPU Sampling Kernels | v1.2 | 7/7 | Complete | 2026-01-19 |
 | 16. GPU RoPE Implementation | v1.2 | 2/2 | Complete | 2026-01-19 |
-| 17. GPU Quantization | v1.2 | 0/3 | Not started | - |
-| 18. GPU Attention Completion | v1.2 | 0/? | Not started | - |
+| 17. GPU Quantization | v1.2 | 3/3 | Complete | 2026-01-19 |
+| 18. GPU Attention Completion | v1.2 | 2/3 | In progress | 2026-01-19 |
 | 19. Code Hygiene Completion | v1.2 | 0/? | Not started | - |
 | 20. Test Health & Performance | v1.2 | 0/? | Not started | - |
 
-**Total Progress:** 119/124 v1.0+v1.1+v1.2 plans complete (96%)
+**Total Progress:** 124/127 v1.0+v1.1+v1.2 plans complete (98%)

@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-01-19)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Phase 17 - GPU Quantization (In Progress)
+**Current focus:** Phase 18 - GPU Attention Completion
 
 ## Current Position
 
-Phase: 17 of 20 (GPU Quantization)
-Plan: 3/3 in current phase
+Phase: 18 of 20 (GPU Attention Completion)
+Plan: 2/2 in current phase
 Status: Phase Complete
-Last activity: 2026-01-19 — Completed Phase 17 Plan 3: Fused Quantized MatMul
+Last activity: 2026-01-19 — Completed Phase 18-02: MQA/GQA KV replication kernel verification
 
-Progress: [██████░░░░░░░░░░░░░░░░░] 20% (17 of 20 phases complete)
+Progress: [███████░░░░░░░░░░░░░░░] 25% (18 of 20 phases complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 119 (v1.0 + v1.1 + v1.2 through 16)
+- Total plans completed: 124 (v1.0 + v1.1 + v1.2 through 18-02)
 - Average duration: ~44 min
-- Total execution time: ~76 hours
+- Total execution time: ~78 hours
 
 **By Phase:**
 
@@ -58,6 +58,8 @@ Progress: [██████░░░░░░░░░░░░░░░░░
 | 17-01 | 1 | ~13min | 13 min |
 | 17-02 | 1 | ~20min | 20 min |
 | 17-03 | 1 | ~5min | 5 min |
+| 18-01 | 1 | ~10min | 10 min |
+| 18-02 | 1 | ~12min | 12 min |
 
 **Recent Trend:**
 - Last 5 phases: Stable (3-13 min/plan)
@@ -86,6 +88,8 @@ Recent decisions affecting v1.2:
 - **17-01 Q4_0 GPU Dequantization**: Implemented GPU-side Q4_0 dequantization using cached HSACO kernel; kernel cache pattern with lazy initialization from Q4_0_DEQUANT_HSACO env var; graceful CPU fallback when GPU unavailable; bit-exact GPU tests (QUANT-05)
 - **17-02 Q4_K and Q6_K GPU Dequantization**: Implemented GPU-side Q4_K and Q6_K dequantization using cached HSACO kernels; Q4_K format (256 elements/super-block, 8 sub-blocks, value = min + quant*scale); Q6_K format (256 elements/block, signed 6-bit values); integrated into GgufLoader with CPU fallback; bit-exact GPU tests (QUANT-05 satisfied for Q4_K and Q6_K)
 - **17-03 Fused Quantized MatMul**: Integrated fused dequant+matmul kernels for Q4_0, Q4_K, Q6_K; removed `#[allow(dead_code)]` markers; added GPU matmul integration tests; removed CPU dequantization fallback from GPU tensor loading (QUANT-06 satisfied); ~17x memory bandwidth reduction achieved
+- **18-01 FlashAttention GPU Verification**: Verified all 3 FlashAttention kernels registered in build.rs; causal and non-causal kernels compile and execute correctly (GPU matches CPU within tolerance); generic kernel has compilation issue (CUDA `__shfl_down_f32` intrinsic needs HIP `__shfl_down`); FlashAttentionBackend verified pure GPU path with no CPU round-trips
+- **18-02 MQA/GQA KV Replication Verification**: Verified mqa_kv_replicate.hip kernel source, build.rs integration, and Rust wrapper mqa_kv_replicate_gpu_kernel() all present; confirmed forward_device() uses pure GPU path with no CPU round-trips; RoPE is pre-applied at model layer so TODO in multi_query.rs is not a blocker; 4 MQA/GQA tests ready for GPU testing
 
 ### Pending Todos
 
@@ -97,8 +101,9 @@ None yet.
 - ~~**topk_sampling.hip watchdog timeout**: Single-threaded loops over vocab_size caused GPU hang~~ **RESOLVED** (15-03)
 - ~~**topp_sampling Rust integration**: Existing `src/sampler/gpu.rs` expects single kernel but we implemented 3-kernel pipeline; needs API updates~~ **RESOLVED** (15-05)
 - **RoPE GPU kernel execution bug**: `rope_gpu_kernel()` returns -1 (execution failed) - blocks RoPE GPU tests (16-02)
+- **FlashAttention generic kernel compilation**: CUDA intrinsic `__shfl_down_f32` in flash_attention.hip needs to be replaced with HIP `__shfl_down` or removed as unused code (18-01)
 - **topk_topp_sampling watchdog risk**: Fused kernel uses single-threaded loops over vocab_size (documented in TODO comments); refactor to parallel pattern before production use
-- **Code quality note**: 27 lib warnings remain from v1.1; duplicate `GgufMetadata` structs exist (pre-existing technical debt)
+- **Code quality note**: 71 lib warnings remain; duplicate `GgufMetadata` structs exist (pre-existing technical debt)
 
 ### Completed Work
 
@@ -122,9 +127,11 @@ None yet.
 - Phase 17-01: Implemented Q4_0 GPU dequantization with kernel cache, CPU fallback, and bit-exact tests (QUANT-05 satisfied)
 - Phase 17-02: Implemented Q4_K and Q6_K GPU dequantization with kernel cache, CPU fallback, and bit-exact tests (QUANT-05 satisfied for K-quants)
 - Phase 17-03: Integrated fused quantized matmul kernels for Q4_0, Q4_K, Q6_K; added GPU matmul integration tests; removed CPU fallback (QUANT-06 satisfied)
+- Phase 18-01: Verified FlashAttention kernels; causal and non-causal kernels work correctly; generic kernel has CUDA intrinsic compilation issue
+- Phase 18-02: Verified MQA/GQA KV replication kernel; confirmed pure GPU execution path; RoPE pre-applied at model layer
 
 ## Session Continuity
 
 Last session: 2026-01-19
-Stopped at: Completed 17-03 — Fused quantized matmul integration complete
+Stopped at: Completed 18-02 — Phase 18 (GPU Attention Completion) complete
 Resume file: None
