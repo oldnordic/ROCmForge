@@ -12,7 +12,7 @@ None (no applicable domain expertise found)
 
 **Phase Numbering:**
 - Integer phases (1, 2, 3): Planned milestone work
-- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
+- Decimal phases (2.1, 12.1): Post-v1.0 enhancements
 
 Decimal phases appear between their surrounding integers in numeric order.
 
@@ -26,6 +26,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 8: GGUF Compatibility** - Universal model support across architectures
 - [x] **Phase 9: Performance Optimization** - Balanced throughput, latency, memory efficiency
 - [x] **Phase 10: Production Hardening** - Error handling, logging, monitoring, documentation
+- [x] **Phase 11: Fix Test Suite & Verify E2E** - Test compilation and E2E verification
+- [x] **Phase 12: Complete CPU SIMD Attention** - CPU SIMD attention operations
+- [ ] **Phase 12.1: CPU SIMD Enhancements & LLM Context** - AVX-512, additional SIMD ops, SQLiteGraph integration
 
 ## Phase Details
 
@@ -221,10 +224,44 @@ Plans:
 
 **Note:** Re-audit confirmed all CPU SIMD attention operations were implemented in Phase 4. Previous audit looked in wrong file (src/backend/cpu/simd.rs only has matmul).
 
+---
+
+### Phase 12.1A: CPU SIMD Completion
+**Goal**: AVX-512 runtime detection, RMSNorm, RoPE, SiLU/SwiGLU SIMD
+**Depends on**: Phase 4
+**Status**: 🔄 Planning (2 plans in 2 waves)
+**Mode**: Post-v1.0 enhancement (pure ROCmForge)
+
+Plans:
+- [ ] 12.1A-01: AVX-512 runtime detection and SIMD variants
+  - Add raw-cpuid dependency for runtime CPU feature detection
+  - Create CpuFeatures module with has_avx512f(), has_avx2() methods
+  - Implement AVX-512 (f32x16) variants for matmul and attention ops
+  - Add dynamic dispatch selecting optimal SIMD path at runtime
+- [ ] 12.1A-02: Additional SIMD operations (RMSNorm, RoPE, activations)
+  - Create simd_ops.rs module with layer norm and activation functions
+  - Implement RMSNorm, RoPE, SiLU, SwiGLU, GELU with SIMD
+  - Integrate into transformer layer execution
+
+### Phase 12.1B: Context Engine Integration
+**Goal**: SQLiteGraph-based LLM context augmentation (separate service)
+**Depends on**: Nothing (independent feature)
+**Status**: 🔄 Planning (1 plan)
+**Mode**: Post-v1.0 enhancement (optional integration)
+
+**Note:** Kept separate to keep ROCmForge lean while SQLiteGraph grows independently as the "memory brain".
+
+Plans:
+- [ ] 12.1B-01: SQLiteGraph context integration
+  - Add sqlitegraph dependency with "context" feature flag
+  - Create GraphContextStore for message-to-node storage
+  - Implement HNSW vector search for semantic context retrieval
+  - Add HTTP endpoint /v1/context/search and CLI commands
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 12.1
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -240,3 +277,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 10. Production Hardening | 20/20 | Complete | 2026-01-19 |
 | 11. Fix Test Suite & Verify E2E | 2/2 | Complete | 2026-01-19 |
 | 12. Complete CPU SIMD Attention | 4/4 | Complete | 2026-01-19 |
+| 12.1. CPU SIMD Enhancements | 0/3 | Planning | - |
