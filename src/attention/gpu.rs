@@ -46,6 +46,11 @@ impl GpuBackend {
 
         let scale = 1.0 / (dim as f32).sqrt();
 
+        // Create HIP backend for GPU operations
+        let backend = HipBackend::new().map_err(|e| {
+            AttentionError::HandleCreation(format!("Failed to create HIP backend: {}", e))
+        })?;
+
         // Create HIP BLAS handle for GPU operations
         let handle = HipBlasHandle::new().map_err(|e| {
             AttentionError::HandleCreation(format!("Failed to create HIP BLAS handle: {}", e))
@@ -120,6 +125,7 @@ impl GpuBackend {
                     })?;
 
                 let scores_batch = matmul_f32(
+                    &backend,
                     &handle,
                     &q_batch,
                     &k_batch,
@@ -326,6 +332,7 @@ impl GpuBackend {
                     })?;
 
                 let output_batch = matmul_f32(
+                    &backend,
                     &handle,
                     &scores_batch,
                     &v_batch,

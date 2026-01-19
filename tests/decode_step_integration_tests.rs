@@ -229,9 +229,8 @@ mod tests {
 
         // Verify output is finite
         let mut output_host = vec![0.0f32; config.vocab_size];
-        output_tensor
-            .buffer()
-            .copy_to_host(&mut output_host)
+        backend
+            .copy_from_device_safe(output_tensor.buffer(), &mut output_host)
             .context("TODO: add error context")?;
 
         for &val in &output_host {
@@ -319,9 +318,8 @@ mod tests {
         );
 
         let mut gpu_output_host = vec![0.0f32; config.vocab_size];
-        gpu_output
-            .buffer()
-            .copy_to_host(&mut gpu_output_host)
+        backend
+            .copy_from_device_safe(gpu_output.buffer(), &mut gpu_output_host)
             .context("TODO: add error context")?;
 
         for &val in &gpu_output_host {
@@ -424,8 +422,8 @@ mod tests {
         let mut output1_host = vec![0.0f32; config.vocab_size];
         let mut output2_host = vec![0.0f32; config.vocab_size];
 
-        output1.buffer().copy_to_host(&mut output1_host).context("TODO: add error context")?;
-        output2.buffer().copy_to_host(&mut output2_host).context("TODO: add error context")?;
+        backend.copy_from_device_safe(output1.buffer(), &mut output1_host).context("TODO: add error context")?;
+        backend.copy_from_device_safe(output2.buffer(), &mut output2_host).context("TODO: add error context")?;
 
         for &val in &output1_host {
             assert!(

@@ -442,6 +442,7 @@ impl HipAttentionKernels {
         let hidden_size = num_heads * head_dim;
 
         let result_buffer = matmul_f32(
+            &self.backend,
             &self.blas_handle,
             attention.buffer(),
             v.buffer(),

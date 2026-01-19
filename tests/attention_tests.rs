@@ -34,6 +34,7 @@ impl GpuTensor {
         Ok(GpuTensor { buffer, shape })
     }
 
+    #[allow(deprecated)] // Test helper using deprecated method
     fn to_host(&self) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
         let mut host_data = vec![0.0f32; self.buffer.size() / std::mem::size_of::<f32>()];
         self.buffer.copy_to_host(&mut host_data)?;

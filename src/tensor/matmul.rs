@@ -262,18 +262,19 @@ mod tests {
 
     #[test]
     fn test_matmul_dimension_validation() {
+        let backend = crate::backend::HipBackend::new().unwrap();
         let handle = HipBlasHandle::new().unwrap();
         let a = HipBuffer::new(4).unwrap();
         let b = HipBuffer::new(4).unwrap();
 
         // Test invalid dimensions
-        let result = matmul_f32(&handle, &a, &b, 0, 2, 2);
+        let result = matmul_f32(&backend, &handle, &a, &b, 0, 2, 2);
         assert!(result.is_err(), "m=0 should fail");
 
-        let result = matmul_f32(&handle, &a, &b, 2, 0, 2);
+        let result = matmul_f32(&backend, &handle, &a, &b, 2, 0, 2);
         assert!(result.is_err(), "n=0 should fail");
 
-        let result = matmul_f32(&handle, &a, &b, 2, 2, 0);
+        let result = matmul_f32(&backend, &handle, &a, &b, 2, 2, 0);
         assert!(result.is_err(), "k=0 should fail");
     }
 }

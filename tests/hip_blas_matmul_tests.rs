@@ -2,7 +2,7 @@
 //! Tests GPU matmul against CPU reference implementation
 
 use anyhow::Context;
-use rocmforge::backend::hip_backend::HipBuffer;
+use rocmforge::backend::hip_backend::{HipBackend, HipBuffer};
 use rocmforge::backend::hip_blas::HipBlasHandle;
 use rocmforge::tensor::matmul::{cpu_matmul_f32, matmul_f32};
 
@@ -67,6 +67,8 @@ mod tests {
     #[test]
     fn test_hipblas_sgemm_simple() -> anyhow::Result<()> {
         // Test hipBLAS SGEMM with minimal parameters to check if it's working
+        let backend = HipBackend::new()
+            .context("Failed to create HIP backend")?;
         let handle = HipBlasHandle::new()
             .context("Failed to create hipBLAS handle")?;
 
@@ -92,11 +94,11 @@ mod tests {
             .context("Dimension validation failed")?;
 
         // Simple 1x1 * 1x1 = 1x1 matrix multiplication
-        let gpu_c = matmul_f32(&handle, &gpu_a, &gpu_b, m, k, n)
+        let gpu_c = matmul_f32(&backend, &handle, &gpu_a, &gpu_b, m, k, n)
             .context("Simple 1x1 matmul failed")?;
 
         let mut host_result = vec![0.0f32; 1];
-        gpu_c.copy_to_host(&mut host_result)
+        backend.copy_from_device_safe(&gpu_c, &mut host_result)
             .context("Failed to copy result from GPU")?;
 
         assert!(
@@ -142,6 +144,8 @@ mod tests {
         }
 
         // Test GPU matmul (will fail until implemented)
+        let backend = HipBackend::new()
+            .context("Failed to create HIP backend")?;
         let handle = HipBlasHandle::new()
             .context("Failed to create hipBLAS handle")?;
 
@@ -157,12 +161,12 @@ mod tests {
             .context("Failed to copy matrix B to GPU")?;
 
         // Perform GPU matmul
-        let gpu_c = matmul_f32(&handle, &gpu_a, &gpu_b, m as i32, n as i32, k as i32)
+        let gpu_c = matmul_f32(&backend, &handle, &gpu_a, &gpu_b, m as i32, n as i32, k as i32)
             .context("GPU matmul operation failed")?;
 
         // Copy result back from GPU
         let mut gpu_result = vec![0.0f32; (m * n) as usize];
-        gpu_c.copy_to_host(&mut gpu_result)
+        backend.copy_from_device_safe(&gpu_c, &mut gpu_result)
             .context("Failed to copy result from GPU")?;
 
         // Compare GPU vs CPU results
@@ -208,6 +212,8 @@ mod tests {
         assert_eq!(cpu_result.len(), (m * n) as usize);
 
         // Test GPU matmul
+        let backend = HipBackend::new()
+            .context("Failed to create HIP backend")?;
         let handle = HipBlasHandle::new()
             .context("Failed to create hipBLAS handle")?;
 
@@ -223,12 +229,12 @@ mod tests {
             .context("Failed to copy matrix B to GPU")?;
 
         // Perform GPU matmul
-        let gpu_c = matmul_f32(&handle, &gpu_a, &gpu_b, m as i32, n as i32, k as i32)
+        let gpu_c = matmul_f32(&backend, &handle, &gpu_a, &gpu_b, m as i32, n as i32, k as i32)
             .context("GPU matmul operation failed")?;
 
         // Copy result back from GPU
         let mut gpu_result = vec![0.0f32; (m * n) as usize];
-        gpu_c.copy_to_host(&mut gpu_result)
+        backend.copy_from_device_safe(&gpu_c, &mut gpu_result)
             .context("Failed to copy result from GPU")?;
 
         // Compare GPU vs CPU results
@@ -254,6 +260,8 @@ mod tests {
         let k = 3;
         let k_prime = 4; // Mismatched inner dimension
 
+        let backend = HipBackend::new()
+            .context("Failed to create HIP backend")?;
         let handle = HipBlasHandle::new()
             .context("Failed to create hipBLAS handle")?;
 
@@ -280,7 +288,7 @@ mod tests {
         );
 
         // This should fail due to dimension mismatch
-        let result = matmul_f32(&handle, &gpu_a, &gpu_b, m as i32, n as i32, k as i32);
+        let result = matmul_f32(&backend, &handle, &gpu_a, &gpu_b, m as i32, n as i32, k as i32);
 
         // Expect error due to dimension mismatch
         match result {
@@ -339,7 +347,7 @@ mod tests {
 
         // Copy result back from GPU
         let mut result = vec![0.0f32; (m * n) as usize];
-        gpu_output.copy_to_host(&mut result).expect("Failed to copy result from GPU");
+        backend.copy_from_device_safe(&gpu_output, &mut result).expect("Failed to copy result from GPU");
 
         // Verify result matches expected
         assert_eq!(result.len(), expected.len(), "Result length mismatch");

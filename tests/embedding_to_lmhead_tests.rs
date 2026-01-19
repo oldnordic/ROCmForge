@@ -282,7 +282,7 @@ fn test_lm_head_gpu_cpu_parity() -> anyhow::Result<()> {
     let b_gpu = HipBuffer::new(b.len() * 4)?;
     b_gpu.copy_from_host(&b)?;
 
-    let c_gpu = matmul_f32(&handle, &a_gpu, &b_gpu, m as i32, n as i32, k as i32)?;
+    let c_gpu = matmul_f32(&backend, &handle, &a_gpu, &b_gpu, m as i32, n as i32, k as i32)?;
 
     let mut gpu_result = vec![0.0f32; cpu_result.len()];
     backend.copy_from_device_safe(&c_gpu, &mut gpu_result)?;
@@ -362,6 +362,7 @@ fn test_embedding_to_lmhead_pipeline() -> anyhow::Result<()> {
         lm_head_gpu.copy_from_host(&lm_head)?;
 
         let logits_gpu = matmul_f32(
+            &backend,
             &handle,
             &hidden_gpu,      // [1, hidden_size]
             &lm_head_gpu,     // [vocab_size, hidden_size]

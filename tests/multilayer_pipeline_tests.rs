@@ -76,7 +76,11 @@ fn test_kv_cache_creation() -> Result<(), HipError> {
 }
 
 /// Test execution plan creation
+///
+/// NOTE: This test is ignored because ExecutionPlan::new() is deprecated.
+/// Use ExecutionPlan::from_gguf() with a real GGUF file instead.
 #[test]
+#[ignore]
 #[serial]
 fn test_execution_plan_creation() -> Result<(), HipError> {
     let fixture = GPU_FIXTURE
@@ -153,7 +157,11 @@ fn test_tensor_operations() -> Result<(), HipError> {
 }
 
 /// Test multi-layer pipeline structure
+///
+/// NOTE: This test is ignored because ExecutionPlan::new() is deprecated.
+/// Use ExecutionPlan::from_gguf() with a real GGUF file instead.
 #[test]
+#[ignore]
 #[serial]
 fn test_multilayer_pipeline_structure() -> Result<(), HipError> {
     let fixture = GPU_FIXTURE

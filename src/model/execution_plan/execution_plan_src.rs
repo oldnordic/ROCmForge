@@ -2319,6 +2319,7 @@ impl ExecutionPlan {
         eprintln!(">>>       matmul: calling matmul_f32...",);
         let matmul_call_start = std::time::Instant::now();
         let output_buffer = matmul_f32(
+            backend,
             &blas_handle,
             input.buffer(),
             weight.buffer(),

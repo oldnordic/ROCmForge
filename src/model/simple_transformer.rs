@@ -181,6 +181,8 @@ impl Linear {
             .map_err(|e| ModelError::GpuError(crate::tensor::matmul::MatmulError::HipError(e)))?;
 
         // Device: Perform GPU matrix multiplication
+        let backend = crate::backend::HipBackend::new()
+            .map_err(|e| ModelError::GpuError(crate::tensor::matmul::MatmulError::HipError(e)))?;
         let handle = hip_blas::HipBlasHandle::new().map_err(|e| ModelError::GpuError(e.into()))?;
 
         // Convert dimensions to i32 for BLAS API
@@ -199,6 +201,7 @@ impl Linear {
         })?;
 
         let _result = matmul_f32(
+            &backend,
             &handle,
             &input_buffer,
             weight_buffer,

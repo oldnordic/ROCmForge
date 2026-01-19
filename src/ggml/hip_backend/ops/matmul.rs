@@ -23,7 +23,7 @@ pub fn matmul(
         .map_err(|e| HipError::GenericError(format!("Failed to set hipBLAS stream: {}", e)))?;
     eprintln!(">>> matmul_wrapper: hipBLAS stream set");
 
-    let result = matmul_f32(&handle, a, b, m, n, k)
+    let result = matmul_f32(backend, &handle, a, b, m, n, k)
         .map_err(|e| HipError::GenericError(format!("matmul_f32 failed: {}", e)))?;
     eprintln!(">>> matmul_wrapper: matmul_f32 complete");
 
