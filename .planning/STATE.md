@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-19)
 ## Current Position
 
 Phase: 19 of 20 (Wavefront-Native Quantized Matmul Kernels)
-Plan: 1/1 in current phase
+Plan: 2/2 in current phase
 Status: In Progress
-Last activity: 2026-01-19 — Completed Phase 19-01: Quantization format analysis
+Last activity: 2026-01-19 — Completed Phase 19-02: HIP intrinsics replacement
 
-Progress: [███████░░░░░░░░░░░░░░░] 25% (18.125 of 20 phases complete)
+Progress: [███████░░░░░░░░░░░░░░░] 26% (18.25 of 20 phases complete)
 
 ## Performance Metrics
 
@@ -62,6 +62,7 @@ Progress: [███████░░░░░░░░░░░░░░░] 2
 | 18-02 | 1 | ~12min | 12 min |
 | 18-03 | 1 | ~18min | 18 min |
 | 19-01 | 1 | ~1min | 1 min |
+| 19-02 | 1 | ~3min | 3 min |
 
 **Recent Trend:**
 - Last 5 phases: Stable (3-13 min/plan)
@@ -94,6 +95,7 @@ Recent decisions affecting v1.2:
 - **18-02 MQA/GQA KV Replication Verification**: Verified mqa_kv_replicate.hip kernel source, build.rs integration, and Rust wrapper mqa_kv_replicate_gpu_kernel() all present; confirmed forward_device() uses pure GPU path with no CPU round-trips; RoPE is pre-applied at model layer so TODO in multi_query.rs is not a blocker; 4 MQA/GQA tests ready for GPU testing
 - **18-03 End-to-End GPU Attention Integration Tests**: Added 8 comprehensive integration tests covering FlashAttention, MQA, GQA with realistic model configurations; all ATTENTION-01 through ATTENTION-05 requirements now satisfied; GPU vs CPU consistency tests with 1e-3 tolerance; REQUIREMENTS.md updated to mark all ATTENTION requirements complete
 - **19-01 Quantization Format Analysis**: Documented Q4_0 (32 elements/block, 20 bytes, scale + 4-bit signed values), Q4_K (256-element super-blocks, 8 sub-blocks with scale/min), Q6_K (256-element blocks, 16 f16 scales, 6-bit signed values); CPU references verified as ground truth for GPU kernel numerical validation
+- **19-02 HIP Intrinsics Replacement**: Corrected WARP_SIZE from 32 to 64 for RDNA3 wavefront alignment; replaced CUDA `__shfl_down_f32` with HIP `__shfl_down` in Q4_0, Q4_K, Q6_K matmul kernels (6 occurrences); TILE_SIZE_K/N=32 documented as not wave64-aligned (deferred optimization)
 
 ### Pending Todos
 
@@ -106,6 +108,7 @@ None yet.
 - ~~**topp_sampling Rust integration**: Existing `src/sampler/gpu.rs` expects single kernel but we implemented 3-kernel pipeline; needs API updates~~ **RESOLVED** (15-05)
 - **RoPE GPU kernel execution bug**: `rope_gpu_kernel()` returns -1 (execution failed) - blocks RoPE GPU tests (16-02)
 - **FlashAttention generic kernel compilation**: CUDA intrinsic `__shfl_down_f32` in flash_attention.hip needs to be replaced with HIP `__shfl_down` or removed as unused code (18-01)
+- **Quantized matmul tile size alignment**: TILE_SIZE_K=32, TILE_SIZE_N=32 not wave64-aligned (deferred optimization, documented in 19-02-SUMMARY.md)
 - **topk_topp_sampling watchdog risk**: Fused kernel uses single-threaded loops over vocab_size (documented in TODO comments); refactor to parallel pattern before production use
 - **Code quality note**: 71 lib warnings remain; duplicate `GgufMetadata` structs exist (pre-existing technical debt)
 
@@ -135,9 +138,10 @@ None yet.
 - Phase 18-02: Verified MQA/GQA KV replication kernel; confirmed pure GPU execution path; RoPE pre-applied at model layer
 - Phase 18-03: End-to-end GPU attention integration tests; 8 new tests for FlashAttention, MQA, GQA; all ATTENTION requirements satisfied
 - Phase 19-01: Quantization format analysis; documented Q4_0, Q4_K, Q6_K bit-packing layouts; CPU references validated as ground truth
+- Phase 19-02: HIP intrinsics replacement; corrected WARP_SIZE to 64 for wave64; replaced __shfl_down_f32 with __shfl_down; documented tile size alignment
 
 ## Session Continuity
 
 Last session: 2026-01-19
-Stopped at: Completed 19-01 — Phase 19 quantization format analysis complete
+Stopped at: Completed 19-02 — Phase 19 HIP intrinsics replacement complete
 Resume file: None
