@@ -1,6 +1,7 @@
 //! Continuous batching scheduler for efficient GPU utilization
 
 use std::collections::{HashMap, VecDeque};
+use std::collections::hash_map::Entry;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
@@ -624,23 +625,22 @@ impl Scheduler {
         }
 
         // Update remaining processing requests
-        // Preserve tokens from processing_requests to avoid losing data from stale batch clones
+        // Use Entry API to preserve tokens - only update if batch has fresher data
         for request in batch.requests {
-            if !self.processing_requests.contains_key(&request.request_id) {
-                // Request was removed (completed), don't re-insert stale clone
-                continue;
-            }
             if !request.is_complete() && request.state != RequestState::Failed {
-                // Check if we have an existing request with more tokens than the batch
-                // This can happen if the batch has a stale clone from before token generation
-                if let Some(existing) = self.processing_requests.get(&request.request_id) {
-                    if existing.generated_tokens.len() > request.generated_tokens.len() {
-                        // Keep the existing request with more tokens (skip the stale clone)
+                match self.processing_requests.entry(request.request_id) {
+                    Entry::Vacant(_e) => {
+                        // Request not in processing (was completed), skip stale clone
                         continue;
                     }
+                    Entry::Occupied(mut e) => {
+                        // Only update if batch has more tokens (prevents stale overwrite)
+                        if e.get().generated_tokens.len() <= request.generated_tokens.len() {
+                            e.insert(request);
+                        }
+                        // If batch has fewer tokens, keep existing (it's fresher)
+                    }
                 }
-                // Otherwise, insert/overwrite with the batch's version
-                self.processing_requests.insert(request.request_id, request);
             }
         }
 
