@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-18)
 ## Current Position
 
 Phase: 12.1A of 12 (CPU SIMD Completion)
-Plan: 12.1A-01 (AVX-512 Runtime Detection and SIMD Variants)
-Status: Plan 12.1A-01 complete
-Last activity: 2026-01-19 — Completed Phase 12.1A-01 (AVX-512 Runtime Detection)
+Plan: 12.1A-02 (Additional SIMD Operations)
+Status: Plan 12.1A-02 complete
+Last activity: 2026-01-19 — Completed Phase 12.1A-02 (Additional SIMD Operations)
 
-Progress: ███████████ 100% (Phase 12.1A-01 complete, 1 more plan remaining)
+Progress: ███████████ 100% (Phase 12.1A-02 complete)
 
 **Phase 8 Status:** ✅ Complete (11/11 tasks complete)
 - 08-01: Complete - Mistral metadata keys (Key mappings for mistral.* metadata)
@@ -59,13 +59,17 @@ Progress: ███████████ 100% (Phase 12.1A-01 complete, 1 mor
 
 **Verification:** 6/6 must-haves verified (11-VERIFICATION.md)
 
-**Phase 12.1A Status:** In Progress (1/2 plans complete)
+**Phase 12.1A Status:** Complete (2/2 plans complete)
 - 12.1A-01: Complete - AVX-512 Runtime Detection and SIMD Variants
   - Runtime CPU detection using raw-cpuid
   - AVX-512 SIMD variants (f32x16) for matmul
   - Dynamic dispatch for optimal SIMD path selection
   - 9/9 tests passing (6 cpu_features + 3 dispatch)
-- 12.1A-02: Pending - Additional SIMD enhancements
+- 12.1A-02: Complete - Additional SIMD Operations (RMSNorm, RoPE, Activations)
+  - SIMD layer operations module (simd_ops.rs, 1200+ LOC)
+  - RMSNorm, RoPE, SiLU, SwiGLU, GELU with SIMD acceleration
+  - All operations have scalar fallbacks for correctness validation
+  - 22/22 new tests passing (606/606 total)
 
 **Phase 5 Status:** ✅ Complete
 - 05-01: Complete - Quantization research (RESEARCH.md with format specifications and implementation strategy)

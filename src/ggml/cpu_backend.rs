@@ -120,6 +120,12 @@ impl CpuBackend {
             (a_buf.clone(), b_buf.clone())
         };
 
+        // Check SIMD capability before taking mutable borrow
+        #[cfg(feature = "simd")]
+        let use_simd = self.simd_capable;
+        #[cfg(not(feature = "simd"))]
+        let use_simd = false;
+
         let c_buf = self.buffer_mut(c_id).ok_or_else(|| {
             GgmlError::Backend(format!("Output tensor C not found: {:?}", c_id))
         })?;
@@ -146,7 +152,7 @@ impl CpuBackend {
 
         #[cfg(feature = "simd")]
         {
-            if self.simd_capable {
+            if use_simd {
                 use crate::backend::cpu::simd::{simd_matmul_f32, SimdMatmulError};
                 match simd_matmul_f32(&a_data, &b_data, m, n, k) {
                     Ok(result) => {
@@ -186,6 +192,12 @@ impl CpuBackend {
             .ok_or_else(|| GgmlError::Backend(format!("Input tensor not found: {:?}", input_id)))?
             .clone();
 
+        // Check SIMD capability before taking mutable borrow
+        #[cfg(feature = "simd")]
+        let use_simd = self.simd_capable;
+        #[cfg(not(feature = "simd"))]
+        let use_simd = false;
+
         let output_buf = self.buffer_mut(output_id).ok_or_else(|| {
             GgmlError::Backend(format!("Output tensor not found: {:?}", output_id))
         })?;
@@ -202,7 +214,7 @@ impl CpuBackend {
         // For now, treat as 1D (single row)
         #[cfg(feature = "simd")]
         {
-            if self.simd_capable {
+            if use_simd {
                 use crate::attention::cpu::softmax_simd;
                 let result = softmax_simd(&input_data);
                 output_buf.copy_from_slice(&result);
