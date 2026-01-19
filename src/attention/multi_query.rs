@@ -308,7 +308,7 @@ impl MultiQueryAttention {
         // Allocate attention scores tensor
         let scores_shape =
             crate::loader::TensorShape::from_dims(&[batch_size, seq_len, num_heads, kv_seq_len]);
-        let mut scores = DeviceTensor::empty(&backend, scores_shape.clone()).map_err(|e| {
+        let scores = DeviceTensor::empty(&backend, scores_shape.clone()).map_err(|e| {
             AttentionError::MemoryAllocation(format!("Failed to allocate scores: {}", e))
         })?;
 
@@ -338,7 +338,7 @@ impl MultiQueryAttention {
             // Allocate output tensor
             let output_shape =
                 crate::loader::TensorShape::from_dims(&[batch_size, seq_len, num_heads, head_dim]);
-            let mut output = DeviceTensor::empty(&backend, output_shape.clone()).map_err(|e| {
+            let output = DeviceTensor::empty(&backend, output_shape.clone()).map_err(|e| {
                 AttentionError::MemoryAllocation(format!("Failed to allocate output: {}", e))
             })?;
 

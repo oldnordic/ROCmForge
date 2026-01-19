@@ -101,6 +101,7 @@ Recent decisions affecting v1.2:
 - **19-02 HIP Intrinsics Replacement**: Corrected WARP_SIZE from 32 to 64 for RDNA3 wavefront alignment; replaced CUDA `__shfl_down_f32` with HIP `__shfl_down` in Q4_0, Q4_K, Q6_K matmul kernels (6 occurrences); TILE_SIZE_K/N=32 documented as not wave64-aligned (deferred optimization)
 - **19-03 Fused RMSNorm CUDA Intrinsics Removal**: Corrected WARP_SIZE from 32 to 64 in fused_dequant_rmsnorm.hip; replaced final CUDA `__shfl_down_f32` with HIP `__shfl_down`; all 4 quantized kernels (Q4_0, Q4_K, Q6_K, fused RMSNorm) are now CUDA-intrinsic-free
 - **19-04 HIP Kernel Compilation and Validation**: Compiled all 4 quantized matmul kernels for gfx1100 (q4_0_matmul.hsaco, q4_k_matmul.hsaco, q6_k_matmul.hsaco, fused_q4_0_rmsnorm.hsaco); replaced invalid `__builtin_amdgcn_wave_reduce_fadd` with manual `__shfl_down` reduction; fixed Q4_K and Q6_K CPU test bugs (bit_pos calculation and 6-bit extraction); validated 12 CPU dequantization tests passing; verified WARP_SIZE=64 and zero CUDA intrinsics across all kernels
+- **20-01 Hygiene Baseline**: Fixed unreachable pattern warnings (removed catch-all _ from execute_op match, removed duplicate yi.rms_norm_eps); fixed unexpected_cfg warnings (replaced invalid cfg(feature = "std") with cfg(feature = "rocm")); reduced warnings from 64 to 59
 
 ### Pending Todos
 
@@ -146,12 +147,10 @@ None yet.
 - Phase 19-02: HIP intrinsics replacement; corrected WARP_SIZE to 64 for wave64; replaced __shfl_down_f32 with __shfl_down; documented tile size alignment
 - Phase 19-03: Fused RMSNorm CUDA intrinsics removal; corrected WARP_SIZE to 64; replaced __shfl_down_f32 with __shfl_down; all 4 quantized kernels are CUDA-intrinsic-free
 - Phase 19-04: Compile and validate HIP quantized kernels; compiled 4 HSACO files for gfx1100; replaced invalid __builtin_amdgcn_wave_reduce_fadd; fixed Q4_K and Q6_K CPU test bugs; validated all 12 CPU dequantization tests
-- Phase 20-01: Removed duplicate GgufMetadata struct from ggml.rs; consolidated to single definition in loader.rs
-- Phase 20-02: Renamed Q4_K/Q6_K type aliases (Q4_KDequantResult to Q4KdequantResult, Q6_KDequantResult to Q6KdequantResult, etc.) to follow Rust naming conventions; made Q4_0DequantCache public; eliminated 5 compiler warnings
-- Phase 20-03: Removed 8 unused imports (6 HipError, 2 KernelTimer) across hip_backend ops modules; eliminated all unused import warnings
+- Phase 20-01: Fix unreachable pattern and cfg warnings; removed catch-all _ from execute_op match; removed duplicate yi.rms_norm_eps; replaced cfg(feature = "std") with cfg(feature = "rocm"); HYGIENE-02 and HYGIENE-06 satisfied
 
 ## Session Continuity
 
 Last session: 2026-01-19
-Stopped at: Completed 20-03 — Removed unused imports, HYGIENE-04 satisfied
+Stopped at: Completed 20-01 — Fixed unreachable pattern and cfg warnings, baseline hygiene established
 Resume file: None
