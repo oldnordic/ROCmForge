@@ -97,33 +97,24 @@ __device__ __forceinline__ float unpack_q4_0_value(const uint8_t* data, int elem
 }
 
 /**
- * Wave32 reduction for RDNA architectures
+ * Wavefront reduction for AMD GPU architectures
  *
  * Uses wave-level reduction for efficient partial sum accumulation.
- * RDNA3/RDNA2 use wave32 (32 threads per wave).
+ * RDNA3 (gfx1100) uses wave64 (64 threads per wave).
+ * CDNA uses wave64 (64 threads per wave).
+ * RDNA2/RDNA3 can also use wave32 mode.
  */
 __device__ __forceinline__ float wave_reduce_sum(float partial) {
 #if WARP_SIZE == 32
-    // RDNA3/RDNA2: Use native wave32 reduction
-    // Use __shfl_down for intra-wave communication
-    #if __HIP_DEVICE_COMPILE__
-        // HIP builtin for wave reduction
-        partial = __builtin_amdgcn_wave_reduce_fadd(partial);
-    #else
-        // Fallback: manual reduction
-        for (int stride = 16; stride > 0; stride >>= 1) {
-            partial += __shfl_down(partial, stride);
-        }
-    #endif
+    // Wave32 reduction (RDNA2/RDNA3 in wave32 mode)
+    for (int stride = 16; stride > 0; stride >>= 1) {
+        partial += __shfl_down(partial, stride);
+    }
 #else
-    // CDNA: Use wave64 reduction
-    #if __HIP_DEVICE_COMPILE__
-        partial = __builtin_amdgcn_wave_reduce_fadd(partial);
-    #else
-        for (int stride = 32; stride > 0; stride >>= 1) {
-            partial += __shfl_down(partial, stride);
-        }
-    #endif
+    // Wave64 reduction (RDNA3 default, CDNA2/CDNA3)
+    for (int stride = 32; stride > 0; stride >>= 1) {
+        partial += __shfl_down(partial, stride);
+    }
 #endif
     return partial;
 }
