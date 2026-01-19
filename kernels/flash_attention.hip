@@ -297,13 +297,13 @@ __device__ __forceinline__ float wave_reduce_max(float val) {
 #if WARP_SIZE == 32
     // Wave32 reduction (RDNA2/RDNA3)
     for (int stride = 16; stride > 0; stride >>= 1) {
-        float other = __shfl_down_f32(val, stride, WARP_SIZE);
+        float other = __shfl_down(val, stride, WARP_SIZE);
         val = (val > other) ? val : other;
     }
 #else
     // Wave64 reduction (CDNA2/CDNA3)
     for (int stride = 32; stride > 0; stride >>= 1) {
-        float other = __shfl_down_f32(val, stride, WARP_SIZE);
+        float other = __shfl_down(val, stride, WARP_SIZE);
         val = (val > other) ? val : other;
     }
 #endif
@@ -314,12 +314,12 @@ __device__ __forceinline__ float wave_reduce_add(float val) {
 #if WARP_SIZE == 32
     // Wave32 reduction
     for (int stride = 16; stride > 0; stride >>= 1) {
-        val += __shfl_down_f32(val, stride, WARP_SIZE);
+        val += __shfl_down(val, stride, WARP_SIZE);
     }
 #else
     // Wave64 reduction
     for (int stride = 32; stride > 0; stride >>= 1) {
-        val += __shfl_down_f32(val, stride, WARP_SIZE);
+        val += __shfl_down(val, stride, WARP_SIZE);
     }
 #endif
     return val;

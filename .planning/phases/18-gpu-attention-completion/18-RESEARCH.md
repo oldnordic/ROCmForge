@@ -28,6 +28,54 @@ Phase 18 focuses on ensuring all attention mechanisms (FlashAttention, Multi-Que
 
 The codebase uses existing ROCm/HIP infrastructure - no new dependencies needed.
 
+---
+
+## CRITICAL: Anti-CUDA Porting Guardrails
+
+**IMPORTANT:** ROCmForge is a **native HIP inference engine**, not a CUDA port. See `.planning/research/ANTI_CUDA_PORTING_RATIONALE.md` for complete rationale.
+
+### Why We Don't Port CUDA Code
+
+1. **Different Execution Models**
+   - CUDA: 32-thread warp
+   - AMD: 64-thread wavefront
+   - CUDA-optimized kernels are mathematically misaligned with AMD hardware
+
+2. **Performance Destruction**
+   - HIPIFY gives syntactic translation but zero performance tuning
+   - Wrong assumptions about shared memory, indexing, block dims
+   - Porting breaks vectorization, occupancy, LDS tiling
+
+3. **Project Integrity**
+   - Thesis: "First pure Rust ROCm/HIP inference engine"
+   - Porting CUDA destroys uniqueness and research value
+   - Contaminates the architecture with NVIDIA-specific assumptions
+
+### Current CUDA Intrinsics to Eliminate
+
+The following kernels have CUDA-specific `__shfl_down_f32` that must be replaced with HIP `__shfl_down`:
+
+| Kernel | Lines | Status | Action |
+|--------|-------|--------|--------|
+| `flash_attention.hip` | 300, 306, 317, 322 | ✅ Fixed | Replaced with `__shfl_down` |
+| `q4_0_matmul.hip` | 115, 124 | ❌ BLOCKING | Needs HIP-native rewrite |
+| `q4_k_matmul.hip` | 176, 185 | ❌ BLOCKING | Needs HIP-native rewrite |
+| `q6_k_matmul.hip` | 176, 185 | ❌ BLOCKING | Needs HIP-native rewrite |
+| `fused_dequant_rmsnorm.hip` | 225 | ❌ BLOCKING | Needs HIP-native rewrite |
+
+**Note:** These quantized matmul kernels are CRITICAL for GGUF model inference. They must be fixed, but properly rewritten as HIP-native code, not simple find-replace.
+
+### Development Rules
+
+1. **NEVER** copy CUDA kernels directly
+2. **NEVER** use HIPIFY on inference kernels
+3. **ALWAYS** write HIP kernels from scratch for AMD
+4. **USE** AMD ISA documents for optimization
+5. **REFERENCE** llama.cpp, vllm as reference only - don't copy
+6. **TEST** on actual AMD hardware
+
+---
+
 ### Core (Already in use)
 | Component | Location | Purpose | Status |
 |-----------|----------|---------|--------|
