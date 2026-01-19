@@ -28,7 +28,7 @@
 
 // RDNA3 tuning constants
 constexpr int BLOCK_SIZE = 256;  // 8 waves of 32 threads
-constexpr int WARP_SIZE = 32;     // RDNA3 wavefront size
+constexpr int WARP_SIZE = 64;     // RDNA3 wavefront size
 
 // Q4_0 block size in bytes
 constexpr int Q4_0_BLOCK_SIZE = 20;  // 4 bytes scale + 16 bytes packed data
