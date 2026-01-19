@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-19)
 ## Current Position
 
 Phase: 20 of 20 (Code Hygiene Completion)
-Plan: 7 of 8 in current phase
-Status: In progress
-Last activity: 2026-01-19 — Completed Phase 20-07: Unused functions, methods, constants, and type aliases review
+Plan: 8 of 8 in current phase
+Status: Phase complete
+Last activity: 2026-01-19 — Completed Phase 20-08: Dead code marker review and zero warnings baseline verification
 
-Progress: [█████████░░░░░░░░░░░░] 32% (19.6 of 20 phases complete)
+Progress: [██████████████████████] 100% (20 of 20 phases complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 138 (v1.0 + v1.1 + v1.2 through 20-07)
+- Total plans completed: 139 (v1.0 + v1.1 + v1.2 through 20-08)
 - Average duration: ~44 min
-- Total execution time: ~82 hours
+- Total execution time: ~83 hours
 
 **By Phase:**
 
@@ -70,6 +70,7 @@ Progress: [█████████░░░░░░░░░░░░] 32% 
 | 20-05 | 1 | ~3min | 3 min |
 | 20-06 | 1 | ~2min | 2 min |
 | 20-07 | 1 | ~3min | 3 min |
+| 20-08 | 1 | ~8min | 8 min |
 
 **Recent Trend:**
 - Last 5 phases: Stable (3-13 min/plan)
@@ -109,6 +110,7 @@ Recent decisions affecting v1.2:
 - **20-04 Deprecated API Replacement**: Replaced all 19 deprecated HipBuffer::copy_to_host and DeviceTensor::to_host_vec calls with HipBackend::copy_from_device_safe; eliminated all deprecated method warnings (0 remaining); total warnings reduced from 59 to 38
 - **20-05 Simple Hygiene Fixes**: Fixed unused mut warnings (removed mut from scores and output in multi_query.rs); fixed unused assignment warning (replaced unused max_time assignment with explicit let _); verified Q4_0DequantCache already pub from 20-02; HYGIENE-05 satisfied
 - **20-06 Dead Code Categorization**: Categorized all 35 dead_code warnings by type and file; fixed 13 backend file warnings with #[allow(dead_code)] justifications; remaining 22 warnings documented for future cleanup
+- **20-08 Dead Code Marker Review and Zero Warnings Baseline**: Reviewed all #[allow(dead_code)] markers and added explanatory comments; added #[allow(dead_code)] with comments to 23 items across 16 files; verified zero Rust compiler warnings (HYGIENE-03 and HYGIENE-07 satisfied)
 
 ### Pending Todos
 
@@ -123,7 +125,7 @@ None yet.
 - **FlashAttention generic kernel compilation**: CUDA intrinsic `__shfl_down_f32` in flash_attention.hip needs to be replaced with HIP `__shfl_down` (18-01) - separate from quantized kernels which are now CUDA-intrinsic-free
 - **Quantized matmul tile size alignment**: TILE_SIZE_K=32, TILE_SIZE_N=32 not wave64-aligned (deferred optimization, documented in 19-02-SUMMARY.md)
 - **topk_topp_sampling watchdog risk**: Fused kernel uses single-threaded loops over vocab_size (documented in TODO comments); refactor to parallel pattern before production use
-- **Code quality note**: 71 lib warnings remain; duplicate `GgufMetadata` structs exist (pre-existing technical debt)
+- **flash_attention.hip generic kernel compilation**: CUDA intrinsic `__shfl_down_f32` needs HIP replacement (build warning only, non-blocking)
 
 ### Completed Work
 
@@ -159,9 +161,12 @@ None yet.
 - Phase 20-05: Fix unused mut and unused assignment warnings; removed mut from scores and output variables; replaced unused max_time assignment with explicit let _; HYGIENE-05 satisfied
 - Phase 20-06: Dead code categorization and backend field fixes; categorized 35 warnings; fixed 13 backend warnings with #[allow(dead_code)]; documented 22 remaining warnings for future plans
 - Phase 20-07: Unused functions, methods, constants, and type aliases review; added #[allow(dead_code)] with explanatory comments to all unused items; HYGIENE-03 satisfied
+- Phase 20-08: Dead code marker review and zero warnings baseline; reviewed all #[allow(dead_code)] markers; added markers with comments to 23 items; verified zero Rust compiler warnings; HYGIENE-03 and HYGIENE-07 satisfied
+
+**Phase 20 COMPLETE** - All code hygiene requirements satisfied
 
 ## Session Continuity
 
 Last session: 2026-01-19
-Stopped at: Completed 20-07 — Unused functions, methods, constants, and type aliases review
+Stopped at: Completed 20-08 — Phase 20 complete, all plans executed
 Resume file: None
