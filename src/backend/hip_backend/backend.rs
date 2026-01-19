@@ -207,6 +207,38 @@ impl From<crate::ggml::GgmlError> for HipError {
     }
 }
 
+impl HipError {
+    /// Check if this error is recoverable (temporary condition)
+    ///
+    /// Recoverable errors may be retried with exponential backoff.
+    /// These include:
+    /// - Temporary device errors (GPU busy, driver resetting)
+    /// - Memory allocation failures (may succeed after GC or waiting)
+    /// - Memory copy failures (temporary driver issues)
+    ///
+    /// Non-recoverable errors (should NOT be retried):
+    /// - DeviceNotFound (no GPU available)
+    /// - InitializationFailed (HIP runtime broken)
+    /// - KernelLoadFailed (corrupted kernel file)
+    /// - LockPoisoned (data corruption bug)
+    /// - GenericError (unknown errors)
+    pub fn is_recoverable(&self) -> bool {
+        matches!(
+            self,
+            HipError::DeviceError(_)
+                | HipError::MemoryAllocationFailed(_)
+                | HipError::MemoryCopyFailed(_)
+                | HipError::MemoryQueryFailed(_)
+                | HipError::KernelLaunchFailed(_)
+        )
+    }
+
+    /// Check if this error is permanent (should never retry)
+    pub fn is_permanent(&self) -> bool {
+        !self.is_recoverable()
+    }
+}
+
 // SAFETY: HipStream is Send+Sync because it only contains a raw pointer
 // and we ensure thread-safe access through proper synchronization
 // NOTE: HipStream does NOT implement Clone because cloning raw pointers
@@ -1522,6 +1554,142 @@ impl HipBackend {
     }
 
     // ========== End Phase 20.3 ==========
+
+    // ========== Phase 10-20: Retry Logic for Temporary GPU Errors ==========
+
+    /// Execute a fallible operation with retry logic for recoverable errors
+    ///
+    /// This helper wraps GPU operations with automatic retry on temporary errors.
+    /// Only recoverable errors (as determined by HipError::is_recoverable()) are retried.
+    ///
+    /// # Arguments
+    /// * `operation` - Function that may fail with recoverable GPU errors
+    /// * `context` - Description of the operation for error messages
+    ///
+    /// # Returns
+    /// The operation's result, or the last error if all retries exhausted
+    ///
+    /// # Example
+    /// ```ignore
+    /// let buffer = backend.retry_operation(
+    ///     || backend.allocate_buffer(1024 * 1024),
+    ///     "allocate_buffer"
+    /// )?;
+    /// ```
+    pub fn retry_operation<F, T>(
+        &self,
+        mut operation: F,
+        context: &str,
+    ) -> HipResult<T>
+    where
+        F: FnMut() -> HipResult<T>,
+    {
+        // Default retry configuration
+        let max_retries = 3;
+        let initial_delay_ms = 10u64;
+        let backoff_multiplier = 2.0f64;
+        let max_delay_ms = 1000u64;
+
+        let mut last_error = None;
+
+        for attempt in 0..=max_retries {
+            match operation() {
+                Ok(result) => {
+                    if attempt > 0 {
+                        tracing::info!(
+                            context,
+                            attempt,
+                            "GPU operation succeeded after retry"
+                        );
+                    }
+                    return Ok(result);
+                }
+                Err(e) => {
+                    last_error = Some(e);
+
+                    // Check if this is a recoverable error
+                    let is_recoverable = last_error
+                        .as_ref()
+                        .map(|e| e.is_recoverable())
+                        .unwrap_or(false);
+
+                    if !is_recoverable || attempt >= max_retries {
+                        // Non-recoverable error or retries exhausted
+                        if attempt > 0 {
+                            tracing::warn!(
+                                context,
+                                attempt,
+                                error = %last_error.as_ref().unwrap(),
+                                "GPU operation failed after retries, giving up"
+                            );
+                        }
+                        break;
+                    }
+
+                    // Calculate delay for this attempt
+                    let base_delay = initial_delay_ms as f64
+                        * backoff_multiplier.powi(attempt as i32);
+                    let delay_ms = base_delay.min(max_delay_ms as f64) as u64;
+
+                    tracing::warn!(
+                        context,
+                        attempt,
+                        next_attempt = attempt + 1,
+                        delay_ms,
+                        error = %last_error.as_ref().unwrap(),
+                        "GPU operation failed, retrying with exponential backoff"
+                    );
+
+                    // Sleep before retry
+                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                }
+            }
+        }
+
+        // Return the last error
+        Err(last_error.unwrap())
+    }
+
+    /// Allocate buffer with automatic retry on temporary failures
+    ///
+    /// This wraps `allocate_buffer` with retry logic for recoverable errors like
+    /// temporary GPU memory pressure.
+    ///
+    /// # Arguments
+    /// * `size` - Size of buffer to allocate in bytes
+    ///
+    /// # Returns
+    /// Allocated HipBuffer or error if all retries exhausted
+    pub fn allocate_buffer_with_retry(&self, size: usize) -> HipResult<HipBuffer> {
+        self.retry_operation(
+            || self.allocate_buffer(size),
+            "allocate_buffer"
+        )
+    }
+
+    /// Copy from device with automatic retry on temporary failures
+    ///
+    /// This wraps `copy_from_device` with retry logic for recoverable errors like
+    /// temporary driver issues.
+    ///
+    /// # Arguments
+    /// * `buffer` - GPU buffer to copy from
+    /// * `data` - Host buffer to copy into
+    ///
+    /// # Returns
+    /// Success or error if all retries exhausted
+    pub fn copy_from_device_with_retry<T>(
+        &self,
+        buffer: &HipBuffer,
+        data: &mut [T],
+    ) -> HipResult<()> {
+        self.retry_operation(
+            || self.copy_from_device(buffer, data),
+            "copy_from_device"
+        )
+    }
+
+    // ========== End Phase 10-20 Retry Logic ==========
 
     // ========== End Phase 20.2 ==========
 
@@ -3692,4 +3860,138 @@ mod tests {
         let result = loader.upload_to_buffer(&buffer, &host_data, 99);
         assert!(result.is_err(), "Upload with invalid stream should fail");
     }
+
+    // ========== Phase 10-20: Retry Logic Tests ==========
+
+    #[test]
+    fn test_hip_error_recoverable_classification() {
+        // Test that recoverable errors are correctly identified
+        let recoverable_errors = vec![
+            HipError::DeviceError("temporary GPU busy".to_string()),
+            HipError::MemoryAllocationFailed("out of memory".to_string()),
+            HipError::MemoryCopyFailed("copy failed".to_string()),
+            HipError::MemoryQueryFailed("query failed".to_string()),
+            HipError::KernelLaunchFailed("launch failed".to_string()),
+        ];
+
+        for error in recoverable_errors {
+            assert!(
+                error.is_recoverable(),
+                "{} should be recoverable",
+                error
+            );
+            assert!(
+                !error.is_permanent(),
+                "{} should not be permanent",
+                error
+            );
+        }
+
+        // Test that permanent errors are correctly identified
+        let permanent_errors = vec![
+            HipError::InitializationFailed("HIP not available".to_string()),
+            HipError::KernelLoadFailed("kernel file not found".to_string()),
+            HipError::DeviceNotFound,
+            HipError::LockPoisoned("lock poisoned".to_string()),
+            HipError::GenericError("unknown error".to_string()),
+        ];
+
+        for error in permanent_errors {
+            assert!(
+                !error.is_recoverable(),
+                "{} should not be recoverable",
+                error
+            );
+            assert!(
+                error.is_permanent(),
+                "{} should be permanent",
+                error
+            );
+        }
+    }
+
+    #[test]
+    fn test_retry_operation_success_on_first_try() {
+        // Test that successful operations return immediately without retry
+        let backend = HipBackend::new().unwrap();
+        let mut call_count = 0;
+
+        let result = backend.retry_operation(
+            || {
+                call_count += 1;
+                Ok::<(), HipError>(())
+            },
+            "test_operation",
+        );
+
+        assert!(result.is_ok(), "Operation should succeed");
+        assert_eq!(call_count, 1, "Should only call once on success");
+    }
+
+    #[test]
+    fn test_retry_operation_fails_on_permanent_error() {
+        // Test that permanent errors fail immediately without retry
+        let backend = HipBackend::new().unwrap();
+        let mut call_count = 0;
+
+        let result = backend.retry_operation(
+            || {
+                call_count += 1;
+                Err::<(), HipError>(HipError::DeviceNotFound)
+            },
+            "test_operation",
+        );
+
+        assert!(result.is_err(), "Operation should fail");
+        assert_eq!(call_count, 1, "Should not retry permanent errors");
+    }
+
+    #[test]
+    fn test_retry_operation_succeeds_after_retry() {
+        // Test that recoverable errors are retried
+        let backend = HipBackend::new().unwrap();
+        let mut call_count = 0;
+
+        let result = backend.retry_operation(
+            || {
+                call_count += 1;
+                if call_count < 2 {
+                    Err::<(), HipError>(HipError::DeviceError(
+                        "temporary GPU busy".to_string(),
+                    ))
+                } else {
+                    Ok(())
+                }
+            },
+            "test_operation",
+        );
+
+        assert!(result.is_ok(), "Operation should succeed after retry");
+        assert_eq!(call_count, 2, "Should retry once");
+    }
+
+    #[test]
+    fn test_retry_operation_exhausts_retries() {
+        // Test that retries are eventually exhausted
+        let backend = HipBackend::new().unwrap();
+        let mut call_count = 0;
+
+        let result = backend.retry_operation(
+            || {
+                call_count += 1;
+                Err::<(), HipError>(HipError::DeviceError(
+                    "persistent GPU error".to_string(),
+                ))
+            },
+            "test_operation",
+        );
+
+        assert!(result.is_err(), "Operation should fail after retries");
+        // Default max_retries is 3, so we expect 1 initial + 3 retries = 4 total
+        assert_eq!(call_count, 4, "Should exhaust all retries");
+    }
+
+    // Note: RetryConfig tests are in engine.rs tests module since RetryConfig is defined there
+
+    // ========== End Phase 10-20 Retry Logic Tests ==========
 }
