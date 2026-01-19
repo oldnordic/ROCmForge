@@ -388,4 +388,111 @@ mod tests {
         meta2.update_from_kv("mixtral.n_experts", "8");
         meta2.update_from_kv("mixtral.n_experts_per_tok", "2");
     }
+
+    #[test]
+    fn test_qwen2_head_dim_default_calculation() {
+        // Qwen2 0.5B: 14 heads, 896 hidden_size -> head_dim = 64
+        let mut meta = GgufMetadata::default();
+        meta.num_heads = 14;
+        meta.hidden_size = 896;
+        // head_dim starts at 0 (from Default)
+
+        meta.calculate_default_head_dim();
+
+        assert_eq!(meta.head_dim, 64, "head_dim should be 896 / 14 = 64");
+    }
+
+    #[test]
+    fn test_head_dim_gguf_override() {
+        let mut meta = GgufMetadata::default();
+        meta.num_heads = 14;
+        meta.hidden_size = 896;
+
+        // Calculate default
+        meta.calculate_default_head_dim();
+        assert_eq!(meta.head_dim, 64);
+
+        // GGUF override with valid value
+        meta.update_from_kv("qwen2.rope.dimension_count", "96");
+        assert_eq!(meta.head_dim, 96, "GGUF value should override calculated default");
+    }
+
+    #[test]
+    fn test_head_dim_gguf_invalid_ignored() {
+        let mut meta = GgufMetadata::default();
+        meta.num_heads = 14;
+        meta.hidden_size = 896;
+
+        // Calculate default
+        meta.calculate_default_head_dim();
+        assert_eq!(meta.head_dim, 64);
+
+        // GGUF override with invalid value (should be ignored)
+        meta.update_from_kv("qwen2.rope.dimension_count", "not_a_number");
+        assert_eq!(meta.head_dim, 64, "Invalid GGUF value should keep calculated default");
+    }
+
+    #[test]
+    fn test_head_dim_gguf_zero_ignored() {
+        let mut meta = GgufMetadata::default();
+        meta.num_heads = 14;
+        meta.hidden_size = 896;
+
+        // Calculate default
+        meta.calculate_default_head_dim();
+        assert_eq!(meta.head_dim, 64);
+
+        // GGUF override with zero (should be ignored)
+        meta.update_from_kv("qwen2.rope.dimension_count", "0");
+        assert_eq!(meta.head_dim, 64, "Zero GGUF value should keep calculated default");
+    }
+
+    #[test]
+    fn test_llama_head_dim_calculation() {
+        // LLaMA: 32 heads, 4096 hidden_size -> head_dim = 128
+        let mut meta = GgufMetadata::default();
+        meta.num_heads = 32;
+        meta.hidden_size = 4096;
+
+        meta.calculate_default_head_dim();
+
+        assert_eq!(meta.head_dim, 128, "head_dim should be 4096 / 32 = 128");
+    }
+
+    #[test]
+    fn test_head_dim_no_calculation_when_missing_prereqs() {
+        let mut meta = GgufMetadata::default();
+        // Missing num_heads and hidden_size
+
+        meta.calculate_default_head_dim();
+
+        assert_eq!(meta.head_dim, 0, "head_dim should remain 0 when prerequisites missing");
+    }
+
+    #[test]
+    fn test_head_dim_no_override_when_already_set() {
+        let mut meta = GgufMetadata::default();
+        meta.num_heads = 14;
+        meta.hidden_size = 896;
+        meta.head_dim = 128; // Pre-set to non-zero
+
+        meta.calculate_default_head_dim();
+
+        assert_eq!(meta.head_dim, 128, "head_dim should not be recalculated if already set");
+    }
+
+    #[test]
+    fn test_llama_rope_dimension_override() {
+        let mut meta = GgufMetadata::default();
+        meta.num_heads = 32;
+        meta.hidden_size = 4096;
+
+        // Calculate default
+        meta.calculate_default_head_dim();
+        assert_eq!(meta.head_dim, 128);
+
+        // LLaMA GGUF override
+        meta.update_from_kv("llama.rope.dimension_count", "64");
+        assert_eq!(meta.head_dim, 64, "LLaMA rope.dimension_count should override calculated default");
+    }
 }
