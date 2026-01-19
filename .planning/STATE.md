@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-19)
 ## Current Position
 
 Phase: 15 of 20 (GPU Sampling Kernels)
-Plan: 4/4 in current phase
+Plan: 5/5 in current phase
 Status: Phase complete
-Last activity: 2026-01-19 — Completed 15-04: Fused top-k + top-p sampling kernel build.rs integration
+Last activity: 2026-01-19 — Completed 15-05: GPU sampler cache updated for compiled HSACO loading
 
-Progress: [█████░░░░░░░░░░░░░░░░░░░] 17% (15.4 of 20 phases planned)
+Progress: [█████░░░░░░░░░░░░░░░░░░░] 18% (15.5 of 20 phases planned)
 
 ## Performance Metrics
 
@@ -50,6 +50,7 @@ Progress: [█████░░░░░░░░░░░░░░░░░░
 | 15-02 | 1 | ~6min | 6 min |
 | 15-03 | 1 | ~3min | 3 min |
 | 15-04 | 1 | ~4min | 4 min |
+| 15-05 | 1 | ~5min | 5 min |
 
 **Recent Trend:**
 - Last 5 phases: Stable (3-6 min/plan)
@@ -70,6 +71,7 @@ Recent decisions affecting v1.2:
 - **15-02 Kernel Design**: Used bitonic sort for parallel threshold finding in topk_sampling.hip; limited shared memory to <64KB; deprecated mask/renorm kernels (operations done inline)
 - **15-03 Kernel Design**: Multi-kernel pipeline for top-p sampling to avoid watchdog timeout; two-pass parallel scan (thread stride sums + thread-0 accumulation); binary search for threshold (O(log v)) and sampling (O(log v))
 - **15-04 Kernel Integration**: Fused top-k + top-p sampling kernel added to build.rs; uses rejection sampling with MAX_ITERATIONS=10 bound and argmax fallback; watchdog timeout risks documented in TODO comments
+- **15-05 API Integration**: Updated SamplingKernelCache to load 7 kernel types from HSACO env vars; deprecated single-kernel topp_sampling_kernel; updated GpuTopPSampler to use 3-kernel pipeline; added 4 new kernel wrapper functions
 
 ### Pending Todos
 
@@ -79,9 +81,10 @@ None yet.
 
 - ~~**Scheduler Clone Bug**: `update_iteration_batch` overwrites scheduler state with stale batch clones~~ **RESOLVED** (14-01)
 - ~~**topk_sampling.hip watchdog timeout**: Single-threaded loops over vocab_size caused GPU hang~~ **RESOLVED** (15-03)
-- **topp_sampling Rust integration**: Existing `src/sampler/gpu.rs` expects single kernel but we implemented 3-kernel pipeline; needs API updates
+- ~~**topp_sampling Rust integration**: Existing `src/sampler/gpu.rs` expects single kernel but we implemented 3-kernel pipeline; needs API updates~~ **RESOLVED** (15-05)
 - **topk_topp_sampling watchdog risk**: Fused kernel uses single-threaded loops over vocab_size (documented in TODO comments); refactor to parallel pattern before production use
 - **Code quality note**: 27 lib warnings remain from v1.1; duplicate `GgufMetadata` structs exist (pre-existing technical debt)
+- **GpuTopKSampler and GpuFusedSampler**: Still use CPU fallback; GPU kernels exist but not yet wired up in try_gpu_sample
 
 ### Completed Work
 
@@ -97,9 +100,10 @@ None yet.
 - Phase 15-02: Refactored topk_sampling.hip with parallel algorithms (bitonic sort, stride-based loops)
 - Phase 15-03: Implemented multi-kernel topp_sampling.hip pipeline (prefix_sum, threshold, sample)
 - Phase 15-04: Added fused top-k + top-p sampling kernel to build.rs (FUSED_SAMPLING_HSACO)
+- Phase 15-05: Updated GPU sampler cache with 7 kernel fields; added kernel wrappers; updated GpuTopPSampler for multi-kernel pipeline
 
 ## Session Continuity
 
 Last session: 2026-01-19
-Stopped at: Completed 15-04 — Phase 15 complete, ready for Phase 16
+Stopped at: Completed 15-05 — Phase 15 complete, ready for Phase 16
 Resume file: None
