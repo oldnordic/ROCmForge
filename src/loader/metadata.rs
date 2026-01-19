@@ -182,8 +182,7 @@ impl GgufMetadata {
             | "qwen2.attention_norm_epsilon"
             | "mistral.attention.layer_norm_rms_epsilon"
             | "mistral.norm_eps"
-            | "yi.attention.layer_norm_rms_epsilon"
-            | "yi.rms_norm_eps" => {
+            | "yi.attention.layer_norm_rms_epsilon" => {
                 self.rms_norm_eps = value.parse().unwrap_or(1e-6)
             }
             // Tokenizer JSON (embedded in some models)
