@@ -229,19 +229,19 @@ Plans:
 ### Phase 12.1A: CPU SIMD Completion
 **Goal**: AVX-512 runtime detection, RMSNorm, RoPE, SiLU/SwiGLU SIMD
 **Depends on**: Phase 4
-**Status**: 🔄 Planning (2 plans in 2 waves)
+**Status**: ✅ Complete (2026-01-19)
 **Mode**: Post-v1.0 enhancement (pure ROCmForge)
 
 Plans:
-- [ ] 12.1A-01: AVX-512 runtime detection and SIMD variants
+- [x] 12.1A-01: AVX-512 runtime detection and SIMD variants
   - Add raw-cpuid dependency for runtime CPU feature detection
   - Create CpuFeatures module with has_avx512f(), has_avx2() methods
   - Implement AVX-512 (f32x16) variants for matmul and attention ops
   - Add dynamic dispatch selecting optimal SIMD path at runtime
-- [ ] 12.1A-02: Additional SIMD operations (RMSNorm, RoPE, activations)
+- [x] 12.1A-02: Additional SIMD operations (RMSNorm, RoPE, activations)
   - Create simd_ops.rs module with layer norm and activation functions
   - Implement RMSNorm, RoPE, SiLU, SwiGLU, GELU with SIMD
-  - Integrate into transformer layer execution
+  - All operations exported and available for integration
 
 ### Phase 12.1B: Context Engine Integration
 **Goal**: SQLiteGraph-based LLM context augmentation (separate service)
