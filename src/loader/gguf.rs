@@ -7,6 +7,9 @@
 //! - GPU memory allocation via DeviceTensor
 
 use crate::backend::hip_backend::{AsyncLoader, DeviceTensor, HipBackend, HipBuffer};
+
+// GPU dequantization kernels (require ROCm feature)
+#[cfg(feature = "rocm")]
 use crate::ggml::hip_backend::ops::q4_0_dequant::dequantize_q4_0_kernel_cached;
 use crate::ggml::hip_backend::ops::q4_k_dequant::dequantize_q4_k_gpu_kernel;
 use crate::ggml::hip_backend::ops::q6_k_dequant::dequantize_q6_k_gpu_kernel;
@@ -737,6 +740,7 @@ impl GgufLoader {
             // QUANT-06: CPU dequantization fallback removed for GPU tensors
             // If GPU dequantization fails, fail fast with clear error message
             match tensor_type {
+                #[cfg(feature = "rocm")]
                 GgufTensorType::Q4_0 => {
                     dequantize_q4_0_kernel_cached(backend, tensor_bytes, &output_buffer, num_elements)
                         .map_err(|e| anyhow!("GPU dequantization failed for '{}': {}. If GPU is unavailable, use CPU tensors instead.", name, e))?;
