@@ -9,10 +9,11 @@
 //!
 //! ```rust
 //! use rocmforge::profiling::kernel_launch::{LaunchOverheadTracker, LaunchOverheadStats};
+//! use rocmforge::error::ForgeResult;
 //!
 //! // Track kernel launch overhead
 //! let mut tracker = LaunchOverheadTracker::new();
-//! tracker.enable();
+//! tracker.enable()?;
 //!
 //! // Measure launch overhead
 //! let result = tracker.measure_launch("matmul", || {
@@ -22,11 +23,14 @@
 //! // Get statistics
 //! let stats = tracker.get_stats("matmul").unwrap();
 //! println!("Average overhead: {:.2} us", stats.avg_overhead_us);
+//! # Ok::<(), rocmforge::error::RocmForgeError>(())
 //! ```
 
 use std::time::{Duration, Instant};
 use std::sync::Mutex;
 use std::collections::HashMap;
+
+use crate::error::{ForgeResult, RocmForgeError};
 
 /// Statistics about kernel launch overhead
 #[derive(Debug, Clone)]
@@ -144,18 +148,31 @@ impl LaunchOverheadTracker {
     }
 
     /// Enable overhead tracking
-    pub fn enable(&self) {
-        *self.enabled.lock().unwrap() = true;
+    pub fn enable(&self) -> ForgeResult<()> {
+        let mut enabled = self.enabled.lock().map_err(|e| {
+            RocmForgeError::LockPoisoned(format!("Failed to acquire lock in enable(): {}", e))
+        })?;
+        *enabled = true;
+        Ok(())
     }
 
     /// Disable overhead tracking
-    pub fn disable(&self) {
-        *self.enabled.lock().unwrap() = false;
+    pub fn disable(&self) -> ForgeResult<()> {
+        let mut enabled = self.enabled.lock().map_err(|e| {
+            RocmForgeError::LockPoisoned(format!("Failed to acquire lock in disable(): {}", e))
+        })?;
+        *enabled = false;
+        Ok(())
     }
 
     /// Check if tracking is enabled
+    ///
+    /// Returns false on lock failure (graceful degradation)
     pub fn is_enabled(&self) -> bool {
-        *self.enabled.lock().unwrap()
+        self.enabled
+            .lock()
+            .map(|guard| *guard)
+            .unwrap_or(false)
     }
 
     /// Measure launch overhead for a kernel launch
@@ -452,17 +469,17 @@ mod tests {
         let tracker = LaunchOverheadTracker::new();
         assert!(!tracker.is_enabled());
 
-        tracker.enable();
+        tracker.enable().unwrap();
         assert!(tracker.is_enabled());
 
-        tracker.disable();
+        tracker.disable().unwrap();
         assert!(!tracker.is_enabled());
     }
 
     #[test]
     fn test_launch_overhead_measurement() {
         let mut tracker = LaunchOverheadTracker::new();
-        tracker.enable();
+        tracker.enable().unwrap();
 
         // Simulate a kernel launch with overhead
         tracker.measure_launch("test_kernel", || {
@@ -480,7 +497,7 @@ mod tests {
     #[test]
     fn test_multiple_launches_tracking() {
         let mut tracker = LaunchOverheadTracker::new();
-        tracker.enable();
+        tracker.enable().unwrap();
 
         for _ in 0..10 {
             tracker.measure_launch("repeated_kernel", || {
@@ -498,7 +515,7 @@ mod tests {
     #[test]
     fn test_tracker_reset() {
         let mut tracker = LaunchOverheadTracker::new();
-        tracker.enable();
+        tracker.enable().unwrap();
 
         tracker.measure_launch("temp_kernel", || ());
         assert!(tracker.get_stats("temp_kernel").is_some());
@@ -510,7 +527,7 @@ mod tests {
     #[test]
     fn test_get_all_stats() {
         let mut tracker = LaunchOverheadTracker::new();
-        tracker.enable();
+        tracker.enable().unwrap();
 
         tracker.measure_launch("kernel_a", || ());
         tracker.measure_launch("kernel_b", || ());
@@ -573,7 +590,7 @@ mod tests {
     #[test]
     fn test_recommendations() {
         let mut tracker = LaunchOverheadTracker::new();
-        tracker.enable();
+        tracker.enable().unwrap();
 
         // Add some simulated data
         for _ in 0..10 {
@@ -589,7 +606,7 @@ mod tests {
     #[test]
     fn test_get_high_overhead_kernels() {
         let mut tracker = LaunchOverheadTracker::new();
-        tracker.enable();
+        tracker.enable().unwrap();
 
         tracker.measure_launch("fast_kernel", || {
             std::thread::sleep(Duration::from_micros(10));
