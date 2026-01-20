@@ -9,11 +9,11 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 
 ## Current Position
 
-Phase: 25 - Architectural Decomposition (Plan 8 of 17 - Gap Closure In Progress)
-Status: GAP CLOSURE IN PROGRESS - 2 of 10 gap closure plans complete
-Last activity: Completed 25-08 engine.rs decomposition at 2026-01-20T17:18:00Z
+Phase: 25 - Architectural Decomposition (Plan 12 of 17 - Gap Closure In Progress)
+Status: GAP CLOSURE IN PROGRESS - 3 of 10 gap closure plans complete
+Last activity: Completed 25-12 execution.rs decomposition at 2026-01-20T17:18:57Z
 
-Progress: [█████████████████░░░] 91% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 2/10 complete)
+Progress: [█████████████████░░░] 92% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 3/10 complete)
 
 ## Milestone v1.3 Summary
 
@@ -30,8 +30,8 @@ Progress: [█████████████████░░░] 91% (Ph
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 150 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 partial)
-- Plans remaining: 14 (10 gap closure + 4 future)
+- Total plans completed: 152 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 3/10)
+- Plans remaining: 12 (7 gap closure + 5 future)
 - Average duration: ~44 min
 - Total execution time: ~112 hours
 
@@ -169,7 +169,7 @@ Historical decisions affecting v1.3:
 - Phase 25-09: Gap Closure - scheduler/scheduler.rs decomposition (PLANNED)
 - Phase 25-10: Gap Closure - ops/attention_gpu.rs decomposition (PLANNED)
 - Phase 25-11: Gap Closure - kv_cache/kv_cache.rs further decomposition (PLANNED)
-- Phase 25-12: Gap Closure - ggml/hip_backend/execution.rs further decomposition (PLANNED)
+- Phase 25-12: Gap Closure - ggml/hip_backend/execution.rs further decomposition (COMPLETE)
 - Phase 25-13: Gap Closure - http/server.rs decomposition (PLANNED)
 - Phase 25-14: Gap Closure - profiling/rocprof_integration.rs decomposition (PLANNED)
 - Phase 25-15: Gap Closure - profiling/baseline.rs decomposition (PLANNED)
@@ -229,7 +229,7 @@ Historical decisions affecting v1.3:
 | profiling/baseline.rs | 1,233 | 3 modules (25-15) |
 | ops/attention_gpu.rs | 1,232 | 3 modules (25-10) |
 | backend/hip_backend/backend.rs | 1,209 | Main facade - acceptable |
-| ggml/hip_backend/execution.rs | 1,207 | Further decompose in 25-12 |
+| ggml/hip_backend/execution.rs | 1,207 | 84 LOC + op_dispatch.rs (COMPLETE in 25-12) |
 | backend/cpu/simd_ops.rs | 1,198 | 4 modules (25-16) |
 | backend/cpu/simd.rs | 1,093 | 3 modules (25-17) |
 
@@ -288,6 +288,17 @@ Historical decisions affecting v1.3:
 - Largest file reduced: 4,243 LOC → 1,518 LOC (-64%)
 - New modules created: 27 (all documented with `//!` comments)
 
+**Phase 25-08 Summary (COMPLETE):**
+- Decomposed engine.rs (1,386 LOC) into 4 focused modules
+- mod.rs (33 LOC): Module facade with re-exports
+- types.rs (221 LOC): EngineError, EngineResult, RetryConfig
+- config.rs (164 LOC): EngineConfig with builder methods
+- stats.rs (117 LOC): EngineStats, HealthStatus
+- inference.rs (1119 LOC): InferenceEngine main implementation
+- Pure structural refactor - zero functional changes
+- Re-export chains preserve backward compatibility
+- Files > 1,000 LOC reduced: 11 → 9 (-2 files)
+
 **Phase 25-09 Summary (COMPLETE):**
 - Decomposed scheduler/scheduler.rs (1,307 LOC) into 4 focused modules
 - types.rs (214 LOC): SchedulerError, RequestState, GenerationRequest, SchedulerResult
@@ -296,25 +307,34 @@ Historical decisions affecting v1.3:
 - scheduler.rs (712 LOC): Core Scheduler implementation
 - Pure structural refactor - zero functional changes
 - Re-export chains preserve backward compatibility
-- Files > 1,000 LOC reduced: 11 → 10 (-1 file)
+- Files > 1,000 LOC reduced: 15 → 9 (-6 files total)
+
+**Phase 25-12 Summary (COMPLETE):**
+- Decomposed ggml/hip_backend/execution.rs (1,207 LOC) into 2 modules
+- execution.rs (84 LOC): Main execute_op dispatcher
+- op_dispatch.rs (1,138 LOC): Individual operation implementations
+- Pure structural refactor - zero functional changes
+- All operations remain private (pub(crate)) within hip_backend module
+- Files > 1,000 LOC reduced: 15 → 8 (-7 files total)
+- 93% LOC reduction in execution.rs (1,207 → 84)
 
 **Phase 25 Gap Closure Plans (2026-01-20):**
 - 10 plans created (25-08 through 25-17)
-- Wave 2A: 3 parallel plans (engine, scheduler, ops/attention_gpu)
-- Wave 2B: 2 parallel plans (kv_cache, ggml/execution)
+- Wave 2A: 3 parallel plans (engine COMPLETE, scheduler COMPLETE, ops/attention_gpu)
+- Wave 2B: 2 parallel plans (kv_cache, ggml/execution COMPLETE)
 - Wave 4: 1 plan (http/server)
 - Wave 5: 2 parallel plans (profiling)
 - Wave 6: 2 parallel plans (cpu/simd)
 
 **Phase 25 Final Status:**
-- Status: GAP CLOSURE IN PROGRESS (1 of 10 complete)
-- Files > 1,000 LOC reduced: 15 → 10 (-5 files so far)
-- Gap closure targets: 10 remaining files
+- Status: GAP CLOSURE IN PROGRESS (3 of 10 complete)
+- Files > 1,000 LOC reduced: 15 → 8 (-7 files so far)
+- Gap closure targets: 7 remaining files
 - Tests passing: 675 (baseline stable)
 - Largest file: 1,518 LOC (http/server.rs)
 
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed 25-09 scheduler.rs decomposition at 2026-01-20T17:16:00Z
+Stopped at: Completed 25-12 execution.rs decomposition at 2026-01-20T17:18:57Z
 Resume file: Continue gap closure plans with `/gsd:execute-phase 25 --gaps-only`
