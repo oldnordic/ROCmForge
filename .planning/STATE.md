@@ -400,23 +400,33 @@ Historical decisions affecting v1.3:
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed 27-01 TransposeKernel infrastructure creation at 2026-01-20T19:46:44Z
-Resume file: Continue with Phase 27-02 (HIP transpose kernel implementation)
+Stopped at: Completed 27-02 HIP transpose kernel at 2026-01-20T19:47:48Z
+Resume file: Continue with Phase 27-03 (GPU transpose integration)
 
 **v1.5 - GPU Transpose Fix (2026-01-20):**
 - Phase 27-01: TransposeKernel module with lazy HSACO loading, build.rs integration (COMPLETE)
+- Phase 27-02: HIP transpose kernel with shared memory tiling (COMPLETE)
 
 **Phase 27-01 Summary:**
 - Created src/kernels/transpose/mod.rs (263 LOC) with TransposeKernel struct
 - new(), initialize(), and transpose() methods following existing kernel pattern
-- TRANSPOSE_HSACO build.rs integration for src/kernels/transpose/hip transpose.hip
+- TRANSPOSE_HSACO build.rs integration
 - Error handling: HipError::KernelLoadFailed for missing HSACO with descriptive messages
 - 2D tensor shape validation with proper error messages
 - Tests passing: 701/701 (baseline stable)
 - Commits: 2 (6b80ec0: create module, 5112072: add to kernels/mod.rs and build.rs)
 
-**Decision: Kernel Module Pattern for Transpose**
-- Follow existing kernel cache pattern from sampler/gpu.rs (Phases 15-18)
-- Lazy initialization via initialize() method called on first use
-- Environment variable-based HSACO discovery (TRANSPOSE_HSACO)
-- Kernel name "transpose_kernel" follows existing convention (scale_kernel, softmax_kernel, etc.)
+**Phase 27-02 Summary:**
+- Created kernels/transpose.hip (130 LOC) with optimized transpose kernel
+- transposeLdsNoBankConflicts: TILE_DIM=64, shared memory tile with +1 padding for bank conflict avoidance
+- transposeNaive: Simple reference kernel for debugging
+- Grid/block calculations handle non-tile-aligned matrix sizes
+- Build.rs integration: TRANSPOSE_HSACO and TRANSPOSE_NAIVE_HSACO env vars
+- Fixed kernel name in mod.rs from "transpose_kernel" to "transposeLdsNoBankConflicts"
+- Commits: 2 (5112072: kernel and build integration, 9b94c71: fix kernel name)
+
+**Decisions:**
+- **Kernel File Location**: Use kernels/transpose.hip at project root instead of src/kernels/transpose/hip transpose.hip to match existing project structure where all HIP files are in /kernels/ (27-02)
+- **Kernel Entry Point**: Use transposeLdsNoBankConflicts as primary kernel name (not transpose_kernel) to match AMD ROCm Examples naming convention (27-02)
+- **Shared Memory Padding**: TILE_DIM x (TILE_DIM + 1) with padding avoids AMD GPU bank conflicts (27-02)
+- **Kernel Module Pattern for Transpose**: Follow existing kernel cache pattern from sampler/gpu.rs (Phases 15-18) (27-01)

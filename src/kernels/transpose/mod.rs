@@ -24,7 +24,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::backend::hip_backend::{DeviceTensor, HipBackend, HipError, HipKernel, HipModule, HipResult};
-use crate::loader::mmap_loader::TensorShape;
+use crate::loader::TensorShape;
 
 /// GPU transpose kernel
 ///
