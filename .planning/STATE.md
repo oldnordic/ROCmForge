@@ -5,15 +5,15 @@
 See: .planning/PROJECT.md (updated 2026-01-20)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** v1.4 planning
+**Current focus:** Phase 12.1B - Context Engine
 
 ## Current Position
 
-Phase: Milestone v1.3 Complete
-Status: Shipped 2026-01-20
-Last activity: Completed Phase 21 with 5/6 plans (21-06 performance validation skipped by user)
+Phase: 12.1B - Context Engine (Plan 01 of 1)
+Status: Complete 2026-01-20
+Last activity: SQLiteGraph context integration with CLI commands
 
-Progress: [██████████████████████████] 100% (v1.3 complete)
+Progress: [████████░░░░░░░░░░░░░░░] 10% (Phase 12.1B Plan 1 complete, v1.3 complete, v1.4 planning paused)
 
 ## Milestone v1.3 Summary
 
@@ -41,20 +41,28 @@ Progress: [███████████████████████
 
 Decisions are logged in PROJECT.md Key Decisions table.
 
-Recent decisions affecting v1.3:
+Recent decisions:
+
+- **HTTP Context Endpoint Deferred**: HNSW index in sqlitegraph is not Send+Sync due to internal `Rc<RefCell<>>`, making it incompatible with Axum's async State extractor. CLI commands provide full context management functionality as alternative (12.1B-01)
+- **Performance Validation Deferred**: GPU benchmarking (21-06) skipped by user to avoid desktop GPU stress testing
+
+Historical decisions affecting v1.3:
 
 - **CUDA Intrinsics Elimination**: ROCmForge does NOT port CUDA code. All kernels must be rewritten from mathematical first principles for AMD HIP (ANTI_CUDA_PORTING_RATIONALE.md)
 - **WARP_SIZE Correction**: Changed from 32 to 64 for RDNA3 wavefront alignment (19-02)
 - **Zero Warnings Baseline**: Achieved through systematic elimination of all compiler warning categories (20-08)
 - **Graceful Skip Pattern**: GPU tests without HSACO kernels skip gracefully with helpful messages, enabling CI/CD without GPU kernel compilation (21-05)
-- **Performance Validation Deferred**: GPU benchmarking (21-06) skipped by user to avoid desktop GPU stress testing
+
+**Phase 12.1B (2026-01-20):**
+- Phase 12.1B-01: SQLiteGraph context integration with CLI commands (HTTP endpoint deferred due to HNSW Send+Sync limitation)
 
 ### Pending Todos
 
-None - v1.3 milestone complete.
+- **Context HTTP API integration**: Requires upstream sqlitegraph changes to make HNSW Send+Sync, or alternative thread-safe vector index
 
 ### Blockers/Concerns
 
+- **HNSW Send+Sync**: Context HTTP endpoint blocked by sqlitegraph's HNSW using `Rc<RefCell<>>` internally. CLI commands work as alternative.
 - **Performance validation**: Deferred to future phase (requires GPU stress testing infrastructure)
 - **FlashAttention generic kernel**: CUDA intrinsic `__shfl_down_f32` compilation issue (documented in blockers)
 - **Quantized matmul tile size alignment**: TILE_SIZE_K/N=32 not wave64-aligned (deferred optimization)
@@ -87,5 +95,5 @@ None - v1.3 milestone complete.
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed v1.3 milestone, ready for v1.4 planning
+Stopped at: Completed Phase 12.1B-01 (SQLiteGraph context integration)
 Resume file: None
