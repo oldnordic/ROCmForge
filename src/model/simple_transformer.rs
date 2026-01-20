@@ -57,6 +57,7 @@ impl Linear {
         // Initialize bias to zeros
         let bias_data = vec![0.0f32; out_features];
 
+        #[allow(unused_mut)] // mut needed for with_gpu_buffer() reassign when feature="rocm"
         let mut linear = Self {
             weight: Tensor { data: weight_data },
             bias: Tensor { data: bias_data },
