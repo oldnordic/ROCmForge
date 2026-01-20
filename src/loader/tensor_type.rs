@@ -5,6 +5,11 @@ use serde::Serialize;
 use std::fmt;
 
 /// GGUF tensor types (ggml_type enum values from ggml.h)
+///
+/// Note: Q4_1, Q5_0, Q5_1 formats are intentionally not supported.
+/// No commonly used GGUF models (LLaMA, Qwen, Mistral, Mixtral, Gemma, Phi)
+/// utilize these quantization formats as of 2026-01-20. The active formats
+/// are Q4_0, Q4_K, Q5_K, Q6_K, Q8_0, F16, F32, and IQ formats.
 #[derive(Debug, Clone, PartialEq, Copy, Serialize)]
 #[repr(u8)]
 #[allow(non_camel_case_types)]  // Q*_K variants match GGUF specification
@@ -12,9 +17,6 @@ pub enum GgufTensorType {
     F32 = 0,   // GGML_TYPE_F32
     F16 = 1,   // GGML_TYPE_F16
     Q4_0 = 2,  // GGML_TYPE_Q4_0
-    Q4_1 = 3,  // GGML_TYPE_Q4_1
-    Q5_0 = 6,  // GGML_TYPE_Q5_0
-    Q5_1 = 7,  // GGML_TYPE_Q5_1
     Q8_0 = 8,  // GGML_TYPE_Q8_0
     Q2_K = 10, // GGML_TYPE_Q2_K (K-quants)
     Q3_K = 11, // GGML_TYPE_Q3_K
@@ -36,9 +38,10 @@ impl GgufTensorType {
             0 => Ok(GgufTensorType::F32),
             1 => Ok(GgufTensorType::F16),
             2 => Ok(GgufTensorType::Q4_0),
-            3 => Ok(GgufTensorType::Q4_1),
-            6 => Ok(GgufTensorType::Q5_0),
-            7 => Ok(GgufTensorType::Q5_1),
+            3 | 6 | 7 => Err(anyhow::anyhow!(
+                "Unsupported GGUF tensor type: {} (Q4_1, Q5_0, Q5_1 are not supported - no common models use these formats as of 2026-01-20)",
+                value
+            )),
             8 => Ok(GgufTensorType::Q8_0),
             10 => Ok(GgufTensorType::Q2_K),
             11 => Ok(GgufTensorType::Q3_K),
@@ -58,9 +61,6 @@ impl GgufTensorType {
             GgufTensorType::F32 => "FP32",
             GgufTensorType::F16 => "FP16",
             GgufTensorType::Q4_0 => "Q4_0",
-            GgufTensorType::Q4_1 => "Q4_1",
-            GgufTensorType::Q5_0 => "Q5_0",
-            GgufTensorType::Q5_1 => "Q5_1",
             GgufTensorType::Q8_0 => "Q8_0",
             GgufTensorType::Q2_K => "Q2_K",
             GgufTensorType::Q3_K => "Q3_K",
@@ -76,11 +76,7 @@ impl GgufTensorType {
     /// Get the block size (number of elements per block) for block-quantized types
     pub fn block_size(&self) -> usize {
         match self {
-            GgufTensorType::Q4_0 => 32,
-            GgufTensorType::Q4_1 => 32,
-            GgufTensorType::Q5_0 => 32,
-            GgufTensorType::Q5_1 => 32,
-            GgufTensorType::Q8_0 => 32,
+            GgufTensorType::Q4_0 | GgufTensorType::Q8_0 => 32,
             GgufTensorType::Q2_K => 256,
             GgufTensorType::Q3_K => 256,
             GgufTensorType::Q4_K => 256,
@@ -103,11 +99,7 @@ impl GgufTensorType {
             GgufTensorType::F32 => 4,
             GgufTensorType::F16 => 2,
             // Block-based quantization types return their block size
-            GgufTensorType::Q4_0 => 32,
-            GgufTensorType::Q4_1 => 32,
-            GgufTensorType::Q5_0 => 32,
-            GgufTensorType::Q5_1 => 32,
-            GgufTensorType::Q8_0 => 32,
+            GgufTensorType::Q4_0 | GgufTensorType::Q8_0 => 32,
             GgufTensorType::Q2_K => 256,
             GgufTensorType::Q3_K => 256,
             GgufTensorType::Q4_K => 256,

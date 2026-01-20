@@ -74,9 +74,6 @@ fn test_gguf_tensor_enumeration() {
             rocmforge::loader::GgufTensorType::F32
             | rocmforge::loader::GgufTensorType::F16
             | rocmforge::loader::GgufTensorType::Q4_0
-            | rocmforge::loader::GgufTensorType::Q4_1
-            | rocmforge::loader::GgufTensorType::Q5_0
-            | rocmforge::loader::GgufTensorType::Q5_1
             | rocmforge::loader::GgufTensorType::Q8_0
             | rocmforge::loader::GgufTensorType::Q2_K
             | rocmforge::loader::GgufTensorType::Q3_K

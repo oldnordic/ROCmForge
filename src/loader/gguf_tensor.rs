@@ -47,21 +47,6 @@ impl GgufTensor {
                 let blocks = self.total_elements().div_ceil(32);
                 blocks.checked_mul(4 + 32).unwrap_or(usize::MAX)
             }
-            GgufTensorType::Q4_1 => {
-                // Q4_1: similar structure to Q4_0
-                let blocks = self.total_elements().div_ceil(32);
-                blocks.checked_mul(4 + 32).unwrap_or(usize::MAX)
-            }
-            GgufTensorType::Q5_0 => {
-                // Q5_0: block_size=32
-                let blocks = self.total_elements().div_ceil(32);
-                blocks.checked_mul(4 + 32).unwrap_or(usize::MAX)
-            }
-            GgufTensorType::Q5_1 => {
-                // Q5_1: block_size=32
-                let blocks = self.total_elements().div_ceil(32);
-                blocks.checked_mul(4 + 32).unwrap_or(usize::MAX)
-            }
             GgufTensorType::Q8_0 => {
                 // Q8_0: block_size=32, each block has 1 scale (f32) + 32 quants (u8)
                 let blocks = self.total_elements().div_ceil(32);

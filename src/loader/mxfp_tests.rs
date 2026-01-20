@@ -424,8 +424,9 @@ mod test_gguf_tensor_types {
     #[test]
     fn test_mxfp_tensor_type_values() {
         // Verify enum values don't conflict with existing types
-        // Existing: F32=0, F16=1, Q4_0=2, Q4_1=3, Q5_0=6, Q5_1=7, Q8_0=8
-        // New: MXFP4=20, MXFP6_E2M3=21, MXFP6_E3M2=22
+        // Existing: F32=0, F16=1, Q4_0=2, Q8_0=8
+        // Note: Q4_1=3, Q5_0=6, Q5_1=7 are NO LONGER SUPPORTED (removed 2026-01-20)
+        // MXFP: MXFP4=20, MXFP6_E2M3=21, MXFP6_E3M2=22
 
         assert_eq!(GgufTensorType::F32 as u32, 0);
         assert_eq!(GgufTensorType::F16 as u32, 1);

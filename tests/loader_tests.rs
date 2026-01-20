@@ -139,18 +139,10 @@ fn test_gguf_tensor_type_conversion() {
         GgufTensorType::from_u32(2),
         Ok(GgufTensorType::Q4_0)
     ));
-    assert!(matches!(
-        GgufTensorType::from_u32(3),
-        Ok(GgufTensorType::Q4_1)
-    ));
-    assert!(matches!(
-        GgufTensorType::from_u32(6),
-        Ok(GgufTensorType::Q5_0)
-    ));
-    assert!(matches!(
-        GgufTensorType::from_u32(7),
-        Ok(GgufTensorType::Q5_1)
-    ));
+    // Q4_1, Q5_0, Q5_1 are not supported - should return Err
+    assert!(GgufTensorType::from_u32(3).is_err()); // Q4_1 not supported
+    assert!(GgufTensorType::from_u32(6).is_err()); // Q5_0 not supported
+    assert!(GgufTensorType::from_u32(7).is_err()); // Q5_1 not supported
     assert!(matches!(
         GgufTensorType::from_u32(8),
         Ok(GgufTensorType::Q8_0)
@@ -179,9 +171,6 @@ fn test_gguf_tensor_type_element_size() {
     assert_eq!(GgufTensorType::F16.element_size(), 2);
     assert_eq!(GgufTensorType::Q8_0.element_size(), 32); // Block-based
     assert_eq!(GgufTensorType::Q4_0.element_size(), 32); // Block-based
-    assert_eq!(GgufTensorType::Q4_1.element_size(), 32); // Block-based
-    assert_eq!(GgufTensorType::Q5_0.element_size(), 32); // Block-based
-    assert_eq!(GgufTensorType::Q5_1.element_size(), 32); // Block-based
     assert_eq!(GgufTensorType::Mxfp4.element_size(), 32); // Block-based
     assert_eq!(GgufTensorType::Mxfp6E2m3.element_size(), 32); // Block-based
 }
@@ -353,14 +342,15 @@ proptest! {
         type_id in 0u32..23u32
     ) {
         let result = GgufTensorType::from_u32(type_id);
-        // Only test valid type IDs
-        if [0, 1, 2, 3, 6, 7, 8, 20, 21, 22].contains(&type_id) {
+        // Only test valid type IDs (Q4_1=3, Q5_0=6, Q5_1=7 are no longer supported)
+        if [0, 1, 2, 8, 10, 11, 12, 13, 14, 20, 21, 22].contains(&type_id) {
             prop_assert!(result.is_ok());
 
             let tensor_type = result.unwrap();
             let size = tensor_type.element_size();
             prop_assert!(size > 0);
-            prop_assert!(size <= 32); // Max element size for block-based types
+            // K-quants have 256-byte blocks, others have 32 or less
+            prop_assert!(size <= 256); // Max element size for K-quant block-based types
         }
     }
 }

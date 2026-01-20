@@ -13,9 +13,6 @@ pub fn is_format_supported(format: GgufTensorType) -> bool {
         GgufTensorType::F32
             | GgufTensorType::F16
             | GgufTensorType::Q4_0
-            | GgufTensorType::Q4_1
-            | GgufTensorType::Q5_0
-            | GgufTensorType::Q5_1
             | GgufTensorType::Q8_0
             | GgufTensorType::Q2_K
             | GgufTensorType::Q3_K
@@ -34,9 +31,6 @@ pub fn supported_formats() -> Vec<GgufTensorType> {
         GgufTensorType::F32,
         GgufTensorType::F16,
         GgufTensorType::Q4_0,
-        GgufTensorType::Q4_1,
-        GgufTensorType::Q5_0,
-        GgufTensorType::Q5_1,
         GgufTensorType::Q8_0,
         GgufTensorType::Q2_K,
         GgufTensorType::Q3_K,
@@ -91,9 +85,6 @@ mod tests {
             GgufTensorType::F32,
             GgufTensorType::F16,
             GgufTensorType::Q4_0,
-            GgufTensorType::Q4_1,
-            GgufTensorType::Q5_0,
-            GgufTensorType::Q5_1,
             GgufTensorType::Q8_0,
         ];
 
@@ -129,7 +120,7 @@ mod tests {
         // Test that we have complete coverage across format types
         let formats = supported_formats();
 
-        // K-quants (6 total including Q4_0, Q4_1, Q5_0, Q5_1 which are K-quants too)
+        // K-quants (5 total: Q2_K, Q3_K, Q4_K, Q5_K, Q6_K)
         assert!(formats.contains(&GgufTensorType::Q2_K), "Q2_K missing");
         assert!(formats.contains(&GgufTensorType::Q3_K), "Q3_K missing");
         assert!(formats.contains(&GgufTensorType::Q4_K), "Q4_K missing");

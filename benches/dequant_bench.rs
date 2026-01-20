@@ -1,7 +1,7 @@
 //! Dequantization Benchmark Suite
 //!
 //! Benchmarks for comparing dequantization performance across all GGUF quantization formats.
-//! Tests all 15 formats: F32, F16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, MXFP4, MXFP6E2m3, MXFP6E3m2
+//! Tests all supported formats: F32, F16, Q4_0, Q8_0, Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, MXFP4, MXFP6E2m3, MXFP6E3m2
 //!
 //! Run with: `cargo bench --bench dequant_bench`
 
@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 // Import quantization and dequantization types
 use rocmforge::loader::{
-    dequant_q2_k, dequant_q3_k, dequant_q4_0, dequant_q4_1, dequant_q4_k,
-    dequant_q5_0, dequant_q5_1, dequant_q5_k, dequant_q6_k, dequant_q8_0,
+    dequant_q2_k, dequant_q3_k, dequant_q4_0, dequant_q4_k,
+    dequant_q5_k, dequant_q6_k, dequant_q8_0,
     dequant_mxfp4, dequant_mxfp6, dequantize,
     GgufTensor, GgufTensorType, TensorShape,
 };
@@ -189,77 +189,7 @@ fn create_q4_0_tensor() -> GgufTensor {
     create_test_tensor(GgufTensorType::Q4_0, data)
 }
 
-// Format 04: Q4_1 - 32 values per block, scale + min + 16 bytes quants
-fn create_q4_1_tensor() -> GgufTensor {
-    let blocks = TOTAL_ELEMENTS.div_ceil(32);
-    let total_bytes = blocks * (4 + 4 + 16);
-    let mut data = vec![0u8; total_bytes];
-
-    for block_idx in 0..blocks {
-        let block_start = block_idx * (4 + 4 + 16);
-
-        // Set scale = 0.01
-        let scale: f32 = 0.01;
-        let scale_bytes = scale.to_le_bytes();
-        data[block_start..block_start + 4].copy_from_slice(&scale_bytes);
-
-        // Set min = 0.0
-        let min: f32 = 0.0;
-        let min_bytes = min.to_le_bytes();
-        data[block_start + 4..block_start + 8].copy_from_slice(&min_bytes);
-    }
-
-    create_test_tensor(GgufTensorType::Q4_1, data)
-}
-
-// Format 05: Q5_0 - 32 values per block, scale + qh + 20 bytes quants
-fn create_q5_0_tensor() -> GgufTensor {
-    let blocks = TOTAL_ELEMENTS.div_ceil(32);
-    let total_bytes = blocks * (4 + 4 + 20);
-    let mut data = vec![0u8; total_bytes];
-
-    for block_idx in 0..blocks {
-        let block_start = block_idx * (4 + 4 + 20);
-
-        // Set scale = 0.01
-        let scale: f32 = 0.01;
-        let scale_bytes = scale.to_le_bytes();
-        data[block_start..block_start + 4].copy_from_slice(&scale_bytes);
-
-        // qh = 0
-        data[block_start + 4..block_start + 8].copy_from_slice(&[0u8; 4]);
-    }
-
-    create_test_tensor(GgufTensorType::Q5_0, data)
-}
-
-// Format 06: Q5_1 - 32 values per block, scale + min + qh + 20 bytes quants
-fn create_q5_1_tensor() -> GgufTensor {
-    let blocks = TOTAL_ELEMENTS.div_ceil(32);
-    let total_bytes = blocks * (4 + 4 + 4 + 20);
-    let mut data = vec![0u8; total_bytes];
-
-    for block_idx in 0..blocks {
-        let block_start = block_idx * (4 + 4 + 4 + 20);
-
-        // Set scale = 0.01
-        let scale: f32 = 0.01;
-        let scale_bytes = scale.to_le_bytes();
-        data[block_start..block_start + 4].copy_from_slice(&scale_bytes);
-
-        // Set min = 0.0
-        let min: f32 = 0.0;
-        let min_bytes = min.to_le_bytes();
-        data[block_start + 4..block_start + 8].copy_from_slice(&min_bytes);
-
-        // qh = 0
-        data[block_start + 8..block_start + 12].copy_from_slice(&[0u8; 4]);
-    }
-
-    create_test_tensor(GgufTensorType::Q5_1, data)
-}
-
-// Format 07: Q8_0 - 32 values per block, scale (4 bytes) + 32 bytes quants
+// Format 04: Q8_0 - 32 values per block, scale (4 bytes) + 32 bytes quants
 fn create_q8_0_tensor() -> GgufTensor {
     let blocks = TOTAL_ELEMENTS.div_ceil(32);
     let total_bytes = blocks * (4 + 32);
@@ -468,54 +398,6 @@ fn benchmark_q4_0() {
     let bench = Benchmark::new("Q4_0 -> FP32", 50);
     let result = bench.run_time(|| {
         black_box(dequant_q4_0(&tensor).unwrap())
-    });
-
-    result.report_throughput(TOTAL_ELEMENTS, input_bytes);
-}
-
-/// Benchmark Q4_1 dequantization
-fn benchmark_q4_1() {
-    println!("\n[Q4_1 Dequantization]");
-    println!("======================");
-
-    let tensor = create_q4_1_tensor();
-    let input_bytes = tensor.data.len();
-
-    let bench = Benchmark::new("Q4_1 -> FP32", 50);
-    let result = bench.run_time(|| {
-        black_box(dequant_q4_1(&tensor).unwrap())
-    });
-
-    result.report_throughput(TOTAL_ELEMENTS, input_bytes);
-}
-
-/// Benchmark Q5_0 dequantization
-fn benchmark_q5_0() {
-    println!("\n[Q5_0 Dequantization]");
-    println!("======================");
-
-    let tensor = create_q5_0_tensor();
-    let input_bytes = tensor.data.len();
-
-    let bench = Benchmark::new("Q5_0 -> FP32", 50);
-    let result = bench.run_time(|| {
-        black_box(dequant_q5_0(&tensor).unwrap())
-    });
-
-    result.report_throughput(TOTAL_ELEMENTS, input_bytes);
-}
-
-/// Benchmark Q5_1 dequantization
-fn benchmark_q5_1() {
-    println!("\n[Q5_1 Dequantization]");
-    println!("======================");
-
-    let tensor = create_q5_1_tensor();
-    let input_bytes = tensor.data.len();
-
-    let bench = Benchmark::new("Q5_1 -> FP32", 50);
-    let result = bench.run_time(|| {
-        black_box(dequant_q5_1(&tensor).unwrap())
     });
 
     result.report_throughput(TOTAL_ELEMENTS, input_bytes);
@@ -777,46 +659,18 @@ fn main() {
         input_bytes: TOTAL_ELEMENTS * 2,
     });
 
-    // Q-format (4-bit variants)
+    // Q-format (4-bit)
     println!("\n========================================");
-    println!("4-Bit QUANTIZED FORMATS");
+    println!("4-Bit QUANTIZED FORMAT");
     println!("========================================");
 
     benchmark_q4_0();
-    benchmark_q4_1();
 
     metrics.push(FormatMetrics {
         name: "Q4_0".to_string(),
         avg_ms: 0.0, elements_per_sec: 0.0, bandwidth_gb: 0.0,
         compression_ratio: 8.0,
         input_bytes: (TOTAL_ELEMENTS.div_ceil(32)) * (4 + 16),
-    });
-    metrics.push(FormatMetrics {
-        name: "Q4_1".to_string(),
-        avg_ms: 0.0, elements_per_sec: 0.0, bandwidth_gb: 0.0,
-        compression_ratio: 7.1,
-        input_bytes: (TOTAL_ELEMENTS.div_ceil(32)) * (4 + 4 + 16),
-    });
-
-    // Q-format (5-bit variants)
-    println!("\n========================================");
-    println!("5-Bit QUANTIZED FORMATS");
-    println!("========================================");
-
-    benchmark_q5_0();
-    benchmark_q5_1();
-
-    metrics.push(FormatMetrics {
-        name: "Q5_0".to_string(),
-        avg_ms: 0.0, elements_per_sec: 0.0, bandwidth_gb: 0.0,
-        compression_ratio: 6.4,
-        input_bytes: (TOTAL_ELEMENTS.div_ceil(32)) * (4 + 4 + 20),
-    });
-    metrics.push(FormatMetrics {
-        name: "Q5_1".to_string(),
-        avg_ms: 0.0, elements_per_sec: 0.0, bandwidth_gb: 0.0,
-        compression_ratio: 5.8,
-        input_bytes: (TOTAL_ELEMENTS.div_ceil(32)) * (4 + 4 + 4 + 20),
     });
 
     // Q-format (8-bit)
