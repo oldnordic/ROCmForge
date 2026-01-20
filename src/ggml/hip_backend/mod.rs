@@ -74,6 +74,14 @@ impl GgmlBackend for HipGgmlBackend {
     fn alloc(&mut self, desc: &TensorDesc) -> GgmlResult<()> {
         let bytes = desc.byte_size();
 
+        // Skip allocation for zero-byte tensors (empty tensors from KV cache at current_len=0)
+        // These are handled as views and don't need GPU buffers
+        if bytes == 0 {
+            self.tensors.insert(desc.id, (desc.clone(), self.backend.dummy_zero_buffer()
+                .map_err(|e| GgmlError::Backend(e.to_string()))?));
+            return Ok(());
+        }
+
         // Try to allocate from pool if allocator is enabled
         let buffer = if let Some(alloc) = &mut self.allocator {
             alloc.allocate(bytes, |size| {
@@ -253,6 +261,13 @@ impl GgmlBackend for HipGgmlBackend {
                 let k = a_desc.shape[1] as i32;
                 let b_k = b_desc.shape[0] as i32;
                 let n = b_desc.shape[1] as i32;
+
+                eprintln!(">>> MatMul validation: A shape={:?}, B shape={:?}, output shape={:?}",
+                         a_desc.shape, b_desc.shape, output_desc.shape);
+                eprintln!(">>> MatMul: m={}, k={}, b_k={}, n={}", m, k, b_k, n);
+                eprintln!(">>> MatMul: expected output elements={}*{}={}, actual output elements={}",
+                         m, n, m as usize * n as usize, output_desc.element_count());
+
                 if k != b_k {
                     return Err(GgmlError::InvalidShape(format!(
                         "MatMul dimension mismatch: k={} b_k={}",
@@ -260,9 +275,10 @@ impl GgmlBackend for HipGgmlBackend {
                     )));
                 }
                 if output_desc.element_count() != (m as usize * n as usize) {
-                    return Err(GgmlError::InvalidShape(
-                        "Output shape does not match matmul result".to_string(),
-                    ));
+                    return Err(GgmlError::InvalidShape(format!(
+                        "Output shape does not match matmul result: expected shape=[{}, {}] ({} elements), got shape={:?} ({} elements)",
+                        m, n, m as usize * n as usize, output_desc.shape, output_desc.element_count()
+                    )));
                 }
 
                 let a_buf = self
@@ -1030,6 +1046,10 @@ impl GgmlBackend for HipGgmlBackend {
                     ));
                 }
 
+                eprintln!(">>> View/Reshape: inputs={:?}, outputs={:?}", inputs, outputs);
+                eprintln!(">>> View/Reshape: Available tensor IDs in backend: {:?}",
+                         self.tensors.keys().collect::<Vec<_>>());
+
                 let output_desc = self
                     .tensor_desc(outputs[0])
                     .ok_or_else(|| GgmlError::InvalidShape("Missing output desc".to_string()))?;
@@ -1137,7 +1157,7 @@ impl GgmlBackend for HipGgmlBackend {
                     .map_err(|e| GgmlError::Backend(format!("Failed to read weights: {}", e)))?;
 
                 // Perform dequantize + matmul
-                crate::ggml::hip_backend::ops::quantized_matmul::matmul_q4_0(
+                crate::kernels::matmul::quantized::matmul_q4_0(
                     &self.backend,
                     &quantized_data,
                     input_buf,
@@ -1214,7 +1234,7 @@ impl GgmlBackend for HipGgmlBackend {
                     .map_err(|e| GgmlError::Backend(format!("Failed to read weights: {}", e)))?;
 
                 // Perform dequantize + matmul
-                crate::ggml::hip_backend::ops::quantized_matmul::matmul_q8_0(
+                crate::kernels::matmul::quantized::matmul_q8_0(
                     &self.backend,
                     &quantized_data,
                     input_buf,

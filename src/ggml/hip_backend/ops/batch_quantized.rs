@@ -205,11 +205,11 @@ impl BatchQuantizedMatmul {
     ) -> Result<(), HipError> {
         #[cfg(feature = "rocm")]
         {
-            use crate::ggml::hip_backend::ops::quantized_matmul;
+            use crate::kernels::matmul::quantized;
 
             match op.format {
                 QuantFormat::Q4_0 => {
-                    quantized_matmul::matmul_q4_0(
+                    quantized::matmul_q4_0(
                         &self.backend,
                         &op.weights,
                         input,
@@ -220,7 +220,7 @@ impl BatchQuantizedMatmul {
                     .map_err(|e| HipError::GenericError(format!("Q4_0 matmul failed: {}", e)))?;
                 }
                 QuantFormat::Q4_K => {
-                    quantized_matmul::matmul_q4_k(
+                    quantized::matmul_q4_k(
                         &self.backend,
                         &op.weights,
                         input,
@@ -231,7 +231,7 @@ impl BatchQuantizedMatmul {
                     .map_err(|e| HipError::GenericError(format!("Q4_K matmul failed: {}", e)))?;
                 }
                 QuantFormat::Q6_K => {
-                    quantized_matmul::matmul_q6_k(
+                    quantized::matmul_q6_k(
                         &self.backend,
                         &op.weights,
                         input,
@@ -242,7 +242,7 @@ impl BatchQuantizedMatmul {
                     .map_err(|e| HipError::GenericError(format!("Q6_K matmul failed: {}", e)))?;
                 }
                 QuantFormat::Q8_0 => {
-                    quantized_matmul::matmul_q8_0(
+                    quantized::matmul_q8_0(
                         &self.backend,
                         &op.weights,
                         input,
@@ -259,11 +259,11 @@ impl BatchQuantizedMatmul {
 
         #[cfg(not(feature = "rocm"))]
         {
-            use crate::ggml::hip_backend::ops::quantized_matmul;
+            use crate::kernels::matmul::quantized;
 
             match op.format {
                 QuantFormat::Q4_0 => {
-                    quantized_matmul::matmul_q4_0(
+                    quantized::matmul_q4_0(
                         &self.backend,
                         &op.weights,
                         input,
@@ -274,7 +274,7 @@ impl BatchQuantizedMatmul {
                     .map_err(|e| HipError::GenericError(format!("Q4_0 matmul failed: {}", e)))?;
                 }
                 QuantFormat::Q4_K => {
-                    quantized_matmul::matmul_q4_k(
+                    quantized::matmul_q4_k(
                         &self.backend,
                         &op.weights,
                         input,
@@ -285,7 +285,7 @@ impl BatchQuantizedMatmul {
                     .map_err(|e| HipError::GenericError(format!("Q4_K matmul failed: {}", e)))?;
                 }
                 QuantFormat::Q6_K => {
-                    quantized_matmul::matmul_q6_k(
+                    quantized::matmul_q6_k(
                         &self.backend,
                         &op.weights,
                         input,
@@ -296,7 +296,7 @@ impl BatchQuantizedMatmul {
                     .map_err(|e| HipError::GenericError(format!("Q6_K matmul failed: {}", e)))?;
                 }
                 QuantFormat::Q8_0 => {
-                    quantized_matmul::matmul_q8_0(
+                    quantized::matmul_q8_0(
                         &self.backend,
                         &op.weights,
                         input,
@@ -380,12 +380,12 @@ impl AsyncKernelLauncher {
         output: &crate::backend::HipBuffer,
     ) -> Result<AsyncHandle, HipError> {
         // Launch kernel without synchronization
-        use crate::ggml::hip_backend::ops::quantized_matmul;
+        use crate::kernels::matmul::quantized;
 
         match op.format {
             QuantFormat::Q4_0 => {
                 unsafe {
-                    quantized_matmul::matmul_q4_0_gpu(
+                    quantized::matmul_q4_0_gpu(
                         &self.backend,
                         input.as_ptr() as *const f32,
                         self.backend.allocate_buffer(op.weights.len()).map_err(|e| {
@@ -419,11 +419,11 @@ impl AsyncKernelLauncher {
         output: &crate::backend::HipBuffer,
     ) -> Result<(), HipError> {
         // Execute synchronously using the quantized matmul functions
-        use crate::ggml::hip_backend::ops::quantized_matmul;
+        use crate::kernels::matmul::quantized;
 
         match op.format {
             QuantFormat::Q4_0 => {
-                quantized_matmul::matmul_q4_0(
+                quantized::matmul_q4_0(
                     &self.backend,
                     &op.weights,
                     input,
@@ -434,7 +434,7 @@ impl AsyncKernelLauncher {
                 .map_err(|e| HipError::GenericError(format!("Q4_0 matmul failed: {}", e)))?;
             }
             QuantFormat::Q4_K => {
-                quantized_matmul::matmul_q4_k(
+                quantized::matmul_q4_k(
                     &self.backend,
                     &op.weights,
                     input,
@@ -445,7 +445,7 @@ impl AsyncKernelLauncher {
                 .map_err(|e| HipError::GenericError(format!("Q4_K matmul failed: {}", e)))?;
             }
             QuantFormat::Q6_K => {
-                quantized_matmul::matmul_q6_k(
+                quantized::matmul_q6_k(
                     &self.backend,
                     &op.weights,
                     input,
@@ -456,7 +456,7 @@ impl AsyncKernelLauncher {
                 .map_err(|e| HipError::GenericError(format!("Q6_K matmul failed: {}", e)))?;
             }
             QuantFormat::Q8_0 => {
-                quantized_matmul::matmul_q8_0(
+                quantized::matmul_q8_0(
                     &self.backend,
                     &op.weights,
                     input,

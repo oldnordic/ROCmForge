@@ -1,4 +1,7 @@
 //! HIP backend ops for ggml IR.
+//!
+//! DEPRECATED: Quantization kernels have been moved to `crate::kernels::quant`.
+//! This module now re-exports from there for backward compatibility (Phase 24-02).
 
 pub mod accumulate;
 pub mod add_scale;
@@ -24,34 +27,27 @@ pub use batch_quantized::{QuantFormat, QuantizedMatmulOp, BatchQuantizedMatmul, 
 #[cfg(feature = "rocm")]
 pub use batch_quantized::{AsyncKernelLauncher, AsyncHandle};
 
-// Public exports for Q4_0 dequantization operations
-pub use q4_0_dequant::{
-    dequantize_q4_0_with_fallback,
+// Re-export quantization kernels from kernels::quant (Phase 24-02)
+// These maintain backward compatibility for existing code
+pub use crate::kernels::quant::{
     dequantize_q4_0_cpu,
+    dequantize_q4_k_cpu,
+    dequantize_q6_k_cpu,
 };
 
 // GPU-only exports (require ROCm feature)
 #[cfg(feature = "rocm")]
-pub use q4_0_dequant::{
+pub use crate::kernels::quant::{
+    dequantize_q4_0_with_fallback,
     dequantize_q4_0_kernel_cached,
     get_or_init_q4_0_dequant_cache,
     dequantize_q4_0_cpu_upload,
-};
-
-// Public exports for Q4_K dequantization operations
-pub use q4_k_dequant::{
     dequantize_q4_k_with_fallback,
     dequantize_q4_k_gpu_kernel,
     get_or_init_q4_k_dequant_cache,
-    dequantize_q4_k_cpu,
-};
-
-// Public exports for Q6_K dequantization operations
-pub use q6_k_dequant::{
     dequantize_q6_k_with_fallback,
     dequantize_q6_k_gpu_kernel,
     get_or_init_q6_k_dequant_cache,
-    dequantize_q6_k_cpu,
 };
 
 // Element-wise operations are now in kernels::element
