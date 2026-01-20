@@ -9,7 +9,9 @@ use std::sync::{Arc, Mutex};
 use crate::backend::hip_backend::{HipBackend, HipError, HipKernel, HipModule};
 
 // Public sub-modules that can access private KernelCache fields
+#[cfg(feature = "rocm")]
 pub mod kernels_basic;
+#[cfg(feature = "rocm")]
 pub mod kernels_flash;
 
 // RDNA3 (wave32) tuning constants for AMD Radeon RX 7900 XT
@@ -84,7 +86,8 @@ pub struct AttentionKernelCache {
 }
 
 /// Get or initialize the global kernel cache
-pub fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> {
+#[cfg(feature = "rocm")]
+pub(crate) fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> {
     // First check if already initialized
     {
         let cache = GLOBAL_CACHE

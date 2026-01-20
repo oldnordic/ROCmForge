@@ -9,13 +9,11 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 
 ## Current Position
 
-Phase: 26 - Warning Cleanup (Plan 3 of N - In Progress)
-Status: PLAN 26-02 COMPLETE - All to_host_vec() deprecation warnings eliminated
-Last activity: Completed 26-02 to_host_vec() migration at 2026-01-20T18:40:33Z
+Phase: 26 - Warning Cleanup (Plan 3 of N - COMPLETE)
+Status: PLAN 26-03 COMPLETE - All dead code warnings suppressed with justification
+Last activity: Completed 26-03 dead code warning suppression at 2026-01-20T18:41:02Z
 
-Note: 26-01 (loader dequant migration) also complete at 18:44:00Z
-
-Progress: [████████████████████░] 98% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 COMPLETE, Phase 26 in progress)
+Progress: [████████████████████░] 99% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 COMPLETE, Phase 26 in progress)
 
 ## Milestone v1.3 Summary
 
@@ -45,6 +43,12 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 Recent decisions:
 
+- **Dead Code Suppression Standard**: All #[allow(dead_code)] attributes MUST have explanatory comments per Phase 20 standard. Comments explain WHY code is kept (future use, compatibility, optimization) (26-03)
+- **Kernel Cache Infrastructure Preserved**: Q4_0/Q4_K/Q6_K kernel cache structs, statics, and initializers are not dead code but premature infrastructure from Phase 24. Reserved for future HSACO lazy-loading optimization (26-03)
+- **FFI Constants Kept for API Completeness**: HIP_EVENT_DEFAULT and HIP_EVENT_RECORD_TIMING are part of complete HIP API surface. Currently unused but kept for future use (26-03)
+- **Deprecated Backward Compatibility Wrappers**: dequant_q8_0, dequant_q4_0, dequant_q4_k, dequant_q6_k functions are Phase 24 migration compatibility wrappers. Kept with both #[deprecated] and #[allow(dead_code)] (26-03)
+- **LRU Eviction Method Preserved**: evict_lru_sequences in kv_cache is complete but replaced by simpler capacity-based eviction. Kept for future cache optimization (26-03)
+- **RoPE Cache Functions Reserved**: rope_cache and get_rope_cache reserved for future RoPE pre-computation optimization (26-03)
 - **Operation Module Pattern for Cache Decomposition**: Use functional operation modules taking explicit RwLock references instead of trait extensions. Enables testability and clear lock management. Applied to kv_cache in 25-11 with cache_ops, sequence_ops, and block_ops modules (25-11)
 - **Submodule Pattern for Private Field Access**: When sibling modules need access to private fields, reorganize as parent-child submodules (e.g., kernels_cache/ containing kernels_basic.rs and kernels_flash.rs) to preserve encapsulation (25-07)
 - **Memory Arena for GPU Weights**: Use ModelWeightArena with single HipBuffer backing store to prevent RDNA3 GPU hangs from multiple small allocations. Best-fit allocation with 256-byte alignment (22-01)
@@ -395,5 +399,5 @@ Historical decisions affecting v1.3:
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed 26-02 to_host_vec() migration at 2026-01-20T18:40:33Z
-Resume file: Continue warning cleanup with plan 26-03 (remaining warnings)
+Stopped at: Completed 26-03 dead code warning suppression at 2026-01-20T18:41:02Z
+Resume file: Continue warning cleanup with plan 26-04 (remaining visibility mismatch warning) or next warning category
