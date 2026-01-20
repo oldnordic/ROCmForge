@@ -54,7 +54,6 @@ pub fn load_tensor_to_gpu_impl(
 }
 
 /// GPU dequantization path for Q4_0/Q4_K/Q6_K
-#[cfg(feature = "rocm")]
 fn gpu_dequantize_upload(
     backend: &HipBackend,
     name: &str,
@@ -123,19 +122,6 @@ fn gpu_dequantize_upload(
         tensor_bytes.len()
     );
     Ok(device_tensor_arc)
-}
-
-/// GPU dequantization path (no ROCm feature - should not be called)
-#[cfg(not(feature = "rocm"))]
-fn gpu_dequantize_upload(
-    _backend: &HipBackend,
-    _name: &str,
-    _tensor_bytes: &[u8],
-    _shape: &TensorShape,
-    _tensor_type: GgufTensorType,
-    _loader: &GgufLoader,
-) -> Result<Arc<DeviceTensor>> {
-    Err(anyhow!("GPU dequantization not available (rocm feature disabled)"))
 }
 
 /// CPU dequantization path for other tensor types

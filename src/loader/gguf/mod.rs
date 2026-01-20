@@ -192,7 +192,6 @@ mod gguf_spec_tests {
 
     /// Test that verifies Qwen2.5-0.5B model loads without errors
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_qwen_model_loads() {
         use std::path::Path;
 

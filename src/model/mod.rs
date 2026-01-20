@@ -17,7 +17,6 @@ pub mod config_tests;
 
 // Include Phase 5: PagedAttention integration tests
 #[cfg(test)]
-#[cfg(feature = "rocm")]
 pub mod phase5_paged_tests;
 
 pub use config::*;

@@ -7,7 +7,6 @@
 // - Loading statistics
 
 #[cfg(test)]
-#[cfg(feature = "rocm")]
 mod tests {
     use crate::backend::HipBackend;
 use serial_test::serial;

@@ -259,7 +259,6 @@ impl GlmPositionHandler {
     /// q[i + half_dim] = q[i] * sin[pos] + q[i + half_dim] * cos[pos]
     /// ```
     /// (same for K tensor)
-    #[cfg(feature = "rocm")]
     pub fn apply_position_embeddings_device(
         &self,
         q: crate::backend::DeviceTensor,

@@ -4,7 +4,7 @@
 //! All GPU results must match CPU results within 0.1% tolerance.
 
 #[cfg(test)]
-mod gpu_position_embedding_tests {
+mod tests {
     use std::sync::Arc;
 use serial_test::serial;
 
@@ -53,7 +53,7 @@ use serial_test::serial;
     /// Test 1: Basic position embedding application (no RoPE)
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
+
     fn test_basic_position_embedding_no_rope() {
         let config = GlmPositionConfig::new(128);
         let handler = GlmPositionHandler::new(config).unwrap();
@@ -98,7 +98,7 @@ use serial_test::serial;
     /// Test 2: Position embedding with RoPE enabled
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
+
     fn test_position_embedding_with_rope() {
         let rope_config = RopeConfig::new(128, 128);
         let config = GlmPositionConfig::new(128).with_rope(rope_config);
@@ -148,7 +148,7 @@ use serial_test::serial;
     /// Test 3: Position embedding with RoPE disabled
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
+
     fn test_position_embedding_rope_disabled() {
         let config = GlmPositionConfig::new(128);
         let handler = GlmPositionHandler::new(config).unwrap();
@@ -176,7 +176,7 @@ use serial_test::serial;
     /// Test 4: Batch dimension handling
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
+
     #[ignore] // TODO: Current implementation doesn't support batching properly
     fn test_batch_dimension_handling() {
         let rope_config = RopeConfig::new(128, 128);
@@ -226,7 +226,7 @@ use serial_test::serial;
     /// Test 5: Multiple heads (8 heads)
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
+
     fn test_multiple_heads() {
         let rope_config = RopeConfig::new(128, 128);
         let config = GlmPositionConfig::new(128).with_rope(rope_config);
@@ -271,7 +271,7 @@ use serial_test::serial;
     /// Test 6: Large sequence for performance testing
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
+
     fn test_large_sequence_performance() {
         let rope_config = RopeConfig::new(128, 2048);
         let config = GlmPositionConfig::new(2048).with_rope(rope_config);
@@ -322,7 +322,7 @@ use serial_test::serial;
     /// Test 7: Edge case - single token
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
+
     fn test_single_token() {
         let rope_config = RopeConfig::new(64, 128);
         let config = GlmPositionConfig::new(128).with_rope(rope_config);
@@ -367,7 +367,7 @@ use serial_test::serial;
     /// Test 8: Verify GPU path is actually used (not CPU fallback)
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
+
     fn test_gpu_path_is_used() {
         let rope_config = RopeConfig::new(64, 128);
         let config = GlmPositionConfig::new(128).with_rope(rope_config);

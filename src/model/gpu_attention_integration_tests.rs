@@ -4,7 +4,6 @@
 // These tests verify the complete GPU attention path matches CPU results.
 
 #[cfg(test)]
-#[cfg(feature = "rocm")]
 mod gpu_attention_integration_tests {
     use crate::backend::hip_backend::{HipBackend, DeviceTensor};
 use serial_test::serial;

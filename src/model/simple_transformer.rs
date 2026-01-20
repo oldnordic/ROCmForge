@@ -14,7 +14,6 @@ use serial_test::serial;
 #[derive(Debug, Clone, Copy)]
 pub enum ModelBackend {
     Cpu,
-    #[cfg(feature = "rocm")]
     Gpu,
 }
 
@@ -26,7 +25,6 @@ pub enum ModelError {
     DimensionError(String),
     #[error("Attention error: {0}")]
     AttentionError(#[from] crate::attention::AttentionError),
-    #[cfg(feature = "rocm")]
     #[error("GPU error: {0}")]
     GpuError(#[from] crate::tensor::matmul::MatmulError),
 }
@@ -39,7 +37,6 @@ pub struct Linear {
     bias: Tensor,
     in_features: usize,
     out_features: usize,
-    #[cfg(feature = "rocm")]
     gpu_buffer: Option<crate::backend::HipBuffer>,
 }
 
@@ -57,30 +54,20 @@ impl Linear {
         // Initialize bias to zeros
         let bias_data = vec![0.0f32; out_features];
 
-        #[allow(unused_mut)] // mut needed for with_gpu_buffer() reassign when feature="rocm"
+        #[allow(unused_mut)] // mut needed for with_gpu_buffer() reassign
         let mut linear = Self {
             weight: Tensor { data: weight_data },
             bias: Tensor { data: bias_data },
             in_features,
             out_features,
-            #[cfg(feature = "rocm")]
             gpu_buffer: None,
         };
 
-        #[cfg(feature = "rocm")]
-        {
-            linear = linear.with_gpu_buffer();
-        }
-
-        #[cfg(not(feature = "rocm"))]
-        {
-            // Nothing to do
-        }
+        linear = linear.with_gpu_buffer();
 
         linear
     }
 
-    #[cfg(feature = "rocm")]
     fn with_gpu_buffer(mut self) -> Self {
         use crate::backend::HipBackend;
 
@@ -125,16 +112,10 @@ impl Linear {
             )));
         }
 
-        #[cfg(feature = "rocm")]
         if let Some(ref weight_buffer) = self.gpu_buffer {
             self.forward_gpu(input, weight_buffer)
         } else {
             self.forward_cpu(input)
-        }
-
-        #[cfg(not(feature = "rocm"))]
-        {
-            return self.forward_cpu(input);
         }
     }
 
@@ -159,7 +140,6 @@ impl Linear {
         Ok(output)
     }
 
-    #[cfg(feature = "rocm")]
     fn forward_gpu(
         &self,
         input: &[f32],
@@ -273,7 +253,6 @@ impl SimpleAttention {
         // Route based on backend
         match self.backend {
             ModelBackend::Cpu => self.forward_cpu(input),
-            #[cfg(feature = "rocm")]
             ModelBackend::Gpu => self.forward_gpu(input),
         }
     }
@@ -351,7 +330,6 @@ impl SimpleAttention {
         Ok(final_output)
     }
 
-    #[cfg(feature = "rocm")]
     fn forward_gpu(&self, input: &[f32]) -> ModelResult<Vec<f32>> {
         // Debug logging for GPU usage (gated by debug assertions)
         #[cfg(debug_assertions)]

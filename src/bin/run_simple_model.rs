@@ -17,15 +17,7 @@ fn main() -> Result<(), ModelError> {
     let args: Vec<String> = env::args().collect();
     let backend = if args.len() > 1 && args[1] == "gpu" {
         println!("Using GPU backend");
-        #[cfg(feature = "rocm")]
-        {
-            ModelBackend::Gpu
-        }
-        #[cfg(not(feature = "rocm"))]
-        {
-            println!("GPU backend not available, falling back to CPU");
-            ModelBackend::Cpu
-        }
+        ModelBackend::Gpu
     } else {
         println!("Using CPU backend");
         ModelBackend::Cpu

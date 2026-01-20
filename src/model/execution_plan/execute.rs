@@ -331,53 +331,21 @@ fn self_attention(
 
         // Apply RoPE position embeddings to Q and K
         // Use GPU method when available, otherwise use CPU fallback
-        #[cfg(feature = "rocm")]
-        {
-            let (q_with_pos, k_with_pos) = position_handler
-                .apply_position_embeddings_device(
-                    q_reshaped.clone(),
-                    k_reshaped.clone(),
-                    &position_ids,
-                    num_heads,
-                )
-                .map_err(|e| {
-                    HipError::GenericError(format!(
-                        "Failed to apply position embeddings: {}",
-                        e
-                    ))
-                })?;
-            q_reshaped = q_with_pos;
-            k_reshaped = k_with_pos;
-        }
-
-        #[cfg(not(feature = "rocm"))]
-        {
-            // CPU fallback: download tensors, apply RoPE, upload back
-            let mut q_host = vec![0.0f32; q_reshaped.len()];
-            backend.copy_from_device_safe(&q_reshaped.buffer, &mut q_host)
-                .map_err(|e| HipError::GenericError(format!("Failed to download Q: {}", e)))?;
-            let mut k_host = vec![0.0f32; k_reshaped.len()];
-            backend.copy_from_device_safe(&k_reshaped.buffer, &mut k_host)
-                .map_err(|e| HipError::GenericError(format!("Failed to download K: {}", e)))?;
-
-            let (q_with_pos, k_with_pos) = position_handler
-                .apply_position_embeddings(q_host, k_host, &position_ids, num_heads)
-                .map_err(|e| {
-                    HipError::GenericError(format!(
-                        "Failed to apply position embeddings: {}",
-                        e
-                    ))
-                })?;
-
-            // Upload position-encoded tensors back to GPU
-            let q_shape = TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
-            q_reshaped = DeviceTensor::from_host_vec(backend, q_with_pos, q_shape)
-                .map_err(|e| HipError::GenericError(format!("Failed to upload Q: {}", e)))?;
-
-            let k_shape = TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
-            k_reshaped = DeviceTensor::from_host_vec(backend, k_with_pos, k_shape)
-                .map_err(|e| HipError::GenericError(format!("Failed to upload K: {}", e)))?;
-        }
+        let (q_with_pos, k_with_pos) = position_handler
+            .apply_position_embeddings_device(
+                q_reshaped.clone(),
+                k_reshaped.clone(),
+                &position_ids,
+                num_heads,
+            )
+            .map_err(|e| {
+                HipError::GenericError(format!(
+                    "Failed to apply position embeddings: {}",
+                    e
+                ))
+            })?;
+        q_reshaped = q_with_pos;
+        k_reshaped = k_with_pos;
     }
     eprintln!(
         ">>>   self_attention({}): Step 3/6 - RoPE done ({:?})",

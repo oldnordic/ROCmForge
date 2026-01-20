@@ -4,7 +4,6 @@
 //! PagedAttention for efficient non-contiguous KV cache access.
 
 #[cfg(test)]
-#[cfg(feature = "rocm")]
 mod tests {
     use crate::backend::hip_backend::{DeviceTensor, HipBackend, HipError};
 use serial_test::serial;

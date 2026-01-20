@@ -51,10 +51,8 @@ pub use types::{ExecutionPlan, LoadingStats};
 // Include test files
 // TODO: Re-enable when test files are created
 // #[cfg(test)]
-// #[cfg(feature = "rocm")]
 // include!("gpu_attention_integration_tests.rs");
 
 // lazy_tests.rs does not exist yet - commented out to fix compilation
 // #[cfg(test)]
-// #[cfg(feature = "rocm")]
 // include!("lazy_tests.rs");
