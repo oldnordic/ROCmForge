@@ -9,11 +9,11 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 
 ## Current Position
 
-Phase: 23 - Dead/Duplicate Code Removal (Plan 04 of 5)
-Status: Phase 23 In Progress - ParallelResult removed, compilation errors fixed
-Last activity: Removed ParallelResult type alias and fixed blocking issues from 23-01/23-02
+Phase: 23 - Dead/Duplicate Code Removal (Plan 02 of 5)
+Status: Phase 23 In Progress - Removed unused Q4_1, Q5_0, Q5_1 quantization formats
+Last activity: Removed 337 lines of unused quantization code, all tests passing
 
-Progress: [████████████████░░░░░] 80% (Phase 22 COMPLETE, Phase 23 4/5 plans complete)
+Progress: [████████░░░░░░░░░░░░░] 40% (Phase 22 COMPLETE, Phase 23 2/5 plans complete)
 
 ## Milestone v1.3 Summary
 
@@ -30,8 +30,8 @@ Progress: [████████████████░░░░░] 80% 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 144 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22, Phase 23 23-01/23-03/23-04)
-- Plans remaining: 1 (21-06, skipped) + 8 (Phases 23-24)
+- Total plans completed: 143 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22, Phase 23 23-01/23-02)
+- Plans remaining: 1 (21-06, skipped) + 9 (Phases 23-24)
 - Average duration: ~44 min
 - Total execution time: ~105 hours
 
@@ -115,23 +115,16 @@ Historical decisions affecting v1.3:
 **v1.5 - Code Quality & Cleanup (2026-01-20):**
 - Phase 23-01: Remove duplicate MXFP code (E8M0, MxfpBlock) from gguf.rs - use mxfp.rs
 - Phase 23-02: Remove unused quantization formats (Q4_1, Q5_0, Q5_1) from GgufTensorType
-- Phase 23-03: Consolidate GgufMetadata - remove duplicate from gguf.rs, keep metadata.rs version
-- Phase 23-04: Remove ParallelResult type alias, fix compilation errors from 23-01/23-02
 
-**Phase 23 In Progress** - 4 of 5 plans complete
+**Phase 23 In Progress** - 2 of 5 plans complete
 
-**Decision: Single Source of Truth for GgufMetadata**
-- Keep GgufMetadata in src/loader/metadata.rs (has both update_from_kv() and calculate_default_head_dim())
-- Remove incomplete duplicate from src/loader/gguf.rs (only had calculate_default_head_dim())
-- Use canonical import path: crate::loader::metadata::GgufMetadata (23-03)
-
-**Decision: Remove ParallelResult Type Alias**
-- ParallelResult (Arc<RwLock<Vec<f32>>>) was defined but never used
-- Rayon parallel dequantization uses inline Arc::new(RwLock::new(result)) instead
-- AsyncLoader uses different pattern (HIP streams, not CPU parallel results) (23-04)
+**Decision: Remove Unused Quantization Formats**
+- Q4_1, Q5_0, Q5_1 formats removed - no common GGUF models use these as of 2026-01-20
+- from_u32() returns descriptive Err for unsupported types (3, 6, 7) instead of Ok
+- Active formats: Q4_0, Q4_K, Q5_K, Q6_K, Q8_0, F16, F32, and IQ formats (23-02)
 
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed Phase 23-04 (ParallelResult removed, compilation errors fixed)
+Stopped at: Completed Phase 23-02 (Removed Q4_1, Q5_0, Q5_1 quantization formats)
 Resume file: None

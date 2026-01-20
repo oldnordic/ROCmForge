@@ -8,7 +8,8 @@
 
 use crate::backend::hip_backend::{AsyncLoader, DeviceTensor, HipBackend};
 use crate::loader::mxfp::{E8M0, MxfpBlock};
-use crate::loader::metadata::GgufMetadata;
+// Re-export GgufMetadata for external access (tests, etc.)
+pub use crate::loader::metadata::GgufMetadata;
 use crate::memory::{MemoryCalculator, ModelWeightArena};
 
 // GPU dequantization kernels (require ROCm feature)
