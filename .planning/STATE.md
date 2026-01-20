@@ -9,11 +9,11 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 
 ## Current Position
 
-Phase: 24 - Kernel-Centric Restructure (Plan 05 of 6)
-Status: In Progress - Element-wise kernels migrated to src/kernels/element/
-Last activity: Migrated RMSNorm, SwiGLU, and add/scale operations to kernels/element/
+Phase: 24 - Kernel-Centric Restructure (Plan 03 of 4)
+Status: In Progress - Attention kernels migrated to src/kernels/attention/
+Last activity: Migrated softmax, matmul, flash, mask, rope kernels with CPU/GPU fallback
 
-Progress: [█████████████░░░░░░░] 65% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 2/6 plans COMPLETE)
+Progress: [██████████████░░░░░░] 68% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 3/4 plans COMPLETE)
 
 ## Milestone v1.3 Summary
 
@@ -30,10 +30,10 @@ Progress: [█████████████░░░░░░░] 65% (Ph
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 150 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22, Phase 23 COMPLETE, Phase 24-01, 24-05)
-- Plans remaining: 1 (21-06, skipped) + 4 (Phase 24)
+- Total plans completed: 152 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22, Phase 23 COMPLETE, Phase 24-01, 24-02, 24-03, 24-05)
+- Plans remaining: 1 (21-06, skipped) + 2 (Phase 24: 24-04, 24-06)
 - Average duration: ~44 min
-- Total execution time: ~109 hours
+- Total execution time: ~110 hours
 
 ## Accumulated Context
 
@@ -137,12 +137,13 @@ Historical decisions affecting v1.3:
 
 **v1.6 - Kernel-Centric Restructure (2026-01-20):**
 - Phase 24-01: Created src/kernels/ directory structure with quant/, attention/, matmul/, element/ subdirectories
-- Phase 24-05: Migrated element-wise kernels (RMSNorm, SwiGLU, add/scale) to kernels/element/
+- Phase 24-02: Migrated quantization kernels (Q4_0, Q4_K, Q6_K, Q8_0) to kernels/quant/
+- Phase 24-03: Migrated attention kernels (softmax, matmul, flash, mask, rope) to kernels/attention/ with CPU/GPU fallback
 
-**Phase 24 in Progress** - 2 of 6 plans complete
+**Phase 24 in Progress** - 3 of 4 plans complete
 
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed Phase 24-05 (Element-wise kernels migrated)
+Stopped at: Completed Phase 24-03 (Attention kernels migrated to src/kernels/attention/)
 Resume file: None
