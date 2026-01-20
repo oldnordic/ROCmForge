@@ -157,20 +157,88 @@ impl TransposeKernel {
         let output_buffer = self
             .backend
             .allocate_buffer(cols * rows * elem_size)?;
-        let output_tensor = DeviceTensor {
-            buffer: output_buffer,
-            shape: transposed_shape,
-        };
 
-        // TODO: Launch kernel in plan 27-02
-        // For now, return placeholder output
-        tracing::warn!(
-            "Transpose kernel not yet implemented - returning untransposed tensor (shape: {:?})",
-            output_tensor.shape()
+        // Get kernel reference
+        let kernel = self.kernel.as_ref()
+            .ok_or_else(|| HipError::KernelLoadFailed("Transpose kernel not initialized".to_string()))?;
+
+        // Grid/block dimensions for transpose kernel
+        // Grid: (ceil(cols / TILE_DIM), ceil(rows / TILE_DIM))
+        // Block: (TILE_DIM, TILE_DIM) for 2D tiling
+        const TILE_DIM: u32 = 64;
+        let grid_x = (cols as u32 + TILE_DIM - 1) / TILE_DIM;
+        let grid_y = (rows as u32 + TILE_DIM - 1) / TILE_DIM;
+        let grid_dim = (grid_x, grid_y, 1);
+        let block_dim = (TILE_DIM, TILE_DIM, 1);
+
+        // Shared memory: TILE_DIM * (TILE_DIM + 1) floats for bank conflict avoidance
+        let shared_mem_bytes = TILE_DIM * (TILE_DIM + 1) * std::mem::size_of::<f32>() as u32;
+
+        // Prepare kernel arguments
+        let mut rows_arg = rows;
+        let mut cols_arg = cols;
+
+        let args: &[*mut std::ffi::c_void] = &[
+            output_buffer.as_ptr() as *mut std::ffi::c_void,
+            tensor.buffer.as_ptr() as *mut std::ffi::c_void,
+            &mut rows_arg as *mut usize as *mut std::ffi::c_void,
+            &mut cols_arg as *mut usize as *mut std::ffi::c_void,
+        ];
+
+        self.backend.launch_kernel_with_module_shared(
+            kernel,
+            grid_dim,
+            block_dim,
+            args,
+            shared_mem_bytes,
+        )?;
+
+        tracing::debug!(
+            "Transposed tensor: [{}, {}] -> [{}, {}]",
+            rows, cols, cols, rows
         );
 
-        Ok(output_tensor)
+        Ok(DeviceTensor {
+            buffer: output_buffer,
+            shape: transposed_shape,
+        })
     }
+}
+
+/// Convenience function to transpose a 2D tensor on GPU
+///
+/// Creates a TransposeKernel instance and performs the transpose.
+/// This is the preferred API for one-shot transpose operations.
+///
+/// # Arguments
+///
+/// * `backend` - HIP backend for GPU operations
+/// * `tensor` - Input tensor to transpose (must be 2D)
+///
+/// # Returns
+///
+/// A new `DeviceTensor` with transposed shape
+///
+/// # Errors
+///
+/// - `KernelLoadFailed` - HSACO file not found
+/// - `DeviceError` - Input tensor is not 2D
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use crate::kernels::transpose::transpose_tensor;
+/// use std::sync::Arc;
+///
+/// let transposed = transpose_tensor(&backend, &input_tensor)?;
+/// // shape [hidden_size, vocab_size] -> [vocab_size, hidden_size]
+/// ```
+pub fn transpose_tensor(
+    backend: &Arc<HipBackend>,
+    tensor: &DeviceTensor,
+) -> HipResult<DeviceTensor> {
+    let mut kernel = TransposeKernel::new(Arc::clone(backend));
+    kernel.transpose(tensor)
 }
 
 #[cfg(test)]
