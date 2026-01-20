@@ -188,6 +188,11 @@ fn compile_hip_kernels() {
             "FUSED_SAMPLING_HSACO",
             "topk_topp_sampling_kernel",
         ),
+        (
+            "src/kernels/transpose/hip transpose.hip",
+            "TRANSPOSE_HSACO",
+            "transpose_kernel",
+        ),
     ];
 
     for (src_file, env_name, kernel_name) in &kernels {

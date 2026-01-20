@@ -23,8 +23,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::backend::hip_backend::{HipBackend, HipError, HipKernel, HipModule, HipResult};
-use crate::backend::hip_backend::backend::DeviceTensor;
+use crate::backend::hip_backend::{DeviceTensor, HipBackend, HipError, HipKernel, HipModule, HipResult};
+use crate::loader::mmap_loader::TensorShape;
 
 /// GPU transpose kernel
 ///
@@ -141,10 +141,10 @@ impl TransposeKernel {
 
         // Verify tensor is 2D
         let shape = tensor.shape();
-        if shape.rank() != 2 {
+        if shape.dims().len() != 2 {
             return Err(HipError::DeviceError(format!(
                 "Transpose requires 2D tensor, got {}D",
-                shape.rank()
+                shape.dims().len()
             )));
         }
 
@@ -153,7 +153,7 @@ impl TransposeKernel {
         let elem_size = std::mem::size_of::<f32>();
 
         // Allocate output buffer with transposed shape (cols, rows)
-        let transposed_shape = crate::backend::hip_backend::backend::TensorShape::new(&[cols, rows]);
+        let transposed_shape = TensorShape::from_dims(&[cols, rows]);
         let output_buffer = self
             .backend
             .allocate_buffer(cols * rows * elem_size)?;
@@ -216,7 +216,7 @@ mod tests {
         let mut kernel = TransposeKernel::new(backend);
 
         // Create a 2D tensor
-        let shape = crate::backend::hip_backend::backend::TensorShape::new(&[4, 8]);
+        let shape = TensorShape::from_dims(&[4, 8]);
         let buffer = kernel.backend.allocate_buffer(4 * 8 * 4).unwrap();
         let input = DeviceTensor { buffer, shape };
 
@@ -244,7 +244,7 @@ mod tests {
         let mut kernel = TransposeKernel::new(backend);
 
         // Create a 3D tensor
-        let shape = crate::backend::hip_backend::backend::TensorShape::new(&[2, 4, 8]);
+        let shape = TensorShape::from_dims(&[2, 4, 8]);
         let buffer = kernel.backend.allocate_buffer(2 * 4 * 8 * 4).unwrap();
         let input = DeviceTensor { buffer, shape };
 
