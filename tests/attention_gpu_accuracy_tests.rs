@@ -4,9 +4,12 @@
 use proptest::prelude::*;
 #[cfg(feature = "rocm")]
 use proptest::test_runner::TestRunner;
+#[cfg(feature = "rocm")]
+use serial_test::serial;
 
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn test_cpu_gpu_attention_close_enough() {
     let mut runner = TestRunner::default();
 

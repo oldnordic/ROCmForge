@@ -10,6 +10,7 @@
 #[cfg(feature = "rocm")]
 mod tests {
     use crate::backend::HipBackend;
+use serial_test::serial;
     use crate::loader::gguf::GgufLoader;
     use crate::model::execution_plan::ExecutionPlan;
     use std::path::Path;
@@ -51,6 +52,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_embedding_lazy_load_on_first_access() {
         // Verify first call to embedding_weights() loads tensor
         let backend = get_backend_or_skip();
@@ -77,6 +79,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_embedding_cached_on_second_access() {
         // Verify second call returns cached tensor (no reload)
         let backend = get_backend_or_skip();
@@ -107,6 +110,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_preload_layers() {
         // Verify preload_layers() loads specific layers
         let backend = get_backend_or_skip();
@@ -137,6 +141,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_preload_all() {
         // Verify preload_all() loads all layers
         let backend = get_backend_or_skip();
@@ -168,6 +173,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_loading_stats() {
         // Verify loading_stats() returns accurate counts
         let backend = get_backend_or_skip();

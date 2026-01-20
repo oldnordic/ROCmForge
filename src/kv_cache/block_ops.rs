@@ -6,9 +6,8 @@
 use super::blocks::{PhysicalBlock, PhysicalBlockPool};
 use super::config::CacheConfig;
 use super::types::{BlockId, BlockTable, KvCacheError, KvCacheResult, PagedCacheStats};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::RwLock;
-use crate::backend::HipBackend;
 
 /// Allocate a block for PagedAttention-style KV cache management
 ///
@@ -61,8 +60,8 @@ pub fn get_block(
 
 /// Get the physical block for a given logical block ID
 pub fn get_physical_block(
-    block_table: &RwLock<HashMap<BlockId, BlockTable>>,
     block_pool: &RwLock<PhysicalBlockPool>,
+    block_table: &RwLock<HashMap<BlockId, BlockTable>>,
     block_id: BlockId,
 ) -> KvCacheResult<PhysicalBlock> {
     let table_entry = get_block(block_table, block_id)?;

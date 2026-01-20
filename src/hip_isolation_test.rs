@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod hip_isolation_tests {
+    use serial_test::serial;
 
     #[link(name = "amdhip64")]
     extern "C" {
@@ -10,6 +11,7 @@ mod hip_isolation_tests {
     const hipSuccess: i32 = 0;
 
     #[test]
+    #[serial]
     fn test_minimal_hip() {
         println!("Testing minimal HIP in test environment...");
 

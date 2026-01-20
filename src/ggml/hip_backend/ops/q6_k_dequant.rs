@@ -16,7 +16,6 @@
 //! - Dequantization: value = signed_6bit * scale
 //! - Signed 6-bit conversion: if >= 32, subtract 64 (range: [-32, 31])
 
-use std::env;
 use std::sync::Mutex;
 
 use crate::backend::{HipBackend, HipKernel, HipModule};
@@ -55,8 +54,9 @@ pub fn get_or_init_q6_k_dequant_cache(backend: &HipBackend) -> Q6KdequantResult<
     }
 
     // Slow path: initialize cache
-    let hsaco_path = env::var("Q6_K_DEQUANT_HSACO")
-        .map_err(|_| "Q6_K_DEQUANT_HSACO environment variable not set".to_string())?;
+    // Use option_env!() to read compile-time environment variable set by build.rs
+    let hsaco_path = option_env!("Q6_K_DEQUANT_HSACO")
+        .ok_or_else(|| "Q6_K_DEQUANT_HSACO environment variable not set at compile time. Rebuild with cargo feature 'rocm' enabled.".to_string())?;
 
     // Load the module from HSACO file
     let module = backend

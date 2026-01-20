@@ -3,19 +3,12 @@
 //! This module contains the core cache operations for token insertion,
 //! sequence retrieval, and basic cache management.
 
-use super::block_allocator::BlockAllocator;
-use super::blocks::PhysicalBlockPool;
 use super::config::CacheConfig;
-use super::page_table::PageTable;
 use super::pages::{CachePage, SequenceCache};
-use super::types::{BlockId, CacheStats, KvCacheError, KvCacheResult};
-use std::collections::{HashMap, VecDeque};
+use super::types::{CacheStats, KvCacheError, KvCacheResult};
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use std::time::Instant;
 use crate::backend::HipBackend;
-
-/// Core cache operations - these are implemented as extension traits
-/// to keep the main KvCache struct focused on state management
 
 /// Allocate a new page for a sequence
 ///
@@ -185,12 +178,15 @@ pub fn get_sequence_length(
 }
 
 /// Remove a sequence and free its pages
+///
+/// NOTE: This function requires page_table and block_allocator for
+/// deallocating blocks from the paged system. Use with caution.
 pub fn remove_sequence(
     pages: &RwLock<HashMap<u32, CachePage>>,
     sequences: &RwLock<HashMap<u32, SequenceCache>>,
     free_pages: &RwLock<Vec<u32>>,
-    page_table: &RwLock<PageTable>,
-    block_allocator: &RwLock<BlockAllocator>,
+    page_table: &RwLock<super::PageTable>,
+    block_allocator: &RwLock<super::BlockAllocator>,
     sequence_id: u32,
 ) -> KvCacheResult<()> {
     let sequence = sequences
@@ -289,9 +285,9 @@ mod tests {
 
         let pages = RwLock::new(HashMap::new());
         let sequences = RwLock::new(HashMap::new());
-        let mut free_pages = Vec::new();
-        free_pages.push(5); // Pre-populate with a free page
-        let free_pages = RwLock::new(free_pages);
+        let mut free_pages_vec = Vec::new();
+        free_pages_vec.push(5); // Pre-populate with a free page
+        let free_pages = RwLock::new(free_pages_vec);
         let next_page_id = RwLock::new(0);
 
         let page_id = allocate_page(

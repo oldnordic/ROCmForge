@@ -182,6 +182,24 @@ impl KVCache {
         Ok(())
     }
 
+    /// Get the underlying key and value buffers for a layer, along with layer offset.
+    /// This is used for creating write views into the KV cache.
+    /// Returns (keys_buffer, values_buffer, layer_offset_bytes)
+    pub fn get_layer_buffers(&self, layer: usize) -> KVCacheResult<(HipBuffer, HipBuffer, usize)> {
+        if layer >= self.num_layers {
+            return Err(KVCacheError::InvalidLayer {
+                layer,
+                max_layers: self.num_layers,
+            });
+        }
+        let layer_offset_bytes = layer * self.layer_size_bytes;
+        Ok((
+            self.keys_buffer.clone(),
+            self.values_buffer.clone(),
+            layer_offset_bytes,
+        ))
+    }
+
     /// Get key and value tensors for specified layer
     /// Returns views into the cached data for the current sequence length
     pub fn get(

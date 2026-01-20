@@ -6,6 +6,7 @@
 #[cfg(feature = "rocm")]
 mod tests {
     use super::super::paged_kernel::{PagedAttentionConfig, PagedAttentionKernels};
+use serial_test::serial;
     use crate::backend::{DeviceTensor, HipBackend, HipError};
     use crate::loader::TensorShape;
     use std::sync::Arc;
@@ -59,6 +60,7 @@ mod tests {
 
     // Test 1: Kernel compilation test
     #[test]
+    #[serial]
     fn test_paged_attention_kernel_compilation() {
         let backend = get_backend_or_skip();
         let config = PagedAttentionConfig {
@@ -83,6 +85,7 @@ mod tests {
 
     // Test 2: Single block paged attention
     #[test]
+    #[serial]
     fn test_paged_attention_single_block() {
         let backend = get_backend_or_skip();
         let config = PagedAttentionConfig {
@@ -133,6 +136,7 @@ mod tests {
 
     // Test 3: Multiple non-contiguous blocks
     #[test]
+    #[serial]
     fn test_paged_attention_multiple_blocks() {
         let backend = get_backend_or_skip();
         let config = PagedAttentionConfig {
@@ -216,6 +220,7 @@ mod tests {
 
     // Test 4: MQA (Multi-Query Attention) support
     #[test]
+    #[serial]
     fn test_paged_attention_mqa() {
         let backend = get_backend_or_skip();
         let config = PagedAttentionConfig {
@@ -284,6 +289,7 @@ mod tests {
 
     // Test 5: Block boundary crossing
     #[test]
+    #[serial]
     fn test_paged_attention_block_boundary() {
         let backend = get_backend_or_skip();
         let config = PagedAttentionConfig {
@@ -358,6 +364,7 @@ mod tests {
 
     // Test 6: Invalid input handling
     #[test]
+    #[serial]
     fn test_paged_attention_invalid_input() {
         let backend = get_backend_or_skip();
         let config = PagedAttentionConfig {

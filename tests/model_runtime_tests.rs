@@ -6,9 +6,12 @@ use rocmforge::backend::ModelRuntime;
 use rocmforge::loader::mmap_loader::{open_mmap_weights, MmapWeights, TensorShape};
 #[cfg(feature = "rocm")]
 use rocmforge::model::{ModelConfig, ModelType};
+#[cfg(feature = "rocm")]
+use serial_test::serial;
 
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn test_model_runtime_creation() {
     // Create test weights
     let test_f32: Vec<f32> = vec![1.0; 100]; // 100 f32 elements
@@ -48,6 +51,7 @@ fn test_model_runtime_creation() {
 
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn test_model_runtime_scratch_buffers() {
     // Create minimal test weights
     let test_f32: Vec<f32> = vec![1.0; 10];
@@ -83,6 +87,7 @@ fn test_model_runtime_scratch_buffers() {
 
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn test_model_runtime_empty_weights() {
     // Create empty weights file
     let temp_file = tempfile::NamedTempFile::new().unwrap();
@@ -111,6 +116,7 @@ fn test_model_runtime_empty_weights() {
 
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn test_model_runtime_memory_limits() {
     // Create large test weights to test memory limit handling
     let large_size = 1024 * 1024; // 1M f32 elements = 4MB

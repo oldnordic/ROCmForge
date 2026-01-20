@@ -5,3 +5,5 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 2f7fd18ee3ab4920bd988cdd85b85083fdebca409e016245672463e41de2744e # shrinks to data = [0.0], rows = 1, cols = 2
+cc d1717b21b435233a8335c97b784e66fb91642f3bde318c2e6082cfac0ed3005d # shrinks to type_id = 3
+cc a8279e9faab22c1d86a5676d3b7033ee886ad03400b77ebc64842ba111d9fde6 # shrinks to type_id = 10

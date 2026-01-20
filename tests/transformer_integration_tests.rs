@@ -17,7 +17,9 @@ use anyhow::Context;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
+    #[serial]
     #[test]
     fn test_layer_norm_integration() -> anyhow::Result<()> {
         // Initialize HIP backend
@@ -111,6 +113,7 @@ mod tests {
         Ok(())
     }
 
+    #[serial]
     #[test]
     fn test_mlp_swiglu_integration() -> anyhow::Result<()> {
         // Initialize HIP backend
@@ -204,6 +207,7 @@ mod tests {
         Ok(())
     }
 
+    #[serial]
     #[test]
     #[ignore] // ExecutionPlan::new() is deprecated - use ExecutionPlan::from_gguf() instead
     fn test_transformer_component_shapes() -> anyhow::Result<()> {

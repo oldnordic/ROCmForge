@@ -8,6 +8,7 @@
 #[cfg(feature = "rocm")]
 mod single_token_tests {
     use rocmforge::backend::HipBackend;
+    use serial_test::serial;
     use rocmforge::loader::gguf::GgufLoader;
     use rocmforge::model::config::ModelConfig;
     use rocmforge::model::execution_plan::ExecutionPlan;
@@ -53,6 +54,7 @@ mod single_token_tests {
     /// 1. Token embedding lookup works
     /// 2. Single transformer layer forward pass works
     /// 3. Output logits have correct shape
+    #[serial]
     #[test]
     fn test_single_token_forward() {
         let backend = get_backend_or_skip();
@@ -99,6 +101,7 @@ mod single_token_tests {
     }
 
     /// Test 2: Verify embedding lookup returns correct tensor shape
+    #[serial]
     #[test]
     fn test_embedding_lookup_shape() {
         let backend = get_backend_or_skip();
@@ -132,6 +135,7 @@ mod single_token_tests {
     }
 
     /// Test 3: Verify layer weights are accessible
+    #[serial]
     #[test]
     fn test_layer_weights_accessible() {
         let backend = get_backend_or_skip();
@@ -161,6 +165,7 @@ mod single_token_tests {
     }
 
     /// Test 4: Output layer (lm_head) accessible
+    #[serial]
     #[test]
     fn test_lm_head_accessible() {
         let backend = get_backend_or_skip();

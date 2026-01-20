@@ -83,10 +83,12 @@ mod model_loading_tests {
     /// 1. Create ExecutionPlan from GGUF
     /// 2. Load all weight tensors
     /// 3. Bind weights to GPU memory
+    #[serial]
     #[test]
     #[cfg(feature = "rocm")]
     fn test_load_execution_plan_from_gguf() {
         use rocmforge::backend::HipBackend;
+        use serial_test::serial;
 
         let model_path = match find_test_model() {
             Some(path) => path,

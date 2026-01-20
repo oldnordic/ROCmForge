@@ -15,6 +15,7 @@
 mod qkt_matmul_tests {
     use crate::backend::{DeviceTensor, HipBackend};
     use crate::loader::mmap_loader::TensorShape;
+    use serial_test::serial;
 
     const TEST_TOLERANCE: f32 = 1e-3;
 
@@ -109,6 +110,7 @@ mod qkt_matmul_tests {
     /// - build.rs integration
     /// - kernels.rs wrapper
     #[test]
+    #[serial]
     fn test_qkt_matmul_matches_cpu_small() {
         let batch = 1;
         let heads = 2;
@@ -178,6 +180,7 @@ mod qkt_matmul_tests {
 
     /// Test 2: QK^T matches CPU - 32×32×4×32 (larger test)
     #[test]
+    #[serial]
     fn test_qkt_matmul_matches_cpu_32x32() {
         let batch = 2;
         let heads = 4;
@@ -202,6 +205,7 @@ mod qkt_matmul_tests {
     /// This test verifies that our explicit layout indexing is correct
     /// by computing QK^T per head and checking the result is consistent.
     #[test]
+    #[serial]
     fn test_qkt_matmul_explicit_layout_indexing() {
         let batch = 1;
         let heads = 2;
@@ -252,6 +256,7 @@ mod qkt_matmul_tests {
 
     /// Test 4: Non-square sequence lengths (seq_q != seq_k)
     #[test]
+    #[serial]
     fn test_qkt_matmul_non_square_sequences() {
         let batch = 1;
         let heads = 2;

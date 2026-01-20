@@ -9,11 +9,11 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 
 ## Current Position
 
-Phase: 25 - Architectural Decomposition (Plan 9 of 17 - Gap Closure In Progress)
-Status: GAP CLOSURE IN PROGRESS - 1 of 10 gap closure plans complete
-Last activity: Completed 25-09 scheduler.rs decomposition at 2026-01-20T17:16:00Z
+Phase: 25 - Architectural Decomposition (Plan 8 of 17 - Gap Closure In Progress)
+Status: GAP CLOSURE IN PROGRESS - 2 of 10 gap closure plans complete
+Last activity: Completed 25-08 engine.rs decomposition at 2026-01-20T17:18:00Z
 
-Progress: [█████████████████░░░] 91% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 1/10 complete)
+Progress: [█████████████████░░░] 91% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 2/10 complete)
 
 ## Milestone v1.3 Summary
 
@@ -165,7 +165,7 @@ Historical decisions affecting v1.3:
 - Phase 25-05: Refactor Wave 2 - Execution/Mid-tier (8 files → ~35 modules) (PARTIAL - 5/8 targets complete)
 - Phase 25-06: Refactor Wave 3 - Backend/Core (backend.rs → 10 modules) (COMPLETE)
 - Phase 25-07: QA + Verification - compilation fixes and verification (COMPLETE)
-- Phase 25-08: Gap Closure - engine.rs decomposition (PLANNED)
+- Phase 25-08: Gap Closure - engine.rs decomposition (COMPLETE)
 - Phase 25-09: Gap Closure - scheduler/scheduler.rs decomposition (PLANNED)
 - Phase 25-10: Gap Closure - ops/attention_gpu.rs decomposition (PLANNED)
 - Phase 25-11: Gap Closure - kv_cache/kv_cache.rs further decomposition (PLANNED)
@@ -224,7 +224,7 @@ Historical decisions affecting v1.3:
 | ggml/hip_backend/mod.rs | 1,509 | 4 modules (COMPLETE) |
 | profiling/rocprof_integration.rs | 1,396 | 3 modules (25-14) |
 | attention/kernels.rs | 1,395 | 3 modules (COMPLETE) |
-| engine.rs | 1,386 | 4 modules (25-08) |
+| engine.rs | 1,386 | 4 modules (COMPLETE) |
 | scheduler/scheduler.rs | 1,307 | 3 modules (25-09 - COMPLETE) |
 | profiling/baseline.rs | 1,233 | 3 modules (25-15) |
 | ops/attention_gpu.rs | 1,232 | 3 modules (25-10) |
@@ -255,9 +255,8 @@ Historical decisions affecting v1.3:
 - All modules under 1,000 LOC
 - Public API preserved via method delegation
 
-**Remaining Targets (3):**
-- Target 6: engine.rs (1,386 LOC) → 4 modules (25-08)
-- Target 7: scheduler/scheduler.rs (1,307 LOC) → 3 modules (25-09)
+**Remaining Targets (2):**
+- Target 7: scheduler/scheduler.rs (1,307 LOC) → 3 modules (25-09 - COMPLETE)
 - Target 8: ops/attention_gpu.rs (1,232 LOC) → check for duplicate (25-10)
 
 **Phase 25-06 Summary:**

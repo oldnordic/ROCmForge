@@ -7,6 +7,9 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use thiserror::Error;
 
+#[cfg(test)]
+use serial_test::serial;
+
 /// Model backend for CPU vs GPU computation
 #[derive(Debug, Clone, Copy)]
 pub enum ModelBackend {
@@ -598,6 +601,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[serial]
     fn test_linear_forward() {
         let linear = Linear::new(3, 2, 42);
         let input = vec![1.0f32, 2.0f32, 3.0f32];
@@ -608,6 +612,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_simple_attention_forward() {
         let attention = SimpleAttention::new(4, ModelBackend::Cpu, 42);
         let input = vec![1.0f32; 8]; // seq_len=2, dim=4
@@ -618,6 +623,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_simple_model_forward() {
         let model = SimpleModel::new(100, 8, 1, 4, ModelBackend::Cpu, 42);
         let input_tokens = vec![1, 2, 3, 4];

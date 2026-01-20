@@ -305,10 +305,12 @@ impl FlashAttentionBackend {
 // ============================================================================
 
 #[cfg(test)]
+    use serial_test::serial;
 mod tests {
     use super::*;
 
     #[test]
+    #[serial]
     #[cfg(feature = "rocm")]
     fn test_flash_attention_backend_creation() {
         let backend = FlashAttentionBackend::new();
@@ -316,6 +318,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     #[cfg(not(feature = "rocm"))]
     fn test_flash_attention_backend_fails_without_rocm() {
         let result = FlashAttentionBackend::new();
@@ -324,6 +327,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     #[cfg(feature = "rocm")]
     fn test_can_use_flash_attention_valid_config() {
         let config = AttentionConfig::new(512, 8, 64)
@@ -333,6 +337,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     #[cfg(feature = "rocm")]
     fn test_can_use_flash_attention_head_dim_too_large() {
         let config = AttentionConfig::new(512, 4, 129) // head_dim > 128
@@ -342,6 +347,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     #[cfg(feature = "rocm")]
     fn test_can_use_flash_attention_seq_len_too_large() {
         let config = AttentionConfig::new(512, 8, 64)
@@ -351,6 +357,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_supports_mask_causal() {
         let config = AttentionConfig::new(512, 8, 64)
             .with_causal(true);
@@ -359,6 +366,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_supports_mask_no_mask() {
         let config = AttentionConfig::new(512, 8, 64)
             .with_causal(false);
@@ -367,6 +375,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_supports_mask_custom_mask_not_supported() {
         // Custom masks (non-causal) are not yet supported
         let config = AttentionConfig::new(512, 8, 64)
@@ -376,6 +385,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     #[cfg(feature = "rocm")]
     fn test_backend_name() {
         let backend = FlashAttentionBackend::new().unwrap();
@@ -383,6 +393,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     #[cfg(feature = "rocm")]
     fn test_backend_supports_valid_config() {
         let backend = FlashAttentionBackend::new().unwrap();
@@ -393,6 +404,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     #[cfg(feature = "rocm")]
     fn test_backend_does_not_support_invalid_config() {
         let backend = FlashAttentionBackend::new().unwrap();
@@ -403,6 +415,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     #[cfg(feature = "rocm")]
     fn test_backend_required_kv_layout() {
         let backend = FlashAttentionBackend::new().unwrap();
@@ -413,6 +426,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     #[cfg(feature = "rocm")]
     fn test_backend_forward_simple() {
         let backend = FlashAttentionBackend::new().unwrap();
@@ -448,6 +462,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     #[cfg(feature = "rocm")]
     fn test_backend_forward_with_causal_mask() {
         let backend = FlashAttentionBackend::new().unwrap();
@@ -478,6 +493,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     #[cfg(feature = "rocm")]
     fn test_backend_custom_mask_not_supported() {
         let backend = FlashAttentionBackend::new().unwrap();
@@ -499,6 +515,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     #[cfg(feature = "rocm")]
     fn test_backend_forward_nocausal() {
         let backend = FlashAttentionBackend::new().unwrap();

@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod hip_backend_debug_tests {
     use crate::backend::hip_backend::*;
+    use serial_test::serial;
     use std::sync::Arc;
 
     /// Helper: Get GPU backend or skip test if not available (llama.cpp pattern)
@@ -20,6 +21,7 @@ mod hip_backend_debug_tests {
     }
 
     #[test]
+    #[serial]
     fn test_detect_amd_gpu_step_by_step() {
         println!("Testing detect_amd_gpu step by step...");
 

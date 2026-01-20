@@ -2,6 +2,8 @@
 //!
 //! This is the production-grade paged KV cache implementation
 //! with PagedAttention support, LRU eviction, and block sharing.
+//!
+//! For the simple GPU-resident KV cache (legacy), see `crate::model::kv_cache::SimpleKVCache`.
 
 use super::block_allocator::BlockAllocator;
 use super::blocks::{AllocationStats, PhysicalBlock, PhysicalBlockPool};
@@ -11,15 +13,29 @@ use super::pages::{CachePage, SequenceCache};
 use super::types::{
     BlockId, BlockTable, CacheStats, KvCacheError, KvCacheResult, MemoryProfile, PagedCacheStats,
 };
+
+// Import extracted module operations
+use super::cache_ops::{allocate_page, append_token as cache_append_token};
+use super::sequence_ops::{
+    cleanup_completed_sequences as seq_cleanup_completed_sequences,
+    get_active_sequences, get_sequence_access_time,
+    is_sequence_completed, mark_sequence_completed, sort_free_lists,
+    update_sequence_access,
+};
+use super::block_ops::{
+    allocate_block as block_allocate_block, copy_block, get_allocation_stats as block_get_allocation_stats,
+    get_block, get_physical_block, get_paged_stats, ref_block, reset_allocation_stats as block_reset_allocation_stats,
+    unref_block,
+};
+
 use crate::backend::HipBackend;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, RwLock};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// Paged KV cache with PagedAttention support
 ///
 /// This is the production KV cache used by the inference engine.
-/// For the simple GPU-resident KV cache (legacy), see `crate::model::kv_cache::SimpleKVCache`.
 #[derive(Debug)]
 pub struct KvCache {
     config: CacheConfig,
@@ -81,288 +97,94 @@ impl KvCache {
     }
 
     pub fn allocate_page(&mut self, sequence_id: u32) -> KvCacheResult<u32> {
-        // Try to reuse a free page first
-        let page_id = if let Some(free_id) = self.free_pages.write()?.pop() {
-            // Reuse existing free page
-            free_id
-        } else {
-            // No free pages - check if we can allocate a new page
-            let current_pages = self.pages.read()?.len();
-            if current_pages >= self.config.max_pages {
-                return Err(KvCacheError::CapacityExceeded);
-            }
-            // Allocate new page ID
-            let mut next_id = self.next_page_id.write()?;
-            let id = *next_id;
-            *next_id += 1;
-            id
-        };
-
-        let page = CachePage::new(page_id, sequence_id, &self.backend, &self.config)?;
-        self.pages.write()?.insert(page_id, page);
-
-        // Update sequence cache
-        let mut sequences = self.sequences.write()?;
-        let sequence = sequences
-            .entry(sequence_id)
-            .or_insert_with(|| SequenceCache::new(sequence_id));
-        sequence.add_page(page_id);
-
-        Ok(page_id)
+        allocate_page(
+            &self.pages,
+            &self.sequences,
+            &self.free_pages,
+            &self.next_page_id,
+            &self.config,
+            &self.backend,
+            sequence_id,
+        )
     }
 
     pub fn append_token(&mut self, sequence_id: u32, token: u32) -> KvCacheResult<()> {
-        // FIX-10: Check if sequence is completed before appending
-        {
-            let sequences = self.sequences.read()?;
-            if let Some(sequence) = sequences.get(&sequence_id) {
-                if sequence.is_completed {
-                    return Err(KvCacheError::InvalidSequenceId(sequence_id));
-                }
-            }
-        }
-
-        let last_page_id = {
-            let sequences = self.sequences.read()?;
-            let sequence = sequences
-                .get(&sequence_id)
-                .ok_or(KvCacheError::InvalidSequenceId(sequence_id))?;
-            sequence
-                .get_last_page()
-                .ok_or(KvCacheError::PageNotFound(sequence_id))?
-        };
-
-        let can_append = {
-            let pages = self.pages.read()?;
-            let page = pages
-                .get(&last_page_id)
-                .ok_or(KvCacheError::PageNotFound(last_page_id))?;
-            page.can_append(token)
-        };
-
-        if can_append {
-            {
-                let mut pages = self.pages.write()?;
-                let page = pages
-                    .get_mut(&last_page_id)
-                    .ok_or(KvCacheError::PageNotFound(last_page_id))?;
-                page.append_token(token)?;
-            }
-            let mut sequences = self.sequences.write()?;
-            let sequence = sequences
-                .get_mut(&sequence_id)
-                .ok_or(KvCacheError::InvalidSequenceId(sequence_id))?;
-            sequence.total_tokens += 1;
-            sequence.update_access(); // FIX-10: Update access time on append
-        } else {
-            // Allocate new page
-            let new_page_id = self.allocate_page(sequence_id)?;
-            {
-                let mut pages = self.pages.write()?;
-                // Safe: new_page_id was just allocated above
-                let new_page = pages
-                    .get_mut(&new_page_id)
-                    .ok_or(KvCacheError::PageNotFound(new_page_id))?;
-                new_page.append_token(token)?;
-            }
-            let mut sequences = self.sequences.write()?;
-            let sequence = sequences
-                .get_mut(&sequence_id)
-                .ok_or(KvCacheError::InvalidSequenceId(sequence_id))?;
-            sequence.total_tokens += 1;
-        }
-
-        Ok(())
+        cache_append_token(
+            &self.pages,
+            &self.sequences,
+            &self.free_pages,
+            &self.next_page_id,
+            &self.config,
+            &self.backend,
+            sequence_id,
+            token,
+        )
     }
 
     pub fn get_sequence_tokens(&self, sequence_id: u32) -> KvCacheResult<Vec<u32>> {
-        let sequences = self.sequences.read()?;
-        let sequence = sequences
-            .get(&sequence_id)
-            .ok_or(KvCacheError::InvalidSequenceId(sequence_id))?;
-
-        let mut tokens = Vec::with_capacity(sequence.total_tokens);
-        let sequence_pages = sequence.pages.clone();
-
-        drop(sequences); // Release sequences lock before acquiring pages lock
-
-        let pages = self.pages.read()?;
-        for page_id in &sequence_pages {
-            let page = pages
-                .get(page_id)
-                .ok_or(KvCacheError::PageNotFound(*page_id))?;
-            tokens.extend_from_slice(&page.tokens);
-        }
-
-        Ok(tokens)
+        super::cache_ops::get_sequence_tokens(&self.pages, &self.sequences, sequence_id)
     }
 
     pub fn get_sequence_length(&self, sequence_id: u32) -> KvCacheResult<usize> {
-        let sequences = self.sequences.read()?;
-        let sequence = sequences
-            .get(&sequence_id)
-            .ok_or(KvCacheError::InvalidSequenceId(sequence_id))?;
-
-        Ok(sequence.total_tokens)
+        super::cache_ops::get_sequence_length(&self.sequences, sequence_id)
     }
 
     pub fn remove_sequence(&mut self, sequence_id: u32) -> KvCacheResult<()> {
-        let sequence = self
-            .sequences
-            .write()?
-            .remove(&sequence_id)
-            .ok_or(KvCacheError::InvalidSequenceId(sequence_id))?;
-
-        // Free pages from GPU memory
-        let mut pages = self.pages.write()?;
-        let mut free_pages = self.free_pages.write()?;
-
-        for page_id in sequence.pages {
-            if pages.remove(&page_id).is_some() {
-                free_pages.push(page_id);
-            }
-        }
-
-        // PHASE 2 FIX: Also deallocate blocks from paged system
-        // Get blocks from page table before removing sequence
-        let blocks_to_deallocate = self
-            .page_table
-            .read()?
-            .get_sequence_blocks(sequence_id)
-            .map(|v| v.to_vec());
-
-        if let Some(blocks) = blocks_to_deallocate {
-            let mut allocator = self.block_allocator.write()?;
-            for &block_id in &blocks {
-                allocator.deallocate(block_id);
-            }
-        }
-
-        // Remove from page table
-        self.page_table.write()?.remove_sequence(sequence_id);
-
-        Ok(())
+        super::cache_ops::remove_sequence(
+            &self.pages,
+            &self.sequences,
+            &self.free_pages,
+            &self.page_table,
+            &self.block_allocator,
+            sequence_id,
+        )
     }
 
     pub fn get_cache_stats(&self) -> CacheStats {
-        // Safe: These locks should never be poisoned in normal operation
-        // If they are, it indicates a serious bug and we want to know about it
-        let pages = self.pages.read().expect("KvCache pages lock poisoned");
-        let free_pages = self
-            .free_pages
-            .read()
-            .expect("KvCache free_pages lock poisoned");
-        let sequences = self
-            .sequences
-            .read()
-            .expect("KvCache sequences lock poisoned");
-
-        CacheStats {
-            total_pages: pages.len(),
-            free_pages: free_pages.len(),
-            active_sequences: sequences.len(),
-            total_tokens: sequences.values().map(|s| s.total_tokens).sum(),
-        }
+        super::cache_ops::get_cache_stats(&self.pages, &self.free_pages, &self.sequences)
     }
 
-    // ========== FIX-10: Sequence State Tracking Methods ==========
+    // ========== Sequence State Tracking Methods ==========
 
     /// Mark a sequence as completed (to be cleaned up later)
     pub fn mark_sequence_completed(&mut self, sequence_id: u32) -> KvCacheResult<()> {
-        let mut sequences = self.sequences.write()?;
-        let sequence = sequences
-            .get_mut(&sequence_id)
-            .ok_or(KvCacheError::InvalidSequenceId(sequence_id))?;
-
-        sequence.mark_completed();
-        Ok(())
+        mark_sequence_completed(&self.sequences, sequence_id)
     }
 
     /// Check if a sequence is marked as completed
     pub fn is_sequence_completed(&self, sequence_id: u32) -> KvCacheResult<bool> {
-        let sequences = self.sequences.read()?;
-        let sequence = sequences
-            .get(&sequence_id)
-            .ok_or(KvCacheError::InvalidSequenceId(sequence_id))?;
-
-        Ok(sequence.is_completed)
+        is_sequence_completed(&self.sequences, sequence_id)
     }
 
     /// Update the last access time for a sequence (for LRU tracking)
     pub fn update_sequence_access(&mut self, sequence_id: u32) -> KvCacheResult<()> {
-        let mut sequences = self.sequences.write()?;
-        let sequence = sequences
-            .get_mut(&sequence_id)
-            .ok_or(KvCacheError::InvalidSequenceId(sequence_id))?;
-
-        sequence.update_access();
-        Ok(())
+        update_sequence_access(&self.sequences, sequence_id)
     }
 
     /// Get the last access time for a sequence
     pub fn get_sequence_access_time(&self, sequence_id: u32) -> KvCacheResult<Instant> {
-        let sequences = self.sequences.read()?;
-        let sequence = sequences
-            .get(&sequence_id)
-            .ok_or(KvCacheError::InvalidSequenceId(sequence_id))?;
-
-        Ok(sequence.last_access)
+        get_sequence_access_time(&self.sequences, sequence_id)
     }
 
     /// Get list of active (non-completed) sequence IDs
     pub fn get_active_sequences(&self) -> KvCacheResult<Vec<u32>> {
-        let sequences = self.sequences.read()?;
-
-        let active: Vec<u32> = sequences
-            .values()
-            .filter(|s| s.is_active())
-            .map(|s| s.sequence_id)
-            .collect();
-
-        Ok(active)
+        get_active_sequences(&self.sequences)
     }
 
     /// Remove all completed sequences from the cache
     /// This should be called periodically to free up memory
     pub fn cleanup_completed_sequences(&mut self) -> KvCacheResult<usize> {
-        let mut sequences = self.sequences.write()?;
-
-        // Find completed sequence IDs
-        let completed_ids: Vec<u32> = sequences
-            .iter()
-            .filter(|(_, s)| s.is_completed)
-            .map(|(id, _)| *id)
-            .collect();
-
-        let mut removed_count = 0;
-
-        for seq_id in completed_ids {
-            // Remove from sequences map
-            if let Some(sequence) = sequences.remove(&seq_id) {
-                // Free pages from GPU memory
-                let mut pages = self.pages.write()?;
-                let mut free_pages = self.free_pages.write()?;
-
-                for page_id in sequence.pages {
-                    if pages.remove(&page_id).is_some() {
-                        free_pages.push(page_id);
-                    }
-                }
-
-                removed_count += 1;
-            }
-        }
-
-        Ok(removed_count)
+        seq_cleanup_completed_sequences(&self.pages, &self.sequences, &self.free_pages)
     }
 
     /// Evict least recently used sequences to free up space for new sequences
     /// This is called automatically when capacity is exceeded during allocation
     fn evict_lru_sequences(&mut self, required_pages: usize) -> KvCacheResult<()> {
         let sequences = self.sequences.read()?;
+        let pages = self.pages.read()?;
 
         // Check if we need to evict
-        let current_usage = self.pages.read()?.len();
+        let current_usage = pages.len();
         let max_pages = self.config.max_pages;
 
         if current_usage + required_pages <= max_pages {
@@ -370,7 +192,7 @@ impl KvCache {
         }
 
         // Find LRU sequences (only active sequences, not completed ones)
-        let mut seq_access_times: Vec<(u32, Instant)> = sequences
+        let mut seq_access_times: Vec<(u32, std::time::Instant)> = sequences
             .iter()
             .filter(|(_, s)| s.is_active()) // Only consider active sequences
             .map(|(id, s)| (*id, s.last_access))
@@ -398,8 +220,9 @@ impl KvCache {
             .max(1)
             .min(seq_access_times.len());
 
-        // Drop the read lock before acquiring write locks
+        // Drop the read locks before acquiring write locks
         drop(sequences);
+        drop(pages);
 
         // Evict LRU sequences
         for (seq_id, _) in seq_access_times.iter().take(seqs_to_evict) {
@@ -532,102 +355,41 @@ impl KvCache {
     /// Allocate a block for PagedAttention-style KV cache management
     /// Returns the logical block ID
     pub fn allocate_block(&mut self, sequence_id: u32) -> KvCacheResult<BlockId> {
-        // Allocate physical block from pool
-        let physical_block_id = self
-            .block_pool
-            .write()?
-            .allocate()
-            .ok_or(KvCacheError::CapacityExceeded)?;
-
-        // Get or create logical block ID
-        let logical_block_id = if let Some(free_id) = self.free_blocks.write()?.pop() {
-            free_id
-        } else {
-            let mut next_id = self.next_block_id.write()?;
-            let id = *next_id;
-            *next_id += 1;
-            id
-        };
-
-        // Create block table entry
-        let mut block_table = BlockTable::new(logical_block_id, physical_block_id);
-        block_table.add_sequence(sequence_id);
-
-        // Register in block table
-        self.block_table
-            .write()?
-            .insert(logical_block_id, block_table);
-
-        Ok(logical_block_id)
+        block_allocate_block(
+            &self.block_pool,
+            &self.block_table,
+            &self.free_blocks,
+            &self.next_block_id,
+            &self.config,
+            sequence_id,
+        )
     }
 
     /// Get a block table entry by logical block ID
     pub fn get_block(&self, block_id: BlockId) -> KvCacheResult<BlockTable> {
-        let block_table = self.block_table.read()?;
-        block_table
-            .get(&block_id)
-            .cloned()
-            .ok_or(KvCacheError::PageNotFound(block_id))
+        get_block(&self.block_table, block_id)
     }
 
     /// Get the physical block for a given logical block ID
     pub fn get_physical_block(&self, block_id: BlockId) -> KvCacheResult<PhysicalBlock> {
-        let block_table = self.get_block(block_id)?;
-        let block_pool = self.block_pool.read()?;
-        block_pool
-            .get_block(block_table.physical_block_id)
-            .cloned()
-            .ok_or(KvCacheError::PageNotFound(block_id))
+        get_physical_block(&self.block_pool, &self.block_table, block_id)
     }
 
     /// Increment reference count for a block (for block sharing across sequences)
     pub fn ref_block(&mut self, block_id: BlockId, sequence_id: u32) -> KvCacheResult<()> {
-        let mut block_table = self.block_table.write()?;
-        let block = block_table
-            .get_mut(&block_id)
-            .ok_or(KvCacheError::PageNotFound(block_id))?;
-
-        block.add_sequence(sequence_id);
-        block.incr_ref();
-
-        Ok(())
+        ref_block(&self.block_table, block_id, sequence_id)
     }
 
     /// Decrement reference count for a block
     /// Returns true if block was freed (ref count reached zero)
     pub fn unref_block(&mut self, block_id: BlockId, sequence_id: u32) -> KvCacheResult<bool> {
-        let mut physical_block_id = None;
-        let mut should_free = false;
-
-        {
-            let mut block_table = self.block_table.write()?;
-            let block = block_table
-                .get_mut(&block_id)
-                .ok_or(KvCacheError::PageNotFound(block_id))?;
-
-            block.remove_sequence(sequence_id);
-            let prev_count = block.decr_ref();
-
-            if prev_count == 0 {
-                should_free = true;
-                physical_block_id = Some(block.physical_block_id);
-            }
-        }
-
-        if should_free {
-            // Remove from block table
-            self.block_table.write()?.remove(&block_id);
-            // Return physical block to pool
-            if let Some(phys_id) = physical_block_id {
-                self.block_pool.write()?.deallocate(phys_id);
-            }
-            // Recycle logical block ID
-            self.free_blocks.write()?.push(block_id);
-
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        unref_block(
+            &self.block_pool,
+            &self.block_table,
+            &self.free_blocks,
+            block_id,
+            sequence_id,
+        )
     }
 
     /// Copy a block for copy-on-write (COW) optimization
@@ -637,38 +399,23 @@ impl KvCache {
     /// For now, this is not implemented - use block sharing (ref_block) instead.
     pub fn copy_block(
         &mut self,
-        _block_id: BlockId,
+        block_id: BlockId,
         new_sequence_id: u32,
     ) -> KvCacheResult<BlockId> {
-        // COW block copying requires HipBackend::memcpy_device_to_device()
-        // which is not yet implemented. For now, allocate a fresh block.
-        // The caller should use ref_block() for sharing instead.
-        let new_block_id = self.allocate_block(new_sequence_id)?;
-        Ok(new_block_id)
+        copy_block(
+            &self.block_pool,
+            &self.block_table,
+            &self.free_blocks,
+            &self.next_block_id,
+            &self.config,
+            block_id,
+            new_sequence_id,
+        )
     }
 
     /// Get PagedAttention statistics
     pub fn get_paged_stats(&self) -> PagedCacheStats {
-        // Safe: These locks should never be poisoned in normal operation
-        let block_pool = self
-            .block_pool
-            .read()
-            .expect("KvCache block_pool lock poisoned");
-        let block_table = self
-            .block_table
-            .read()
-            .expect("KvCache block_table lock poisoned");
-        let sequences = self
-            .sequences
-            .read()
-            .expect("KvCache sequences lock poisoned");
-
-        PagedCacheStats {
-            total_blocks: block_pool.total_count(),
-            free_blocks: block_pool.free_count(),
-            allocated_blocks: block_table.len(),
-            active_sequences: sequences.len(),
-        }
+        get_paged_stats(&self.block_pool, &self.block_table, &self.sequences)
     }
 
     /// Get detailed memory profile for profiling and optimization
@@ -826,7 +573,7 @@ impl KvCache {
         let reclaimed = self.reclaim_unused_blocks()?;
 
         // Step 3: Sort free lists for better allocation patterns
-        self.sort_free_lists();
+        sort_free_lists(&self.free_pages);
 
         let bytes_after = self.calculate_memory_usage()?;
         let freed_bytes = bytes_before.saturating_sub(bytes_after);
@@ -859,7 +606,6 @@ impl KvCache {
 
     /// Get current timestamp in milliseconds
     fn timestamp_ms(&self) -> u64 {
-        use std::time::{SystemTime, UNIX_EPOCH};
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
@@ -898,32 +644,14 @@ impl KvCache {
         Ok(reclaimed)
     }
 
-    /// Sort free lists to improve allocation patterns
-    ///
-    /// Sorting free lists can improve cache locality by allocating
-    /// contiguous blocks when possible.
-    fn sort_free_lists(&mut self) {
-        // Sort the free_pages list for better allocation patterns
-        let mut free_pages = self.free_pages.write().expect("Free pages lock poisoned");
-        free_pages.sort();
-        free_pages.dedup(); // Remove duplicates if any
-    }
-
     /// Get allocation statistics from the block pool
     pub fn get_allocation_stats(&self) -> AllocationStats {
-        self.block_pool
-            .read()
-            .expect("Block pool lock poisoned")
-            .stats()
-            .clone()
+        block_get_allocation_stats(&self.block_pool)
     }
 
     /// Reset allocation statistics
     pub fn reset_allocation_stats(&mut self) {
-        self.block_pool
-            .write()
-            .expect("Block pool lock poisoned")
-            .reset_stats();
+        block_reset_allocation_stats(&self.block_pool);
     }
 }
 

@@ -2,20 +2,19 @@
 
 **AMD GPU Inference Engine for Large Language Models**
 
-Version 0.1.0 | Phase 11 Complete | Last Updated: January 2026
+Version 0.1.0-dev | Development Stage | Last Updated: January 2026
+
+**⚠️ Development Status: Not production-ready. Use for testing and development only.**
 
 ---
 
 ## Table of Contents
 
 1. [Installation](#installation)
-2. [Quick Start](#quick-start)
-3. [Model Loading](#model-loading)
-4. [CLI Usage](#cli-usage)
-5. [HTTP Server](#http-server)
-6. [Configuration](#configuration)
-7. [Troubleshooting](#troubleshooting)
-8. [Performance Tuning](#performance-tuning)
+2. [Build](#build)
+3. [Running Tests](#running-tests)
+4. [Model Discovery](#model-discovery)
+5. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -23,13 +22,12 @@ Version 0.1.0 | Phase 11 Complete | Last Updated: January 2026
 
 ### Prerequisites
 
-| Requirement | Minimum Version | Recommended |
-|-------------|-----------------|-------------|
-| Rust | 1.70+ | Latest stable |
-| ROCm | 5.x | 7.1+ |
-| AMD GPU | RDNA2+ | RX 7900 XT or better |
-| RAM | 16GB | 32GB+ |
-| OS | Linux | Ubuntu 22.04, Arch |
+| Requirement | Minimum Version | Tested On |
+|-------------|-----------------|----------|
+| Rust | 1.82+ | 1.82 |
+| ROCm | 5.x | 5.0+ |
+| AMD GPU | RDNA2+ | RX 7900 XT |
+| RAM | 16GB | 32GB |
 
 ### Step 1: Install ROCm
 
@@ -37,317 +35,122 @@ Version 0.1.0 | Phase 11 Complete | Last Updated: January 2026
 # Ubuntu/Debian
 wget https://repo.radeon.com/rocm/rocm.gpg.key
 sudo apt-key add rocm.gpg.key
-echo 'deb [arch=amd64] https://repo.radeon.com/rocm/apt/7.1 ubuntu main' | sudo tee /etc/apt/sources.list.d/rocm.list
+echo 'deb [arch=amd64] https://repo.radeon.com/rocm/apt/5.0 ubuntu main' | sudo tee /etc/apt/sources.list.d/rocm.list
 sudo apt update
 sudo apt install rocm-hip-sdk rocm-dev
 
-# Arch Linux
-sudo pacman -S hip-sdk rocm-hip-runtime rocm-core
-```
-
-### Step 2: Verify ROCm Installation
-
-```bash
-# Check ROCm version
-rocminfo | grep "ROCm Version"
-
-# Check GPU detection
+# Verify ROCm installation
 rocm-smi
-
-# Verify hipcc
-hipcc --version
 ```
 
-### Step 3: Build ROCmForge
+### Step 2: Clone and Build
 
 ```bash
 # Clone repository
-git clone https://github.com/your-repo/ROCmForge.git
+cd /path/to/projects
+git clone <repository-url>
 cd ROCmForge
 
-# Build release binary
+# Build release binary (~55 seconds)
 cargo build --release
 
-# Run tests (requires AMD GPU)
-cargo test --features rocm --lib -- --test-threads=1
-```
-
-### Step 4: Add to PATH (Optional)
-
-```bash
-# Add to ~/.bashrc or ~/.zshrc
-echo 'export PATH="$PATH:/path/to/ROCmForge/target/release"' >> ~/.bashrc
-source ~/.bashrc
+# Verify build
+ls -la target/release/rocmforge_cli
 ```
 
 ---
 
-## Quick Start
+## Build
 
-### 1. Download a GGUF Model
-
-```bash
-# Create models directory
-mkdir -p ~/.config/rocmforge/models
-
-# Download a model (example: Qwen2.5 0.5B)
-huggingface-cli download TheBloke/Qwen2.5-0.5B-GGUF \
-  qwen2.5-0.5b.Q4_K_M.gguf \
-  --local-dir ~/.config/rocmforge/models
-```
-
-### 2. Generate Text (CLI)
+### Build Commands
 
 ```bash
-rocmforge_cli generate \
-  --gguf ~/.config/rocmforge/models/qwen2.5-0.5b.Q4_K_M.gguf \
-  --prompt "The future of AI is" \
-  --max-tokens 50 \
-  --temperature 0.7
+# Release build (optimized)
+cargo build --release
+
+# Development build (faster compilation)
+cargo build
+
+# Check compilation only
+cargo check
 ```
 
-### 3. Start HTTP Server
+### Build Output
 
-```bash
-rocmforge_cli serve --port 8080
-
-# In another terminal, test it
-curl -X POST http://localhost:8080/v1/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "qwen2.5-0.5b",
-    "prompt": "Explain quantum computing",
-    "max_tokens": 100
-  }'
-```
+The build produces several binaries:
+- `rocmforge_cli` - Main CLI tool
+- `inspect_gguf` - GGUF model inspector
+- `test_inference` - Inference testing tool
+- `test_gguf_load` - GGUF loading tests
+- `run_simple_model` - Simple model runner
 
 ---
 
-## Model Loading
+## Running Tests
 
-### Supported Formats
+### Lib Unit Tests
 
-ROCmForge supports GGUF format with the following tensor types:
+```bash
+# Run all lib unit tests (~0.5s)
+cargo test --lib
 
-| Category | Tensor Types | Notes |
-|----------|--------------|-------|
-| Floating Point | F32, F16 | Full precision |
-| Quantized (4-bit) | Q4_0, Q4_1, Q4_K | 4-bit quantization |
-| Quantized (5-bit) | Q5_0, Q5_1, Q5_K | 5-bit quantization |
-| Quantized (8-bit) | Q8_0 | 8-bit quantization |
-| MXFP | MXFP4, MXFP6 | AMD-optimized (OCP MX Spec v1.0) |
+# Run lib tests with output
+cargo test --lib -- --nocapture
+```
 
-### Supported Architectures
+**Expected Result**: `test result: ok. 578 passed`
 
+### Integration Tests
+
+```bash
+# Run specific integration test suite
+cargo test --test multilayer_pipeline_tests
+
+# Run all integration tests (excluding those with compilation errors)
+cargo test --test '*'
+
+# Run tests sequentially (prevents GPU conflicts)
+cargo test -- --test-threads=1
+```
+
+### GPU Tests
+
+GPU tests require `#[serial]` protection to prevent conflicts:
+
+```bash
+# Run GPU tests sequentially
+cargo test --test multilayer_pipeline_tests -- --test-threads=1
+```
+
+**Note**: GPU tests will skip gracefully if GPU is not available.
+
+---
+
+## Model Discovery
+
+### List Available Models
+
+```bash
+cargo run --release --bin rocmforge_cli -- models
+```
+
+**Expected Output**:
+```
+- qwen2-0_5b-instruct-q5_k_m
+  gguf: models/Qwen2-0.5B-Instruct-GGUF/qwen2.5-0.5b.Q4_K_M.gguf
+  arch: qwen2 | layers: 24 | heads: 14 | hidden: 896 | ctx: 2048
+```
+
+### Supported Models
+
+ROCmForge can read GGUF metadata from:
 - Qwen2 / Qwen2.5
-- LLaMA / LLaMA 2 / LLaMA 3
-- Mistral
+- LLaMA family
 - GLM
-- And more (auto-detected from GGUF metadata)
+- Mistral
+- And others (auto-detected from GGUF)
 
-### Model Inspection
-
-```bash
-# View model metadata
-rocmforge_cli inspect --model /path/to/model.gguf
-
-# Output includes:
-# - Architecture type
-# - Tensor count and types
-# - Vocabulary size
-# - Layer count
-# - Memory requirements
-```
-
----
-
-## CLI Usage
-
-### Commands
-
-| Command | Description |
-|---------|-------------|
-| `generate` | Generate text from a prompt |
-| `serve` | Start HTTP API server |
-| `inspect` | View GGUF model metadata |
-
-### Generate Options
-
-```bash
-rocmforge_cli generate [OPTIONS]
-
-OPTIONS:
-    --gguf <PATH>              Path to GGUF model file
-    --prompt <TEXT>            Input prompt
-    --max-tokens <N>           Maximum tokens to generate [default: 50]
-    --temperature <0.0-2.0>    Sampling temperature [default: 0.7]
-    --top-p <0.0-1.0>          Nucleus sampling threshold [default: 0.9]
-    --top-k <N>                Top-k sampling [default: 40]
-    --seed <N>                 Random seed for reproducibility
-```
-
-### Examples
-
-```bash
-# Creative writing (high temperature)
-rocmforge_cli generate \
-  --gguf model.gguf \
-  --prompt "Write a short story about" \
-  --temperature 1.2 \
-  --max-tokens 200
-
-# Factual responses (low temperature)
-rocmforge_cli generate \
-  --gguf model.gguf \
-  --prompt "What is the capital of France?" \
-  --temperature 0.1 \
-  --max-tokens 50
-
-# Reproducible output
-rocmforge_cli generate \
-  --gguf model.gguf \
-  --prompt "Hello world" \
-  --seed 42 \
-  --max-tokens 20
-```
-
----
-
-## HTTP Server
-
-### Starting the Server
-
-```bash
-rocmforge_cli serve [OPTIONS]
-
-OPTIONS:
-    --port <N>           HTTP port [default: 8080]
-    --host <IP>          Bind address [default: 0.0.0.0]
-    --gguf <PATH>        Path to model file (optional, can load dynamically)
-```
-
-### API Endpoints
-
-#### Health Check
-
-```bash
-GET /health
-
-Response:
-{"status": "ok", "model": "loaded"}
-```
-
-#### Completions (OpenAI-Compatible)
-
-```bash
-POST /v1/completions
-
-{
-  "model": "model-name",
-  "prompt": "Your prompt here",
-  "max_tokens": 50,
-  "temperature": 0.7,
-  "top_p": 0.9,
-  "top_k": 40
-}
-
-Response:
-{
-  "id": "cmpl-123",
-  "object": "text_completion",
-  "created": 1234567890,
-  "model": "model-name",
-  "choices": [{
-    "text": "Generated text here",
-    "index": 0,
-    "finish_reason": "length"
-  }],
-  "usage": {
-    "prompt_tokens": 5,
-    "completion_tokens": 50,
-    "total_tokens": 55
-  }
-}
-```
-
-#### Streaming Completions (SSE)
-
-```bash
-POST /v1/completions
-Content-Type: application/json
-
-{
-  "model": "model-name",
-  "prompt": "Write a poem",
-  "stream": true
-}
-
-# Response: Server-Sent Events (text/event-stream)
-data: {"id": "cmpl-123", "choices": [{"text": "Once"}]}
-data: {"id": "cmpl-123", "choices": [{"text": " upon"}]}
-data: {"id": "cmpl-123", "choices": [{"text": " a"}]}
-...
-data: [DONE]
-```
-
-### Python Client Example
-
-```python
-import requests
-
-url = "http://localhost:8080/v1/completions"
-data = {
-    "model": "qwen2.5-0.5b",
-    "prompt": "Explain recursion",
-    "max_tokens": 100
-}
-
-response = requests.post(url, json=data)
-print(response.json()["choices"][0]["text"])
-```
-
-### cURL Examples
-
-```bash
-# Simple completion
-curl -X POST http://localhost:8080/v1/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "qwen2.5-0.5b",
-    "prompt": "Count to 10",
-    "max_tokens": 50
-  }'
-
-# Streaming
-curl -X POST http://localhost:8080/v1/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "qwen2.5-0.5b",
-    "prompt": "Write code",
-    "stream": true
-  }'
-```
-
----
-
-## Configuration
-
-### Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `ROCMFORGE_MODEL_PATH` | Default model directory | `~/.config/rocmforge/models` |
-| `ROCMFORGE_GPU_MEMORY` | GPU memory limit (GB) | Auto-detect |
-| `ROCMFORCE_LOG_LEVEL` | Logging level | `info` |
-
-### Example Configuration
-
-```bash
-# ~/.bashrc or ~/.zshrc
-export ROCFORGE_MODEL_PATH="/mnt/models"
-export ROCFORGE_GPU_MEMORY=16
-export ROCFORGE_LOG_LEVEL=debug
-```
+**Note**: Full inference not yet validated - only metadata reading confirmed.
 
 ---
 
@@ -361,124 +164,95 @@ export ROCFORGE_LOG_LEVEL=debug
 # Check GPU detection
 rocm-smi
 
-# Verify ROCm installation
-rocminfo
-
-# Check HIP SDK
-ls -la /opt/rocm/bin/hipcc
+# Expected: Device list with GPU info
+# If empty: ROCm not installed or GPU not detected
 ```
 
-#### 2. Model Loading Hangs at 180 Seconds
-
-This is a known ROCm MES firmware bug. ROCmForge includes a workaround (memory pooling).
-
-**Solution**: The issue is automatically mitigated. If it persists:
+#### 2. Build Failures
 
 ```bash
-# Try disabling MES (temporary workaround)
-sudo modprobe -r amdgpu
-sudo modprobe amdgpu amdgpu.mes=0
+# Clean and rebuild
+cargo clean
+cargo build --release
 ```
 
-#### 3. Out of Memory Errors
+#### 3. Test Failures
 
+**Known failing tests**:
+- `test_token_embedding_lookup_f32` - GGUF metadata bug (vocab_size = 0)
+- `test_batch_embedding_lookup` - Same metadata bug
+- `test_lm_head_matmul_correctness` - Same metadata bug
+
+**Known compilation errors**:
+- `tests/q_dequant_tests.rs` - Type mismatches, needs fixes
+- `tests/attention_gpu_tests.rs` - Borrow checker issues
+
+**Workaround**: Run tests excluding these files:
 ```bash
-# Monitor GPU memory
-watch -n 1 rocm-smi
-
-# Try a smaller model
-# - Use Q4_K quantization instead of Q8_0
-# - Reduce context length
-# - Close other GPU applications
+mv tests/q_dequant_tests.rs tests/q_dequant_tests.rs.disabled
+cargo test --test '*'
+mv tests/q_dequant_tests.rs.disabled tests/q_dequant_tests.rs
 ```
 
-#### 4. Slow Generation
+#### 4. GPU Reset During Tests
 
-- **First run is slow**: Model loading takes time
-- **Subsequent runs**: Use in-memory caching
-- **CPU bottleneck**: Check that GPU is actually being used (`rocm-smi`)
+**Fixed**: All GPU tests now have `#[serial]` attribute and run sequentially.
 
-#### 5. CLI Crashes (Known Issue)
-
-The CLI is experimental. For stable operation, use the HTTP server.
-
+If you still experience GPU resets:
 ```bash
-# Use HTTP server instead
-rocmforge_cli serve --port 8080
+# Run tests with single thread
+cargo test -- --test-threads=1
 ```
 
 ### Debug Mode
 
 ```bash
 # Enable verbose logging
-RUST_LOG=debug rocmforge_cli generate --prompt "test"
+RUST_LOG=debug cargo test --lib
 
 # Run with backtrace
-RUST_BACKTRACE=1 rocmforge_cli generate --prompt "test"
-```
-
----
-
-## Performance Tuning
-
-### GPU Memory Optimization
-
-| Setting | Impact | Recommendation |
-|---------|--------|----------------|
-| Quantization | 4x memory reduction | Use Q4_K for best quality/size |
-| Context Length | Linear memory increase | Keep < 4096 for 7B models |
-| Batch Size | Linear memory increase | Use HTTP server for batching |
-
-### Sampling Parameters
-
-| Parameter | Range | Effect |
-|-----------|-------|--------|
-| Temperature | 0.0 - 2.0 | Higher = more random |
-| Top-P | 0.0 - 1.0 | Nucleus sampling threshold |
-| Top-K | 1 - 100 | Limit to top K tokens |
-
-### Recommended Settings
-
-**Creative Writing**:
-```bash
---temperature 1.2 --top-p 0.9 --top-k 50
-```
-
-**Factual Responses**:
-```bash
---temperature 0.1 --top-p 0.95 --top-k 40
-```
-
-**Balanced**:
-```bash
---temperature 0.7 --top-p 0.9 --top-k 40
+RUST_BACKTRACE=1 cargo test --lib
 ```
 
 ---
 
 ## Known Limitations
 
-| Issue | Status | Workaround |
-|-------|--------|------------|
-| CLI crashes | ⚠️ Known | Use HTTP server |
-| Phase 6 (GPU Sampler) | ⚠️ Pending | CPU fallback works |
-| FP16 Compute | ⚠️ Planned | FP32 currently used |
+| Issue | Status | Details |
+|-------|--------|---------|
+| GGUF vocab_size = 0 | ⚠️ Bug | Metadata parser returns wrong value |
+| q_dequant_tests | ❌ Broken | Compilation errors |
+| attention_gpu_tests | ❌ Broken | Compilation errors |
+| HTTP server | ❓ Untested | Exists but not validated |
+| CLI generate/serve | ❓ Untested | Commands exist but not tested |
+| End-to-end inference | ❓ Untested | Full pipeline not validated |
+
+---
+
+## Development Focus
+
+Current priorities based on actual testing:
+
+1. **Fix GGUF metadata parser** - vocab_size returns 0
+2. **Fix compilation errors** - q_dequant_tests, attention_gpu_tests
+3. **Validate HTTP server** - Test `/v1/completions` endpoint
+4. **Test end-to-end** - Run actual inference with real models
+5. **Add CLI tests** - Validate generate/serve commands
 
 ---
 
 ## Getting Help
 
-- **Documentation**: See `docs/` directory
-- **API Reference**: `docs/API.md`
-- **Changelog**: `docs/CHANGELOG.md`
-- **Issues**: Report bugs on GitHub
+- **Build Issues**: Check ROCm installation, Rust version
+- **Test Failures**: See Known Issues above
+- **GPU Issues**: Run `rocm-smi` to verify GPU detection
 
 ---
 
 ## License
 
-MIT License - See LICENSE file for details
+GPL-3.0
 
 ---
 
-**Next**: See [API.md](API.md) for complete API reference
+**Note**: This is a development-stage project. Many features are untested and may not work as expected.

@@ -22,6 +22,7 @@ mod gpu_path_regression_tests {
     use crate::backend::hip_backend::{HipBackend, HipBuffer};
     use crate::backend::DeviceTensor;
     use crate::loader::mmap_loader::TensorShape;
+    use serial_test::serial;
 
     /// Helper: Get GPU backend or skip test if not available (llama.cpp pattern)
     fn get_backend_or_skip() -> std::sync::Arc<HipBackend> {
@@ -58,6 +59,7 @@ mod gpu_path_regression_tests {
     /// final_buffer.copy_from_buffer(&output_buffer)?;  // ✅ GPU→GPU
     /// ```
     #[test]
+    #[serial]
     fn test_mlp_swiglu_gpu_only_path() {
         let backend = get_backend_or_skip();
 
@@ -121,6 +123,7 @@ mod gpu_path_regression_tests {
     /// Verifies that `HipBuffer::copy_from_buffer` uses `hipMemcpyDeviceToDevice`
     /// and not GPU→CPU→GPU (which would be slower).
     #[test]
+    #[serial]
     fn test_gpu_to_gpu_copy() {
         let backend = get_backend_or_skip();
 
@@ -155,6 +158,7 @@ mod gpu_path_regression_tests {
     /// This test documents the expected behavior. If this test fails,
     /// it means someone has reintroduced a CPU fallback in the MLP path.
     #[test]
+    #[serial]
     fn test_no_host_roundtrip_in_mlp_layer() {
         // This is a documentation test - the actual check is:
         // grep -n "to_host_vec" src/backend/hip_backend.rs | grep -A5 -B5 "mlp_swiglu"

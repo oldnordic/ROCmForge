@@ -88,12 +88,18 @@ pub fn execute_graph_with_config<B: GgmlBackend>(
     // Allocate buffers for all tensors
     eprintln!(">>> execute_graph_with_config: Allocating buffers for {} tensors", graph.tensors.len());
     for desc in &graph.tensors {
+        eprintln!(">>> Checking tensor {:?}: is_view={}, has_buffer={}",
+                 desc.id, desc.is_view(), backend.buffer(desc.id).is_some());
         if desc.is_view() {
+            eprintln!(">>> SKIP: tensor {:?} is a view", desc.id);
             continue;
         }
         if backend.buffer(desc.id).is_none() {
-            eprintln!(">>> execute_graph_with_config: Allocating buffer for tensor {:?}", desc.id);
+            eprintln!(">>> execute_graph_with_config: Allocating buffer for tensor {:?} (shape={:?})",
+                     desc.id, desc.shape);
             backend.alloc(desc)?;
+        } else {
+            eprintln!(">>> Tensor {:?} already has buffer", desc.id);
         }
     }
     eprintln!(">>> execute_graph_with_config: Buffer allocation complete");

@@ -12,6 +12,7 @@
 mod causal_mask_tests {
     use crate::backend::{DeviceTensor, HipBackend};
     use crate::loader::mmap_loader::TensorShape;
+    use serial_test::serial;
     use std::sync::Arc;
 
     const TEST_TOLERANCE: f32 = 1e-5;
@@ -67,6 +68,7 @@ mod causal_mask_tests {
 
     /// Test 1: Causal mask pattern matches CPU - small square
     #[test]
+    #[serial]
     fn test_causal_mask_matches_cpu_small_square() {
         let batch = 1;
         let heads = 1;
@@ -160,6 +162,7 @@ mod causal_mask_tests {
 
     /// Test 2: Causal mask with multiple heads and batch
     #[test]
+    #[serial]
     fn test_causal_mask_multi_head_batch() {
         let batch = 2;
         let heads = 4;
@@ -221,6 +224,7 @@ mod causal_mask_tests {
 
     /// Test 3: Verify mask doesn't corrupt non-causal positions
     #[test]
+    #[serial]
     fn test_causal_mask_preserves_valid_positions() {
         let batch = 1;
         let heads = 1;
@@ -253,6 +257,7 @@ mod causal_mask_tests {
 
     /// Test 4: Explicit layout indexing verification
     #[test]
+    #[serial]
     fn test_causal_mask_explicit_layout() {
         let batch = 2;
         let heads = 3;

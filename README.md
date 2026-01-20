@@ -1,46 +1,68 @@
 # ROCmForge
 
-**AMD GPU Inference Engine for Large Language Models**
+**AMD GPU Inference Engine for Large Language Models - Development Stage**
 
-An LLM inference engine for AMD GPUs using ROCm and HIP. Loads GGUF-format models and provides an OpenAI-compatible HTTP API.
+An LLM inference engine for AMD GPUs using ROCm and HIP. Loads GGUF-format models and provides an HTTP API.
 
-## Status
+**⚠️ Development Status: Not production-ready. Use for testing and development only.**
 
-**Version:** 0.1.0 (v1.0 milestone complete)
+## Current Status
+
+**Version:** 0.1.0-development
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| GGUF Model Loading | Working | 15 quantization formats supported |
-| CPU Backend | Working | SIMD (AVX2/NEON), attention ops |
-| GPU Backend | Working | HIP kernels for matmul, dequantization, attention |
-| HTTP Server | Working | OpenAI-compatible API |
-| CLI | Working | serve, generate, context commands |
-| Tests | Passing | 564+ lib tests passing |
+| Build | ✅ Working | Release builds in ~55 seconds |
+| Lib Tests | ✅ 578 passing | Unit tests for core components |
+| GGUF Loading | ⚠️ Partial | Loads metadata, some tensor types have issues |
+| GPU Backend | ⚠️ Development | HIP kernels implemented, not all tested |
+| HTTP Server | ⚠️ Untested | Server exists, not validated in production |
+| CLI | ⚠️ Partial | `models` command works, others untested |
+| Integration Tests | ⚠️ Mixed | Some pass, 3 failing in embedding_to_lmhead_tests |
 
-### What Works
+### Test Results (Actual)
 
-Based on actual test results:
+```
+Lib tests:         578 passed
+Integration tests: 35+ passed across multiple test files
+Known failures:    3 tests in embedding_to_lmhead_tests (metadata parsing bug)
+Known issues:      q_dequant_tests has compilation errors
+                    attention_gpu_tests has compilation errors
+```
 
-- **GGUF Loading**: 15 quantization formats (F32, F16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, MXFP4, MXFP6)
-- **CPU SIMD Backend**: AVX2 (f32x8), NEON (f32x4), runtime detection, matmul + attention + layer ops
-- **GPU Kernels**: HIP implementations for dequantization, matmul, attention
-- **Hybrid Scheduler**: Automatic CPU/GPU backend selection
-- **HTTP API**: `/v1/completions`, `/health`, `/ready`, `/metrics`
-- **CLI Tools**: `rocmforge_cli serve`, `generate`, `context` (add/search/list/clear)
+### What Actually Works
 
-### Known Limitations
+Based on actual testing:
 
-- GPU sampler kernels use CPU fallback (optimization deferred)
-- MQA GPU optimization uses partial CPU fallback
-- SIMD feature requires nightly Rust
-- AVX-512 is opt-in (feature flag to avoid CPU throttling)
-- ~82 compiler warnings (cosmetic: unused imports, variables)
+- **Build System**: `cargo build --release` completes successfully
+- **Core Libraries**: Tensor operations, KV cache, scheduler components tested
+- **GGUF Metadata Parsing**: Reads architecture, layers, some tensor info
+- **GPU Detection**: Successfully detects AMD GPUs (tested on RX 7900 XT)
+- **Test Infrastructure**: All GPU tests have `#[serial]` protection (no GPU resets)
+- **Model Discovery**: `rocmforge_cli models` finds cached GGUF files
+
+### Known Issues (Honest Assessment)
+
+1. **GGUF Metadata Bug**: `metadata.vocab_size` returns 0 instead of actual value
+   - Affects: `test_token_embedding_lookup_f32`, `test_batch_embedding_lookup`, `test_lm_head_matmul_correctness`
+   - Root cause: Metadata parser not correctly reading vocab_size from GGUF
+
+2. **Compilation Errors**:
+   - `tests/q_dequant_tests.rs`: Type mismatches (usize vs u8), unresolved imports
+   - `tests/attention_gpu_tests.rs`: Borrow checker issues with moved values
+
+3. **Untested Features**:
+   - HTTP server `/v1/completions` endpoint not validated
+   - CLI `generate` and `serve` commands not tested
+   - End-to-end inference not validated with real models
+
+4. **Approximately 27 compiler warnings** (unused imports, deprecated methods)
 
 ## Requirements
 
-- **Rust**: 1.82+ (for SIMD support)
+- **Rust**: 1.82+
 - **ROCm**: 5.0+ (Linux only)
-- **GPU**: AMD GPU with ROCm support (RDNA2/3 or CDNA2/3)
+- **GPU**: AMD GPU with ROCm support (tested on RX 7900 XT)
 - **Memory**: 8GB+ VRAM recommended
 
 ## Build
@@ -49,104 +71,87 @@ Based on actual test results:
 # Build release binary
 cargo build --release
 
-# Run tests
+# Run lib tests
 cargo test --lib
 
-# Run with ROCm feature
-cargo build --release --features rocm
-
-# Run with SIMD (requires nightly)
-cargo build --release --features simd
+# Run integration tests (excluding q_dequant_tests which has compilation errors)
+cargo test --test '*'
 ```
 
 ## Usage
 
-### HTTP Server
+### Model Discovery
 
 ```bash
-# Start server
-./target/release/rocmforge_cli serve --addr 127.0.0.1:8080 --gguf model.gguf
-
-# Health check
-curl http://localhost:8080/health
-
-# Generate completion
-curl -X POST http://localhost:8080/v1/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model": "model", "prompt": "Hello", "max_tokens": 50}'
+# List available GGUF models
+cargo run --release --bin rocmforge_cli -- models
 ```
 
-### CLI
+Output example:
+```
+- qwen2-0_5b-instruct-q5_k_m
+  gguf: models/Qwen2-0.5B-Instruct-GGUF/qwen2.5-0.5b.Q4_K_M.gguf
+  arch: qwen2 | layers: 24 | heads: 14 | hidden: 896 | ctx: 2048
+```
+
+### Running Tests
 
 ```bash
-# Generate text
-./target/release/rocmforge_cli generate --gguf model.gguf --prompt "Hello world"
+# Lib unit tests (578 tests, ~0.5s)
+cargo test --lib
 
-# Context management (requires --features context)
-./target/release/rocmforge_cli context add "Your text here"
-./target/release/rocmforge_cli context search "query terms"
+# Integration tests with GPU
+cargo test --test multilayer_pipeline_tests
+
+# Run all tests sequentially (prevents GPU conflicts)
+cargo test -- --test-threads=1
 ```
-
-## Documentation
-
-- [User Guide](docs/USER_GUIDE.md) - Installation and usage
-- [CLI Reference](docs/CLI_REFERENCE.md) - Command-line interface
-- [API Documentation](docs/API_DOCUMENTATION.md) - HTTP API endpoints
-- [Deployment Guide](docs/DEPLOYMENT.md) - Deployment instructions
 
 ## Architecture
 
 ```
 src/
-├── attention/       # Multi-head attention (CPU/GPU backends)
+├── attention/       # Multi-head attention implementations
 ├── backend/         # CPU and HIP/ROCm backends
-├── context/         # SQLiteGraph context engine (feature-gated)
-├── engine.rs        # Main inference engine
-├── error.rs         # Unified error types
-├── http/            # HTTP API server
+├── engine.rs        # Inference engine
+├── http/            # HTTP API server (untested)
 ├── kv_cache/        # Paged key-value cache
 ├── loader/          # GGUF model loader
-├── logging.rs       # Logging utilities
 ├── model/           # Model configuration and execution
-├── otel_traces.rs   # OpenTelemetry tracing
-├── profiling/       # Performance profiling
 ├── sampler/         # Token sampling
 ├── scheduler/       # Request batching
-├── tensor/          # Tensor data structures
-└── tokenizer.rs     # HuggingFace tokenizer integration
+└── tensor/          # Tensor data structures
 ```
 
-## Features
+## Known Limitations
 
-- **Hybrid Execution**: Automatic CPU/GPU backend selection via `CapabilityProvider` trait
-- **GGUF Compatibility**: Supports LLaMA, Qwen, Mistral, Yi, Mixtral architectures
-- **Quantized Inference**: Q4_0, Q8_0, Q4_K, Q6_K with fused dequant+matmul kernels
-- **CPU SIMD**: AVX-512/AVX2/NEON with runtime detection
-- **Context Engine**: SQLiteGraph-based semantic context (feature-gated)
+| Issue | Impact |
+|-------|--------|
+| GGUF vocab_size metadata bug | 3 integration tests fail |
+| q_dequant_tests compilation errors | Those tests cannot run |
+| attention_gpu_tests compilation errors | GPU attention tests cannot run |
+| HTTP server untested | Unknown if `/v1/completions` works |
+| CLI generate/serve untested | Unknown if inference actually works |
+| No end-to-end validation | Haven't confirmed full inference pipeline |
 
-## Development
+## Development Focus
 
-```bash
-# Format code
-cargo fmt
+Current priorities (based on actual test failures):
 
-# Run linter
-cargo clippy -- -D warnings
-
-# Run tests
-cargo test --lib
-
-# Run with specific features
-cargo test --features rocm,simd
-```
+1. Fix GGUF metadata parser (`vocab_size` returns 0)
+2. Fix compilation errors in q_dequant_tests and attention_gpu_tests
+3. Validate HTTP server `/v1/completions` endpoint
+4. Test end-to-end inference with real GGUF models
+5. Add integration tests for CLI commands
 
 ## Contributing
 
-This is a development-focused project. Patches are welcome for:
-- GPU kernel optimizations
-- Additional quantization format support
-- CPU SIMD improvements
-- Bug fixes
+This is a development project. Areas needing work:
+- GGUF metadata parser fixes
+- GPU kernel validation
+- HTTP server testing
+- End-to-end inference testing
+- Error handling improvements
 
 ## License
 
@@ -155,6 +160,6 @@ GPL-3.0
 ## Acknowledgments
 
 Inspired by:
-- [llama.cpp](https://github.com/ggerganov/llama.cpp) - GGUF format and quantization
-- [vLLM](https://github.com/vllm-project/vllm) - Paged attention and batching
-- [candle](https://github.com/huggingface/candle) - Rust ML design patterns
+- [llama.cpp](https://github.com/ggerganov/llama.cpp) - GGUF format
+- [vLLM](https://github.com/vllm-project/vllm) - Paged attention
+- [candle](https://github.com/huggingface/candle) - Rust ML design

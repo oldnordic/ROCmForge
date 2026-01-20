@@ -3,9 +3,12 @@
 
 #[cfg(feature = "rocm")]
 use rocmforge::model::{ModelBackend, SimpleModel};
+#[cfg(feature = "rocm")]
+use serial_test::serial;
 
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn test_simple_model_cpu_gpu_parity() {
     // Build two models with identical config and seed
     let cpu_model = SimpleModel::new(100, 64, 2, 8, ModelBackend::Cpu, 42);
@@ -41,6 +44,7 @@ fn test_simple_model_cpu_gpu_parity() {
 
 #[cfg(feature = "rocm")]
 #[test]
+#[serial]
 fn test_simple_model_gpu_backend_does_not_fallback() {
     // On a build where ROCm is available, GPU backend should be used
     let gpu_model = SimpleModel::new(50, 32, 1, 4, ModelBackend::Gpu, 123);

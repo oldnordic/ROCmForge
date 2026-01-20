@@ -3,12 +3,9 @@
 //! This module contains operations for managing sequence lifecycle,
 //! tracking access times for LRU eviction, and cleanup of completed sequences.
 
-use super::config::CacheConfig;
-use super::page_table::PageTable;
 use super::pages::{CachePage, SequenceCache};
-use super::block_allocator::BlockAllocator;
 use super::types::{KvCacheError, KvCacheResult};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::RwLock;
 use std::time::Instant;
 
@@ -119,67 +116,6 @@ pub fn cleanup_completed_sequences(
     }
 
     Ok(removed_count)
-}
-
-/// Evict least recently used sequences to free up space for new sequences
-///
-/// This is called automatically when capacity is exceeded during allocation.
-/// Only active (non-completed) sequences are considered for eviction.
-pub fn evict_lru_sequences(
-    pages: &RwLock<HashMap<u32, CachePage>>,
-    sequences: &RwLock<HashMap<u32, SequenceCache>>,
-    config: &CacheConfig,
-    required_pages: usize,
-    remove_fn: &mut impl FnMut(u32) -> KvCacheResult<()>,
-) -> KvCacheResult<()> {
-    let sequences_guard = sequences.read()?;
-
-    // Check if we need to evict
-    let current_usage = pages.read()?.len();
-    let max_pages = config.max_pages;
-
-    if current_usage + required_pages <= max_pages {
-        return Ok(());
-    }
-
-    // Find LRU sequences (only active sequences, not completed ones)
-    let mut seq_access_times: Vec<(u32, Instant)> = sequences_guard
-        .iter()
-        .filter(|(_, s)| s.is_active()) // Only consider active sequences
-        .map(|(id, s)| (*id, s.last_access))
-        .collect();
-
-    // Sort by access time (oldest first)
-    seq_access_times.sort_by_key(|(_, time)| *time);
-
-    // Calculate how many sequences we need to evict
-    let pages_to_free = (current_usage + required_pages) - max_pages;
-
-    // Estimate pages per sequence (rough estimate)
-    let avg_pages_per_seq = if seq_access_times.is_empty() {
-        1
-    } else {
-        let total_pages: usize = sequences_guard
-            .values()
-            .filter(|s| s.is_active())
-            .map(|s| s.pages.len())
-            .sum();
-        (total_pages / seq_access_times.len()).max(1)
-    };
-
-    let seqs_to_evict = (pages_to_free / avg_pages_per_seq)
-        .max(1)
-        .min(seq_access_times.len());
-
-    // Drop the read lock before acquiring write locks
-    drop(sequences_guard);
-
-    // Evict LRU sequences
-    for (seq_id, _) in seq_access_times.iter().take(seqs_to_evict) {
-        let _ = remove_fn(*seq_id);
-    }
-
-    Ok(())
 }
 
 /// Sort free lists to improve allocation patterns

@@ -9,11 +9,14 @@
 //! - See `crate::model::kv_cache::KVCache` for the legacy simple implementation
 
 pub mod block_allocator;
+pub mod block_ops;
 pub mod blocks;
+pub mod cache_ops;
 pub mod config;
 pub mod kv_cache;
 pub mod page_table;
 pub mod pages;
+pub mod sequence_ops;
 pub mod types;
 
 // Re-export from kv_cache

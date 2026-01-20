@@ -11,6 +11,7 @@ mod decode_loop_tests {
     use rocmforge::loader::gguf::GgufLoader;
     use rocmforge::model::config::ModelConfig;
     use rocmforge::model::execution_plan::ExecutionPlan;
+use serial_test::serial;
     use std::path::Path;
 
     /// Helper: Find a test model GGUF file
@@ -53,6 +54,7 @@ mod decode_loop_tests {
     /// 1. KV cache grows correctly with each token
     /// 2. Each token is generated successfully
     /// 3. No memory corruption or leaks
+    #[serial]
     #[test]
     fn test_generate_n_tokens() {
         let backend = get_backend_or_skip();
@@ -100,6 +102,7 @@ mod decode_loop_tests {
     }
 
     /// Test 2: Verify KV cache doesn't grow beyond max_seq_len
+    #[serial]
     #[test]
     fn test_kv_cache_max_sequence() {
         let backend = get_backend_or_skip();
@@ -133,6 +136,7 @@ mod decode_loop_tests {
     }
 
     /// Test 3: Temperature sampling produces varied output
+    #[serial]
     #[test]
     fn test_temperature_sampling() {
         let backend = get_backend_or_skip();
@@ -172,6 +176,7 @@ mod decode_loop_tests {
     }
 
     /// Test 4: Top-p (nucleus) sampling
+    #[serial]
     #[test]
     fn test_top_p_sampling() {
         let backend = get_backend_or_skip();
@@ -208,6 +213,7 @@ mod decode_loop_tests {
     }
 
     /// Test 5: Stop tokens work correctly
+    #[serial]
     #[test]
     fn test_stop_tokens() {
         let backend = get_backend_or_skip();

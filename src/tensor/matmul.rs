@@ -214,11 +214,13 @@ pub fn cpu_matmul_f32(a: &[f32], b: &[f32], m: usize, n: usize, k: usize) -> Vec
 }
 
 #[cfg(test)]
+    use serial_test::serial;
 mod tests {
     use super::*;
     use crate::backend::hip_blas::HipBlasHandle;
 
     #[test]
+    #[serial]
     fn test_cpu_matmul_simple() {
         // Test 2x2 * 2x2 case
         let a = vec![1.0, 2.0, 3.0, 4.0]; // [[1,2],[3,4]]
@@ -240,6 +242,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_cpu_matmul_rectangular() {
         // Test 2x3 * 3x2 case
         let a = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]; // [[1,2,3],[4,5,6]]
@@ -261,6 +264,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_matmul_dimension_validation() {
         let backend = crate::backend::HipBackend::new().unwrap();
         let handle = HipBlasHandle::new().unwrap();

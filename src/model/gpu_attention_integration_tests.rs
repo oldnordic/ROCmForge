@@ -7,6 +7,7 @@
 #[cfg(feature = "rocm")]
 mod gpu_attention_integration_tests {
     use crate::backend::hip_backend::{HipBackend, DeviceTensor};
+use serial_test::serial;
     use crate::loader::TensorShape;
     use crate::model::config::{ModelConfig, ModelType};
     use crate::model::execution_plan::ExecutionPlan;
@@ -113,6 +114,7 @@ mod gpu_attention_integration_tests {
 
     /// Test 1: QKV → RoPE → Causal Mask → Attention → Output (Single Token)
     #[test]
+    #[serial]
     #[ignore] // ExecutionPlan::new() is deprecated - use ExecutionPlan::from_gguf() instead
     fn test_gpu_attention_single_token() {
         let backend = get_backend_or_skip();
@@ -146,6 +148,7 @@ mod gpu_attention_integration_tests {
 
     /// Test 2: Multi-token sequence attention
     #[test]
+    #[serial]
     #[ignore] // ExecutionPlan::new() is deprecated - use ExecutionPlan::from_gguf() instead
     fn test_gpu_attention_multi_token() {
         let backend = get_backend_or_skip();
@@ -178,6 +181,7 @@ mod gpu_attention_integration_tests {
 
     /// Test 3: Causal mask correctness
     #[test]
+    #[serial]
     #[ignore] // ExecutionPlan::new() is deprecated - use ExecutionPlan::from_gguf() instead
     fn test_gpu_attention_causal_mask() {
         let backend = get_backend_or_skip();
@@ -213,6 +217,7 @@ mod gpu_attention_integration_tests {
 
     /// Test 4: GPU results match CPU within tolerance
     #[test]
+    #[serial]
     #[ignore] // ExecutionPlan::new() is deprecated - use ExecutionPlan::from_gguf() instead
     fn test_gpu_cpu_consistency() {
         let backend = get_backend_or_skip();
@@ -256,6 +261,7 @@ mod gpu_attention_integration_tests {
 
     /// Test 5: Attention with varying sequence lengths
     #[test]
+    #[serial]
     #[ignore] // ExecutionPlan::new() is deprecated - use ExecutionPlan::from_gguf() instead
     fn test_gpu_attention_varying_lengths() {
         let backend = get_backend_or_skip();
@@ -293,6 +299,7 @@ mod gpu_attention_integration_tests {
 
     /// Test 6: Numerical stability (avoid NaN/Inf)
     #[test]
+    #[serial]
     #[ignore] // ExecutionPlan::new() is deprecated - use ExecutionPlan::from_gguf() instead
     fn test_gpu_attention_numerical_stability() {
         let backend = get_backend_or_skip();
@@ -356,6 +363,7 @@ mod gpu_attention_integration_tests {
 
     /// Test 7: Performance baseline (measure for comparison)
     #[test]
+    #[serial]
     #[ignore] // ExecutionPlan::new() is deprecated - use ExecutionPlan::from_gguf() instead
     fn test_gpu_attention_performance_baseline() {
         use std::time::Instant;

@@ -58,9 +58,11 @@ fn validate_matmul_dims(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
-    // CPU-only tests (don't need GPU)
+    // Note: HipBlasHandle::new() initializes HIP - must run serially
     #[test]
+    #[serial]
     fn test_hip_blas_handle_creation_and_drop() -> anyhow::Result<()> {
         // Test that we can create and destroy a hipBLAS handle
         let handle = HipBlasHandle::new()

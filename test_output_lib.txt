@@ -1,0 +1,900 @@
+warning: rocmforge@0.1.0: Failed to compile kernels/flash_attention.hip: exit code Some(1)
+   Compiling rocmforge v0.1.0 (/home/feanor/Projects/ROCmForge)
+warning: unused imports: `DeviceTensor` and `HipError`
+ --> src/model/phase5_paged_tests.rs:9:39
+  |
+9 |     use crate::backend::hip_backend::{DeviceTensor, HipBackend, HipError};
+  |                                       ^^^^^^^^^^^^              ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `crate::loader::TensorShape`
+  --> src/model/phase5_paged_tests.rs:12:9
+   |
+12 |     use crate::loader::TensorShape;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused attribute
+  --> src/mlp/swiglu_tests.rs:72:5
+   |
+72 |     #[ignore] // Requires HSACO kernels - GPU kernel unavailable
+   |     ^^^^^^^^^ help: remove this attribute
+   |
+note: attribute also specified here
+  --> src/mlp/swiglu_tests.rs:71:5
+   |
+71 |     #[ignore] // Requires HSACO kernels - GPU kernel unavailable
+   |     ^^^^^^^^^
+   = note: `#[warn(unused_attributes)]` (part of `#[warn(unused)]`) on by default
+
+warning: use of deprecated method `backend::hip_backend::backend::HipBuffer::copy_to_host`: Use HipBackend::copy_from_device_safe() instead - clearer intent
+  --> src/attention/kernel_tests.rs:66:14
+   |
+66 |             .copy_to_host(&mut gpu_input)
+   |              ^^^^^^^^^^^^
+   |
+   = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `backend::hip_backend::backend::HipBuffer::copy_to_host`: Use HipBackend::copy_from_device_safe() instead - clearer intent
+   --> src/attention/kernel_tests.rs:126:14
+    |
+126 |             .copy_to_host(&mut gpu_result)
+    |              ^^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::HipBuffer::copy_to_host`: Use HipBackend::copy_from_device_safe() instead - clearer intent
+   --> src/attention/kernel_tests.rs:206:14
+    |
+206 |             .copy_to_host(&mut gpu_input)
+    |              ^^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::HipBuffer::copy_to_host`: Use HipBackend::copy_from_device_safe() instead - clearer intent
+   --> src/attention/kernel_tests.rs:269:14
+    |
+269 |             .copy_to_host(&mut gpu_input)
+    |              ^^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::HipBuffer::copy_to_host`: Use HipBackend::copy_from_device_safe() instead - clearer intent
+   --> src/attention/kernel_tests.rs:322:14
+    |
+322 |             .copy_to_host(&mut gpu_input)
+    |              ^^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+  --> src/attention/rope_gpu_tests.rs:63:37
+   |
+63 |         let gpu_result = gpu_tensor.to_host_vec().expect("Failed to copy from GPU");
+   |                                     ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/rope_gpu_tests.rs:110:37
+    |
+110 |         let gpu_result = gpu_tensor.to_host_vec().expect("Failed to copy from GPU");
+    |                                     ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/rope_gpu_tests.rs:156:37
+    |
+156 |         let gpu_result = gpu_tensor.to_host_vec().expect("Failed to copy from GPU");
+    |                                     ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/rope_gpu_tests.rs:195:37
+    |
+195 |         let gpu_result = gpu_tensor.to_host_vec().expect("Failed to copy from GPU");
+    |                                     ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/rope_gpu_tests.rs:237:37
+    |
+237 |         let gpu_result = gpu_tensor.to_host_vec().expect("Failed to copy from GPU");
+    |                                     ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/rope_gpu_tests.rs:291:41
+    |
+291 |             let gpu_result = gpu_tensor.to_host_vec().expect("Failed to copy from GPU");
+    |                                         ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/rope_gpu_tests.rs:356:37
+    |
+356 |         let gpu_result = gpu_tensor.to_host_vec().expect("Failed to copy from GPU");
+    |                                     ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/flash_attention_tests.rs:112:14
+    |
+112 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/flash_attention_tests.rs:211:14
+    |
+211 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/flash_attention_tests.rs:295:14
+    |
+295 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/flash_attention_tests.rs:379:14
+    |
+379 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/flash_attention_tests.rs:459:14
+    |
+459 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/flash_attention_tests.rs:605:34
+    |
+605 |         let gpu_result = out_gpu.to_host_vec().expect("Failed to copy output");
+    |                                  ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/qkt_matmul_tests.rs:161:14
+    |
+161 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/softmax_explicit_tests.rs:134:14
+    |
+134 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/softmax_explicit_tests.rs:214:14
+    |
+214 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/softmax_explicit_tests.rs:283:14
+    |
+283 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/softmax_explicit_tests.rs:349:14
+    |
+349 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/weighted_matmul_tests.rs:155:14
+    |
+155 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/weighted_matmul_tests.rs:223:14
+    |
+223 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/weighted_matmul_tests.rs:285:14
+    |
+285 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/flash_nocausal_tests.rs:174:14
+    |
+174 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/flash_nocausal_tests.rs:250:14
+    |
+250 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/flash_nocausal_tests.rs:320:14
+    |
+320 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/flash_nocausal_tests.rs:390:14
+    |
+390 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/flash_nocausal_tests.rs:471:24
+    |
+471 |             scores_gpu.to_host_vec().unwrap(),
+    |                        ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/flash_nocausal_tests.rs:492:44
+    |
+492 |         let result_separate = out_separate.to_host_vec().unwrap();
+    |                                            ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/flash_nocausal_tests.rs:519:38
+    |
+519 |         let result_fused = out_fused.to_host_vec().unwrap();
+    |                                      ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/causal_mask_tests.rs:130:14
+    |
+130 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/causal_mask_tests.rs:195:14
+    |
+195 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/flash_causal_tests.rs:182:14
+    |
+182 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/flash_causal_tests.rs:289:14
+    |
+289 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/flash_causal_tests.rs:360:14
+    |
+360 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/paged_tests.rs:131:34
+    |
+131 |         let output_host = output.to_host_vec().expect("Failed to copy output to host");
+    |                                  ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/paged_tests.rs:167:24
+    |
+167 |         let k_data = k.to_host_vec().expect("Failed to copy K to host");
+    |                        ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/paged_tests.rs:168:24
+    |
+168 |         let v_data = v.to_host_vec().expect("Failed to copy V to host");
+    |                        ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/paged_tests.rs:215:34
+    |
+215 |         let output_host = output.to_host_vec().expect("Failed to copy output to host");
+    |                                  ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/paged_tests.rs:284:34
+    |
+284 |         let output_host = output.to_host_vec().expect("Failed to copy output to host");
+    |                                  ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/paged_tests.rs:312:24
+    |
+312 |         let k_data = k.to_host_vec().expect("Failed to copy K to host");
+    |                        ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/paged_tests.rs:313:24
+    |
+313 |         let v_data = v.to_host_vec().expect("Failed to copy V to host");
+    |                        ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+  --> src/attention/mqa_kernel_tests.rs:88:14
+   |
+88 |             .to_host_vec()
+   |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/mqa_kernel_tests.rs:155:14
+    |
+155 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/mqa_kernel_tests.rs:231:14
+    |
+231 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/attention/mqa_kernel_tests.rs:348:18
+    |
+348 |                 .to_host_vec()
+    |                  ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/mlp/swiglu_tests.rs:118:14
+    |
+118 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/mlp/swiglu_tests.rs:185:14
+    |
+185 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/mlp/swiglu_tests.rs:246:14
+    |
+246 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/mlp/swiglu_tests.rs:306:14
+    |
+306 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/mlp/rms_norm_tests.rs:124:14
+    |
+124 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/mlp/rms_norm_tests.rs:190:14
+    |
+190 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/mlp/gpu_path_regression_tests.rs:111:14
+    |
+111 |             .to_host_vec()
+    |              ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::HipBuffer::copy_to_host`: Use HipBackend::copy_from_device_safe() instead - clearer intent
+   --> src/mlp/gpu_path_regression_tests.rs:150:14
+    |
+150 |             .copy_to_host(&mut result)
+    |              ^^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+  --> src/model/position_embedding_tests.rs:90:34
+   |
+90 |         let q_gpu = q_gpu_device.to_host_vec().unwrap();
+   |                                  ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+  --> src/model/position_embedding_tests.rs:91:34
+   |
+91 |         let k_gpu = k_gpu_device.to_host_vec().unwrap();
+   |                                  ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/model/position_embedding_tests.rs:136:34
+    |
+136 |         let q_gpu = q_gpu_device.to_host_vec().unwrap();
+    |                                  ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/model/position_embedding_tests.rs:137:34
+    |
+137 |         let k_gpu = k_gpu_device.to_host_vec().unwrap();
+    |                                  ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/model/position_embedding_tests.rs:218:34
+    |
+218 |         let q_gpu = q_gpu_device.to_host_vec().unwrap();
+    |                                  ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/model/position_embedding_tests.rs:219:34
+    |
+219 |         let k_gpu = k_gpu_device.to_host_vec().unwrap();
+    |                                  ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/model/position_embedding_tests.rs:263:34
+    |
+263 |         let q_gpu = q_gpu_device.to_host_vec().unwrap();
+    |                                  ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/model/position_embedding_tests.rs:264:34
+    |
+264 |         let k_gpu = k_gpu_device.to_host_vec().unwrap();
+    |                                  ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/model/position_embedding_tests.rs:308:34
+    |
+308 |         let q_gpu = q_gpu_device.to_host_vec().unwrap();
+    |                                  ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/model/position_embedding_tests.rs:309:34
+    |
+309 |         let k_gpu = k_gpu_device.to_host_vec().unwrap();
+    |                                  ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/model/position_embedding_tests.rs:359:34
+    |
+359 |         let q_gpu = q_gpu_device.to_host_vec().unwrap();
+    |                                  ^^^^^^^^^^^
+
+warning: use of deprecated method `backend::hip_backend::backend::DeviceTensor::to_host_vec`: Use HipBackend::copy_from_device_safe() with explicit buffer access instead
+   --> src/model/position_embedding_tests.rs:360:34
+    |
+360 |         let k_gpu = k_gpu_device.to_host_vec().unwrap();
+    |                                  ^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+  --> src/attention/kernel_tests.rs:88:13
+   |
+88 |         let mut scores: Vec<f32> = vec![1.0; 16];
+   |             ----^^^^^^
+   |             |
+   |             help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `i`
+   --> src/attention/rope_gpu_tests.rs:199:14
+    |
+199 |         for (i, (&inp, &out)) in input.iter().zip(gpu_result.iter()).enumerate() {
+    |              ^ help: if this is intentional, prefix it with an underscore: `_i`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+  --> src/attention/flash_attention_tests.rs:77:13
+   |
+77 |         let mut out_gpu =
+   |             ----^^^^^^^
+   |             |
+   |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/attention/flash_attention_tests.rs:175:13
+    |
+175 |         let mut out_gpu =
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/attention/flash_attention_tests.rs:260:13
+    |
+260 |         let mut out_gpu =
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/attention/flash_attention_tests.rs:344:13
+    |
+344 |         let mut out_gpu =
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/attention/flash_attention_tests.rs:424:13
+    |
+424 |         let mut out_gpu =
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/attention/flash_attention_tests.rs:549:13
+    |
+549 |         let mut out_gpu =
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/attention/qkt_matmul_tests.rs:138:13
+    |
+138 |         let mut out_gpu =
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/attention/softmax_explicit_tests.rs:109:13
+    |
+109 |         let mut scores_gpu = DeviceTensor::from_host_vec(&backend, scores.clone(), scores_shape)
+    |             ----^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/attention/softmax_explicit_tests.rs:195:13
+    |
+195 |         let mut scores_gpu = DeviceTensor::from_host_vec(&backend, scores, scores_shape)
+    |             ----^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/attention/softmax_explicit_tests.rs:264:13
+    |
+264 |         let mut scores_gpu = DeviceTensor::from_host_vec(&backend, scores, scores_shape)
+    |             ----^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/attention/softmax_explicit_tests.rs:330:13
+    |
+330 |         let mut scores_gpu = DeviceTensor::from_host_vec(&backend, scores, scores_shape)
+    |             ----^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `b`
+  --> src/attention/weighted_matmul_tests.rs:43:13
+   |
+43 |         for b in 0..batch {
+   |             ^ help: if this is intentional, prefix it with an underscore: `_b`
+
+warning: unused variable: `h`
+  --> src/attention/weighted_matmul_tests.rs:44:17
+   |
+44 |             for h in 0..heads {
+   |                 ^ help: if this is intentional, prefix it with an underscore: `_h`
+
+warning: unused variable: `sq`
+  --> src/attention/weighted_matmul_tests.rs:45:21
+   |
+45 |                 for sq in 0..seq_q {
+   |                     ^^ help: if this is intentional, prefix it with an underscore: `_sq`
+
+warning: variable does not need to be mutable
+   --> src/attention/weighted_matmul_tests.rs:134:13
+    |
+134 |         let mut out_gpu =
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/attention/weighted_matmul_tests.rs:202:13
+    |
+202 |         let mut out_gpu =
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/attention/weighted_matmul_tests.rs:264:13
+    |
+264 |         let mut out_gpu =
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/attention/flash_nocausal_tests.rs:149:13
+    |
+149 |         let mut out_gpu = DeviceTensor::empty(&backend, out_shape.clone())
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/attention/flash_nocausal_tests.rs:225:13
+    |
+225 |         let mut out_gpu = DeviceTensor::empty(&backend, out_shape.clone())
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/attention/flash_nocausal_tests.rs:295:13
+    |
+295 |         let mut out_gpu = DeviceTensor::empty(&backend, out_shape.clone())
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/attention/flash_nocausal_tests.rs:365:13
+    |
+365 |         let mut out_gpu = DeviceTensor::empty(&backend, out_shape.clone())
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `v`
+   --> src/attention/flash_nocausal_tests.rs:347:13
+    |
+347 |         let v = create_v_tensor(batch, heads, seq_len, dim);
+    |             ^ help: if this is intentional, prefix it with an underscore: `_v`
+
+warning: variable does not need to be mutable
+   --> src/attention/flash_nocausal_tests.rs:437:13
+    |
+437 |         let mut scores_gpu = DeviceTensor::empty(&backend, scores_shape.clone()).unwrap();
+    |             ----^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/attention/flash_nocausal_tests.rs:439:13
+    |
+439 |         let mut out_separate = DeviceTensor::empty(&backend, out_shape.clone()).unwrap();
+    |             ----^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/attention/flash_nocausal_tests.rs:498:13
+    |
+498 |         let mut out_fused = DeviceTensor::empty(&backend, out_shape).unwrap();
+    |             ----^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `i`
+   --> src/attention/flash_nocausal_tests.rs:523:14
+    |
+523 |         for (i, (sep, fused)) in result_separate.iter().zip(result_fused.iter()).enumerate() {
+    |              ^ help: if this is intentional, prefix it with an underscore: `_i`
+
+warning: value assigned to `weights_gpu` is never read
+   --> src/attention/flash_nocausal_tests.rs:438:31
+    |
+438 |         let mut weights_gpu = DeviceTensor::empty(&backend, scores_shape.clone()).unwrap();
+    |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src/attention/causal_mask_tests.rs:110:13
+    |
+110 |         let mut mask_gpu = DeviceTensor::empty(&backend, mask_shape.clone())
+    |             ----^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/attention/causal_mask_tests.rs:175:13
+    |
+175 |         let mut mask_gpu = DeviceTensor::empty(&backend, mask_shape.clone())
+    |             ----^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/attention/flash_causal_tests.rs:157:13
+    |
+157 |         let mut out_gpu = DeviceTensor::empty(&backend, out_shape.clone())
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/attention/flash_causal_tests.rs:264:13
+    |
+264 |         let mut out_gpu =
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/attention/flash_causal_tests.rs:335:13
+    |
+335 |         let mut out_gpu =
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/mlp/swiglu_tests.rs:96:13
+   |
+96 |         let mut out_gpu =
+   |             ----^^^^^^^
+   |             |
+   |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/mlp/swiglu_tests.rs:163:13
+    |
+163 |         let mut out_gpu =
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/mlp/swiglu_tests.rs:224:13
+    |
+224 |         let mut out_gpu =
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/mlp/swiglu_tests.rs:284:13
+    |
+284 |         let mut out_gpu =
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/mlp/rms_norm_tests.rs:101:13
+    |
+101 |         let mut out_gpu =
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/mlp/rms_norm_tests.rs:170:13
+    |
+170 |         let mut out_gpu =
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `backend`
+   --> src/mlp/gpu_path_regression_tests.rs:128:13
+    |
+128 |         let backend = get_backend_or_skip();
+    |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_backend`
+
+warning: variable does not need to be mutable
+  --> src/ops/causal_mask_tests.rs:52:9
+   |
+52 |     let mut attention_host = vec![1.0f32; batch_size * num_heads * seq_len * seq_len];
+   |         ----^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: unused variable: `expected`
+  --> src/ops/causal_mask_tests.rs:75:25
+   |
+75 |                     let expected = cpu_reference[i * seq_len + j];
+   |                         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_expected`
+
+warning: function `check_kernel_result` is never used
+  --> src/attention/kernel_tests.rs:20:8
+   |
+20 |     fn check_kernel_result(result: i32, kernel_name: &str) {
+   |        ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `make_test_tensor_id` is never used
+   --> src/ggml/hybrid_scheduler.rs:722:8
+    |
+722 |     fn make_test_tensor_id() -> crate::ggml::TensorId {
+    |        ^^^^^^^^^^^^^^^^^^^
+
+warning: method `evict_lru_sequences` is never used
+   --> src/kv_cache/kv_cache.rs:989:8
+    |
+673 | impl KvCache {
+    | ------------ method in this implementation
+...
+989 |     fn evict_lru_sequences(&mut self, required_pages: usize) -> KvCacheResult<()> {
+    |        ^^^^^^^^^^^^^^^^^^^
+
+warning: comparison is useless due to type limits
+  --> src/loader/mxfp_tests.rs:82:17
+   |
+82 |         assert!(e8m0.exponent <= 127);
+   |                 ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_comparisons)]` on by default
+
+warning: comparison is useless due to type limits
+  --> src/loader/mxfp_tests.rs:82:17
+   |
+82 |         assert!(e8m0.exponent <= 127);
+   |                 ^^^^^^^^^^^^^^^^^^^^
+
+warning: comparison is useless due to type limits
+   --> src/otel_traces.rs:782:17
+    |
+782 |         assert!(count >= 0);
+    |                 ^^^^^^^^^^
+
+warning: constant `hipSuccess` should have an upper case name
+  --> src/hip_isolation_test.rs:11:11
+   |
+11 |     const hipSuccess: i32 = 0;
+   |           ^^^^^^^^^^
+   |
+   = note: `#[warn(non_upper_case_globals)]` (part of `#[warn(nonstandard_style)]`) on by default
+help: convert the identifier to upper case
+   |
+11 -     const hipSuccess: i32 = 0;
+11 +     const HIP_SUCCESS: i32 = 0;
+   |
+
+warning: `rocmforge` (lib test) generated 122 warnings (run `cargo fix --lib -p rocmforge --tests` to apply 46 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.05s
+     Running unittests src/lib.rs (target/debug/deps/rocmforge-7cd3bfc580d4d381)
+
+running 681 tests
+test attention::backend_registry::tests::test_attention_config_builder ... ok
+test attention::backend_registry::tests::test_attention_config_validation ... ok
+test attention::backend_registry::tests::test_cpu_backend_selection ... ok
+test attention::backend_registry::tests::test_flash_attention_does_not_support_large_head_dim ... ok
+test attention::backend_registry::tests::test_flash_attention_supports_valid_config ... ok
+test attention::backend_registry::tests::test_get_backend_by_name ... ok
+test attention::backend_registry::tests::test_get_flash_attention_backend ... ok
+test attention::backend_registry::tests::test_cpu_backend_forward ... ok
+test attention::backend_registry::tests::test_gpu_backend_selection ... ok
+test attention::backend_registry::tests::test_set_default_backend ... ok
+test attention::backend_registry::tests::test_set_flash_attention_as_default ... ok
+test attention::backend_registry::tests::test_set_nonexistent_backend ... ok
+test attention::causal_mask_tests::causal_mask_tests::test_causal_mask_explicit_layout ... ok
+test attention::causal_mask_tests::causal_mask_tests::test_causal_mask_preserves_valid_positions ... ok
+test attention::compute::tests::test_matmul_cpu_basic ... ok
+test attention::backend_registry::tests::test_registry_creation ... ok
+test attention::compute::tests::test_dropout_deterministic ... ok
+test attention::causal_mask_tests::causal_mask_tests::test_causal_mask_multi_head_batch ... ok
+test attention::causal_mask_tests::causal_mask_tests::test_causal_mask_matches_cpu_small_square ... ok
+test attention::flash_attention::tests::test_backend_forward_simple ... ok
+test attention::flash_attention::tests::test_backend_forward_nocausal ... ok
+test attention::flash_attention::tests::test_backend_custom_mask_not_supported ... ok
+test attention::flash_attention::tests::test_backend_forward_with_causal_mask ... ok
+test attention::flash_attention::tests::test_backend_name ... ok
+test attention::flash_attention::tests::test_backend_does_not_support_invalid_config ... ok
+test attention::flash_attention::tests::test_backend_required_kv_layout ... ok
+test attention::flash_attention::tests::test_backend_supports_valid_config ... ok
+test attention::flash_attention::tests::test_can_use_flash_attention_head_dim_too_large ... ok
+test attention::flash_attention::tests::test_can_use_flash_attention_seq_len_too_large ... ok
+test attention::flash_attention::tests::test_can_use_flash_attention_valid_config ... ok
+test attention::flash_attention::tests::test_flash_attention_backend_creation ... ok
+test attention::flash_attention::tests::test_supports_mask_causal ... ok
+test attention::flash_attention::tests::test_supports_mask_custom_mask_not_supported ... ok
+test attention::flash_attention::tests::test_supports_mask_no_mask ... ok
+test attention::flash_attention_tests::phase3_flash_attention_tests::benchmark_flash_attention_vs_separate ... ok
+test attention::flash_attention_tests::phase3_flash_attention_tests::test_flash_attention_matches_cpu_batch_2 ... ok
+test attention::flash_attention_tests::phase3_flash_attention_tests::test_flash_attention_matches_cpu_seq_len_8 ... ok
+test attention::flash_attention_tests::phase3_flash_attention_tests::test_flash_attention_matches_cpu_small_no_mask ... ok
+test attention::flash_attention_tests::phase3_flash_attention_tests::test_flash_attention_matches_cpu_with_causal_mask ... ok
+test attention::flash_attention_tests::phase3_flash_attention_tests::test_flash_attention_softmax_properties ... ok
+test attention::flash_causal_tests::flash_causal_tests::test_flash_causal_first_position_matches_noncausal ... ok
+test attention::flash_nocausal_tests::flash_nocausal_tests::test_flash_nocausal_softmax_properties ... ok
+test attention::kernel_tests::phase1_kernel_tests::test_mask_gpu_matches_cpu ... ignored
+test attention::kernel_tests::phase1_kernel_tests::test_scale_gpu_matches_cpu ... ignored
+test attention::kernel_tests::phase1_kernel_tests::test_softmax_gpu_matches_cpu ... ignored
+test attention::kernel_tests::phase1_kernel_tests::test_softmax_gpu_numerical_stability ... ignored
+test attention::kernel_tests::phase1_kernel_tests::test_softmax_gpu_seq8 ... ignored
+test attention::mask::tests::test_causal_mask_pattern ... ok
+test attention::mqa_kernel_tests::tests::test_kv_replication_correctness ... ignored
+test attention::flash_causal_tests::flash_causal_tests::test_flash_causal_matches_cpu_small ... ok
+test attention::flash_causal_tests::flash_causal_tests::test_flash_causal_weights_sum_to_one ... ok
+test attention::flash_nocausal_tests::flash_nocausal_tests::test_flash_nocausal_matches_cpu_16x16 ... ok
+test attention::flash_nocausal_tests::flash_nocausal_tests::test_flash_nocausal_matches_cpu_32x32 ... ok
+test attention::flash_nocausal_tests::flash_nocausal_tests::test_flash_nocausal_matches_cpu_small ... ok
+test attention::flash_causal_tests::flash_causal_tests::test_flash_causal_matches_cpu_16x16 ... ok
+test attention::flash_nocausal_tests::flash_nocausal_tests::test_flash_nocausal_vs_separate_kernels ... ok
+Memory access fault by GPU node-1 (Agent handle: 0x7e5ea400e060) on address 0x7e5fade05000. Reason: Page not present or supervisor privilege.
+error: test failed, to rerun pass `--lib`
+
+Caused by:
+  process didn't exit successfully: `/home/feanor/Projects/ROCmForge/target/debug/deps/rocmforge-7cd3bfc580d4d381` (signal: 6, SIGABRT: process abort signal)

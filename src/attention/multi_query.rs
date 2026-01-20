@@ -725,11 +725,13 @@ impl MultiQueryAttention {
 }
 
 #[cfg(test)]
+    use serial_test::serial;
 mod tests {
     use super::*;
     use crate::attention::rope::{Rope, RopeConfig};
 
     #[test]
+    #[serial]
     fn test_multi_query_config_validation() {
         let config = MultiQueryConfig::new(8, 64);
         assert!(config.validate().is_ok());
@@ -743,6 +745,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_multi_query_attention_basic() {
         let config = MultiQueryConfig::new(2, 4); // 2 query heads, 1 KV head, dim 4
         let mqa = MultiQueryAttention::new(config).unwrap();
@@ -767,6 +770,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_multi_query_with_rope() {
         let rope_config = RopeConfig::new(4, 8);
         let rope = Rope::new(rope_config);
@@ -790,6 +794,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_mask_broadcast_shape() {
         // Test ATT-3 fix: broadcast mask shape [batch_size, seq_len, kv_seq_len]
         let config = MultiQueryConfig::new(2, 4); // 2 query heads, 1 KV head, dim 4
@@ -813,6 +818,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_mask_full_shape() {
         // Test ATT-3 fix: full mask shape [batch_size, seq_len, num_heads, kv_seq_len]
         let config = MultiQueryConfig::new(2, 4); // 2 query heads, 1 KV head, dim 4
@@ -834,6 +840,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_mask_invalid_shape() {
         // Test ATT-3 fix: invalid mask shape should produce clear error
         let config = MultiQueryConfig::new(2, 4); // 2 query heads, 1 KV head, dim 4

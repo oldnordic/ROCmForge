@@ -145,9 +145,11 @@ fn create_synthetic_glm_model(path: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use tempfile::tempdir;
 
     #[test]
+    #[serial]
     fn test_glm_model_loading() -> anyhow::Result<()> {
         let temp_dir = tempdir()?;
         let model_path = temp_dir.path().join("synthetic_glm.gguf");
@@ -190,6 +192,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_single_token_decode() -> anyhow::Result<()> {
         let temp_dir = tempdir()?;
         let model_path = temp_dir.path().join("synthetic_glm.gguf");
@@ -234,6 +237,7 @@ mod tests {
     // This test is already in model_runtime_tests.rs:14
 
     #[test]
+    #[serial]
     fn test_glm_layer_structure() -> anyhow::Result<()> {
         let temp_dir = tempdir()?;
         let model_path = temp_dir.path().join("synthetic_glm.gguf");
@@ -270,6 +274,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_position_ids_handling() -> anyhow::Result<()> {
         let temp_dir = tempdir()?;
         let model_path = temp_dir.path().join("synthetic_glm.gguf");
@@ -297,6 +302,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_multi_query_attention_support() -> anyhow::Result<()> {
         let temp_dir = tempdir()?;
         let model_path = temp_dir.path().join("synthetic_glm.gguf");
@@ -327,6 +333,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_output_shape_correctness() -> anyhow::Result<()> {
         let temp_dir = tempdir()?;
         let model_path = temp_dir.path().join("synthetic_glm.gguf");

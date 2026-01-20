@@ -8,6 +8,7 @@
 #[cfg(test)]
 mod config_tests {
     use crate::model::config::{ModelConfig, ModelType};
+use serial_test::serial;
 
     /// Helper to create a test config
     fn create_test_config(num_attention_heads: usize, num_kv_heads: Option<usize>) -> ModelConfig {
@@ -27,6 +28,7 @@ mod config_tests {
     }
 
     #[test]
+    #[serial]
     fn test_config_mqa_detection() {
         // MQA: 32 query heads, 1 KV head
         let config = create_test_config(32, Some(1));
@@ -42,6 +44,7 @@ mod config_tests {
     }
 
     #[test]
+    #[serial]
     fn test_config_gqa_detection() {
         // GQA: 32 query heads, 8 KV heads (4:1 ratio)
         let config = create_test_config(32, Some(8));
@@ -60,6 +63,7 @@ mod config_tests {
     }
 
     #[test]
+    #[serial]
     fn test_config_mha_explicit() {
         // MHA: 32 query heads, 32 KV heads (standard)
         let config = create_test_config(32, Some(32));
@@ -78,6 +82,7 @@ mod config_tests {
     }
 
     #[test]
+    #[serial]
     fn test_config_mha_default() {
         // MHA: num_kv_heads = None (defaults to num_attention_heads)
         let config = create_test_config(32, None);
@@ -96,6 +101,7 @@ mod config_tests {
     }
 
     #[test]
+    #[serial]
     fn test_heads_per_kv_mqa() {
         // Test various MQA configurations
         let config_16_1 = create_test_config(16, Some(1));
@@ -114,6 +120,7 @@ mod config_tests {
     }
 
     #[test]
+    #[serial]
     fn test_heads_per_kv_gqa() {
         // Test various GQA configurations
         let config_32_4 = create_test_config(32, Some(4));
@@ -132,6 +139,7 @@ mod config_tests {
     }
 
     #[test]
+    #[serial]
     fn test_gqa_edge_case_2_kv_heads() {
         // GQA edge case: 32 query heads, 2 KV heads
         let config = create_test_config(32, Some(2));
@@ -146,6 +154,7 @@ mod config_tests {
     }
 
     #[test]
+    #[serial]
     fn test_real_world_llama2_7b() {
         // LLaMA 2 7B uses standard MHA (32:32)
         let config = ModelConfig::llama2_7b();
@@ -161,6 +170,7 @@ mod config_tests {
     }
 
     #[test]
+    #[serial]
     fn test_validation_rejects_invalid_kv_heads() {
         // num_kv_heads > num_attention_heads should fail validation
         let config = create_test_config(8, Some(16)); // 8 query, 16 KV - INVALID!
@@ -173,6 +183,7 @@ mod config_tests {
     }
 
     #[test]
+    #[serial]
     fn test_validation_rejects_zero_kv_heads() {
         let config = create_test_config(32, Some(0)); // 0 KV heads - INVALID!
 
