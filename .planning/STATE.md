@@ -5,15 +5,15 @@
 See: .planning/PROJECT.md (updated 2026-01-20)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Phase 22 - Memory Pool Implementation
+**Current focus:** Phase 23 - Dead/Duplicate Code Removal
 
 ## Current Position
 
-Phase: 23 - Dead/Duplicate Code Removal (Plan 03 of 5)
-Status: Phase 23 In Progress - GgufMetadata consolidated, MXFP/Q-format cleanup pending
-Last activity: GgufMetadata consolidation complete - duplicate struct removed from gguf.rs
+Phase: 23 - Dead/Duplicate Code Removal (Plan 04 of 5)
+Status: Phase 23 In Progress - ParallelResult removed, compilation errors fixed
+Last activity: Removed ParallelResult type alias and fixed blocking issues from 23-01/23-02
 
-Progress: [████████████████░░░░░] 60% (Phase 22 COMPLETE, Phase 23 3/5 plans complete)
+Progress: [████████████████░░░░░] 80% (Phase 22 COMPLETE, Phase 23 4/5 plans complete)
 
 ## Milestone v1.3 Summary
 
@@ -30,8 +30,8 @@ Progress: [████████████████░░░░░] 60% 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 143 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22, Phase 23 23-01/23-03)
-- Plans remaining: 1 (21-06, skipped) + 9 (Phases 23-24)
+- Total plans completed: 144 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22, Phase 23 23-01/23-03/23-04)
+- Plans remaining: 1 (21-06, skipped) + 8 (Phases 23-24)
 - Average duration: ~44 min
 - Total execution time: ~105 hours
 
@@ -116,16 +116,22 @@ Historical decisions affecting v1.3:
 - Phase 23-01: Remove duplicate MXFP code (E8M0, MxfpBlock) from gguf.rs - use mxfp.rs
 - Phase 23-02: Remove unused quantization formats (Q4_1, Q5_0, Q5_1) from GgufTensorType
 - Phase 23-03: Consolidate GgufMetadata - remove duplicate from gguf.rs, keep metadata.rs version
+- Phase 23-04: Remove ParallelResult type alias, fix compilation errors from 23-01/23-02
 
-**Phase 23 In Progress** - 3 of 5 plans complete
+**Phase 23 In Progress** - 4 of 5 plans complete
 
 **Decision: Single Source of Truth for GgufMetadata**
 - Keep GgufMetadata in src/loader/metadata.rs (has both update_from_kv() and calculate_default_head_dim())
 - Remove incomplete duplicate from src/loader/gguf.rs (only had calculate_default_head_dim())
 - Use canonical import path: crate::loader::metadata::GgufMetadata (23-03)
 
+**Decision: Remove ParallelResult Type Alias**
+- ParallelResult (Arc<RwLock<Vec<f32>>>) was defined but never used
+- Rayon parallel dequantization uses inline Arc::new(RwLock::new(result)) instead
+- AsyncLoader uses different pattern (HIP streams, not CPU parallel results) (23-04)
+
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed Phase 23-03 (GgufMetadata consolidation - duplicate removed from gguf.rs)
+Stopped at: Completed Phase 23-04 (ParallelResult removed, compilation errors fixed)
 Resume file: None
