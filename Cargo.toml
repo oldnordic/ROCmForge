@@ -118,8 +118,8 @@ name = "test_inference"
 path = "test_inference.rs"
 
 [features]
-default = []
-rocm = []
+# ROCm/HIP is always-on for ROCmForge - AMD GPU inference engine
+default = ["simd"]
 # Enable SIMD CPU backend (requires nightly Rust)
 simd = []
 # Enable AVX-512 code paths (opt-in due to CPU throttling concerns)
