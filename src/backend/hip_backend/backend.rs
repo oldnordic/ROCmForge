@@ -1736,6 +1736,20 @@ impl HipBackend {
         Ok(buffer)
     }
 
+    /// Create a dummy zero-byte buffer for empty tensors.
+    ///
+    /// Used for tensors with byte_size=0 (e.g., KV cache views at current_len=0).
+    /// These don't need actual GPU memory but need a valid HipBuffer for the type system.
+    pub fn dummy_zero_buffer(&self) -> HipResult<HipBuffer> {
+        Ok(HipBuffer {
+            inner: Arc::new(HipBufferInner {
+                ptr: ptr::null_mut(),
+                size: 0,
+                offset: 0,
+            }),
+        })
+    }
+
     pub fn launch_kernel(
         &self,
         kernel_name: &str,
@@ -3617,6 +3631,87 @@ impl AsyncLoader {
         Ok(())
     }
 
+    /// Upload data to a GPU buffer at a specific offset (arena-based allocation)
+    ///
+    /// This is used by the memory arena pattern where multiple tensors share a single
+    /// large GPU buffer. Instead of allocating individual buffers, we upload to offsets
+    /// within the arena buffer.
+    ///
+    /// # Arguments
+    /// * `buffer` - Target GPU buffer (typically the arena backing buffer)
+    /// * `offset` - Byte offset into the buffer where data should be written
+    /// * `data` - Host data to upload
+    /// * `stream_idx` - Which stream to use (0-3)
+    ///
+    /// # Errors
+    /// - If offset + data.len() exceeds buffer size
+    /// - If stream_idx is out of range
+    /// - If HIP memcpy fails
+    pub fn upload_to_buffer_offset(
+        &self,
+        buffer: &HipBuffer,
+        offset: usize,
+        data: &[u8],
+        stream_idx: usize,
+    ) -> HipResult<()> {
+        if stream_idx >= NUM_UPLOAD_STREAMS {
+            return Err(HipError::DeviceError(format!(
+                "Invalid stream index: {} (max {})",
+                stream_idx,
+                NUM_UPLOAD_STREAMS - 1
+            )));
+        }
+
+        // Validate offset doesn't exceed buffer bounds
+        if offset + data.len() > buffer.size() {
+            return Err(HipError::DeviceError(format!(
+                "Upload offset out of bounds: offset={}, size={}, buffer_size={}",
+                offset,
+                data.len(),
+                buffer.size()
+            )));
+        }
+
+        tracing::trace!(
+            "AsyncLoader::upload_to_buffer_offset: Uploading {} bytes at offset {} on stream {}",
+            data.len(),
+            offset,
+            stream_idx
+        );
+
+        // Record event before upload
+        self.events[stream_idx].record(&self.streams[stream_idx])?;
+
+        // Perform async copy to offset within buffer
+        let dst_ptr = unsafe { buffer.as_ptr().add(offset) };
+        let result = unsafe {
+            hipMemcpyAsync(
+                dst_ptr as *mut c_void,
+                data.as_ptr() as *const c_void,
+                data.len(),
+                HIP_MEMCPY_HOST_TO_DEVICE,
+                self.streams[stream_idx].as_ptr(),
+            )
+        };
+
+        if result != HIP_SUCCESS {
+            return Err(HipError::DeviceError(format!(
+                "Async upload to offset failed on stream {}: {}",
+                stream_idx, result
+            )));
+        }
+
+        // Record event after upload (marks completion)
+        self.events[stream_idx].record(&self.streams[stream_idx])?;
+
+        tracing::trace!(
+            "AsyncLoader::upload_to_buffer_offset: Upload queued at offset {} on stream {}",
+            offset,
+            stream_idx
+        );
+        Ok(())
+    }
+
     /// Upload data to a GPU buffer, automatically selecting the least busy stream
     ///
     /// This is a convenience method that picks a stream using round-robin.
@@ -3672,8 +3767,10 @@ unsafe impl Sync for AsyncLoader {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
+    #[serial]
     fn test_hip_buffer_creation() {
         let buffer = HipBuffer::new(1024);
         assert!(buffer.is_ok(), "Buffer creation should succeed");
@@ -3689,6 +3786,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_hip_buffer_copy() {
         let backend = HipBackend::new().unwrap();
         let buffer = HipBuffer::new(4 * std::mem::size_of::<f32>()).unwrap();
@@ -3708,6 +3806,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_kernel_launch() {
         let backend = HipBackend::new().unwrap();
         let args: Vec<*mut c_void> = vec![];
@@ -3721,6 +3820,7 @@ mod tests {
     // Test: HipEvent lifecycle (create, record, synchronize, destroy)
 
     #[test]
+    #[serial]
     fn test_hip_event_create_and_destroy() {
         // This test will FAIL initially because HipEvent doesn't exist yet
         let _event = HipEvent::new().expect("Failed to create HIP event");
@@ -3728,6 +3828,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_hip_event_record_and_synchronize() {
         let backend = HipBackend::new().expect("Failed to create backend");
         let event = HipEvent::new().expect("Failed to create HIP event");
@@ -3742,6 +3843,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_hip_event_elapsed_time() {
         let backend = HipBackend::new().expect("Failed to create backend");
         let event_start = HipEvent::new().expect("Failed to create start event");
@@ -3787,6 +3889,7 @@ mod tests {
     // Phase 3: AsyncLoader Tests
 
     #[test]
+    #[serial]
     fn test_async_loader_create() {
         let loader = AsyncLoader::new();
         assert!(loader.is_ok(), "AsyncLoader creation should succeed");
@@ -3795,6 +3898,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_async_loader_upload_single() {
         let backend = HipBackend::new().expect("Failed to create backend");
         let loader = AsyncLoader::new().expect("Failed to create AsyncLoader");
@@ -3819,6 +3923,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_async_loader_upload_concurrent() {
         let backend = HipBackend::new().expect("Failed to create backend");
         let loader = AsyncLoader::new().expect("Failed to create AsyncLoader");
@@ -3854,6 +3959,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_async_loader_upload_auto() {
         let backend = HipBackend::new().expect("Failed to create backend");
         let loader = AsyncLoader::new().expect("Failed to create AsyncLoader");
@@ -3877,6 +3983,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_async_loader_invalid_stream() {
         let loader = AsyncLoader::new().expect("Failed to create AsyncLoader");
         let buffer = HipBuffer::new(1024).expect("Failed to create buffer");
@@ -3937,6 +4044,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_retry_operation_success_on_first_try() {
         // Test that successful operations return immediately without retry
         let backend = HipBackend::new().unwrap();
@@ -3955,6 +4063,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_retry_operation_fails_on_permanent_error() {
         // Test that permanent errors fail immediately without retry
         let backend = HipBackend::new().unwrap();
@@ -3973,6 +4082,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_retry_operation_succeeds_after_retry() {
         // Test that recoverable errors are retried
         let backend = HipBackend::new().unwrap();
@@ -3997,6 +4107,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_retry_operation_exhausts_retries() {
         // Test that retries are eventually exhausted
         let backend = HipBackend::new().unwrap();
