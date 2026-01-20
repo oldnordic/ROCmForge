@@ -80,6 +80,10 @@ impl GgufMetadata {
             // Qwen2-specific keys
             "qwen2.block_count" => self.num_layers = value.parse().unwrap_or(0),
             "qwen2.attention.head_count" => self.num_heads = value.parse().unwrap_or(0),
+            "qwen2.attention.head_count_kv" => {
+                eprintln!(">>> Metadata: Found qwen2.attention.head_count_kv = {}", value);
+                self.num_kv_heads = Some(value.parse().unwrap_or(0))
+            }
             "qwen2.embedding_length" => self.hidden_size = value.parse().unwrap_or(0),
             "qwen2.intermediate_size" => self.intermediate_size = value.parse().unwrap_or(0),
             "qwen2.rope.dimension_count" => {
