@@ -9,11 +9,11 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 
 ## Current Position
 
-Phase: 25 - Architectural Decomposition (Plan 12 of 17 - Gap Closure In Progress)
-Status: GAP CLOSURE IN PROGRESS - 3 of 10 gap closure plans complete
-Last activity: Completed 25-12 execution.rs decomposition at 2026-01-20T17:18:57Z
+Phase: 25 - Architectural Decomposition (Plan 11 of 17 - Gap Closure In Progress)
+Status: GAP CLOSURE IN PROGRESS - 4 of 10 gap closure plans complete
+Last activity: Completed 25-11 kv_cache.rs further decomposition at 2026-01-20T17:19:03Z
 
-Progress: [█████████████████░░░] 92% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 3/10 complete)
+Progress: [█████████████████░░░] 92% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 4/10 complete)
 
 ## Milestone v1.3 Summary
 
@@ -30,8 +30,8 @@ Progress: [█████████████████░░░] 92% (Ph
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 152 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 3/10)
-- Plans remaining: 12 (7 gap closure + 5 future)
+- Total plans completed: 153 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 4/10)
+- Plans remaining: 11 (6 gap closure + 5 future)
 - Average duration: ~44 min
 - Total execution time: ~112 hours
 
@@ -43,6 +43,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 Recent decisions:
 
+- **Operation Module Pattern for Cache Decomposition**: Use functional operation modules taking explicit RwLock references instead of trait extensions. Enables testability and clear lock management. Applied to kv_cache in 25-11 with cache_ops, sequence_ops, and block_ops modules (25-11)
 - **Submodule Pattern for Private Field Access**: When sibling modules need access to private fields, reorganize as parent-child submodules (e.g., kernels_cache/ containing kernels_basic.rs and kernels_flash.rs) to preserve encapsulation (25-07)
 - **Memory Arena for GPU Weights**: Use ModelWeightArena with single HipBuffer backing store to prevent RDNA3 GPU hangs from multiple small allocations. Best-fit allocation with 256-byte alignment (22-01)
 - **HTTP Context Endpoint Deferred**: HNSW index in sqlitegraph is not Send+Sync due to internal `Rc<RefCell<>>`, making it incompatible with Axum's async State extractor. CLI commands provide full context management functionality as alternative (12.1B-01)
@@ -168,7 +169,7 @@ Historical decisions affecting v1.3:
 - Phase 25-08: Gap Closure - engine.rs decomposition (COMPLETE)
 - Phase 25-09: Gap Closure - scheduler/scheduler.rs decomposition (PLANNED)
 - Phase 25-10: Gap Closure - ops/attention_gpu.rs decomposition (PLANNED)
-- Phase 25-11: Gap Closure - kv_cache/kv_cache.rs further decomposition (PLANNED)
+- Phase 25-11: Gap Closure - kv_cache/kv_cache.rs further decomposition (COMPLETE)
 - Phase 25-12: Gap Closure - ggml/hip_backend/execution.rs further decomposition (COMPLETE)
 - Phase 25-13: Gap Closure - http/server.rs decomposition (PLANNED)
 - Phase 25-14: Gap Closure - profiling/rocprof_integration.rs decomposition (PLANNED)
@@ -218,7 +219,7 @@ Historical decisions affecting v1.3:
 | backend/hip_backend/backend.rs | 4,243 | 10 modules (COMPLETE) |
 | model/execution_plan/execution_plan_src.rs | 4,224 | 8 modules (COMPLETE) |
 | loader/gguf.rs | 2,284 | 7 modules (COMPLETE) |
-| kv_cache/kv_cache.rs | 2,094 | 5 modules (PARTIAL - further decompose in 25-11) |
+| kv_cache/kv_cache.rs | 2,094 | 5 modules (COMPLETE - 25-11: 1,032 LOC with cache_ops, sequence_ops, block_ops) |
 | sampler/gpu.rs | 1,858 | 5 modules (COMPLETE) |
 | http/server.rs | 1,518 | 4 modules (25-13) |
 | ggml/hip_backend/mod.rs | 1,509 | 4 modules (COMPLETE) |
@@ -318,6 +319,14 @@ Historical decisions affecting v1.3:
 - Files > 1,000 LOC reduced: 15 → 8 (-7 files total)
 - 93% LOC reduction in execution.rs (1,207 → 84)
 
+**Phase 25-11 Summary (COMPLETE):**
+- Further decomposed kv_cache/kv_cache.rs from 1,304 LOC to 1,032 LOC (658 LOC non-test)
+- Created 3 operation modules: cache_ops (353 LOC), sequence_ops (238 LOC), block_ops (426 LOC)
+- Operation module pattern: Functional operations taking RwLock references
+- Delegation pattern: Main struct delegates to operation modules
+- Pure structural refactor - zero functional changes
+- Files > 1,000 LOC reduced: 15 → 7 (-8 files total)
+
 **Phase 25 Gap Closure Plans (2026-01-20):**
 - 10 plans created (25-08 through 25-17)
 - Wave 2A: 3 parallel plans (engine COMPLETE, scheduler COMPLETE, ops/attention_gpu)
@@ -328,13 +337,13 @@ Historical decisions affecting v1.3:
 
 **Phase 25 Final Status:**
 - Status: GAP CLOSURE IN PROGRESS (3 of 10 complete)
-- Files > 1,000 LOC reduced: 15 → 8 (-7 files so far)
-- Gap closure targets: 7 remaining files
+- Files > 1,000 LOC reduced: 15 → 7 (-8 files so far)
+- Gap closure targets: 6 remaining files
 - Tests passing: 675 (baseline stable)
 - Largest file: 1,518 LOC (http/server.rs)
 
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed 25-12 execution.rs decomposition at 2026-01-20T17:18:57Z
+Stopped at: Completed 25-11 kv_cache.rs decomposition at 2026-01-20T17:19:03Z
 Resume file: Continue gap closure plans with `/gsd:execute-phase 25 --gaps-only`
