@@ -9,14 +9,30 @@
 //! - See `crate::model::kv_cache::KVCache` for the legacy simple implementation
 
 pub mod block_allocator;
+pub mod blocks;
+pub mod config;
 pub mod kv_cache;
 pub mod page_table;
+pub mod pages;
+pub mod types;
 
 // Re-export from kv_cache
-pub use kv_cache::{
-    AllocationStats, BlockTable, CacheConfig, CachePreset, CachePage, CacheStats, KvCache,
-    KvCacheError, KvCacheResult, MemoryProfile, PagedCacheStats, PhysicalBlockPool, SequenceCache,
+pub use kv_cache::KvCache;
+
+// Re-export from types
+pub use types::{
+    BlockId as KvCacheBlockId, BlockTable, CacheStats, KvCacheError, KvCacheResult,
+    MemoryProfile, PagedCacheStats,
 };
+
+// Re-export from config
+pub use config::{CacheConfig, CachePreset};
+
+// Re-export from blocks
+pub use blocks::{AllocationStats, PhysicalBlock, PhysicalBlockPool};
+
+// Re-export from pages
+pub use pages::{CachePage, SequenceCache};
 
 // Re-export from page_table
 pub use page_table::PageTable;
@@ -28,4 +44,4 @@ pub use block_allocator::BlockAllocator;
 // Use fully qualified paths: kv_cache::BlockId, block_allocator::BlockId, etc.
 pub use block_allocator::BlockId as BlockAllocatorBlockId;
 pub use block_allocator::PhysicalBlock as AllocatorPhysicalBlock;
-pub use kv_cache::BlockId;
+pub use types::BlockId;
