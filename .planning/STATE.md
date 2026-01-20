@@ -5,15 +5,15 @@
 See: .planning/PROJECT.md (updated 2026-01-20)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Phase 26 - Compiler Warning Cleanup
+**Current focus:** Phase 27 - GPU Transpose Fix
 
 ## Current Position
 
-Phase: 26 - Warning Cleanup (Plan 4 of N - COMPLETE)
-Status: PLAN 26-04 COMPLETE - KernelCache visibility mismatch fixed
-Last activity: Completed 26-04 visibility fix and test module repair at 2026-01-20T18:43:00Z
+Phase: 27 - GPU Transpose Fix (Plan 2 of 4 - COMPLETE)
+Status: PLAN 27-02 COMPLETE - HIP transpose kernel implemented
+Last activity: Completed 27-02 HIP transpose kernel at 2026-01-20T19:47:48Z
 
-Progress: [████████████████████░] 99% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 COMPLETE, Phase 26 in progress)
+Progress: [████████████████████░] 99% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 COMPLETE, Phase 26 COMPLETE, Phase 27 in progress)
 
 ## Milestone v1.3 Summary
 
@@ -30,10 +30,10 @@ Progress: [████████████████████░] 99% 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 162 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22-25, Phase 26 warning cleanup 4/4)
-- Plans remaining: 2 (Phase 26 plans)
+- Total plans completed: 164 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22-26, Phase 27-01, 27-02)
+- Plans remaining: 2 (Phase 27 plans: 27-03, 27-04)
 - Average duration: ~44 min
-- Total execution time: ~118 hours
+- Total execution time: ~119 hours
 
 ## Accumulated Context
 
@@ -400,5 +400,23 @@ Historical decisions affecting v1.3:
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed 26-04 KernelCache visibility mismatch fix at 2026-01-20T18:43:00Z
-Resume file: Continue warning cleanup with plans 26-01 (deprecated dequant functions) or 26-02 (deprecated to_host_vec)
+Stopped at: Completed 27-01 TransposeKernel infrastructure creation at 2026-01-20T19:46:44Z
+Resume file: Continue with Phase 27-02 (HIP transpose kernel implementation)
+
+**v1.5 - GPU Transpose Fix (2026-01-20):**
+- Phase 27-01: TransposeKernel module with lazy HSACO loading, build.rs integration (COMPLETE)
+
+**Phase 27-01 Summary:**
+- Created src/kernels/transpose/mod.rs (263 LOC) with TransposeKernel struct
+- new(), initialize(), and transpose() methods following existing kernel pattern
+- TRANSPOSE_HSACO build.rs integration for src/kernels/transpose/hip transpose.hip
+- Error handling: HipError::KernelLoadFailed for missing HSACO with descriptive messages
+- 2D tensor shape validation with proper error messages
+- Tests passing: 701/701 (baseline stable)
+- Commits: 2 (6b80ec0: create module, 5112072: add to kernels/mod.rs and build.rs)
+
+**Decision: Kernel Module Pattern for Transpose**
+- Follow existing kernel cache pattern from sampler/gpu.rs (Phases 15-18)
+- Lazy initialization via initialize() method called on first use
+- Environment variable-based HSACO discovery (TRANSPOSE_HSACO)
+- Kernel name "transpose_kernel" follows existing convention (scale_kernel, softmax_kernel, etc.)
