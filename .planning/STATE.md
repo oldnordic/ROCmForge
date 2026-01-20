@@ -9,11 +9,11 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 
 ## Current Position
 
-Phase: 22 - Memory Pool Implementation (Plan 02 of 5)
-Status: In progress - Plan 22-02 complete
-Last activity: Memory requirements calculation implementation
+Phase: 22 - Memory Pool Implementation (Plan 03 of 5)
+Status: In progress - Plan 22-03 complete
+Last activity: Arena-based tensor loading implementation
 
-Progress: [██████████░░░░░░░░░░░░] 20% (Phase 22 Plan 2 of 5 complete, v1.3 complete, v1.4 planning paused)
+Progress: [█████████████░░░░░░░░░] 40% (Phase 22 Plan 3 of 5 complete, v1.3 complete, v1.4 planning paused)
 
 ## Milestone v1.3 Summary
 
@@ -96,14 +96,20 @@ Historical decisions affecting v1.3:
 **v1.4 - Memory & Performance (2026-01-20):**
 - Phase 22-01: ModelWeightArena structure with best-fit allocation and 256-byte alignment
 - Phase 22-02: MemoryCalculator and check_memory_for_model() for pre-allocation memory verification
+- Phase 22-03: Arena-based tensor loading with upload_to_buffer_offset() and from_arena_slice()
 
 **Decision: Safety Margin on Calculated Need**
 - Use 10% + 100MB minimum safety margin on CALCULATED memory need
 - NOT a percentage of free memory (the flawed 70% approach could still crash desktop)
 - Based on actual tensor requirements from GGUF model (22-02)
 
+**Decision: Arena Slice Reference via HipBuffer::sub_buffer_view()**
+- Use existing HipBuffer::sub_buffer_view() for arena slice references
+- Arc-based ownership ensures arena outlives all DeviceTensors using it (22-03)
+- Offset-based upload via AsyncLoader::upload_to_buffer_offset() (22-03)
+
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed Phase 22-02 (Memory Requirements Calculation)
+Stopped at: Completed Phase 22-03 (Arena-based tensor loading)
 Resume file: None

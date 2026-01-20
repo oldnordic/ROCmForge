@@ -6,7 +6,7 @@
 //! - Tensor block reading and validation
 //! - GPU memory allocation via DeviceTensor
 
-use crate::backend::hip_backend::{AsyncLoader, DeviceTensor, HipBackend, HipBuffer};
+use crate::backend::hip_backend::{AsyncLoader, DeviceTensor, HipBackend};
 use crate::memory::{MemoryCalculator, ModelWeightArena};
 
 // GPU dequantization kernels (require ROCm feature)
@@ -1316,9 +1316,10 @@ impl GgufLoader {
         );
 
         tracing::info!(
-            "Arena upload complete: {} MB used, {} MB free, {} fragments",
+            "Arena upload complete: {} MB used, {} MB free, {:.1}% fragmentation, {} fragments",
             arena.allocated_bytes() / 1024 / 1024,
             arena.remaining_capacity() / 1024 / 1024,
+            arena.fragmentation() * 100.0,
             arena.fragment_count()
         );
 
