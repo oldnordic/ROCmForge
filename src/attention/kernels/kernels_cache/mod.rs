@@ -3,9 +3,10 @@
 #![allow(non_snake_case)] // Kernel parameter names follow HIP conventions
 #![allow(dead_code)] // Reserved for future kernel caching optimization
 
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use crate::backend::hip_backend::{HipBackend, HipKernel, HipModule};
+use crate::backend::hip_backend::{HipBackend, HipError, HipKernel, HipModule};
 
 // Public sub-modules that can access private KernelCache fields
 #[cfg(feature = "rocm")]

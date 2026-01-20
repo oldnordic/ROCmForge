@@ -6,7 +6,7 @@
 use std::ffi::c_void;
 
 #[cfg(feature = "rocm")]
-use crate::backend::hip_backend::HipKernel;
+use crate::backend::hip_backend::{HipError, HipKernel};
 
 #[cfg(feature = "rocm")]
 // kernels_basic is now a submodule of kernels_cache, so use super
