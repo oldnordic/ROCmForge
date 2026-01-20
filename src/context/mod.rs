@@ -40,8 +40,8 @@ pub mod graph_context;
 
 #[cfg(feature = "context")]
 pub use graph_context::{
-    ContextMessage, ContextSearchParams, ContextSearchResult, DummyEmbedding,
-    EmbeddingModel, GraphContextStore,
+    ContextError, ContextMessage, ContextResult, ContextSearchParams,
+    ContextSearchResult, DummyEmbedding, EmbeddingModel, GraphContextStore,
 };
 
 // Re-export sqlitegraph types when context feature is enabled

@@ -5,161 +5,120 @@
 ## Languages
 
 **Primary:**
-- Rust 2021 Edition - Core inference engine, all modules
-
-**Minimum Rust Version:**
-- 1.82+ (required for stable `std::simd`)
+- Rust 2021 Edition - Core inference engine and all libraries
+  - Minimum rust-version: 1.82 (required for stable `std::simd`)
+  - Located in: `/home/feanor/Projects/ROCmForge/src/`
 
 **Secondary:**
-- HIP (Heterogeneous Interface for Portability) - GPU kernels in `kernels/` directory
-- C - FFI bindings for ROCm/HIP libraries (via `extern "C"` blocks)
+- HIP (Heterogeneous Interface for Portability) - GPU kernel language
+  - ROCm GPU kernels in: `/home/feanor/Projects/ROCmForge/kernels/`
+  - Compiled to HSACO format via hipcc
 
 ## Runtime
 
 **Environment:**
-- Linux (ROCm is Linux-only)
-- ROCm 5.0+ / HIP 7.1+
+- Linux only (ROCm restriction)
+- ROCm 5.0+ required for AMD GPU support
+- Target GPU architectures: gfx1100 (RDNA3), gfx1030 (RDNA2), gfx90a (CDNA2)
 
 **Package Manager:**
-- Cargo - Rust package manager
-- Lockfile: `Cargo.lock` (present, 92653 bytes)
-
-**Build System:**
-- `cargo build` with custom `build.rs` for HIP kernel compilation
-- `hipcc` compiler invoked via build script to compile `.hip` kernel sources to `.hsaco` binaries
+- Cargo
+- Lockfile: `Cargo.lock` present (92KB)
 
 ## Frameworks
 
 **Core:**
-- std::simd (Rust 1.82+) - CPU SIMD operations for fallback backend (feature-gated: `simd`)
-- Custom HIP FFI layer - Direct ROCm bindings in `src/backend/hip_backend/backend.rs`
-- Custom GGUF loader - GGUF format model parsing in `src/loader/`
-
-**HTTP Server:**
-- axum 0.7 - HTTP web framework (features: json)
-- tokio 1.0 - Async runtime (features: full)
-- tower 0.4 - Middleware utilities
-- tower-http 0.5 - HTTP middleware (features: cors, trace)
+- axum 0.7 - HTTP server framework for `/v1/completions` API
+- tokio 1.0 - Async runtime (features: "full")
+- tower 0.4 / tower-http 0.5 - HTTP middleware (CORS, tracing)
 
 **Testing:**
-- Built-in Rust test harness - Unit and integration tests
-- serial_test 3.0 - Sequential test execution for GPU isolation
+- No explicit test framework - uses Rust's built-in `#[test]`
+- serial_test 3.0 - Sequential GPU test execution
+- mockall 0.12 - Mocking support
 - proptest 1.4 - Property-based testing
-- tempfile 3.8 - Temporary file/directory creation
-- mockall 0.12 - Mocking framework
+- criterion 0.5 - Benchmarking with HTML reports
 
-**Benchmarking:**
-- criterion 0.5 - Statistical benchmarks (features: html_reports)
-
-**CLI:**
-- clap 4.5 - Command-line argument parsing (features: derive)
+**Build/Dev:**
+- cc 1.0 - C compilation support for HIP kernels
+- clap 4.5 - CLI argument parsing for `rocmforge_cli`
 
 ## Key Dependencies
 
-**GPU/Compute:**
-- ROCm HIP (amdhip64, hipblas, hiprtc) - Linked via `build.rs` for GPU operations
-- None (placeholder crates commented out in `Cargo.toml`: `hip`, `hip-sys`)
+**Critical:**
 
-**HTTP/Networking:**
-- reqwest 0.11 - HTTP client (features: json, stream)
-- reqwest-eventsource 0.4 - Server-Sent Events support
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `tokenizers` | 0.15 | Hugging Face tokenizer support (WordLevel, BPE, etc.) |
+| `memmap2` | 0.9 | Memory-mapped file loading for GGUF models |
+| `half` | 2.4 | FP16/BF16 arithmetic support |
+| `rayon` | 1.10 | Parallel CPU operations |
+| `bytemuck` | 1.15 | Safe memory casting for tensor operations |
+| `prometheus-client` | 0.22 | Metrics export at `/metrics` endpoint |
 
-**Tokenization:**
-- tokenizers 0.15 - Hugging Face tokenizer library (features: http)
+**Infrastructure:**
 
-**Metrics:**
-- prometheus-client 0.22 - Prometheus metrics export
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `serde` / `serde_json` | 1.0 | Serialization for config, API responses |
+| `tracing` / `tracing-subscriber` | 0.1 / 0.3 | Structured logging |
+| `anyhow` / `thiserror` | 1.0 / 1.0 | Error handling |
+| `reqwest` | 0.11 | HTTP client for CLI (json, stream features) |
+| `reqwest-eventsource` | 0.4 | Server-Sent Events for streaming responses |
+| `byteorder` | 1.5 | Binary GGUF format parsing |
+| `flate2` | 1.0 | GZIP decompression for GGUF metadata |
+| `once_cell` | 1.18 | Global singleton initialization |
+| `raw-cpuid` | 11.0 | Runtime CPU feature detection for SIMD dispatch |
+| `hex` | 0.4 | Hex encoding/decoding |
 
-**Serialization:**
-- serde 1.0 - Serialization framework (features: derive)
-- serde_json 1.0 - JSON serialization
+**Feature-Gated:**
 
-**Math:**
-- half 2.4 - FP16/BF16 types (features: serde)
-- num-traits 0.2 - Numeric traits
-- rand 0.8 - Random number generation
-- rand_chacha 0.3 - ChaCha RNG
-
-**Async:**
-- futures 0.3 - Async utilities
-- async-stream 0.3 - Async stream support
-
-**File I/O:**
-- memmap2 0.9 - Memory-mapped files
-- byteorder 1.5 - Byte order handling
-- flate2 1.0 - Compression (gzip)
-- rayon 1.10 - Parallel processing
-
-**System:**
-- bytemuck 1.15 - Safe byte casting (features: derive)
-- raw-cpuid 11 - CPU feature detection
-- once_cell 1.18 - One-time initialization
-- hex 0.4 - Hex encoding/decoding
-
-**Error Handling:**
-- anyhow 1.0 - Error context
-- thiserror 1.0 - Error derive macros
-
-**Logging/Tracing:**
-- tracing 0.1 - Instrumentation
-- tracing-subscriber 0.3 - Log routing (features: env-filter, json)
-
-**Context Engine (feature-gated):**
-- sqlitegraph 1.0 - Graph database with HNSW vector indexing (feature: `context`)
-
-**Build:**
-- cc 1.0 - C compilation support
+| Package | Version | Feature | Purpose |
+|---------|---------|---------|---------|
+| `sqlitegraph` | 1.0 | `context` | Graph database for context engine (HNSW vector search) |
+| (placeholder) | - | `rocm` | HIP/ROCm bindings (not yet implemented) |
+| (placeholder) | - | `simd` | CPU SIMD backend (requires nightly) |
 
 ## Configuration
 
 **Environment:**
-- Environment variable based (see `.env.example` for complete list)
-- No runtime config file - all config via env vars
-
-**Key configs:**
-- `ROCM_PATH` - ROCm installation directory (default: `/opt/rocm`)
-- `HIPCC` - HIP compiler path (default: `$ROCM_PATH/bin/hipcc`)
-- `ROCm_ARCH` - Target GPU architecture (default: `gfx1100`)
-- `ROCMFORGE_GGUF` - Path to GGUF model file
-- `ROCMFORGE_TOKENIZER` - Path to tokenizer.json
-- `RUST_LOG` - Tracing filter (default: `info`)
-- `ROCFORGE_LOG_LEVEL` - Simple log level override
-- `ROCFORGE_LOG_FORMAT` - `human` or `json`
-- `ROCMFORGE_GPU_DEVICE` - GPU device number (default: 0)
-- `ROCMORGE_TRACE_SAMPLE_RATE` - OTEL trace sampling (default: 0.1)
-- `ROCMFORGE_MAX_TRACES` - Max traces in memory (default: 1000)
+- Configuration via environment variables
+- Example config: `/.env.example`
+- Key variables:
+  - `ROCMFORGE_GGUF` - Path to GGUF model file
+  - `ROCMFORGE_TOKENIZER` - Path to tokenizer.json
+  - `ROCMFORGE_MODELS` - Model discovery directory (default: `./models`)
+  - `RUST_LOG` - Standard tracing filter
+  - `ROCFORGE_LOG_LEVEL` - Simple log level override
+  - `ROCFORGE_LOG_FORMAT` - "human" or "json"
+  - `ROCFORGE_GPU_DEVICE` - GPU device number (default: 0)
+  - `ROCM_PATH` - ROCm installation path (default: `/opt/rocm`)
+  - `ROCm_ARCH` - Target GPU architecture (default: `gfx1100`)
 
 **Build:**
-- `build.rs` - Compiles HIP kernels from `kernels/*.hip` to `.hsaco` binaries
-- Kernel binaries embedded in build via `cargo:rustc-env`
-- Custom kernel tuning via env vars: `ROCFORGE_BLOCK_SIZE`, `ROCFORGE_WARP_SIZE`, `ROCFORGE_USE_LDS`, `ROCFORGE_LDS_SIZE`, `ROCFORGE_TILE_K`, `ROCFORGE_TILE_N`
+- Build configuration: `/build.rs`
+- Compile HIP kernels when `rocm` feature is enabled
+- 32 HIP kernel sources in `/kernels/`
+- Kernels compiled via `hipcc` to HSACO format
 
 ## Platform Requirements
 
 **Development:**
-- Linux x86_64
 - Rust 1.82+
-- ROCm 5.0+ with HIP compiler
-- AMD GPU with ROCm support (tested on RX 7900 XT - gfx1100)
+- ROCm 5.0+ with hipcc compiler
+- AMD GPU with ROCm support (tested on RX 7900 XT)
 - 8GB+ VRAM recommended
 
-**Production Target:**
-- Linux x86_64 only (ROCm limitation)
-- AMD RDNA2/CDNA GPUs or newer
-- ROCm 5.0+, 6.0+, or 7.0+ compatible drivers
+**Production:**
+- Linux x86_64
+- AMD GPU (RDNA2/3 or CDNA)
+- No Windows support (ROCm limitation)
 
-**Feature Flags:**
-- `default` - No features enabled
-- `rocm` - Enable ROCm/HIP GPU backend (requires ROCm installation)
-- `simd` - Enable CPU SIMD backend (requires nightly Rust)
-- `avx512` - Enable AVX-512 code paths (implies `simd`, opt-in due to CPU throttling)
-- `context` - Enable SQLiteGraph context engine
-- `cuda` - Placeholder for future CUDA support (not implemented)
-
-**Release Profile:**
-- LTO enabled
-- Single codegen unit
-- Panic abort (no unwinding)
+**Build Commands:**
+```bash
+cargo build --release
+cargo test --lib -- --test-threads=1  # GPU tests require serial execution
+```
 
 ---
 

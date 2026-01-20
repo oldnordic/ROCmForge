@@ -6,378 +6,255 @@
 
 **Files:**
 - `snake_case.rs` for all Rust source files
-- `mod.rs` for module entry points in directories
-- Tests co-located with source: `*_tests.rs` or inline `#[cfg(test)]` modules
-- Integration tests in `tests/` directory at project root
+- `mod.rs` for module definitions in directories
+- Test files: `*_tests.rs` or `*_test.rs` for test modules within `src/`
+- Integration tests: `<topic>_tests.rs` in `tests/` directory
 
 **Functions:**
 - `snake_case` for all functions and methods
-- `async fn` prefix for async functions
-- Builder pattern: `with_*` for chaining configuration (e.g., `with_repetition_penalty()`)
+- Constructor pattern: `new()`, `with_<variant>()`, `from_<source>()`
+- Getter pattern: `<property>()` (no `get_` prefix)
+- Setter pattern: `set_<property>()` or `with_<property>(self, ...)` for builder-style
+- Predicate pattern: `is_<state>()`, `has_<property>()`, `can_<action>()`
 
 **Variables:**
-- `snake_case` for local variables and parameters
-- Descriptive names over abbreviations (e.g., `token_id` not `tid`, `batch_size` not `bs`)
-- Single underscore `_` for intentionally unused variables
+- `snake_case` for locals and fields
+- Capitalized acronyms: `HipBackend`, `MxfpBlock`, `RocmForgeError` (not `HIPBackend`)
+- Short names in tight loops: `i`, `j`, `k` for indices; `b`, `h` for batch/heads
+- Descriptive names elsewhere: `input_tokens`, `max_sequence_length`
 
 **Types:**
 - `PascalCase` for structs, enums, and type aliases
-- `PascalCase` for trait names
-- `SCREAMING_SNAKE_CASE` for constants (rare - consts usually use PascalCase or snake_case)
-- `Result<T, CustomError>` type aliases for domain-specific results
+- `PascalCaseError` for error types (e.g., `SamplerError`, `ModelError`)
+- `PascalCaseResult<T>` for Result type aliases (e.g., `ForgeResult<T>`)
+- Traits: `PascalCase` (no suffix convention observed)
 
-**Modules:**
-- `snake_case` for module directories and files
-- Public re-exports at module top for clean API surface
-
-**Generics:**
-- Single-letter: `T`, `E`, `K`, `V`
-- Descriptive when clarity needed: `Backend`, `Config`
+**Constants:**
+- `SCREAMING_SNAKE_CASE` for const values
+- Test constants: `TestTolerance`, `TEST_TOLERANCE` - both patterns observed
 
 ## Code Style
 
 **Formatting:**
-- `rustfmt` for code formatting (via `make fmt` or `cargo fmt`)
+- Rust standard formatting via `cargo fmt`
 - No explicit `.rustfmt.toml` - uses Rust defaults
-- 100-character line target (soft limit)
 
 **Linting:**
-- `clippy` via `make clippy` or `cargo clippy --features rocm -- -D warnings`
-- Clippy warnings treated as errors in CI
-- Standard clippy lints allowed in `src/lib.rs`:
-  ```rust
-  #![allow(clippy::too_many_arguments)]
-  #![allow(clippy::manual_slice_size_calculation)]
-  #![allow(clippy::needless_range_loop)]
-  #![allow(clippy::collapsible_else_if)]
-  #![allow(clippy::collapsible_if)]
-  #![allow(clippy::bool_comparison)]
-  #![allow(clippy::let_and_return)]
-  #![allow(clippy::clone_on_copy)]
-  #![allow(clippy::type_complexity)]
-  #![allow(clippy::missing_safety_doc)]
-  #![allow(clippy::bool_to_int_with_if)]
-  #![allow(clippy::if_same_then_else)]
-  #![allow(clippy::redundant_clone)]
-  #![allow(clippy::manual_memcpy)]
-  ```
-- These allowances accommodate FFI bindings, GPU kernel code, and ML patterns
+- Clippy with many allowed lints via `#![allow(...)]` in `src/lib.rs`:
+  - `too_many_arguments` - FFI and kernel functions need many args
+  - `manual_slice_size_calculation` - Common in GPU code
+  - `needless_range_loop` - Clearer for GPU operations
+  - `collapsible_else_if`, `collapsible_if` - Sometimes clearer for control flow
+  - `bool_comparison` - Sometimes clearer for intent
+  - `let_and_return` - Sometimes clearer for debugging
+  - `clone_on_copy` - Sometimes needed for API clarity
+  - `type_complexity` - Complex types common in ML
+  - `missing_safety_doc` - FFI documented at module level
+  - `bool_to_int_with_if`, `if_same_then_else`, `redundant_clone` - Style choices
+  - `manual_memcpy` - GPU memory operations often manual
+- Compiler warnings: Some unused imports present (c_void, super::*)
 
-**Braces:**
-- Opening braces on same line for structs, enums, functions
-- Closing braces on new line
+**Line Length:**
+- No strict limit enforced
+- GPU kernel declarations can be very long (many parameters)
 
-**Spacing:**
-- Spaces around operators: `a + b`, `x == y`
-- No trailing whitespace
-- Blank line between functions and major logical blocks
+**File Size:**
+- Some files exceed 300 LOC guideline:
+  - `src/model/execution_plan/execution_plan_src.rs`: 4213 lines
+  - `src/backend/hip_backend/backend.rs`: 4039 lines
+  - `src/loader/gguf.rs`: 2846 lines
+  - `src/kv_cache/kv_cache.rs`: 2094 lines
+- Large files typically contain multiple concerns or FFI bindings
 
 ## Import Organization
 
 **Order:**
-1. `std` imports
-2. Third-party crate imports
-3. `crate::` imports (internal)
-4. `use super::*` for child modules
-
-**Example from `src/attention/mod.rs`:**
-```rust
-use thiserror::Error;
-use crate::backend::{DeviceTensor, HipBackend};
-```
+1. Standard library: `use std::...`
+2. External crates: `use rand::...`, `use anyhow::...`
+3. Internal modules: `use crate::...`
+4. Feature-gated imports: `#[cfg(feature = "rocm")] use crate::backend::...`
 
 **Path Aliases:**
-- `crate::` prefix for all internal imports
-- `use crate::module::item;` pattern (no `super::` outside tests)
-- Re-exports at crate root via `src/lib.rs` for public API
+- No `use crate::prelude::*` pattern observed
+- Re-exports at module level: `pub use ...` in `mod.rs` files
+- Example from `src/loader/mod.rs`:
+  ```rust
+  pub use gguf::{GgufLoader, F16};
+  pub use mxfp::{E8M0, MxfpBlock};
+  pub use tensor_type::GgufTensorType;
+  ```
 
-**Feature-gated imports:**
-```rust
-#[cfg(feature = "rocm")]
-use crate::backend::DeviceTensor;
-```
-
-**Common internal re-exports:**
-```rust
-pub use error::{ErrorCategory, ForgeResult, RocmForgeError};
-pub use kv_cache::KvCache;
-pub use sampler::Sampler;
-```
+**Common patterns:**
+- `use super::*` in test modules (but warns when unused)
+- `use crate::<module>::<Type>` for cross-module references
 
 ## Error Handling
 
-**Centralized Error Type:**
-- Single unified error enum: `RocmForgeError` in `src/error.rs`
-- All domain-specific errors consolidated into one type
-- Uses `thiserror` for error display and `From` implementations
+**Pattern:** Centralized error type via `thiserror`
 
-**Error Categories:**
-```rust
-pub enum ErrorCategory {
-    User,       // Invalid input/config - show to user
-    Recoverable, // Temporary condition - may retry
-    Internal,   // Bug - report to developers
-    Backend,    // GPU/HIP failure
-    Model,      // File or model issue
-}
-```
+**Main error type:** `RocmForgeError` in `src/error.rs`
+- Enum-based with domain variants
+- `#[error(...)]` attributes for Display messages
+- `#[from]` for automatic conversions (e.g., `std::io::Error`)
 
-**Error creation macros:**
+**Result type alias:** `ForgeResult<T> = Result<T, RocmForgeError>`
+
+**Module-specific errors:**
+- `SamplerResult<T>` in `src/sampler/sampler.rs`
+- `ModelResult<T>` in `src/model/simple_transformer.rs`
+- `SchedulerResult<T>` in `src/scheduler/scheduler.rs`
+- `AttentionResult<T>` in `src/attention/mod.rs`
+- `EngineResult<T>` in `src/engine.rs`
+
+**Error macros** (defined in `src/error.rs`):
 ```rust
-user_error!("Invalid temperature value")
-user_error!("value: {}", 42)
-internal_error!("Unexpected state in tokenizer")
-backend_error!("HIP kernel launch failed for matmul")
-model_error!("Tensor not found: token_embeddings")
+user_error!("message")           // InvalidRequest variant
+internal_error!("message")        // InternalError variant
+backend_error!("message")         // HipError variant
+model_error!("message")           // ModelLoadFailed variant
+
+// With formatting:
+user_error!("Invalid temperature: {}", temp)
 ```
 
 **Helper functions:**
 ```rust
-user_err("Value not found")
-internal_err("Invariant violated")
-backend_err("GPU not available")
+user_err("msg")       // -> RocmForgeError
+internal_err("msg")   // -> RocmForgeError
+backend_err("msg")    // -> RocmForgeError
+
+io_context(io_err, "context")           // -> RocmForgeError::IoError
+context(any_err, "context")             // -> RocmForgeError::InternalError
+check(result)                           // -> ForgeResult<T>
 ```
 
-**Pattern: Return `ForgeResult<T>`**
-```rust
-pub type ForgeResult<T> = std::result::Result<T, RocmForgeError>;
+**Error categorization:**
+- `RocmForgeError::category()` returns `ErrorCategory`
+- Categories: `User`, `Recoverable`, `Internal`, `Backend`, `Model`
+- Helper methods: `is_recoverable()`, `is_user_error()`, `is_internal_error()`
 
-pub fn sample(&mut self, logits: &[f32]) -> SamplerResult<u32> {
-    if logits.is_empty() {
-        return Err(SamplerError::EmptyLogits);
-    }
-    // ...
-    Ok(token_id)
-}
-```
+**In production paths:**
+- Prefer `?` operator for error propagation
+- Avoid `unwrap()` and `expect()` in production code (per CLAUDE.md)
+- Use `ok_or_else(|| internal_err("context"))?` for Option-to-Result conversion
 
-**Context preservation:**
-```rust
-let result = risky_operation()
-    .map_err(|e| context(e, "during model loading"))?;
-```
-
-**Allowed unwrap/expect:**
-- `unwrap()` used extensively (695 occurrences) - mostly in tests and initialization
-- `expect()` with descriptive messages (435 occurrences)
-- Pattern: `expect("Failed to...")` for truly invariant conditions
-
-**Domain-specific error types:**
-- `SamplerError` in `src/sampler/sampler.rs`
-- `AttentionError` in `src/attention/mod.rs`
-- `KvCacheError` in `src/kv_cache/page_table.rs`
-- These use `thiserror::Error` and convert to `RocmForgeError` at boundaries
+**In tests:**
+- `unwrap()` acceptable for test setup
+- `expect()` with clear messages
 
 ## Logging
 
-**Framework:** `tracing` and `tracing-subscriber`
+**Framework:** `tracing` crate (not `log`)
 
 **Initialization:**
-```rust
-pub use logging::{
-    init_logging_default, init_logging_from_env, init_tracing, is_initialized,
-    LogLevel, LogFormat, LoggingConfig, LoggingError,
-};
-```
+- `init_logging_default()` - Default setup
+- `init_logging_from_env()` - From environment variables
+- `init_tracing()` - Manual configuration
+
+**Levels:** `LogLevel` enum: `Trace`, `Debug`, `Info`, `Warn`, `Error`
 
 **Usage patterns:**
 ```rust
-use tracing::{info, warn, error, debug};
+use tracing::{debug, error, info, warn};
 
-debug!("DEBUG: Attention::forward called with backend: {:?}", self.backend);
-debug!("DEBUG: Input lengths - q: {}, k: {}, v: {}", q.len(), k.len(), v.len());
+debug!("Detailed diagnostic: {}", value);
+info!("Normal operation message");
+warn!("Something unexpected but recoverable: {}", e);
+error!("Operation failed: {}", e);
 ```
 
-**Levels:**
-- `error!`: User-facing errors, failures
-- `warn!`: Recoverable issues, deprecated usage
-- `info!`: Normal operation, startup messages
-- `debug!`: Detailed operation info
-- `trace!`: Very verbose, per-operation details
+**Conditional debug logging:**
+```rust
+#[cfg(debug_assertions)]
+tracing::debug!("Expensive debug info");
+```
 
-**Debug print statements:**
-- `println!` and `eprintln!` used in some GPU tests for visibility
-- Pattern: `eprintln!("WARNING: GPU not available...")` in test fixtures
+**Structured logging:**
+```rust
+use tracing::info;
+info!(request_id = %id, "Processing request");
+```
 
 ## Comments
 
-**Module-level documentation:**
-```rust
-//! MLP (Multi-Layer Perceptron) operations for ROCmForge
-//!
-//! Implements GPU kernels for MLP components:
-//! - SwiGLU activation
-//! - RMSNorm normalization
-```
-
-**Function documentation:**
-- JSDoc/TSDoc-style comments using `///` for public items
-- `///` with description for exported functions
-- Example from `src/error.rs`:
-```rust
-/// Categorize the error for handling decisions
-///
-/// Returns the error category, which can be used to determine
-/// whether an error is recoverable, user-facing, or internal.
-pub fn category(&self) -> ErrorCategory { ... }
-```
-
-**Inline comments:**
-- `//` for implementation notes
-- Explaining non-obvious logic
-- GPU kernel parameters often commented
-
-**TODO/FIXME markers:**
-- 21 occurrences across 17 files (as of 2026-01-20)
-- Pattern: `// TODO: add error context` in test files
-- Pattern: `// TODO: Migrate from to_host_vec() to copy_from_device_safe()`
-
 **When to Comment:**
-- Non-trivial algorithm steps
-- FFI boundary descriptions
-- GPU memory layout explanations
-- Workarounds for hardware/driver issues
+- Module-level documentation (all modules have `//!` doc comments)
+- Complex algorithms (attention kernels, matmul implementations)
+- FFI boundaries (unsafe blocks)
+- Performance-critical sections
+
+**JSDoc/TSDoc equivalent:** Rust doc comments (`///` for items, `//!` for modules)
+
+**Documentation patterns:**
+- Module header: `//! <Purpose>`
+- Function docs: `/// <Summary>` then `/// # Arguments` etc.
+- Example from `src/error.rs`:
+  ```rust
+  /// Unified error type for ROCmForge
+  ///
+  /// This enum consolidates all domain-specific errors into a single type
+  /// that can be used throughout the codebase.
+  ```
+
+**TODO comments:**
+- Present in codebase (grep count: 27 ignored tests indicate some)
+- Use standard Rust TODO/FIXME comments
+
+**Phase markers:**
+- Comments like `// Phase 24 FIX:` indicate development phase
+- `// Phase X:` comments track implementation progress
 
 ## Function Design
 
-**Size:**
-- Target: Keep functions under 50 lines
-- Larger functions acceptable for:
-  - GPU kernel launches (many parameters)
-  - Complex state machines
-  - Table-driven initialization
+**Size:** No strict limit but prefer:
+- Public functions: < 50 lines
+- Private helpers: < 30 lines
+- Large functions are common in:
+  - GPU kernel launch code
+  - FFI wrapper functions
 
 **Parameters:**
-- Many parameters accepted for GPU kernels (allowed via clippy::too_many_arguments)
-- Struct parameters for >3 related fields
-- Builder pattern for configuration
+- Many parameters accepted for GPU kernels (via `#![allow(clippy::too_many_arguments)]`)
+- Builder pattern for complex initialization (e.g., `RetryConfig`)
+- Configuration structs for multi-parameter functions
 
-**Return Values:**
+**Return values:**
 - `Result<T, E>` for fallible operations
-- `Option<T>` for truly optional values
-- `Vec<T>` or `Box<[T]>` for owned collections
-- `&[T]` for slices (preferred over `Vec<T>` reference)
-
-**Self parameter:**
-- `&self` for read-only methods
-- `&mut self` for state mutation
-- `self` for consuming builders
-- `Arc<Self>` shared for GPU backend (reference counting)
+- `Option<T>` for optional values
+- Tuple returns for multiple outputs (e.g., `(free, total)`)
+- `ForgeResult<T>` preferred for library code
 
 ## Module Design
 
 **Exports:**
-- Public items explicitly listed with `pub use`
-- Private items by default
-- Tests in `#[cfg(test)]` modules within source files
+- Public re-exports in `mod.rs` files
+- `pub use` to flatten module hierarchy
+- Example from `src/lib.rs`:
+  ```rust
+  pub use attention::Attention;
+  pub use backend::HipBackend;
+  pub use error::{ErrorCategory, ForgeResult, RocmForgeError};
+  ```
 
-**Barrel Files:**
-- `mod.rs` files re-export public API
-- `src/lib.rs` re-exports crate-level API
-- Example from `src/attention/mod.rs`:
-```rust
-pub use backend::AttentionBackend;
-pub use backend_registry::{
-    AttentionBackendError, AttentionBackendRegistry, ...
-};
-```
+**Barrel files:**
+- `src/lib.rs` acts as main barrel file
+- Each module has `mod.rs` for re-exports
 
-**Test co-location:**
-```rust
-// Phase 1 kernel tests (CPU vs GPU comparison)
-#[cfg(test)]
-#[cfg(feature = "rocm")]
-mod kernel_tests;
+**Feature flags:**
+- `#[cfg(feature = "rocm")]` for GPU-dependent code
+- `#[cfg(test)]` for test modules
+- `#[cfg(feature = "simd")]` for SIMD CPU backend
 
-// Phase 2 RoPE GPU tests
-#[cfg(test)]
-#[cfg(feature = "rocm")]
-mod rope_gpu_tests;
-```
+**Test modules:**
+- Co-located: `mod tests { #[cfg(test)] ... }` within source
+- Separate files: `*_tests.rs` in same directory as module
+- Integration tests: `tests/*.rs`
 
-**Feature-gated modules:**
-```rust
-#[cfg(feature = "rocm")]
-pub mod gpu;
-
-#[cfg(feature = "simd")]
-pub use cpu::{simd_matmul_f32, ...};
-```
-
-**Public vs Internal:**
-- `pub` for library API surface
-- `pub(crate)` for cross-module internal use
-- Private for module-local implementation
-
-## Concurrency Patterns
-
-**Arc Usage:**
-- `Arc<HipBackend>` for shared GPU backend across tests
-- `std::sync::Arc` for reference-counted shared ownership
-- Pattern in test fixtures:
-```rust
-pub static GPU_FIXTURE: Lazy<Option<GpuTestFixture>> = Lazy::new(|| {
-    if !HipBackend::gpu_available() {
-        return None;
-    }
-    match GpuTestFixture::new() {
-        Ok(fixture) => Some(fixture),
-        Err(e) => None,
-    }
-});
-```
-
-**Lock Handling:**
-- `PoisonError<T>` converted to `RocmForgeError::LockPoisoned`
-- Pattern in `src/error.rs`:
-```rust
-impl<T> From<std::sync::PoisonError<T>> for RocmForgeError {
-    fn from(err: std::sync::PoisonError<T>) -> Self {
-        RocmForgeError::LockPoisoned(err.to_string())
-    }
-}
-```
-
-**Async:**
-- `tokio` for async runtime
-- `async fn` for async operations
-- `futures` and `async-stream` for utilities
-
-## Unsafe Code
-
-**FFI Boundaries:**
-- GPU kernel launches use `unsafe`
-- HIP API calls use `unsafe`
-- Pattern:
-```rust
-unsafe {
-    let result = flash_attention_gpu_kernel(
-        q_ptr, k_ptr, v_ptr, out_ptr, mask_ptr,
-        scale, batch_size, seq_len, num_heads, head_dim,
-    );
-    assert_eq!(result, 0, "FlashAttention kernel failed");
-}
-```
-
-**Raw Pointers:**
-- Used for GPU device memory
-- Cast via `as_ptr()`, `as_mut_ptr()`
-- Pattern: `buffer.as_mut_ptr() as *mut f32`
-
-**Safety Documentation:**
-- Not consistently documented (allowed via `clippy::missing_safety_doc`)
-- FFI safety documented at module level
-
-## Constants and Magic Numbers
-
-**Named Constants:**
-```rust
-const TEST_TOLERANCE: f32 = 1e-3;
-```
-
-**Inline Values:**
-- GPU kernel parameters often inline (e.g., grid sizes, block sizes)
-- File format constants inline in parsers
+**Unsafe code:**
+- FFI bindings to HIP/ROCm
+- GPU kernel launches
+- Raw pointer operations
+- SAFETY comments required for unsafe blocks
 
 ---
 

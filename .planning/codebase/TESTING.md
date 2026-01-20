@@ -5,178 +5,120 @@
 ## Test Framework
 
 **Runner:**
-- `cargo test` (built-in Rust test framework)
-- Config: `Makefile` targets for test execution
+- Built-in `cargo test` (Rust's test framework)
+- `serial_test` crate for sequential GPU tests
 
 **Assertion Library:**
-- Built-in `assert!`, `assert_eq!`, `assert_matches!`
-- Custom matchers for error types: `matches!(result, Err(ErrorType))`
-
-**Feature-gated testing:**
-```toml
-[features]
-default = []
-rocm = []
-simd = []
-```
+- Standard `assert!`, `assert_eq!`, `assert_matches!` macros
+- `proptest` for property-based testing
 
 **Run Commands:**
 ```bash
-# Run all tests with serial execution (GPU requirement)
-make test           # cargo test --features rocm --lib -- --test-threads=1
-
-# Verbose output
-make test-verbose   # cargo test --features rocm --lib -- --test-threads=1 --nocapture
-
-# Library unit tests only
-make test-lib       # cargo test --features rocm --lib -- --test-threads=1
-
-# Documentation tests
-make test-docs      # cargo test --doc
-
-# Check without running
-make check          # cargo check --features rocm
-
-# Lint
-make clippy         # cargo clippy --features rocm -- -D warnings
-
-# Format
-make fmt            # cargo fmt
+cargo test                              # Run all tests
+cargo test --test <test_name>           # Run specific test file
+cargo test -- --ignored                 # Run ignored tests
+cargo test -- --nocapture               # Show println output
+ROCFORGE_TEST_MODEL=/path/to/model.gguf cargo test --test e2e_inference_tests -- --ignored
 ```
 
-**Serial test execution:**
-- GPU tests require `--test-threads=1` due to shared device state
-- `serial_test` crate for test serialization:
-```rust
-#[test]
-#[serial]
-fn test_gpu_operation() { ... }
-```
+**Config:**
+- No separate test config file
+- Test configuration via environment variables:
+  - `ROCFORGE_TEST_MODEL` - Path to test model for E2E tests
 
 ## Test File Organization
 
 **Location:**
-- **Co-located**: Tests in `#[cfg(test)]` modules within source files (preferred for unit tests)
-- **Separate**: Integration tests in `tests/` directory at project root
-- **Benchmark**: `benches/` directory for Criterion benchmarks
+- Co-located tests in `src/` using `#[cfg(test)]` modules
+- Integration tests in `tests/` directory
+- Common test helpers in `tests/common/`
 
 **Naming:**
-- Inline test modules: `mod tests`, `mod kernel_tests`, `mod *_tests.rs`
-- Test files: `*_tests.rs` suffix (e.g., `flash_attention_tests.rs`)
-- Integration tests: `*_integration_tests.rs` for integration tests
-- Phase-tagged: `phase*N_*_tests.rs` for development phase tracking
+- Module tests: `*_tests.rs` (e.g., `causal_mask_tests.rs`, `kernel_tests.rs`)
+- Integration tests: `<topic>_tests.rs` (e.g., `simple_model_tests.rs`, `e2e_inference_tests.rs`)
+- Benchmarks: `<topic>_bench.rs` in `benches/`
 
 **Structure:**
 ```
+src/
+  attention/
+    kernels.rs
+    kernel_tests.rs          # Co-located GPU kernel tests
+    causal_mask_tests.rs
+  model/
+    simple_transformer.rs
+    position_embedding_tests.rs
+
 tests/
-├── common/
-│   ├── mod.rs                # Shared test utilities
-│   ├── fixtures.rs           # Reusable test fixtures
-│   └── tempfile_helpers.rs   # Tempfile creation helpers
-├── simple_model_tests.rs          # Model unit tests
-├── edge_case_tests.rs             # Boundary condition tests
-├── e2e_inference_tests.rs         # End-to-end tests
-├── attention_tests.rs             # Attention module tests
-└── ...
-```
-
-**Module-level test structure:**
-```rust
-// In src/attention/mod.rs
-#[cfg(test)]
-#[cfg(feature = "rocm")]
-mod kernel_tests;
-
-#[cfg(test)]
-#[cfg(feature = "rocm")]
-mod rope_gpu_tests;
+  common/
+    tempfile_helpers.rs      # Shared test utilities
+  simple_model_tests.rs      # Integration tests
+  e2e_inference_tests.rs     # End-to-end tests
+  attention_gpu_tests.rs
 ```
 
 ## Test Structure
 
 **Suite Organization:**
+
 ```rust
 #[cfg(test)]
-mod phase3_flash_attention_tests {
-    use crate::attention::cpu::CpuBackend;
-    use crate::attention::kernels::flash_attention_gpu_kernel;
-    use crate::backend::{DeviceTensor, HipBackend};
-    use serial_test::serial;
+mod tests {
+    use super::*;
 
-    const TEST_TOLERANCE: f32 = 1e-3;
-
-    /// Helper: Get GPU backend or skip test if not available
-    fn get_backend_or_skip() -> Arc<HipBackend> {
-        match HipBackend::new_checked() {
-            Ok(backend) => backend,
-            Err(e) => {
-                eprintln!("\nWARNING: GPU not available: {}", e);
-                panic!("GPU_SKIP");  // Caught by test harness
-            }
-        }
+    #[test]
+    fn test_basic_functionality() {
+        // Test body
     }
 
-    /// Test 1: FlashAttention matches CPU - small dimensions
     #[test]
-    #[serial]
-    fn test_flash_attention_matches_cpu_small_no_mask() {
-        let batch_size = 1;
-        let seq_len = 4;
-        let head_dim = 4;
+    #[serial]  // For GPU tests that can't run in parallel
+    fn test_gpu_operation() {
+        // Test requiring exclusive GPU access
+    }
 
-        let (q, k, v) = create_qkv_tensors(batch_size, seq_len, head_dim);
-
-        // CPU reference
-        let cpu_result = CpuBackend::forward(head_dim, &q, &k, &v, None, None)
-            .expect("CPU attention failed");
-
-        // GPU run
-        let backend = get_backend_or_skip();
-        // ... GPU test code ...
-
-        // Compare
-        for (i, (cpu_val, gpu_val)) in cpu_result.iter().zip(gpu_result.iter()).enumerate() {
-            let diff = (cpu_val - gpu_val).abs();
-            assert!(diff < TEST_TOLERANCE, "Mismatch at {}: CPU={}, GPU={}, diff={}",
-                    i, cpu_val, gpu_val, diff);
-        }
+    #[test]
+    #[ignore]  // Requires real model file
+    fn test_with_real_model() {
+        // Test skipped by default
     }
 }
 ```
 
 **Patterns:**
 
-**Setup:**
-- Helper functions for common setup: `get_backend_or_skip()`, `create_qkv_tensors()`
-- Global fixture via `once_cell::sync::Lazy` for GPU backend
-- Configuration creation helpers
+**Setup pattern:**
+```rust
+fn get_backend_or_skip() -> Arc<HipBackend> {
+    match HipBackend::new_checked() {
+        Ok(backend) => backend,
+        Err(e) => {
+            eprintln!("GPU not available: {}", e);
+            panic!("GPU_SKIP");  // Graceful skip pattern
+        }
+    }
+}
+```
 
-**Teardown:**
-- Explicit drop where needed: `drop(tensor);`
-- Memory leak detection: `fixture.assert_no_leak(5);`
+**Teardown pattern:**
+- Rust's Drop handles resource cleanup
+- GPU memory leak checking via `assert_no_leak()`:
+  ```rust
+  fixture.assert_no_leak(5);  // 5% tolerance
+  ```
 
 **Assertion pattern:**
 ```rust
-// Basic assertion
-assert!(result.is_ok(), "Operation should succeed");
+// Standard assertions
+assert_eq!(expected, actual);
+assert!(condition, "Context: {}", value);
 
-// Error matching
-assert!(result.is_err(), "Should fail with invalid input");
-match result {
-    Err(KvCacheError::CapacityExceeded) => { /* expected */ }
-    Err(e) => panic!("Expected CapacityExceeded, got: {:?}", e),
-    Ok(_) => panic!("Should not succeed when cache is full"),
-}
+// Tolerance for floating point
+assert!((expected - actual).abs() < 1e-4, "Diff too large");
 
-// Float comparison with tolerance
-assert!((cpu_val - gpu_val).abs() < TEST_TOLERANCE,
-        "Values differ at {}: {} vs {}", i, cpu_val, gpu_val);
-
-// Vector element-wise comparison
-for (i, (&cpu_val, &gpu_val)) in cpu_result.iter().zip(gpu_result.iter()).enumerate() {
-    let diff = (cpu_val - gpu_val).abs();
-    assert!(diff < 1e-4, "mismatch at {}: CPU={}, GPU={}", i, cpu_val, gpu_val);
-}
+// Pattern matching
+assert!(matches!(result, Ok(_)));
+assert!(matches!(err, SamplerError::InvalidTemperature(_)));
 ```
 
 ## Mocking
@@ -184,209 +126,124 @@ for (i, (&cpu_val, &gpu_val)) in cpu_result.iter().zip(gpu_result.iter()).enumer
 **Framework:** `mockall` (in dev-dependencies)
 
 **Patterns:**
-```rust
-// mockall not extensively used in current codebase
-// Most tests use real implementations or simplified versions
-```
+- Limited use observed - mostly integration-style testing
+- Test fixtures use real GPU when available
 
 **What to Mock:**
-- External services (HTTP clients)
-- File I/O (using temp files instead)
-- Time sources (for deterministic testing)
+- File I/O for some loader tests
+- HTTP responses (if testing server components)
 
 **What NOT to Mock:**
-- CPU reference implementations (used for verification)
-- GPU kernels (tested directly via comparison)
-- Data structures (use real implementations)
-
-**GPU Backend Mocking:**
-- Use `HipBackend::new_checked()` for availability check
-- Graceful skip pattern when GPU unavailable:
-```rust
-fn get_backend_or_skip() -> Arc<HipBackend> {
-    match HipBackend::new_checked() {
-        Ok(backend) => backend,
-        Err(e) => {
-            eprintln!("WARNING: GPU not available - skipping");
-            panic!("GPU_SKIP");
-        }
-    }
-}
-```
+- GPU kernels (use real hardware or skip)
+- Core numerical operations
+- Attention mechanisms
 
 ## Fixtures and Factories
 
 **Test Data:**
 
-**GGUF file creation** (from `tests/common/fixtures.rs`):
 ```rust
-/// Create a minimal valid GGUF file for testing
-pub fn create_test_gguf(path: &Path) -> anyhow::Result<()> {
-    let file = File::create(path)?;
-    let mut writer = BufWriter::new(file);
+// Seeded random for reproducibility
+let data = Tensor::random_seeded(size, 42);
 
-    // Write GGUF magic
-    writer.write_all(b"GGUF")?;
-    writer.write_all(&3u32.to_le_bytes())?;  // version
-    writer.write_all(&0u64.to_le_bytes())?;  // tensor count
-    // ... metadata ...
-    Ok(())
-}
+// Test fixtures module (tests/common/)
+pub fn create_temp_file() -> anyhow::Result<tempfile::NamedTempFile>
 
-/// Create a minimal GGUF with token embeddings
-pub fn create_embedding_gguf(
-    path: &Path,
-    vocab_size: usize,
-    hidden_size: usize,
-) -> anyhow::Result<()>
+// Common patterns
+let q = vec![1.0f32; seq_len * dim];
+let k = vec![0.5f32; seq_len * dim];
 ```
 
-**Tensor creation:**
-```rust
-/// Create test Q, K, V tensors
-fn create_qkv_tensors(
-    batch_size: usize,
-    seq_len: usize,
-    head_dim: usize,
-) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
-    let total_size = batch_size * seq_len * head_dim;
-    let q: Vec<f32> = (0..total_size).map(|i| (i as f32) * 0.1).collect();
-    let k: Vec<f32> = (0..total_size).map(|i| (i as f32) * 0.1 + 1.0).collect();
-    let v: Vec<f32> = (0..total_size).map(|i| (i as f32) * 0.1 + 2.0).collect();
-    (q, k, v)
-}
-```
+**Location:**
+- `tests/common/tempfile_helpers.rs` - File/tempdir helpers
+- `src/backend/gpu_test_common.rs` - GPU test fixture
 
-**GPU Backend fixture** (from `tests/common/mod.rs` and `src/backend/gpu_test_common.rs`):
+**GPU Test Fixture:**
 ```rust
+// Global shared GPU fixture
 pub static GPU_FIXTURE: Lazy<Option<GpuTestFixture>> = Lazy::new(|| {
     if !HipBackend::gpu_available() {
-        eprintln!("WARNING: GPU not available - skipping GPU tests");
         return None;
     }
     match GpuTestFixture::new() {
         Ok(fixture) => Some(fixture),
-        Err(e) => {
-            eprintln!("ERROR: Failed to initialize GPU test fixture: {}", e);
-            None
-        }
+        Err(e) => None,
     }
 });
-
-pub struct GpuTestFixture {
-    backend: std::sync::Arc<HipBackend>,
-    initial_free_mb: usize,
-    initial_total_mb: usize,
-    device_name: String,
-}
 ```
-
-**Location:**
-- `tests/common/fixtures.rs` - Reusable fixtures
-- `tests/common/mod.rs` - GPU test fixture
-- `src/backend/gpu_test_common.rs` - Internal GPU fixture
 
 ## Coverage
 
 **Requirements:** No enforced coverage target
 
 **View Coverage:**
-```bash
-# No coverage tool configured (use cargo-tarpaulin or similar if needed)
-cargo tarpaulin --features rocm --out Html
-```
+- No coverage tool configuration detected
+- Use `cargo test -- --no-run` for compilation check
 
-**Coverage areas:**
-- GPU kernels: Tested via CPU comparison
-- CPU implementations: Unit tests + property tests
-- Error paths: Explicit error variant tests
-- Edge cases: Boundary value tests in `tests/edge_case_tests.rs`
+**Test counts (approximate):**
+- 305 tests in `src/` directory
+- 27 tests marked `#[ignore]`
+- 27 ignored tests (require GPU/HSACO)
 
 ## Test Types
 
 **Unit Tests:**
-- Co-located in `#[cfg(test)]` modules
+- Co-located in `src/` using `#[cfg(test)]`
 - Test individual functions and methods
-- Fast execution (no GPU or minimal GPU usage)
+- Example: `test_softmax_basic`, `test_linear_forward`
 
 **Integration Tests:**
-- `tests/` directory
+- In `tests/` directory
 - Test module interactions
-- File format tests (GGUF loading)
-- End-to-end inference tests
+- Example: `tests/simple_model_tests.rs`
 
 **E2E Tests:**
 - `tests/e2e_inference_tests.rs`
-- `tests/e2e_suite.rs`
-- Full model loading and inference
-- Requires actual model files (configurable via env var)
-
-**GPU Accuracy Tests:**
-- Compare GPU kernel output to CPU reference
-- Use `TEST_TOLERANCE` for float comparison
-- Pattern from `src/attention/flash_attention_tests.rs`:
-```rust
-const TEST_TOLERANCE: f32 = 1e-3;
-
-let cpu_result = CpuBackend::forward(...);
-let gpu_result = run_gpu_kernel(...);
-
-for (i, (cpu_val, gpu_val)) in cpu_result.iter().zip(gpu_result.iter()).enumerate() {
-    let diff = (cpu_val - gpu_val).abs();
-    assert!(diff < TEST_TOLERANCE, "Mismatch at {}: CPU={}, GPU={}", ...);
-}
-```
+- Require real GGUF model file
+- Marked `#[ignore]` by default
+- Run with: `ROCFORGE_TEST_MODEL=/path/to/model.gguf cargo test --test e2e_inference_tests -- --ignored`
 
 **Property Tests:**
-- Framework: `proptest` (in dev-dependencies)
-- Files with property tests:
-  - `src/sampler/sampler.rs` - Sampling properties
-  - `src/kv_cache/kv_cache.rs` - KV cache invariants
-  - `src/scheduler/scheduler.rs` - Scheduling properties
-  - `tests/scheduler_tests.rs`, `tests/kv_cache_tests.rs`, `tests/loader_tests.rs`
+- Using `proptest` crate
+- Example in `src/sampler/sampler.rs`:
+  ```rust
+  proptest! {
+      #[test]
+      fn test_sampling_properties(
+          logits in prop::collection::vec(-10.0f32..10.0f32, 1..100),
+          temperature in 0.1f32..2.0f32,
+          // ...
+      ) {
+          // Property verification
+      }
+  }
+  ```
 
-**Property test pattern:**
-```rust
-proptest! {
-    #[test]
-    fn test_sampling_properties(
-        logits in prop::collection::vec(-10.0f32..10.0f32, 1..100),
-        temperature in 0.1f32..2.0f32,
-        top_k in 1usize..20usize,
-        top_p in 0.1f32..1.0f32
-    ) {
-        let config = SamplingConfig::new(temperature, top_k, top_p).unwrap();
-        let mut sampler = Sampler::new(config);
-
-        if !logits.is_empty() {
-            let token_id = sampler.sample(&logits);
-            prop_assert!(token_id.is_ok());
-            let token_id = token_id.unwrap();
-            prop_assert!(token_id < logits.len() as u32);
-        }
-    }
-}
-```
-
-**Regression Tests:**
-- Named with phase numbers: `phase*N_*`
-- Track specific bugs with targeted tests
-- Pattern: `phase5_paged_tests.rs`, `phase6_integration_*.rs`
-
-**Smoke Tests:**
-- Quick sanity checks
-- `tests/inference_smoke_tests.rs`, `tests/hip_backend_smoke_tests.rs`
-- Verify basic functionality works
+**GPU Tests:**
+- Require `#[cfg(feature = "rocm")]` - only run with ROCm feature
+- Use `#[serial]` attribute from `serial_test` crate
+- Graceful skip pattern:
+  ```rust
+  fn get_backend_or_skip() -> Arc<HipBackend> {
+      match HipBackend::new_checked() {
+          Ok(backend) => backend,
+          Err(e) => {
+              eprintln!("GPU not available: {}", e);
+              panic!("GPU_SKIP");
+          }
+      }
+  }
+  ```
 
 ## Common Patterns
 
 **Async Testing:**
 ```rust
-// tokio test macro for async tests
 #[tokio::test]
 async fn test_async_operation() {
-    let result = async_function().await.unwrap();
-    assert!(result.is_some());
+    // Use tokio::test for async tests
+    let result = engine.submit_request(...).await?;
+    assert!(result.is_ok());
 }
 ```
 
@@ -394,78 +251,81 @@ async fn test_async_operation() {
 ```rust
 #[test]
 fn test_invalid_input_returns_error() {
-    let config = CacheConfig::new(0, 100, 32, 128, 24);
-    assert!(config.is_err(), "Zero page size should be invalid");
+    let result = sampler.sample(&[]);
+    assert!(result.is_err());
+    assert!(matches!(result, Err(SamplerError::EmptyLogits)));
+}
 
-    match config {
-        Err(KvCacheError::InvalidConfiguration) => { /* expected */ }
-        Err(e) => panic!("Expected InvalidConfiguration, got: {:?}", e),
-        Ok(_) => panic!("Should not accept zero page size"),
-    }
+#[test]
+fn test_config_validation() {
+    let config = SamplingConfig::new(0.0, 50, 0.9);  // Invalid temp
+    assert!(config.is_err());
+    assert!(matches!(config, Err(SamplerError::InvalidTemperature(0.0))));
 }
 ```
 
-**Deterministic Testing:**
+**Numerical Accuracy Testing:**
+```rust
+const TEST_TOLERANCE: f32 = 1e-5;
+
+// CPU vs GPU comparison
+for (i, (&cpu_val, &gpu_val)) in cpu_iter.zip(gpu_iter).enumerate() {
+    let diff = (cpu_val - gpu_val).abs();
+    assert!(diff < TEST_TOLERANCE,
+        "Mismatch at {}: CPU={}, GPU={}, diff={}",
+        i, cpu_val, gpu_val, diff);
+}
+
+// Check for finite values
+assert!(output.iter().all(|x| x.is_finite()),
+    "All outputs should be finite");
+```
+
+**Determinism Testing:**
 ```rust
 #[test]
 fn test_model_deterministic_with_same_seed() {
     let model1 = SimpleModel::new(20, 4, 1, 3, ModelBackend::Cpu, 999);
     let model2 = SimpleModel::new(20, 4, 1, 3, ModelBackend::Cpu, 999);
 
-    let input_tokens = vec![1, 2, 3];
-
-    let output1 = model1.forward(&input_tokens).unwrap();
-    let output2 = model2.forward(&input_tokens).unwrap();
+    let output1 = model1.forward(&input).unwrap();
+    let output2 = model2.forward(&input).unwrap();
 
     for (i, (&v1, &v2)) in output1.iter().zip(output2.iter()).enumerate() {
-        assert!((v1 - v2).abs() < 1e-6, "Output at index {} differs", i);
+        assert!((v1 - v2).abs() < 1e-6,
+            "Output at index {} differs: {} vs {}", i, v1, v2);
     }
 }
 ```
 
-**GPU Memory Leak Detection:**
+**Skip Pattern for Missing Resources:**
 ```rust
 #[test]
-#[serial]
-fn test_gpu_operation_no_leak() {
-    let fixture = GPU_FIXTURE.as_ref().expect("GPU not available");
-
-    // ... GPU operations ...
-
-    // Check for memory leaks (5% tolerance)
-    fixture.assert_no_leak(5);
-}
-```
-
-**Numerical Stability Testing:**
-```rust
-#[test]
-fn test_softmax_gpu_numerical_stability() {
-    // Large values that would overflow exp()
-    let input: Vec<f32> = vec![1000.0, 1001.0, 1002.0, 1003.0];
-
-    // GPU run
-    // ... kernel launch ...
-
-    // Verify all values in valid range
-    for &val in &gpu_input {
-        assert!(val > 0.0 && val <= 1.0, "Invalid softmax value {}", val);
+#[ignore]  // Requires real model
+fn test_with_real_model() {
+    if !has_test_model() {
+        println!("Skipping: no test model available");
+        return;
     }
+    // Actual test...
 }
 ```
 
-**Test constants:**
+**HSACO Kernel Testing:**
 ```rust
-const TEST_TOLERANCE: f32 = 1e-3;      // GPU vs CPU comparison
-const SMALL_TOLERANCE: f32 = 1e-6;     // CPU reference
-const EPSILON: f32 = 1e-9;             // Near-zero checks
-```
+let result = unsafe {
+    crate::attention::kernels::some_kernel(
+        ptr,
+        param1,
+        param2,
+    )
+};
 
-**Ignored tests:**
-- Tagged with `#[ignore]` for:
-  - E2E tests requiring specific hardware/models
-  - Performance benchmarks
-  - Experimental features
+if let Err(e) = result {
+    eprintln!("SKIPPED: GPU kernel failed: {} - HSACO not loaded", e);
+    return;  // Skip if kernel not compiled
+}
+```
 
 ---
 

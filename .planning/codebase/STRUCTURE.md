@@ -6,259 +6,260 @@
 
 ```
 ROCmForge/
-├── src/                      # Main library source
-│   ├── attention/            # Multi-head attention (CPU/GPU kernels)
-│   ├── backend/              # CPU and HIP/ROCm backends
-│   │   ├── cpu/              # CPU SIMD operations
-│   │   ├── hip_backend/      # HIP wrapper and GPU execution
-│   ├── ggml/                 # GGML graph IR and backends
-│   │   ├── hip_backend/      # GGML HIP ops (matmul, copy, etc.)
-│   ├── gguf/                 # GGUF loader (merged into loader/)
-│   ├── http/                 # HTTP API server
-│   ├── kv_cache/             # Paged KV cache implementation
-│   ├── loader/               # GGUF/ONNX model loaders
-│   ├── mlp/                  # MLP GPU kernels (SwiGLU, RMSNorm)
-│   ├── model/                # Model configs and execution plans
-│   │   └── execution_plan/   # Layer-wise execution mapping
-│   ├── ops/                  # High-level GPU operations
-│   ├── prompt/               # Prompt processing optimization
-│   ├── sampler/              # Token sampling (top-k, top-p, temperature)
-│   ├── scheduler/            # Continuous batching scheduler
-│   ├── tensor/               # Basic tensor operations
-│   ├── bin/                  # Binary entry points
-│   ├── context/              # SQLiteGraph context engine (feature-gated)
-│   ├── logging/              # Tracing/logging setup
-│   ├── metrics/              # Prometheus metrics
-│   ├── otel_traces.rs        # OpenTelemetry span export
-│   ├── profiling/            # ROCprof integration
-│   ├── tokenizer.rs          # Tokenizer wrapper
-│   ├── models.rs             # Model registry
-│   ├── error.rs              # Unified error types
-│   ├── engine.rs             # Main inference engine
-│   └── lib.rs                # Library root, public exports
-├── tests/                    # Integration tests
-│   ├── common/               # Shared test fixtures
-│   ├── attention/            # Attention-specific tests
-│   └── data/                 # Test data files
-├── benches/                  # Criterion benchmarks
-├── docs/                     # Project documentation
-├── models/                   # Downloaded GGUF models (gitignored)
-├── .planning/                # Phase plans and codebase analysis
-├── Cargo.toml                # Project manifest
-├── CLAUDE.md                 # Development rules
-└── README.md                 # Project overview
+├── src/                    # Main library source code
+│   ├── attention/          # Attention mechanism (CPU/GPU kernels)
+│   ├── backend/            # GPU/HIP backend abstraction
+│   │   ├── hip_backend/    # HIP implementation details
+│   │   └── cpu/            # CPU SIMD implementation
+│   ├── bin/                # CLI binaries
+│   ├── ggml/               # IR-based execution graph
+│   │   └── hip_backend/    # GGML HIP backend (ops implementation)
+│   ├── http/               # REST API server
+│   ├── kv_cache/           # Paged KV cache
+│   ├── loader/             # GGUF/ONNX model loading
+│   ├── mlp/                # MLP operations (SwiGLU, RMSNorm)
+│   ├── model/              # Model implementations
+│   │   └── execution_plan/ # Static execution plans
+│   ├── ops/                # GPU computation ops
+│   ├── profiling/          # Performance profiling
+│   ├── prompt/             # Prompt processing optimization
+│   ├── sampler/            # Token sampling
+│   ├── scheduler/          # Continuous batching
+│   ├── tensor/             # Basic tensor operations
+│   ├── context/            # Context engine (feature-gated)
+│   └── logging/            # Logging configuration
+├── tests/                  # Integration tests
+│   ├── common/             # Test fixtures
+│   └── attention/          # Attention test data
+├── kernels/                # HIP kernel sources (.hip files)
+├── benches/                # Criterion benchmarks
+├── build/                  # Build artifacts (HIP compilation)
+├── docs/                   # Documentation
+├── models/                 # Downloaded model files
+├── .planning/              # Planning artifacts
+└── Cargo.toml              # Package manifest
 ```
 
 ## Directory Purposes
 
 **`src/attention/`:**
-- Purpose: Multi-head attention computation with CPU/GPU backends
-- Contains: Kernels (QK^T, softmax, weighted matmul), FlashAttention, PagedAttention, RoPE, causal masks
-- Key files: `src/attention/flash_attention.rs`, `src/attention/paged_kernel.rs`, `src/attention/rope.rs`
+- Purpose: Attention computation with pluggable CPU/GPU backends
+- Contains: Attention implementations, RoPE, causal masking, FlashAttention, paged attention
+- Key files: `src/attention/mod.rs`, `src/attention/gpu.rs`, `src/attention/flash_attention.rs`, `src/attention/paged_kernel.rs`
 
 **`src/backend/`:**
-- Purpose: Low-level GPU/CPU abstraction
-- Contains: `HipBackend` (main GPU wrapper), `DeviceTensor`, `HipBuffer`, `ModelRuntime`, CPU SIMD
-- Key files: `src/backend/hip_backend/backend.rs`, `src/backend/gpu_executor.rs`
+- Purpose: GPU abstraction layer providing HIP FFI and device memory management
+- Contains: `HipBackend`, `DeviceTensor`, `HipBuffer`, FFI bindings, stream management
+- Key files: `src/backend/mod.rs`, `src/backend/hip_backend/backend.rs`, `src/backend/gpu_executor.rs`
+
+**`src/backend/cpu/`:**
+- Purpose: CPU fallback implementation with SIMD support
+- Contains: CPU feature detection, SIMD matmul operations
+- Key files: `src/backend/cpu/mod.rs`, `src/backend/cpu/simd_ops.rs`
+
+**`src/bin/`:**
+- Purpose: Executable binaries for CLI and utilities
+- Contains: `rocmforge_cli` (main CLI), GGUF inspector, test harnesses
+- Key files: `src/bin/rocmforge_cli.rs`, `src/bin/inspect_gguf.rs`, `src/bin/test_gguf_load.rs`
 
 **`src/ggml/`:**
-- Purpose: GGML graph computation and backend abstraction
-- Contains: `Graph`, `Node`, `Op`, `GgmlBackend` trait, hybrid scheduler
-- Key files: `src/ggml/graph.rs`, `src/ggml/hybrid_scheduler.rs`
+- Purpose: IR-based execution graph for model operations
+- Contains: Graph representation, operations, optimizer, executor, hybrid scheduler
+- Key files: `src/ggml/mod.rs`, `src/ggml/graph.rs`, `src/ggml/executor.rs`, `src/ggml/hybrid_scheduler.rs`
+
+**`src/ggml/hip_backend/`:**
+- Purpose: HIP backend implementation for GGML IR operations
+- Contains: Op implementations (matmul, softmax, RoPE, attention, quantized ops)
+- Key files: `src/ggml/hip_backend/mod.rs`, `src/ggml/hip_backend/ops/matmul.rs`, `src/ggml/hip_backend/ops/softmax.rs`
 
 **`src/http/`:**
-- Purpose: HTTP API server (OpenAI-compatible)
-- Contains: Route handlers, SSE streaming, request/response models
-- Key files: `src/http/mod.rs`
+- Purpose: HTTP server for inference API
+- Contains: Axum server, SSE streaming, request handlers
+- Key files: `src/http/server.rs`, `src/http/mod.rs`
 
 **`src/kv_cache/`:**
-- Purpose: Paged key-value cache for efficient attention
-- Contains: `KvCache`, `PageTable`, `BlockAllocator`, LRU eviction
-- Key files: `src/kv_cache/kv_cache.rs`, `src/kv_cache/page_table.rs`, `src/kv_cache/block_allocator.rs`
+- Purpose: Paged KV cache with block sharing and LRU eviction
+- Contains: `KvCache`, `PageTable`, `BlockAllocator`, sequence management
+- Key files: `src/kv_cache/mod.rs`, `src/kv_cache/kv_cache.rs`, `src/kv_cache/page_table.rs`
 
 **`src/loader/`:**
-- Purpose: Parse GGUF/ONNX models and load weights
-- Contains: `GgufLoader`, dequantization (Q2-K through Q8_0), MXFP support, lazy tensors
-- Key files: `src/loader/mod.rs`, `src/loader/gguf.rs`, `src/loader/dequant.rs`
-
-**`src/mlp/`:**
-- Purpose: Feed-forward layer GPU kernels
-- Contains: SwiGLU activation, RMSNorm kernel implementations
-- Key files: `src/mlp/kernels.rs`
+- Purpose: Model file parsing (GGUF/ONNX) and lazy weight loading
+- Contains: `GgufLoader`, `MmapGguf`, `LazyTensor`, dequantization
+- Key files: `src/loader/mod.rs`, `src/loader/gguf.rs`, `src/loader/lazy_tensor.rs`, `src/loader/mmap_loader.rs`
 
 **`src/model/`:**
-- Purpose: Model configuration and execution planning
-- Contains: `SimpleTransformer`, `ExecutionPlan`, architecture detection, weight mapping
-- Key files: `src/model/simple_transformer.rs`, `src/model/execution_plan/layer_plan.rs`, `src/model/execution_plan/architecture.rs`
+- Purpose: Model implementations and configuration
+- Contains: `SimpleTransformer`, model config detection, position embeddings
+- Key files: `src/model/mod.rs`, `src/model/config.rs`, `src/model/simple_transformer.rs`
 
-**`src/sampler/`:**
-- Purpose: Token sampling from logits
-- Contains: Temperature scaling, top-k filtering, top-p (nucleus) sampling, repetition penalty
-- Key files: `src/sampler/sampler.rs`
+**`src/model/execution_plan/`:**
+- Purpose: Static execution plans for transformer layers
+- Contains: `ExecutionPlan`, `LayerPlan`, `Architecture` detection
+- Key files: `src/model/execution_plan/mod.rs`, `src/model/execution_plan/execution_plan_src.rs`
 
-**`src/scheduler/`:**
-- Purpose: Continuous batching for high GPU utilization
-- Contains: `Scheduler`, `GenerationRequest`, `IterationBatch`, queue management
-- Key files: `src/scheduler/scheduler.rs`
+**`src/mlp/`:**
+- Purpose: MLP layer operations (SwiGLU activation, RMSNorm)
+- Contains: GPU kernels for MLP operations
+- Key files: `src/mlp/mod.rs`, `src/mlp/kernels.rs`
+
+**`src/ops/`:**
+- Purpose: GPU computation operations
+- Contains: Attention kernels, QKV operations
+- Key files: `src/ops/mod.rs`, `src/ops/attention_gpu.rs`, `src/ops/qkv.rs`
+
+**`src/profiling/`:**
+- Purpose: Performance profiling and timing utilities
+- Contains: Kernel timers, TTFT profiling, ROCm tool integration
+- Key files: `src/profiling/mod.rs`, `src/profiling/kernel_timer.rs`, `src/profiling/ttft.rs`
 
 **`src/prompt/`:**
 - Purpose: Prompt processing optimizations
-- Contains: Chunking strategies, prefix caching, batch attention
-- Key files: `src/prompt/chunking.rs`, `src/prompt/cache.rs`, `src/prompt/batch_attention.rs`
+- Contains: Chunking, prefix caching, batch attention
+- Key files: `src/prompt/mod.rs`, `src/prompt/chunking.rs`, `src/prompt/cache.rs`
+
+**`src/sampler/`:**
+- Purpose: Token sampling (top-k, top-p, temperature)
+- Contains: `Sampler`, `SamplingConfig`
+- Key files: `src/sampler/mod.rs`, `src/sampler/sampler.rs`
+
+**`src/scheduler/`:**
+- Purpose: Continuous batching scheduler
+- Contains: `Scheduler`, `GenerationRequest`, `IterationBatch`
+- Key files: `src/scheduler/mod.rs`, `src/scheduler/scheduler.rs`
 
 **`src/tensor/`:**
-- Purpose: Basic tensor data structures and operations
-- Contains: `Tensor` (host-side), matmul operations
-- Key files: `src/tensor/matmul.rs`
-
-**`src/ops/`:**
-- Purpose: High-level GPU operations
-- Contains: QKV projection, attention GPU wrappers
-- Key files: `src/ops/attention_gpu.rs`, `src/ops/qkv.rs`
-
-**`src/bin/`:**
-- Purpose: Executable entry points
-- Contains: CLI, server, debug tools
-- Key files: `src/bin/rocmforge_cli.rs`, `src/bin/inspect_gguf.rs`
+- Purpose: Basic tensor operations (matmul)
+- Contains: CPU matmul, tensor structure
+- Key files: `src/tensor/mod.rs`, `src/tensor/matmul.rs`
 
 **`tests/`:**
-- Purpose: Integration and end-to-end tests
-- Contains: Model loading, inference pipeline, GPU kernels
-- Key files: `tests/glm_model_tests.rs`, `tests/transformer_integration_tests.rs`, `tests/sampling_gpu_tests.rs`
+- Purpose: Integration tests (not unit tests in src/)
+- Contains: End-to-end tests, model loading tests, GPU tests
+- Key files: `tests/e2e_suite.rs`, `tests/attention_gpu_tests.rs`, `tests/glm_model_tests.rs`
+
+**`kernels/`:**
+- Purpose: HIP kernel source files
+- Contains: `.hip` and `.hsaco` (compiled) kernel files
+- Key files: `kernels/flash_attention.hip`, `kernels/q4_k_matmul.hip`, `kernels/topk_topp_sampling.hip`
 
 **`benches/`:**
-- Purpose: Performance benchmarks
-- Contains: Attention, matmul, dequant, inference, memory benchmarks
-- Key files: `benches/attention_bench.rs`, `benches/matmul_bench.rs`
+- Purpose: Criterion benchmarks
+- Contains: Performance benchmarks for attention, matmul, inference
+- Key files: `benches/attention_bench.rs`, `benches/matmul_bench.rs`, `benches/inference_bench.rs`
 
 ## Key File Locations
 
 **Entry Points:**
-- `src/lib.rs`: Library root, module declarations, public API exports
-- `src/bin/rocmforge_cli.rs`: Main CLI (models, generate, serve commands)
-- `src/engine.rs`: `InferenceEngine` - main inference orchestration
+- `src/lib.rs`: Library entry, module declarations, public API exports
+- `src/engine.rs`: `InferenceEngine` - main orchestration
+- `src/bin/rocmforge_cli.rs`: CLI entry point
+- `src/http/server.rs`: HTTP server entry
+- `test_inference.rs`: Standalone inference test
 
 **Configuration:**
-- `Cargo.toml`: Dependencies, features, build configuration
-- `CLAUDE.md`: Development rules and conventions
+- `Cargo.toml`: Dependencies, features, binary definitions
+- `build.rs`: Build script for HIP kernel compilation
+- `.env.example`: Environment variable template
 
 **Core Logic:**
-- `src/attention/flash_attention.rs`: Fused attention kernel
-- `src/kv_cache/kv_cache.rs`: Paged KV cache implementation
-- `src/scheduler/scheduler.rs`: Continuous batching scheduler
-- `src/sampler/sampler.rs`: Token sampling algorithms
-- `src/loader/gguf.rs`: GGUF format parser
-- `src/model/simple_transformer.rs`: Minimal transformer model
-
-**GPU Backend:**
-- `src/backend/hip_backend/backend.rs`: HIP wrapper, device management
-- `src/backend/gpu_executor.rs`: GPU kernel execution
-- `src/backend/scratch.rs`: Scratch buffer management
-
-**Error Handling:**
-- `src/error.rs`: Unified `RocmForgeError` with categorization
+- `src/backend/hip_backend/backend.rs`: HIP backend implementation
+- `src/model/execution_plan/execution_plan_src.rs`: Execution plan
+- `src/loader/gguf.rs`: GGUF model loading
+- `src/scheduler/scheduler.rs`: Request scheduling
 
 **Testing:**
-- `tests/glm_model_tests.rs`: GLM model integration tests
-- `tests/transformer_integration_tests.rs`: End-to-end transformer tests
-- `tests/decode_step_integration_tests.rs`: Single-token decode tests
-- `tests/sampling_gpu_tests.rs`: GPU sampling verification
+- `src/hip_backend_debug_tests.rs`: Backend debugging tests
+- `tests/`: Integration tests
+- Unit tests co-located in source files (e.g., `src/engine.rs` has `#[cfg(test)]` module)
 
 ## Naming Conventions
 
 **Files:**
-- `mod.rs`: Module exports and re-exports
-- `{module}_tests.rs`: Unit tests co-located with module (under `src/`)
-- `{feature}_tests.rs`: Integration tests (under `tests/`)
-- `{module}.rs`: Single-type modules (e.g., `error.rs`, `engine.rs`)
+- Modules: `mod_name.rs` (snake_case)
+- Tests: `{module}_tests.rs` or integrated in `mod.rs` with `#[cfg(test)]`
+- HIP kernels: `{operation}.hip` (e.g., `flash_attention.hip`)
+- Benchmarks: `{name}_bench.rs` in `benches/`
 
 **Directories:**
-- `src/`: Library source code
-- `tests/`: Integration tests (compiled as separate crates)
-- `benches/`: Criterion benchmarks
-- `src/bin/`: Executable entry points
-
-**Functions:**
-- Public API: `snake_case`
-- FFI bindings: `hip` prefix (e.g., `hipGetDeviceCount`)
-- Tests: `test_{feature}` or `test_{scenario}_{expected_result}`
+- Feature modules: `src/feature_name/` (e.g., `src/attention/`, `src/scheduler/`)
+- Backend variants: `src/backend/{variant}/` (e.g., `src/backend/hip_backend/`)
+- Test data: `tests/{feature}/` (e.g., `tests/attention/`)
 
 **Types:**
-- Structs: `PascalCase`
-- Enums: `PascalCase`
-- Type aliases: `{Module}Result<T>`, `{Module}Error`
+- Structs/Enums: `PascalCase` (e.g., `InferenceEngine`, `AttentionBackend`)
+- Error types: `{Module}Error` (e.g., `HipError`, `SchedulerError`)
+- Result types: `{Module}Result<T>` (e.g., `HipResult<T>`, `EngineResult<T>`)
 
-**Modules:**
-- `snake_case` matching directory name
-- Test modules: `{module}_tests` (feature-gated with `#[cfg(test)]`)
+**Functions:**
+- Public: `snake_case` (e.g., `submit_request`, `run_forward_pass`)
+- Async: `async fn snake_case` (e.g., `async fn from_gguf`)
+- FFI: `hipFunctionName` (matches HIP API)
 
 **Constants:**
-- `SCREAMING_SNAKE_CASE`
+- Upper snake case: `MAX_BATCH_SIZE`, `HIP_SUCCESS`
 
 ## Where to Add New Code
 
-**New Feature (Inference):**
-- Primary code: `src/model/` or `src/attention/` or `src/mlp/`
-- Tests: `tests/` with `{feature}_tests.rs` naming
-- Kernels: `src/attention/kernels.rs` or `src/mlp/kernels.rs`
+**New Feature:**
+- Primary code: `src/{feature_name}/`
+- Tests: `tests/{feature_name}_tests.rs` or co-located in `mod.rs`
+- GPU kernels: `kernels/{feature_name}.hip`
 
 **New Model Architecture:**
-- Detection: `src/model/execution_plan/architecture.rs` (add `Architecture` enum variant)
-- Weight mapping: `src/model/execution_plan/layer_plan.rs`
-- Tests: `tests/{architecture}_model_tests.rs`
+- Implementation: `src/model/{architecture}.rs`
+- Config detection: `src/model/config.rs` (add to `detect_architecture()`)
+- Execution plan: `src/model/execution_plan/` (may need new `Architecture` variant)
 
-**New GPU Kernel:**
-- Implementation: `src/attention/` or `src/mlp/`
-- Tests: Co-located `{module}_kernel_tests.rs` under `src/` with `#[cfg(test)]` and `#[cfg(feature = "rocm")]`
-- Use `#[serial]` attribute for GPU isolation
+**New Attention Variant:**
+- Implementation: `src/attention/{variant}.rs`
+- GPU kernel: `kernels/{variant}.hip`
+- Backend registry: `src/attention/backend_registry.rs` (register variant)
+
+**New GGUF Operation:**
+- Op definition: `src/ggml/op.rs` (add to `Op` enum)
+- CPU impl: `src/ggml/cpu_backend.rs`
+- GPU impl: `src/ggml/hip_backend/mod.rs` (add to `execute_op()` match)
 
 **New HTTP Endpoint:**
-- Handler: `src/http/mod.rs`
-- Tests: Create `tests/http_{feature}_tests.rs` (needs integration test setup)
-
-**New CLI Command:**
-- Implementation: `src/bin/rocmforge_cli.rs` (add subcommand to `Cli` enum)
-- Tests: `tests/cli_{command}_tests.rs` (need to test CLI via assert_cmd or similar)
-
-**New Sampling Method:**
-- Implementation: `src/sampler/sampler.rs`
-- Tests: `tests/sampling_{method}_tests.rs`
+- Handler: `src/http/server.rs` (add route)
+- Request/Response types: `src/http/mod.rs` or inline in server
 
 **Utilities:**
-- Shared helpers: `src/` with appropriate module (e.g., `src/utils.rs` or domain-specific module)
-- Test fixtures: `tests/common/mod.rs`
+- Shared helpers: `src/{util_name}.rs` (top-level if generic)
+- Backend helpers: `src/backend/{util_name}.rs`
 
 ## Special Directories
 
 **`src/.codemcp/`:**
-- Purpose: Internal CodeMCP state
+- Purpose: CodeMCP operation backups
 - Generated: Yes
-- Committed: No
+- Committed: Yes (gitignored backups in `.codemcp/backups/`)
 
-**`src/bin/`:**
-- Purpose: Executable entry points (binaries declared in `Cargo.toml`)
-- Generated: No
-- Committed: Yes
+**`build/`:**
+- Purpose: Build-time HIP kernel compilation outputs
+- Generated: Yes
+- Committed: No (in .gitignore)
 
-**`tests/common/`:**
-- Purpose: Shared test fixtures and utilities
-- Generated: No
-- Committed: Yes
+**`kernels/`:**
+- Purpose: HIP kernel source files (text) and compiled binaries (.hsaco)
+- Generated: Partially (`.hsaco` files are compiled from `.hip`)
+- Committed: Yes (both source and compiled kernels)
 
 **`models/`:**
-- Purpose: Downloaded GGUF models for local testing
-- Generated: Yes (by CLI or manual download)
-- Committed: No (gitignored)
-
-**`target/`:**
-- Purpose: Cargo build artifacts
+- Purpose: Downloaded model files (GGUF, tokenizers)
 - Generated: Yes
-- Committed: No
+- Committed: No (large files, gitignored)
 
 **`.planning/`:**
-- Purpose: Development plans and codebase analysis
-- Generated: No
+- Purpose: Development planning documents
+- Generated: Yes (by GSD commands)
+- Committed: Yes (version controlled planning artifacts)
+
+**`docs/`:**
+- Purpose: Project documentation (manual, API docs, etc.)
+- Generated: No (manual edits)
 - Committed: Yes
 
 ---
+
 *Structure analysis: 2026-01-20*

@@ -2,4 +2,7 @@
 
 pub mod server;
 
+#[cfg(feature = "context")]
+pub mod context_handlers;
+
 pub use server::*;
