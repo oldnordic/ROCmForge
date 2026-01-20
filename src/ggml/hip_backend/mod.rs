@@ -5,6 +5,7 @@ pub mod buffer;
 pub mod ops;
 pub mod tuning;
 mod capability;
+mod op_dispatch;  // Must be before execution (execution calls op_dispatch methods)
 mod execution;
 
 pub use backend::HipGgmlBackend;
