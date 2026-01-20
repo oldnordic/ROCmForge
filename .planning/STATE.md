@@ -9,11 +9,11 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 
 ## Current Position
 
-Phase: 25 - Architectural Decomposition (Plan 05 of 7 - In Progress)
-Status: IN PROGRESS - Wave 2 (Mid-tier) - Target 1 of 8 complete
-Last activity: Completed 25-05 Target 1 (execution_plan_src.rs) at 2026-01-20T13:47:00Z
+Phase: 25 - Architectural Decomposition (Plan 06 of 7 - Complete)
+Status: COMPLETE - Wave 3 (Backend/Core) complete
+Last activity: Completed 25-06 (backend.rs → 10 modules) at 2026-01-20T14:34:06Z
 
-Progress: [████████████████░░░░] 79% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 2/7 complete)
+Progress: [█████████████████░░░] 81% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 3/7 complete)
 
 ## Milestone v1.3 Summary
 
@@ -162,10 +162,10 @@ Historical decisions affecting v1.3:
 - Phase 25-03: Module boundary proposal - decomposition map (PLANNED)
 - Phase 25-04: Refactor Wave 1 - Loader (gguf.rs → 7 modules) (COMPLETE)
 - Phase 25-05: Refactor Wave 2 - Execution/Mid-tier (8 files → ~35 modules) (IN PROGRESS - 5/8 targets complete)
-- Phase 25-06: Refactor Wave 3 - Backend/Core (backend.rs → 10 modules) (PENDING)
+- Phase 25-06: Refactor Wave 3 - Backend/Core (backend.rs → 10 modules) (COMPLETE)
 - Phase 25-07: QA + Verification - all files < 1,000 LOC (PENDING)
 
-**Phase 25 IN PROGRESS** - 2/7 complete (Wave 1 done, Wave 2 - 5/8 targets done)
+**Phase 25 IN PROGRESS** - 3/7 complete (Wave 1 done, Wave 2 - 5/8 targets done, Wave 3 done)
 
 **Phase 25-04 Summary:**
 - Decomposed loader/gguf.rs (2,284 LOC) into 7 focused modules
@@ -240,17 +240,34 @@ Historical decisions affecting v1.3:
 - All modules under 1,000 LOC
 - Public API preserved via method delegation
 
-**Remaining Targets (7):**
-- Target 2: kv_cache/kv_cache.rs (2,094 LOC) → 5 modules
-- Target 3: sampler/gpu.rs (1,858 LOC) → 5 modules
-- Target 4: ggml/hip_backend/mod.rs (1,509 LOC) → 4 modules
-- Target 5: attention/kernels.rs (1,395 LOC) → 3 modules
+**Remaining Targets (3):**
 - Target 6: engine.rs (1,386 LOC) → 4 modules
 - Target 7: scheduler/scheduler.rs (1,307 LOC) → 3 modules
 - Target 8: ops/attention_gpu.rs (1,232 LOC) → check for duplicate
 
+**Phase 25-06 Summary:**
+- Decomposed backend/hip_backend/backend.rs (4,243 LOC) into 10 focused modules
+- ffi.rs (82 LOC): extern "C" HIP bindings and constants
+- error.rs (82 LOC): HipError, HipResult types
+- device.rs (113 LOC): HipDeviceProp, HipDevice, device queries
+- stream.rs (83 LOC): HipStream wrapper
+- event.rs (170 LOC): HipEvent wrapper
+- memory.rs (582 LOC): HipBuffer with Arc-based cloning
+- module.rs (124 LOC): HipModule, HipKernel loading
+- backend.rs (1209 LOC): HipBackend main implementation
+- runtime.rs (485 LOC): ModelRuntime for device buffers
+- async_ops.rs (220 LOC): AsyncLoader multi-stream uploads
+- Tests: 675/675 passing
+- All modules under 1,000 LOC except backend.rs (main facade)
+
+**Wave 3 totals:**
+- 4,243 LOC decomposed into 10 focused modules
+- 3,184 LOC total (original had duplication)
+- Re-export chains preserve backward compatibility
+- Pure structural refactor - ZERO functional changes
+
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed Phase 25-05 Targets 1-5 (5 of 8) at 2026-01-20T14:21:12Z
-Resume file: None (partial completion, 3/8 targets remaining)
+Stopped at: Completed Phase 25-06 (backend.rs → 10 modules) at 2026-01-20T14:34:06Z
+Resume file: None (plan 25-06 complete, ready for 25-07)
