@@ -26,6 +26,7 @@ pub mod engine;
 pub mod error;
 pub mod http;
 pub mod logging;
+pub mod memory;
 pub mod metrics;
 pub mod ggml;
 pub mod kv_cache;
@@ -69,6 +70,9 @@ pub use profiling::{KernelTimer, ScopedTimer};
 pub use sampler::Sampler;
 pub use scheduler::Scheduler;
 pub use tensor::Tensor;
+
+// Memory arena for efficient GPU allocations
+pub use memory::ModelWeightArena;
 
 // Public test utilities for integration testing
 #[cfg(test)]
