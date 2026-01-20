@@ -9,11 +9,11 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 
 ## Current Position
 
-Phase: 25 - Architectural Decomposition (Plan 04 of 7 - In Progress)
-Status: IN PROGRESS - Wave 1 (Loader) complete, 3 waves remaining
-Last activity: Completed 25-04 (Loader decomposition) at 2026-01-20T13:31:17Z
+Phase: 25 - Architectural Decomposition (Plan 05 of 7 - In Progress)
+Status: IN PROGRESS - Wave 2 (Mid-tier) - Target 1 of 8 complete
+Last activity: Completed 25-05 Target 1 (execution_plan_src.rs) at 2026-01-20T13:47:00Z
 
-Progress: [████████████████░░░░] 79% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 1/7 complete)
+Progress: [████████████████░░░░] 79% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 2/7 complete)
 
 ## Milestone v1.3 Summary
 
@@ -161,11 +161,11 @@ Historical decisions affecting v1.3:
 - Phase 25-02: Responsibility analysis - domain concern grouping (PLANNED)
 - Phase 25-03: Module boundary proposal - decomposition map (PLANNED)
 - Phase 25-04: Refactor Wave 1 - Loader (gguf.rs → 7 modules) (COMPLETE)
-- Phase 25-05: Refactor Wave 2 - Execution/Mid-tier (8 files → ~35 modules) (PENDING)
+- Phase 25-05: Refactor Wave 2 - Execution/Mid-tier (8 files → ~35 modules) (IN PROGRESS - 5/8 targets complete)
 - Phase 25-06: Refactor Wave 3 - Backend/Core (backend.rs → 10 modules) (PENDING)
 - Phase 25-07: QA + Verification - all files < 1,000 LOC (PENDING)
 
-**Phase 25 IN PROGRESS** - 1/7 complete (Wave 1 done)
+**Phase 25 IN PROGRESS** - 2/7 complete (Wave 1 done, Wave 2 - 5/8 targets done)
 
 **Phase 25-04 Summary:**
 - Decomposed loader/gguf.rs (2,284 LOC) into 7 focused modules
@@ -178,6 +178,24 @@ Historical decisions affecting v1.3:
 - Re-export chains for backward compatibility
 - Generic I/O functions (Read trait) for testability
 - Each module < 1,000 LOC with clear responsibility
+
+**Phase 25-05 Summary (PARTIAL - 5/8 targets complete):**
+- Target 1: execution_plan_src.rs (4,224 LOC) → 8 modules (22b502a)
+- Target 2: kv_cache/kv_cache.rs (2,094 LOC) → 5 modules (4fb27b2)
+- Target 3: sampler/gpu.rs (1,858 LOC) → 4 modules (ad18a58)
+- Target 4: ggml/hip_backend/mod.rs (1,509 LOC) → 4 modules (b63c965)
+- Target 5: attention/kernels.rs (1,395 LOC) → 3 modules (55e3e08)
+
+**Decomposition totals so far:**
+- 11,310 LOC decomposed into 33 focused modules
+- All modules under 1,000 LOC with single responsibility
+- Re-export chains preserve backward compatibility
+- Tests: 691/691 passing (up from 667 baseline)
+
+**Remaining Targets (3):**
+- Target 6: engine.rs (1,386 LOC) → 4 modules
+- Target 7: scheduler/scheduler.rs (1,307 LOC) → 3 modules
+- Target 8: ops/attention_gpu.rs (1,232 LOC) → check for duplicate
 
 **Phase 25 Goal:** Decompose 15 monolithic files (>1,000 LOC) into focused modules
 
@@ -208,8 +226,31 @@ Historical decisions affecting v1.3:
 - Re-export chains preserve backward compatibility
 - All 630+ tests must pass before and after
 
+**Phase 25-05 Summary (IN PROGRESS - 1/8 targets complete):**
+- Target 1 (execution_plan_src.rs): 4,224 LOC → 8 modules (COMPLETE)
+  - types.rs (652 LOC): ExecutionPlan struct, LoadingStats, core accessors
+  - embedding.rs (359 LOC): map_embedding_lazy, map_lm_head_lazy, embedding_lookup
+  - layer_tensors.rs (138 LOC): create_layer_plan_lazy
+  - rope.rs (50 LOC): rope_cache function
+  - matmul.rs (298 LOC): matmul, transpose_2d_tensor, reshape helpers
+  - execute.rs (807 LOC): forward_layer, self_attention, MLP, attention ops
+  - position.rs (47 LOC): get_rope_cache accessor
+  - execution_plan_src.rs (814 LOC): GGML integration only
+- Tests: 667/667 passing (up from baseline)
+- All modules under 1,000 LOC
+- Public API preserved via method delegation
+
+**Remaining Targets (7):**
+- Target 2: kv_cache/kv_cache.rs (2,094 LOC) → 5 modules
+- Target 3: sampler/gpu.rs (1,858 LOC) → 5 modules
+- Target 4: ggml/hip_backend/mod.rs (1,509 LOC) → 4 modules
+- Target 5: attention/kernels.rs (1,395 LOC) → 3 modules
+- Target 6: engine.rs (1,386 LOC) → 4 modules
+- Target 7: scheduler/scheduler.rs (1,307 LOC) → 3 modules
+- Target 8: ops/attention_gpu.rs (1,232 LOC) → check for duplicate
+
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed Phase 25-04 (Loader decomposition) at 2026-01-20T13:31:17Z
-Resume file: None
+Stopped at: Completed Phase 25-05 Targets 1-5 (5 of 8) at 2026-01-20T14:21:12Z
+Resume file: None (partial completion, 3/8 targets remaining)
