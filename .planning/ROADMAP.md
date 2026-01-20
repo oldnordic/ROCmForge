@@ -103,8 +103,9 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 | 20 | v1.3 | 8/8 | Complete | 2026-01-19 |
 | 21 | v1.3 | 5/6 | Complete* | 2026-01-20 |
 | 22 | v1.4 | 5/5 | Complete | 2026-01-20 |
+| 23 | v1.4 | 5/5 | Complete | 2026-01-20 |
 
-**Total Progress:** 141/142 plans complete (99%)
+**Total Progress:** 146/147 plans complete (99%)
 
 **Note:** Phase 21-06 (Performance Validation) skipped by user request. All test health goals (TEST-01 through TEST-06) achieved.
 
@@ -135,7 +136,7 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 <summary>v1.4 Memory Safety + Code Restructure (Phase 22-24) — IN PROGRESS 2026-01-20</summary>
 
 - [x] Phase 22: Memory Pool Implementation (5/5 plans) — **COMPLETE** 2026-01-20
-- [ ] Phase 23: Dead/Duplicate Code Removal (0/5 plans)
+- [x] Phase 23: Dead/Duplicate Code Removal (5/5 plans) — **COMPLETE** 2026-01-20
 - [ ] Phase 24: Kernel-Centric Restructure (0/6 plans)
 
 **Phase 22: Memory Pool Implementation**
@@ -146,11 +147,11 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 - [x] 22-05: Verification: Model loads without GPU hang
 
 **Phase 23: Dead/Duplicate Code Removal**
-- 23-01: Remove duplicate MXFP code from `gguf.rs` (keep `mxfp.rs` version)
-- 23-02: Remove unused quantization formats (Q4_1, Q5_0, Q5_1 if no real models use them)
-- 23-03: Consolidate `GgufMetadata` structs (currently duplicated)
-- 23-04: Clean up `ParallelResult` and unused async loading code
-- 23-05: Verification: No duplicate structures, compiler warnings reduced
+- [x] 23-01: Remove duplicate MXFP code from `gguf.rs` (keep `mxfp.rs` version)
+- [x] 23-02: Remove unused quantization formats (Q4_1, Q5_0, Q5_1)
+- [x] 23-03: Consolidate `GgufMetadata` structs
+- [x] 23-04: Clean up `ParallelResult` and unused async loading code
+- [x] 23-05: Verification: No duplicate structures, all tests pass
 
 **Phase 24: Kernel-Centric Restructure**
 - 24-01: Create new `src/kernels/` directory layout
