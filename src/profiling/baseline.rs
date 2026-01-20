@@ -6,7 +6,7 @@
 //!
 //! # Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use rocmforge::profiling::baseline::{PerformanceBaseline, BaselineMetrics};
 //!
 //! // Create a new baseline

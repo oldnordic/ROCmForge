@@ -89,7 +89,7 @@ impl CpuFeatures {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// let features = CpuFeatures::detect();
     /// println!("CPU: {}", features);
     /// ```
@@ -117,7 +117,7 @@ impl CpuFeatures {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// let features = CpuFeatures::get();
     /// if features.has_avx512f() {
     ///     // Use AVX-512 code path

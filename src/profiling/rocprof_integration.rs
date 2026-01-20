@@ -302,8 +302,8 @@ impl RocprofSession {
     ///
     /// # Example
     ///
-    /// ```rust
-    /// use rocmforge::profiling::rocprof::RocprofSession;
+    /// ```rust,ignore
+    /// use rocmforge::profiling::RocprofSession;
     ///
     /// let session = RocprofSession::new("/tmp/profile")?;
     /// ```

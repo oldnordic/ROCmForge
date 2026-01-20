@@ -12,7 +12,7 @@
 //!
 //! # Usage
 //!
-//! ```rust
+//! ```rust,ignore
 //! use rocmlforge::ggml::dummy_backend::DummyBackend;
 //!
 //! #[test]

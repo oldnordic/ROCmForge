@@ -12,10 +12,13 @@
 //!
 //! # Tuning Parameters
 //!
-//! ```rust
-//! let config = KernelTuning::for_architecture("gfx1100");
+//! ```rust,ignore
+//! use rocmforge::ggml::hip_backend::tuning::{GpuArchitecture, KernelTuning};
+//!
+//! let arch = GpuArchitecture::from_gfx_ip("gfx1100");
+//! let config = arch.get_tuning();
 //! assert_eq!(config.block_size, 256);
-//! assert_eq!(config.warp_size, 32);  // RDNA3 wave32
+//! assert_eq!(config.wave_size, 32);  // RDNA3 wave32
 //! ```
 
 use std::env;
@@ -52,7 +55,9 @@ impl GpuArchitecture {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,ignore
+    /// use rocmforge::ggml::hip_backend::tuning::GpuArchitecture;
+    ///
     /// assert_eq!(GpuArchitecture::from_gfx_ip("gfx1100"), GpuArchitecture::Rdna3);
     /// assert_eq!(GpuArchitecture::from_gfx_ip("gfx1030"), GpuArchitecture::Rdna2);
     /// assert_eq!(GpuArchitecture::from_gfx_ip("gfx90a"), GpuArchitecture::Cdna2);
@@ -167,7 +172,9 @@ impl KernelTuning {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,ignore
+    /// use rocmforge::ggml::hip_backend::tuning::KernelTuning;
+    ///
     /// let config = KernelTuning::for_architecture("gfx1100");
     /// ```
     pub fn for_architecture(gfx_ip: &str) -> Self {

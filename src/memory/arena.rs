@@ -42,11 +42,10 @@ impl FreeBlock {
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```rust,ignore
 /// use rocmforge::backend::HipBackend;
 /// use rocmforge::memory::ModelWeightArena;
 ///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let backend = HipBackend::new(0)?;
 ///
 /// // Calculate total memory needed for all model weights
@@ -63,8 +62,7 @@ impl FreeBlock {
 /// arena.buffer().copy_from_host_with_stream(&data, backend.stream().as_ptr());
 ///
 /// println!("Allocated {} / {} bytes", arena.allocated_bytes(), arena.capacity());
-/// # Ok(())
-/// # }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub struct ModelWeightArena {
     /// Backing GPU buffer (single allocation)

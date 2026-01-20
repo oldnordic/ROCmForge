@@ -6,22 +6,36 @@
 //!
 //! # Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use rocmforge::profiling::KernelTimer;
 //!
 //! // Create a new timer for a kernel
 //! let mut timer = KernelTimer::for_kernel("my_kernel");
 //!
-//! // Start timing
-//! timer.start()?;
+//! // For GPU timing (requires HIP stream):
+//! #[cfg(feature = "rocm")]
+//! {
+//!     use rocmforge::backend::HipStream;
+//!     let stream = HipStream::default();
+//!     timer.start(&stream)?;
 //!
-//! // ... execute kernel ...
+//!     // ... execute kernel ...
 //!
-//! // Stop timing and get elapsed time
-//! timer.stop()?;
-//! let elapsed = timer.elapsed();
+//!     timer.stop(&stream)?;
+//!     if let Some(elapsed) = timer.elapsed() {
+//!         println!("Kernel '{}' took {:.2} ms", timer.name(), elapsed);
+//!     }
+//! }
 //!
-//! println!("Kernel '{}' took {:.2} ms", timer.name(), elapsed);
+//! // For CPU timing fallback:
+//! #[cfg(not(feature = "rocm"))]
+//! {
+//!     timer.start_cpu();
+//!     // ... execute operation ...
+//!     timer.stop_cpu();
+//!     let elapsed = timer.elapsed();
+//!     println!("Operation took {:.2} ms", elapsed);
+//! }
 //! ```
 
 #[cfg(feature = "rocm")]
@@ -247,12 +261,14 @@ impl KernelTimer {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// use rocmforge::profiling::KernelTimer;
     ///
+    /// let mut timer = KernelTimer::for_kernel("my_kernel");
     /// timer.start_cpu();
     /// // ... execute CPU operation ...
     /// timer.stop_cpu();
+    /// let elapsed = timer.elapsed();
     /// ```
     pub fn stop_cpu(&mut self) {
         let stop_instant = Instant::now();

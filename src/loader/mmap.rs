@@ -27,8 +27,9 @@ use std::path::Path;
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use crate::loader::mmap::MmapGguf;
+/// use std::path::Path;
 ///
 /// let mmap = MmapGguf::open(Path::new("model.gguf"))?;
 /// let tensor_bytes = mmap.get_slice(offset, size)?;

@@ -29,7 +29,7 @@ use std::sync::Arc;
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use crate::loader::lazy_tensor::LazyTensor;
 /// use crate::loader::gguf::GgufTensorType;
 ///

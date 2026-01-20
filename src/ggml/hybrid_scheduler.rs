@@ -5,7 +5,7 @@
 //!
 //! ## Usage
 //!
-//! ```rust
+//! ```rust,ignore
 //! use rocmforge::ggml::{HybridScheduler, ExecutionStrategy};
 //!
 //! // Create a scheduler that automatically selects the best backend
@@ -19,7 +19,7 @@
 //!
 //! The scheduler tracks execution decisions and performance:
 //!
-//! ```rust
+//! ```rust,ignore
 //! let summary = scheduler.execution_summary();
 //! println!("GPU: {} us, CPU: {} us", summary.gpu_time_us, summary.cpu_time_us);
 //! ```

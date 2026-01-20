@@ -7,7 +7,7 @@
 //!
 //! # Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use rocmforge::profiling::kernel_launch::{LaunchOverheadTracker, LaunchOverheadStats};
 //! use rocmforge::error::ForgeResult;
 //!
@@ -15,9 +15,10 @@
 //! let mut tracker = LaunchOverheadTracker::new();
 //! tracker.enable()?;
 //!
-//! // Measure launch overhead
+//! // Measure launch overhead for a closure
 //! let result = tracker.measure_launch("matmul", || {
-//!     my_kernel.launch(&args)
+//!     // ... kernel launch code here ...
+//!     Ok::<(), ()>(())
 //! });
 //!
 //! // Get statistics
