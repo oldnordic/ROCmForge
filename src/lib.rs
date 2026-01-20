@@ -22,6 +22,7 @@
 
 pub mod attention;
 pub mod backend;
+pub mod kernels;
 pub mod engine;
 pub mod error;
 pub mod http;
