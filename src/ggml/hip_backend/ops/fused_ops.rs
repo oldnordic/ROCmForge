@@ -142,7 +142,6 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<FusedKernelCache>>, HipEr
 /// # Performance
 /// - Memory bandwidth: ~17x reduction vs unfused (no intermediate FP32 write)
 /// - Kernel launches: 2 -> 1 (dequant + rmsnorm)
-#[cfg(feature = "rocm")]
 pub fn fused_q4_0_rmsnorm(
     backend: &HipBackend,
     q4_0_input: *const u8,
@@ -164,7 +163,6 @@ pub fn fused_q4_0_rmsnorm(
 /// - All pointers point to valid GPU memory
 /// - Dimensions are correct and consistent
 /// - No other threads are accessing the same memory concurrently
-#[cfg(feature = "rocm")]
 pub unsafe fn fused_q4_0_rmsnorm_gpu(
     backend: &HipBackend,
     q4_0_input: *const u8,
@@ -241,7 +239,6 @@ pub unsafe fn fused_q4_0_rmsnorm_gpu(
 /// # Performance
 /// - Memory bandwidth: ~1.6x reduction (eliminates intermediate write)
 /// - Kernel launches: 2 -> 1 (rope + append)
-#[cfg(feature = "rocm")]
 pub fn fused_rope_kv_append(
     backend: &HipBackend,
     keys: *const f32,
@@ -282,7 +279,6 @@ pub fn fused_rope_kv_append(
 /// - Dimensions are correct and consistent
 /// - head_dim is even
 /// - No other threads are accessing the same memory concurrently
-#[cfg(feature = "rocm")]
 pub unsafe fn fused_rope_kv_append_gpu(
     backend: &HipBackend,
     keys: *const f32,
@@ -370,7 +366,6 @@ pub unsafe fn fused_rope_kv_append_gpu(
 /// * `num_heads` - Number of attention heads
 /// * `head_dim` - Dimension per head (must be even)
 /// * `max_seq_len` - Maximum sequence length (cache size)
-#[cfg(feature = "rocm")]
 pub fn fused_rope_kv_append_batch(
     backend: &HipBackend,
     keys: *const f32,
@@ -413,7 +408,6 @@ pub fn fused_rope_kv_append_batch(
 /// - Dimensions are correct and consistent
 /// - head_dim is even
 /// - No other threads are accessing the same memory concurrently
-#[cfg(feature = "rocm")]
 pub unsafe fn fused_rope_kv_append_batch_gpu(
     backend: &HipBackend,
     keys: *const f32,

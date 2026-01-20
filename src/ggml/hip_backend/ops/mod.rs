@@ -24,7 +24,6 @@ pub mod split_qkv;
 // Public exports for batch quantized operations
 pub use batch_quantized::{QuantFormat, QuantizedMatmulOp, BatchQuantizedMatmul, BatchMatmulResult};
 
-#[cfg(feature = "rocm")]
 pub use batch_quantized::{AsyncKernelLauncher, AsyncHandle};
 
 // Re-export quantization kernels from kernels::quant (Phase 24-02)
@@ -35,8 +34,7 @@ pub use crate::kernels::quant::{
     dequantize_q6_k_cpu,
 };
 
-// GPU-only exports (require ROCm feature)
-#[cfg(feature = "rocm")]
+// GPU-only exports
 pub use crate::kernels::quant::{
     dequantize_q4_0_with_fallback,
     dequantize_q4_0_kernel_cached,

@@ -12,24 +12,21 @@ pub fn softmax(
     let _ = backend;
     output.copy_from_buffer(input)?;
 
-    #[cfg(feature = "rocm")]
-    {
-        let _ = (_batch_size, _seq_len);
-        // TODO: Re-enable when softmax_gpu_kernel is available
-        // unsafe {
-        //     let result = crate::attention::kernels::softmax_gpu_kernel(
-        //         output.as_ptr() as *mut f32,
-        //         _batch_size,
-        //         _seq_len,
-        //     );
-        //     if result != 0 {
-        //         return Err(HipError::GenericError(format!(
-        //             "softmax_gpu_kernel failed with code {}",
-        //             result
-        //         )));
-        //     }
-        // }
-    }
+    let _ = (_batch_size, _seq_len);
+    // TODO: Re-enable when softmax_gpu_kernel is available
+    // unsafe {
+    //     let result = crate::attention::kernels::softmax_gpu_kernel(
+    //         output.as_ptr() as *mut f32,
+    //         _batch_size,
+    //         _seq_len,
+    //     );
+    //     if result != 0 {
+    //         return Err(HipError::GenericError(format!(
+    //             "softmax_gpu_kernel failed with code {}",
+    //             result
+    //         )));
+    //     }
+    // }
 
     Ok(())
 }

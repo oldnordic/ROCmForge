@@ -108,7 +108,6 @@ pub fn get_or_init_q4_0_dequant_cache() -> Result<&'static Mutex<Option<Q4_0Dequ
 /// Uses q4_0_to_fp32_batch_kernel with:
 /// - Block size: 256 threads
 /// - Grid size: (num_elements + 255) / 256
-#[cfg(feature = "rocm")]
 pub fn dequantize_q4_0_kernel_cached(
     backend: &HipBackend,
     quantized_data: &[u8],
@@ -245,22 +244,14 @@ pub fn dequantize_q4_0_with_fallback(
     output: &crate::backend::HipBuffer,
     num_elements: usize,
 ) -> Q4_0DequantResult<()> {
-    #[cfg(feature = "rocm")]
-    {
-        // Try GPU kernel first
-        match dequantize_q4_0_kernel_cached(backend, quantized_data, output, num_elements) {
-            Ok(()) => Ok(()),
-            Err(HipError::KernelLoadFailed(_)) | Err(HipError::InitializationFailed(_)) => {
-                // Fall back to CPU path if kernel not available
-                dequantize_q4_0_cpu_upload(backend, quantized_data, output, num_elements)
-            }
-            Err(e) => Err(format!("GPU dequantization failed: {}", e)),
+    // Try GPU kernel first
+    match dequantize_q4_0_kernel_cached(backend, quantized_data, output, num_elements) {
+        Ok(()) => Ok(()),
+        Err(HipError::KernelLoadFailed(_)) | Err(HipError::InitializationFailed(_)) => {
+            // Fall back to CPU path if kernel not available
+            dequantize_q4_0_cpu_upload(backend, quantized_data, output, num_elements)
         }
-    }
-    #[cfg(not(feature = "rocm"))]
-    {
-        // No ROCm support, use CPU path
-        dequantize_q4_0_cpu_upload(backend, quantized_data, output, num_elements)
+        Err(e) => Err(format!("GPU dequantization failed: {}", e)),
     }
 }
 

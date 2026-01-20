@@ -13,25 +13,22 @@ pub fn mask(
     let _ = backend;
     output.copy_from_buffer(scores)?;
 
-    #[cfg(feature = "rocm")]
-    {
-        let _ = _mask; // Suppress unused warning
-        // TODO: Re-enable when mask_gpu_kernel is available
-        // unsafe {
-        //     let result = crate::attention::kernels::mask_gpu_kernel(
-        //         output.as_ptr() as *mut f32,
-        //         mask.as_ptr() as *const f32,
-        //         _batch_size,
-        //         _seq_len,
-        //     );
-        //     if result != 0 {
-        //         return Err(HipError::GenericError(format!(
-        //             "mask_gpu_kernel failed with code {}",
-        //             result
-        //         )));
-        //     }
-        // }
-    }
+    let _ = _mask; // Suppress unused warning
+    // TODO: Re-enable when mask_gpu_kernel is available
+    // unsafe {
+    //     let result = crate::attention::kernels::mask_gpu_kernel(
+    //         output.as_ptr() as *mut f32,
+    //         mask.as_ptr() as *const f32,
+    //         _batch_size,
+    //         _seq_len,
+    //     );
+    //     if result != 0 {
+    //         return Err(HipError::GenericError(format!(
+    //             "mask_gpu_kernel failed with code {}",
+    //             result
+    //         )));
+    //     }
+    // }
 
     Ok(())
 }

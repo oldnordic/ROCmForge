@@ -164,7 +164,6 @@ impl BatchQuantizedMatmul {
     ///
     /// # Returns
     /// BatchMatmulResult with outputs and timing information
-    #[cfg(feature = "rocm")]
     pub fn process_batch_profiled(
         &self,
         input: &crate::backend::HipBuffer,
@@ -203,117 +202,59 @@ impl BatchQuantizedMatmul {
         op: &QuantizedMatmulOp,
         output: &crate::backend::HipBuffer,
     ) -> Result<(), HipError> {
-        #[cfg(feature = "rocm")]
-        {
-            use crate::kernels::matmul::quantized;
+        use crate::kernels::matmul::quantized;
 
-            match op.format {
-                QuantFormat::Q4_0 => {
-                    quantized::matmul_q4_0(
-                        &self.backend,
-                        &op.weights,
-                        input,
-                        op.n,
-                        op.k,
-                        output,
-                    )
-                    .map_err(|e| HipError::GenericError(format!("Q4_0 matmul failed: {}", e)))?;
-                }
-                QuantFormat::Q4_K => {
-                    quantized::matmul_q4_k(
-                        &self.backend,
-                        &op.weights,
-                        input,
-                        op.n,
-                        op.k,
-                        output,
-                    )
-                    .map_err(|e| HipError::GenericError(format!("Q4_K matmul failed: {}", e)))?;
-                }
-                QuantFormat::Q6_K => {
-                    quantized::matmul_q6_k(
-                        &self.backend,
-                        &op.weights,
-                        input,
-                        op.n,
-                        op.k,
-                        output,
-                    )
-                    .map_err(|e| HipError::GenericError(format!("Q6_K matmul failed: {}", e)))?;
-                }
-                QuantFormat::Q8_0 => {
-                    quantized::matmul_q8_0(
-                        &self.backend,
-                        &op.weights,
-                        input,
-                        op.n,
-                        op.k,
-                        output,
-                    )
-                    .map_err(|e| HipError::GenericError(format!("Q8_0 matmul failed: {}", e)))?;
-                }
+        match op.format {
+            QuantFormat::Q4_0 => {
+                quantized::matmul_q4_0(
+                    &self.backend,
+                    &op.weights,
+                    input,
+                    op.n,
+                    op.k,
+                    output,
+                )
+                .map_err(|e| HipError::GenericError(format!("Q4_0 matmul failed: {}", e)))?;
             }
-
-            Ok(())
+            QuantFormat::Q4_K => {
+                quantized::matmul_q4_k(
+                    &self.backend,
+                    &op.weights,
+                    input,
+                    op.n,
+                    op.k,
+                    output,
+                )
+                .map_err(|e| HipError::GenericError(format!("Q4_K matmul failed: {}", e)))?;
+            }
+            QuantFormat::Q6_K => {
+                quantized::matmul_q6_k(
+                    &self.backend,
+                    &op.weights,
+                    input,
+                    op.n,
+                    op.k,
+                    output,
+                )
+                .map_err(|e| HipError::GenericError(format!("Q6_K matmul failed: {}", e)))?;
+            }
+            QuantFormat::Q8_0 => {
+                quantized::matmul_q8_0(
+                    &self.backend,
+                    &op.weights,
+                    input,
+                    op.n,
+                    op.k,
+                    output,
+                )
+                .map_err(|e| HipError::GenericError(format!("Q8_0 matmul failed: {}", e)))?;
+            }
         }
 
-        #[cfg(not(feature = "rocm"))]
-        {
-            use crate::kernels::matmul::quantized;
-
-            match op.format {
-                QuantFormat::Q4_0 => {
-                    quantized::matmul_q4_0(
-                        &self.backend,
-                        &op.weights,
-                        input,
-                        op.n,
-                        op.k,
-                        output,
-                    )
-                    .map_err(|e| HipError::GenericError(format!("Q4_0 matmul failed: {}", e)))?;
-                }
-                QuantFormat::Q4_K => {
-                    quantized::matmul_q4_k(
-                        &self.backend,
-                        &op.weights,
-                        input,
-                        op.n,
-                        op.k,
-                        output,
-                    )
-                    .map_err(|e| HipError::GenericError(format!("Q4_K matmul failed: {}", e)))?;
-                }
-                QuantFormat::Q6_K => {
-                    quantized::matmul_q6_k(
-                        &self.backend,
-                        &op.weights,
-                        input,
-                        op.n,
-                        op.k,
-                        output,
-                    )
-                    .map_err(|e| HipError::GenericError(format!("Q6_K matmul failed: {}", e)))?;
-                }
-                QuantFormat::Q8_0 => {
-                    quantized::matmul_q8_0(
-                        &self.backend,
-                        &op.weights,
-                        input,
-                        op.n,
-                        op.k,
-                        output,
-                    )
-                    .map_err(|e| HipError::GenericError(format!("Q8_0 matmul failed: {}", e)))?;
-                }
-            }
-
-            Ok(())
-        }
+        Ok(())
     }
 
-    /// Execute a single operation with timing (rocm only)
-    #[cfg(feature = "rocm")]
+    /// Execute a single operation with timing
     fn execute_single_timed(
         &self,
         input: &crate::backend::HipBuffer,
@@ -352,12 +293,10 @@ impl BatchQuantizedMatmul {
 ///
 /// This allows launching GPU kernels and continuing CPU work while
 /// the GPU processes the kernels.
-#[cfg(feature = "rocm")]
 pub struct AsyncKernelLauncher {
     backend: HipBackend,
 }
 
-#[cfg(feature = "rocm")]
 impl AsyncKernelLauncher {
     /// Create a new async launcher
     pub fn new(backend: HipBackend) -> Self {
@@ -473,7 +412,6 @@ impl AsyncKernelLauncher {
 }
 
 /// Handle for an async kernel launch
-#[cfg(feature = "rocm")]
 pub struct AsyncHandle {
     // Empty handle - synchronization is managed through the backend
 }
