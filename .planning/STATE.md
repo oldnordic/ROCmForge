@@ -9,9 +9,9 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 
 ## Current Position
 
-Phase: 26 - Warning Cleanup (Plan 3 of N - COMPLETE)
-Status: PLAN 26-03 COMPLETE - All dead code warnings suppressed with justification
-Last activity: Completed 26-03 dead code warning suppression at 2026-01-20T18:41:02Z
+Phase: 26 - Warning Cleanup (Plan 4 of N - COMPLETE)
+Status: PLAN 26-04 COMPLETE - KernelCache visibility mismatch fixed
+Last activity: Completed 26-04 visibility fix and test module repair at 2026-01-20T18:43:00Z
 
 Progress: [████████████████████░] 99% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 COMPLETE, Phase 26 in progress)
 
@@ -30,10 +30,10 @@ Progress: [████████████████████░] 99% 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 158 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 9/10)
-- Plans remaining: 6 (1 gap closure + 5 future)
+- Total plans completed: 162 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22-25, Phase 26 warning cleanup 4/4)
+- Plans remaining: 2 (Phase 26 plans)
 - Average duration: ~44 min
-- Total execution time: ~114 hours
+- Total execution time: ~118 hours
 
 ## Accumulated Context
 
@@ -43,6 +43,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 Recent decisions:
 
+- **KernelCache Visibility Crate-Private**: get_or_init_cache() changed from pub to pub(crate) to match private KernelCache struct visibility. Function only used within kernels_cache module and child submodules (kernels_basic, kernels_flash) (26-04)
 - **Dead Code Suppression Standard**: All #[allow(dead_code)] attributes MUST have explanatory comments per Phase 20 standard. Comments explain WHY code is kept (future use, compatibility, optimization) (26-03)
 - **Kernel Cache Infrastructure Preserved**: Q4_0/Q4_K/Q6_K kernel cache structs, statics, and initializers are not dead code but premature infrastructure from Phase 24. Reserved for future HSACO lazy-loading optimization (26-03)
 - **FFI Constants Kept for API Completeness**: HIP_EVENT_DEFAULT and HIP_EVENT_RECORD_TIMING are part of complete HIP API surface. Currently unused but kept for future use (26-03)
@@ -399,5 +400,5 @@ Historical decisions affecting v1.3:
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed 26-03 dead code warning suppression at 2026-01-20T18:41:02Z
-Resume file: Continue warning cleanup with plan 26-04 (remaining visibility mismatch warning) or next warning category
+Stopped at: Completed 26-04 KernelCache visibility mismatch fix at 2026-01-20T18:43:00Z
+Resume file: Continue warning cleanup with plans 26-01 (deprecated dequant functions) or 26-02 (deprecated to_host_vec)
