@@ -105,7 +105,7 @@ impl TransposeKernel {
         // Get the kernel function
         let kernel = self
             .backend
-            .get_kernel_function(&module, "transpose_kernel")?;
+            .get_kernel_function(&module, "transposeLdsNoBankConflicts")?;
 
         self.module = Some(module);
         self.kernel = Some(kernel);
