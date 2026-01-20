@@ -9,7 +9,6 @@ use super::gguf_tensor::GgufTensor;
 use super::mxfp::MxfpBlock;
 use super::tensor_type::GgufTensorType;
 use anyhow::Result;
-use rayon::prelude::*;
 
 // Re-export Q8_0 from kernels
 pub use crate::kernels::quant::q8_0::dequantize_q8_0 as dequant_q8_0_kernel;

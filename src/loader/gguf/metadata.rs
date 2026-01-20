@@ -8,7 +8,7 @@
 use crate::loader::metadata::GgufMetadata;
 use anyhow::{anyhow, Result};
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, SeekFrom};
 
 /// Parse key-value pairs from GGUF header
 ///
@@ -148,7 +148,7 @@ fn read_value<R: Read + std::io::Seek>(file: &mut R, value_type: u32, key: &str)
 }
 
 /// Skip array value data (we don't need most arrays for metadata)
-fn skip_array_value<R: Read + std::io::Seek>(file: &mut R, value_type: u32, key: &str) -> Result<()> {
+fn skip_array_value<R: Read + std::io::Seek>(file: &mut R, _value_type: u32, key: &str) -> Result<()> {
     // Format per official GGUF spec:
     // 1. The type of the array (gguf_type) - int32_t (4 bytes)
     // 2. The number of elements in the array (uint64_t) - 8 bytes
