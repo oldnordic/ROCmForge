@@ -6,9 +6,7 @@ use crate::backend::{DeviceTensor, HipBackend, HipError, HipResult};
 use crate::loader::TensorShape;
 use crate::model::kv_cache::KVCache;
 
-use super::layer_tensors::create_layer_plan_lazy;
 use super::matmul::{matmul, reshape_for_attention, extract_qkv_tensors, flatten_attention_output, add_residual};
-use super::rope::rope_cache;
 use super::types::ExecutionPlan;
 
 /// Forward pass through a single transformer layer
@@ -355,11 +353,11 @@ fn self_attention(
         #[cfg(not(feature = "rocm"))]
         {
             // CPU fallback: download tensors, apply RoPE, upload back
-            let q_host = q_reshaped
-                .to_host_vec()
+            let mut q_host = vec![0.0f32; q_reshaped.len()];
+            backend.copy_from_device_safe(&q_reshaped.buffer, &mut q_host)
                 .map_err(|e| HipError::GenericError(format!("Failed to download Q: {}", e)))?;
-            let k_host = k_reshaped
-                .to_host_vec()
+            let mut k_host = vec![0.0f32; k_reshaped.len()];
+            backend.copy_from_device_safe(&k_reshaped.buffer, &mut k_host)
                 .map_err(|e| HipError::GenericError(format!("Failed to download K: {}", e)))?;
 
             let (q_with_pos, k_with_pos) = position_handler
@@ -657,7 +655,7 @@ fn mlp_swiglu(
 
 /// Scaled dot-product attention with detailed tracing
 fn scaled_dot_product_attention(
-    plan: &ExecutionPlan,
+    _plan: &ExecutionPlan,
     backend: &HipBackend,
     q: &DeviceTensor,
     k: &DeviceTensor,
@@ -741,9 +739,12 @@ fn compute_attention_cpu_fallback(
     let mut output_host = vec![0.0f32; q_seq_len * num_heads * head_dim];
 
     // Download Q, K, V to host
-    let q_host = q.to_host_vec()?;
-    let k_host = k.to_host_vec()?;
-    let v_host = v.to_host_vec()?;
+    let mut q_host = vec![0.0f32; q.len()];
+    backend.copy_from_device_safe(&q.buffer, &mut q_host)?;
+    let mut k_host = vec![0.0f32; k.len()];
+    backend.copy_from_device_safe(&k.buffer, &mut k_host)?;
+    let mut v_host = vec![0.0f32; v.len()];
+    backend.copy_from_device_safe(&v.buffer, &mut v_host)?;
 
     // Compute attention for each head
     for head in 0..num_heads {

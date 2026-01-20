@@ -6,9 +6,6 @@
 //! - Dequantization: value = (quant - 8) * scale
 //! - Signed 4-bit range: [-8, 7]
 
-use std::ffi::c_void;
-use std::path::Path;
-use std::sync::Mutex;
 
 #[cfg(feature = "rocm")]
 use crate::backend::hip_backend::{HipBackend, HipError, HipKernel, HipModule};

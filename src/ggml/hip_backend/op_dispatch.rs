@@ -5,7 +5,7 @@
 //! ops module for the actual GPU computation.
 
 use crate::backend::DeviceTensor;
-use crate::ggml::{GgmlBackend, GgmlError, GgmlResult, Op, TensorId};
+use crate::ggml::{GgmlBackend, GgmlError, GgmlResult, TensorId};
 use crate::loader::mmap_loader::TensorShape;
 
 impl super::HipGgmlBackend {

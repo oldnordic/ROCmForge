@@ -17,7 +17,7 @@ pub fn allocate_block(
     block_table: &RwLock<HashMap<BlockId, BlockTable>>,
     free_blocks: &RwLock<Vec<BlockId>>,
     next_block_id: &RwLock<BlockId>,
-    config: &CacheConfig,
+    _config: &CacheConfig,
     sequence_id: u32,
 ) -> KvCacheResult<BlockId> {
     // Allocate physical block from pool

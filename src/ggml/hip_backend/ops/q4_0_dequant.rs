@@ -35,6 +35,7 @@ const Q4_0_ELEMENTS_PER_BLOCK: usize = 32;
 pub struct Q4_0DequantCache {
     #[allow(dead_code)] // Module kept alive to keep HSACO loaded in memory
     module: Option<HipModule>,
+    #[allow(dead_code)] // Kept for API symmetry with other cache structs
     kernel: Option<HipKernel>,
 }
 

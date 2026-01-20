@@ -6,16 +6,14 @@
 //! - Internal helper methods
 
 use crate::loader::gguf::{header, metadata, tensor_info, types};
-use crate::loader::{lazy_tensor::LazyTensor, TensorShape};
 use crate::model::config::ModelConfig;
 use anyhow::{anyhow, Result};
 use std::fs::File;
-use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
 // Import GgufLoader and GgufTensor from types module
-use types::{GgufLoader, GgufTensor};
+use types::GgufLoader;
 
 /// Create new GGUF loader from file path
 ///

@@ -96,7 +96,7 @@ impl ModelWeightArena {
     /// # Errors
     /// - If GPU allocation fails (insufficient memory, driver error)
     /// - If required_bytes is zero
-    pub fn new(required_bytes: usize, backend: &HipBackend) -> HipResult<Self> {
+    pub fn new(required_bytes: usize, _backend: &HipBackend) -> HipResult<Self> {
         if required_bytes == 0 {
             return Err(HipError::MemoryAllocationFailed(
                 "Arena capacity cannot be zero".to_string(),

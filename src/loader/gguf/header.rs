@@ -5,8 +5,7 @@
 //! - Version verification
 //! - Tensor and KV count reading
 
-use anyhow::{anyhow, bail, Result};
-use std::fs::File;
+use anyhow::{bail, Result};
 use std::io::Read;
 
 /// GGUF file magic number

@@ -9,6 +9,7 @@ use crate::model::execution_plan::ggml_plan::RopeCache;
 use super::types::ExecutionPlan;
 
 /// Get RoPE cache (cos/sin tables) for position embeddings
+#[allow(dead_code)] // Reserved for future RoPE cache access pattern
 pub fn get_rope_cache(plan: &ExecutionPlan) -> HipResult<Option<&RopeCache>> {
     use once_cell::sync::OnceCell;
 

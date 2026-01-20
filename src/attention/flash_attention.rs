@@ -110,10 +110,10 @@ impl BackendImplementation for FlashAttentionBackend {
     fn forward(
         &self,
         config: &AttentionConfig,
-        q: &[f32],
-        k: &[f32],
-        v: &[f32],
-        mask: Option<&[f32]>,
+        _q: &[f32],
+        _k: &[f32],
+        _v: &[f32],
+        _mask: Option<&[f32]>,
     ) -> AttentionBackendResult<Vec<f32>> {
         // Validate config
         config.validate()
@@ -307,7 +307,7 @@ impl FlashAttentionBackend {
 #[cfg(test)]
     use serial_test::serial;
 mod tests {
-    use super::*;
+    
 
     #[test]
     #[serial]

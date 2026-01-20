@@ -22,7 +22,6 @@
 
 #![allow(dead_code)] // Reserved for future fused kernel optimization
 
-use std::ffi::c_void;
 use std::path::Path;
 use std::sync::Mutex;
 

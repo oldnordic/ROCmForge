@@ -12,7 +12,6 @@ pub use backend::HipGgmlBackend;
 pub use tuning::{GpuArchitecture, KernelTuning};
 
 use crate::ggml::{GgmlBackend, GgmlError, GgmlResult, TensorDesc, TensorId};
-use std::sync::Arc;
 
 impl GgmlBackend for HipGgmlBackend {
     type Buffer = crate::backend::HipBuffer;

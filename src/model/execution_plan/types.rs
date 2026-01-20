@@ -12,15 +12,12 @@ use crate::attention::rope::RopeConfig;
 use crate::backend::{DeviceTensor, HipBackend, HipError, HipResult};
 use crate::loader::gguf::GgufLoader;
 use crate::loader::lazy_tensor::LazyTensor;
-use crate::loader::TensorShape;
-use crate::ggml::backend::GgmlBackend;
-use crate::ggml::{executor::execute_graph, Graph, Layout, Op, TensorDesc, DType};
-use crate::ggml::hip_backend::HipGgmlBackend;
+use crate::ggml::Layout;
 use crate::model::{config::ModelConfig, glm_position::GlmPositionHandler, kv_cache::KVCache};
 use once_cell::sync::OnceCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::Mutex as StdMutex; // Renamed to avoid conflict with once_cell::sync
+ // Renamed to avoid conflict with once_cell::sync
 
 /// Loading statistics for debugging/observability
 ///

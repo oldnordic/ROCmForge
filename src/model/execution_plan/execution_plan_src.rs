@@ -20,7 +20,6 @@ use crate::ggml::hip_backend::HipGgmlBackend;
 use crate::ggml::executor::execute_graph;
 use crate::loader::TensorShape;
 use crate::model::kv_cache::KVCache;
-use once_cell::sync::OnceCell;
 use std::sync::Mutex as StdMutex;
 use std::sync::Arc;
 
@@ -29,6 +28,7 @@ impl ExecutionPlan {
     ///
     /// NOTE: This method is kept for GGML decode path compatibility.
     /// The standard embedding_lookup is now in embedding.rs.
+    #[allow(dead_code)] // Reserved for future embedding layer optimization
     fn build_embedding_plan(
         &self,
         backend: &HipBackend,
@@ -294,7 +294,7 @@ impl ExecutionPlan {
             let mut v_bias_id = None;
             let mut o_proj_bias_id = None;
 
-            let (q_src_id, k_src_id, v_src_id) = if use_separate_qkv {
+            let (q_src_id, k_src_id, _v_src_id) = if use_separate_qkv {
                 let q_ref = q_weight.as_ref().expect("q_weight is Some when use_separate_qkv is true");
                 let k_ref = k_weight.as_ref().expect("k_weight is Some when use_separate_qkv is true");
                 let v_ref = v_weight.as_ref().expect("v_weight is Some when use_separate_qkv is true");

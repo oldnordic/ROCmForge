@@ -9,7 +9,7 @@
 use crate::error::{ErrorCategory, RocmForgeError};
 use axum::{
     http::{header::HeaderMap, StatusCode},
-    response::{sse::Event, IntoResponse, Response},
+    response::{IntoResponse, Response},
     Json,
 };
 use serde::{Deserialize, Serialize};

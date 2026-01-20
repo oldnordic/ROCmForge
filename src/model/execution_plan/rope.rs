@@ -9,6 +9,7 @@ use crate::model::execution_plan::ggml_plan::RopeCache;
 use super::types::ExecutionPlan;
 
 /// Get RoPE cache (cached cos/sin tables on GPU)
+#[allow(dead_code)] // Reserved for future RoPE pre-computation optimization
 pub fn rope_cache(plan: &ExecutionPlan) -> HipResult<Option<&'static RopeCache>> {
     use once_cell::sync::OnceCell;
 

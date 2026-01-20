@@ -10,7 +10,7 @@ use super::types::ExecutionPlan;
 
 /// Matrix multiplication with optional bias
 pub fn matmul(
-    plan: &ExecutionPlan,
+    _plan: &ExecutionPlan,
     backend: &HipBackend,
     input: &DeviceTensor,
     weight: &DeviceTensor,
@@ -128,7 +128,8 @@ pub fn transpose_2d_tensor(backend: &HipBackend, tensor: &DeviceTensor) -> HipRe
         cols,
         tensor.len() * std::mem::size_of::<f32>()
     );
-    let host = tensor.to_host_vec()?;
+    let mut host = vec![0.0f32; tensor.len()];
+    backend.copy_from_device_safe(&tensor.buffer, &mut host)?;
     let mut transposed = vec![0.0f32; host.len()];
 
     for r in 0..rows {
@@ -173,7 +174,8 @@ pub fn reshape_for_attention(
     // This is a view/reshape operation that doesn't copy data.
 
     // Read the data and create a new tensor with the 3D shape
-    let proj_data = proj.to_host_vec().map_err(|e| {
+    let mut proj_data = vec![0.0f32; proj.len()];
+    backend.copy_from_device_safe(&proj.buffer, &mut proj_data).map_err(|e| {
         HipError::GenericError(format!(
             "reshape_for_attention: failed to download tensor: {}",
             e

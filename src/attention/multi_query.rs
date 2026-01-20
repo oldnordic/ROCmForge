@@ -727,8 +727,8 @@ impl MultiQueryAttention {
 #[cfg(test)]
     use serial_test::serial;
 mod tests {
-    use super::*;
-    use crate::attention::rope::{Rope, RopeConfig};
+    
+    
 
     #[test]
     #[serial]

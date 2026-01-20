@@ -8,7 +8,6 @@
 //!   - 224 bytes: 8 sub-blocks of 4-bit quantized values (28 bytes each)
 //! - Dequantization: value = min + (quant * scale)
 
-use std::sync::Mutex;
 
 #[cfg(feature = "rocm")]
 use crate::backend::{HipBackend, HipKernel, HipModule};

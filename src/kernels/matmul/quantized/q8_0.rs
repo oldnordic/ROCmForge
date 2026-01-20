@@ -8,7 +8,7 @@
 use crate::backend::hip_backend::HipBackend;
 use crate::backend::HipBuffer;
 
-use super::common::{Q8_0_BLOCK_SIZE, Q8_0_ELEMENTS_PER_BLOCK, QuantizedResult};
+use super::common::{Q8_0_BLOCK_SIZE, QuantizedResult};
 
 /// Dequantize Q8_0 weights to f32 (CPU reference implementation)
 ///

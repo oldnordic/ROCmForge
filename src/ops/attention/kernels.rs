@@ -177,7 +177,7 @@ impl HipAttentionKernels {
         seq_len: usize,
         cache_len: usize,
     ) -> HipResult<()> {
-        use std::ffi::c_void;
+        
 
         #[cfg(feature = "rocm")]
         {
@@ -289,7 +289,7 @@ impl HipAttentionKernels {
         attention: &mut DeviceTensor,
         _temp_buffer: &DeviceTensor,
     ) -> HipResult<()> {
-        use std::ffi::c_void;
+        
 
         #[cfg(feature = "rocm")]
         {

@@ -7,7 +7,6 @@
 use crate::engine::InferenceEngine;
 use crate::logging::init_logging_default;
 use crate::metrics::{MetricRegistry, Metrics};
-use crate::models::discover_models_with_cache;
 use crate::otel_traces::{init_trace_store, TraceConfig};
 use crate::scheduler::{GenerationRequest as SchedulerRequest, RequestState};
 use crate::tokenizer::{

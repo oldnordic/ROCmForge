@@ -10,7 +10,6 @@
 //! - Dequantization: value = signed_6bit * scale
 //! - Signed 6-bit conversion: if >= 32, subtract 64 (range: [-32, 31])
 
-use std::sync::Mutex;
 
 #[cfg(feature = "rocm")]
 use crate::backend::{HipBackend, HipKernel, HipModule};

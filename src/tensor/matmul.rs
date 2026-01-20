@@ -216,8 +216,8 @@ pub fn cpu_matmul_f32(a: &[f32], b: &[f32], m: usize, n: usize, k: usize) -> Vec
 #[cfg(test)]
     use serial_test::serial;
 mod tests {
-    use super::*;
-    use crate::backend::hip_blas::HipBlasHandle;
+    
+    
 
     #[test]
     #[serial]

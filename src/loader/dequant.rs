@@ -18,6 +18,7 @@ pub use crate::kernels::quant::q8_0::dequantize_q8_0 as dequant_q8_0_kernel;
 /// Re-exports from `crate::kernels::quant::q8_0`.
 /// This function maintains the original API for backward compatibility.
 #[deprecated(note = "Use crate::kernels::quant::dequantize_q8_0 directly")]
+#[allow(dead_code)] // Backward compatibility wrapper - consumers should migrate to crate::kernels::quant::dequantize_q8_0
 pub fn dequant_q8_0(tensor: &GgufTensor) -> Result<Vec<f32>> {
     dequant_q8_0_kernel(&tensor.data, tensor.total_elements())
         .map_err(|e| anyhow::anyhow!("Q8_0 dequantization failed: {}", e))
@@ -31,6 +32,7 @@ pub use crate::kernels::quant::q4_0::dequantize_q4_0_cpu as dequant_q4_0_kernel;
 /// Re-exports from `crate::kernels::quant::q4_0`.
 /// This function maintains the original API for backward compatibility.
 #[deprecated(note = "Use crate::kernels::quant::dequantize_q4_0_cpu directly")]
+#[allow(dead_code)] // Backward compatibility wrapper - consumers should migrate to crate::kernels::quant::dequantize_q4_0_cpu
 pub fn dequant_q4_0(tensor: &GgufTensor) -> Result<Vec<f32>> {
     Ok(dequant_q4_0_kernel(&tensor.data, tensor.total_elements()))
 }
@@ -137,6 +139,7 @@ pub use crate::kernels::quant::q4_k::dequantize_q4_k_cpu as dequant_q4_k_kernel;
 /// Re-exports from `crate::kernels::quant::q4_k`.
 /// This function maintains the original API for backward compatibility.
 #[deprecated(note = "Use crate::kernels::quant::dequantize_q4_k_cpu directly")]
+#[allow(dead_code)] // Backward compatibility wrapper - consumers should migrate to crate::kernels::quant::dequantize_q4_k_cpu
 pub fn dequant_q4_k(tensor: &GgufTensor) -> Result<Vec<f32>> {
     Ok(dequant_q4_k_kernel(&tensor.data, tensor.total_elements()))
 }
@@ -229,6 +232,7 @@ pub use crate::kernels::quant::q6_k::dequantize_q6_k_cpu as dequant_q6_k_kernel;
 /// Re-exports from `crate::kernels::quant::q6_k`.
 /// This function maintains the original API for backward compatibility.
 #[deprecated(note = "Use crate::kernels::quant::dequantize_q6_k_cpu directly")]
+#[allow(dead_code)] // Backward compatibility wrapper - consumers should migrate to crate::kernels::quant::dequantize_q6_k_cpu
 pub fn dequant_q6_k(tensor: &GgufTensor) -> Result<Vec<f32>> {
     Ok(dequant_q6_k_kernel(&tensor.data, tensor.total_elements()))
 }

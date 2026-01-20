@@ -3,7 +3,7 @@
 //! This module provides the main execution entry point for GGML IR operations.
 //! Individual operation implementations are delegated to the op_dispatch module.
 
-use crate::ggml::{GgmlBackend, GgmlError, GgmlResult, Op, TensorId};
+use crate::ggml::{GgmlResult, Op, TensorId};
 
 use super::HipGgmlBackend;
 

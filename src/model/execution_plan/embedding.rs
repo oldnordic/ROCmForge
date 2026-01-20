@@ -162,7 +162,7 @@ pub fn build_embedding_plan(
     use crate::ggml::hip_backend::HipGgmlBackend;
     use crate::ggml::{Graph, Layout, Op, TensorDesc, DType};
     use crate::model::execution_plan::ggml_plan::EmbeddingGgmlPlan;
-    use crate::model::execution_plan::types::ExecutionPlan;
+    
     use std::sync::Mutex as StdMutex;
     use std::sync::Arc;
 
@@ -261,7 +261,7 @@ pub fn embedding_lookup(
     embedding_weights: &DeviceTensor,
 ) -> HipResult<DeviceTensor> {
     use crate::ggml::executor::execute_graph;
-    use crate::model::execution_plan::ggml_plan::EmbeddingGgmlPlan;
+    
 
     eprintln!(
         ">>> embedding_lookup: Starting with {} tokens",

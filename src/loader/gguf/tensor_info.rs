@@ -9,7 +9,7 @@ use crate::loader::lazy_tensor::LazyTensor;
 use crate::loader::tensor_type::GgufTensorType;
 use crate::loader::TensorShape;
 use crate::loader::gguf::types::GgufTensor;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;

@@ -1,6 +1,5 @@
 //! Common types and utilities for quantized matmul operations
 
-use crate::backend::hip_backend::{HipBackend, HipError, HipKernel, HipModule};
 
 /// Result type for quantized operations
 pub type QuantizedResult<T> = Result<T, String>;

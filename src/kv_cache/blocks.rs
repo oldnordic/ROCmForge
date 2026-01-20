@@ -5,7 +5,7 @@
 
 use crate::backend::{HipBackend, HipBuffer};
 use std::collections::VecDeque;
-use super::types::{BlockId, KvCacheResult, KvCacheError};
+use super::types::{BlockId, KvCacheResult};
 
 /// Allocation statistics for monitoring and optimization
 #[derive(Debug, Clone, Default)]
