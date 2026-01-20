@@ -336,7 +336,7 @@ Historical decisions affecting v1.3:
 - Wave 6: 2 parallel plans (cpu/simd)
 
 **Phase 25 Final Status:**
-- Status: GAP CLOSURE IN PROGRESS (3 of 10 complete)
+- Status: GAP CLOSURE IN PROGRESS (4 of 10 complete)
 - Files > 1,000 LOC reduced: 15 → 7 (-8 files so far)
 - Gap closure targets: 6 remaining files
 - Tests passing: 675 (baseline stable)

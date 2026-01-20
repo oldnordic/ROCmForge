@@ -1,35 +1,36 @@
-//! GPU Attention Kernel Compilation and Management
+//! Attention Operations
+//!
+//! Re-exports from the original attention_gpu.rs module.
+//! This file contains the attention computation pipeline implementations.
+
+#![allow(deprecated)]
+
+use std::ffi::c_void;
 
 use crate::backend::{
-    hip_blas::{HipBlasHandle, HIPBLAS_OP_N, HIPBLAS_OP_T},
+    hip_blas::{self, HipBlasHandle, HIPBLAS_OP_N, HIPBLAS_OP_T},
     DeviceTensor, HipBackend, HipError, HipResult,
 };
 #[cfg(feature = "rocm")]
 use crate::backend::{HipKernel, HipModule};
+use crate::loader::TensorShape;
+use crate::model::kv_cache::KVCache;
+use crate::tensor::matmul::matmul_f32;
 #[cfg(feature = "rocm")]
 use once_cell::sync::OnceCell;
-use crate::tensor::matmul::matmul_f32;
 
 #[cfg(feature = "rocm")]
 use super::hiprtc;
-
 #[cfg(feature = "rocm")]
-pub struct CompiledKernel {
-    #[allow(dead_code)]
-    module: HipModule,
-    pub kernel: HipKernel,
-}
+use super::kernels::CompiledKernel;
 
-pub struct HipAttentionKernels {
+/// QK^T matrix multiplication operation
+pub struct QkMatmul {
     backend: HipBackend,
     blas_handle: HipBlasHandle,
-    #[cfg(feature = "rocm")]
-    attention_softmax_kernel: OnceCell<CompiledKernel>,
-    #[cfg(feature = "rocm")]
-    causal_mask_kernel: OnceCell<CompiledKernel>,
 }
 
-impl HipAttentionKernels {
+impl QkMatmul {
     pub fn new(backend: &HipBackend) -> HipResult<Self> {
         let blas_handle = HipBlasHandle::new().map_err(|e| {
             HipError::GenericError(format!("Failed to create hipBLAS handle: {}", e))
@@ -39,13 +40,9 @@ impl HipAttentionKernels {
             .set_stream(backend.stream().as_ptr())
             .map_err(|e| HipError::GenericError(format!("Failed to set hipBLAS stream: {}", e)))?;
 
-        Ok(HipAttentionKernels {
+        Ok(QkMatmul {
             backend: backend.clone(),
             blas_handle,
-            #[cfg(feature = "rocm")]
-            attention_softmax_kernel: OnceCell::new(),
-            #[cfg(feature = "rocm")]
-            causal_mask_kernel: OnceCell::new(),
         })
     }
 
@@ -57,40 +54,7 @@ impl HipAttentionKernels {
         &self.blas_handle
     }
 
-    #[cfg(feature = "rocm")]
-    fn compile_attention_softmax_kernel(&self) -> HipResult<CompiledKernel> {
-        let code = hiprtc::compile_kernel("attention_softmax", ATTENTION_SOFTMAX_KERNEL)?;
-        let module = self.backend.load_module_from_data(&code)?;
-        let kernel = self
-            .backend
-            .get_kernel_function(&module, "attention_softmax")?;
-        Ok(CompiledKernel { module, kernel })
-    }
-
-    #[cfg(feature = "rocm")]
-    pub fn get_attention_softmax_kernel(&self) -> HipResult<&CompiledKernel> {
-        self.attention_softmax_kernel
-            .get_or_try_init(|| self.compile_attention_softmax_kernel())
-    }
-
-    #[cfg(feature = "rocm")]
-    fn compile_causal_mask_kernel(&self) -> HipResult<CompiledKernel> {
-        let code = hiprtc::compile_kernel("causal_mask", CAUSAL_MASK_KERNEL)?;
-        let module = self.backend.load_module_from_data(&code)?;
-        let kernel = self
-            .backend
-            .get_kernel_function(&module, "causal_mask_kernel")?;
-        Ok(CompiledKernel { module, kernel })
-    }
-
-    #[cfg(feature = "rocm")]
-    pub fn get_causal_mask_kernel(&self) -> HipResult<&CompiledKernel> {
-        self.causal_mask_kernel
-            .get_or_try_init(|| self.compile_causal_mask_kernel())
-    }
-
-    /// Compute QK^T using hipBLAS
-    pub fn compute_qk_t(
+    pub fn compute(
         &self,
         q: &DeviceTensor,
         k: &DeviceTensor,
@@ -116,10 +80,10 @@ impl HipAttentionKernels {
             ));
         }
 
-        self.compute_qk_t_gemm(q, k, output)
+        self.compute_gemm(q, k, output)
     }
 
-    fn compute_qk_t_gemm(
+    fn compute_gemm(
         &self,
         q: &DeviceTensor,
         k: &DeviceTensor,
@@ -133,12 +97,6 @@ impl HipAttentionKernels {
         let num_heads = q_shape.dims()[1];
         let head_dim = q_shape.dims()[2];
 
-        if k_shape.dims()[1] != num_heads || k_shape.dims()[2] != head_dim {
-            return Err(HipError::GenericError(
-                "Q and K must have matching num_heads and head_dim".to_string(),
-            ));
-        }
-
         let total_dim = num_heads * head_dim;
         if output.shape().dims() != [seq_q, seq_k] {
             return Err(HipError::GenericError(format!(
@@ -149,7 +107,7 @@ impl HipAttentionKernels {
             )));
         }
 
-        crate::backend::hip_blas::sgemm(
+        hip_blas::sgemm(
             &self.blas_handle,
             HIPBLAS_OP_T,
             HIPBLAS_OP_N,
@@ -169,37 +127,65 @@ impl HipAttentionKernels {
 
         Ok(())
     }
+}
 
-    /// Apply causal mask to attention scores
-    pub fn apply_causal_mask(
+/// Causal mask operation
+pub struct CausalMaskOp {
+    backend: HipBackend,
+    #[cfg(feature = "rocm")]
+    causal_mask_kernel: OnceCell<CompiledKernel>,
+}
+
+impl CausalMaskOp {
+    pub fn new(backend: &HipBackend) -> Self {
+        CausalMaskOp {
+            backend: backend.clone(),
+            #[cfg(feature = "rocm")]
+            causal_mask_kernel: OnceCell::new(),
+        }
+    }
+
+    pub fn apply(
         &self,
         attention: &mut DeviceTensor,
         seq_len: usize,
         cache_len: usize,
     ) -> HipResult<()> {
-        use std::ffi::c_void;
-
         #[cfg(feature = "rocm")]
         {
-            if let Err(err) = self.apply_causal_mask_gpu(attention, seq_len, cache_len) {
+            if let Err(err) = self.apply_gpu(attention, seq_len, cache_len) {
                 tracing::warn!("hip attention mask fallback to CPU: {}", err);
             } else {
                 return Ok(());
             }
         }
 
-        self.apply_causal_mask_cpu_fallback(attention, seq_len, cache_len)
+        self.apply_cpu_fallback(attention, seq_len, cache_len)
     }
 
     #[cfg(feature = "rocm")]
-    fn apply_causal_mask_gpu(
+    fn compile_causal_mask_kernel(&self) -> HipResult<CompiledKernel> {
+        let code = hiprtc::compile_kernel("causal_mask", super::kernels::CAUSAL_MASK_KERNEL)?;
+        let module = self.backend.load_module_from_data(&code)?;
+        let kernel = self
+            .backend
+            .get_kernel_function(&module, "causal_mask_kernel")?;
+        Ok(CompiledKernel { module, kernel })
+    }
+
+    #[cfg(feature = "rocm")]
+    fn get_causal_mask_kernel(&self) -> HipResult<&CompiledKernel> {
+        self.causal_mask_kernel
+            .get_or_try_init(|| self.compile_causal_mask_kernel())
+    }
+
+    #[cfg(feature = "rocm")]
+    fn apply_gpu(
         &self,
         attention: &mut DeviceTensor,
         seq_len: usize,
         cache_len: usize,
     ) -> HipResult<()> {
-        use std::ffi::c_void;
-
         let attention_shape = attention.shape();
         let dims = attention_shape.dims();
 
@@ -262,7 +248,7 @@ impl HipAttentionKernels {
         }
     }
 
-    fn apply_causal_mask_cpu_fallback(
+    fn apply_cpu_fallback(
         &self,
         attention: &mut DeviceTensor,
         seq_len: usize,
@@ -282,32 +268,59 @@ impl HipAttentionKernels {
         *attention = DeviceTensor::from_host_vec(&self.backend, attention_host, shape)?;
         Ok(())
     }
+}
 
-    /// Compute softmax of attention scores
-    pub fn compute_softmax(
+/// Attention softmax operation
+pub struct AttentionSoftmax {
+    backend: HipBackend,
+    #[cfg(feature = "rocm")]
+    attention_softmax_kernel: OnceCell<CompiledKernel>,
+}
+
+impl AttentionSoftmax {
+    pub fn new(backend: &HipBackend) -> Self {
+        AttentionSoftmax {
+            backend: backend.clone(),
+            #[cfg(feature = "rocm")]
+            attention_softmax_kernel: OnceCell::new(),
+        }
+    }
+
+    pub fn compute(
         &self,
         attention: &mut DeviceTensor,
         _temp_buffer: &DeviceTensor,
     ) -> HipResult<()> {
-        use std::ffi::c_void;
-
         #[cfg(feature = "rocm")]
         {
-            if let Err(err) = self.compute_softmax_gpu(attention) {
+            if let Err(err) = self.compute_gpu(attention) {
                 tracing::warn!("hip attention softmax fallback to CPU: {}", err);
             } else {
                 return Ok(());
             }
         }
 
-        let _ = _temp_buffer;
-        self.compute_softmax_cpu_fallback(attention, _temp_buffer)
+        self.compute_cpu_fallback(attention, _temp_buffer)
     }
 
     #[cfg(feature = "rocm")]
-    fn compute_softmax_gpu(&self, attention: &mut DeviceTensor) -> HipResult<()> {
-        use std::ffi::c_void;
+    fn compile_attention_softmax_kernel(&self) -> HipResult<CompiledKernel> {
+        let code = hiprtc::compile_kernel("attention_softmax", super::kernels::ATTENTION_SOFTMAX_KERNEL)?;
+        let module = self.backend.load_module_from_data(&code)?;
+        let kernel = self
+            .backend
+            .get_kernel_function(&module, "attention_softmax")?;
+        Ok(CompiledKernel { module, kernel })
+    }
 
+    #[cfg(feature = "rocm")]
+    fn get_attention_softmax_kernel(&self) -> HipResult<&CompiledKernel> {
+        self.attention_softmax_kernel
+            .get_or_try_init(|| self.compile_attention_softmax_kernel())
+    }
+
+    #[cfg(feature = "rocm")]
+    fn compute_gpu(&self, attention: &mut DeviceTensor) -> HipResult<()> {
         let kernel = self.get_attention_softmax_kernel()?;
         let shape = attention.shape();
         if shape.dims().len() != 2 {
@@ -349,7 +362,7 @@ impl HipAttentionKernels {
         )
     }
 
-    fn compute_softmax_cpu_fallback(
+    fn compute_cpu_fallback(
         &self,
         attention: &mut DeviceTensor,
         _temp_buffer: &DeviceTensor,
@@ -391,24 +404,46 @@ impl HipAttentionKernels {
         *attention = DeviceTensor::from_host_vec(&self.backend, attention_host, shape)?;
         Ok(())
     }
+}
 
-    /// Compute attention-weighted V: attention @ V
-    pub fn compute_attention_weighted_v(
+/// Weighted matmul operation
+pub struct WeightedMatmul {
+    backend: HipBackend,
+    blas_handle: HipBlasHandle,
+}
+
+impl WeightedMatmul {
+    pub fn new(qk_matmul: &QkMatmul) -> HipResult<Self> {
+        let blas_handle = HipBlasHandle::new().map_err(|e| {
+            HipError::GenericError(format!("Failed to create hipBLAS handle: {}", e))
+        })?;
+
+        blas_handle
+            .set_stream(qk_matmul.backend().stream().as_ptr())
+            .map_err(|e| HipError::GenericError(format!("Failed to set hipBLAS stream: {}", e)))?;
+
+        Ok(WeightedMatmul {
+            backend: qk_matmul.backend().clone(),
+            blas_handle,
+        })
+    }
+
+    pub fn compute(
         &self,
         attention: &DeviceTensor,
         v: &DeviceTensor,
         output: &mut DeviceTensor,
     ) -> HipResult<()> {
-        match self.compute_attention_weighted_v_gemm(attention, v, output) {
+        match self.compute_gemm(attention, v, output) {
             Ok(_) => Ok(()),
             Err(err) => {
                 tracing::warn!("hipBLAS attention*V fallback to CPU: {}", err);
-                self.compute_attention_weighted_v_cpu_fallback(attention, v, output)
+                self.compute_cpu_fallback(attention, v, output)
             }
         }
     }
 
-    fn compute_attention_weighted_v_gemm(
+    fn compute_gemm(
         &self,
         attention: &DeviceTensor,
         v: &DeviceTensor,
@@ -473,7 +508,7 @@ impl HipAttentionKernels {
         Ok(())
     }
 
-    fn compute_attention_weighted_v_cpu_fallback(
+    fn compute_cpu_fallback(
         &self,
         attention: &DeviceTensor,
         v: &DeviceTensor,
@@ -512,86 +547,49 @@ impl HipAttentionKernels {
     }
 }
 
-#[cfg(feature = "rocm")]
-pub(crate) const ATTENTION_SOFTMAX_KERNEL: &str = r#"
-extern "C" __global__ void attention_softmax(float* scores, int rows, int cols) {
-    int row = blockIdx.x;
-    if (row >= rows) return;
-    extern __shared__ float shared[];
-    int tid = threadIdx.x;
-    float max_val = -3.402823466e+38f;
-    for (int col = tid; col < cols; col += blockDim.x) {
-        float val = scores[row * cols + col];
-        if (val > max_val) {
-            max_val = val;
-        }
-    }
-    shared[tid] = max_val;
-    __syncthreads();
+/// Complete attention computation
+pub fn compute_attention(
+    qk_matmul: &QkMatmul,
+    causal_mask: &CausalMaskOp,
+    softmax: &AttentionSoftmax,
+    q: &DeviceTensor,
+    kv_cache: &KVCache,
+    layer_id: usize,
+    current_seq_len: usize,
+) -> HipResult<DeviceTensor> {
+    let backend = qk_matmul.backend();
 
-    for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
-        if (tid < offset) {
-            shared[tid] = fmaxf(shared[tid], shared[tid + offset]);
-        }
-        __syncthreads();
+    let q_shape = q.shape();
+    if q_shape.dims().len() != 3 {
+        return Err(HipError::GenericError(
+            "Q tensor must be 3D [seq_len, num_heads, head_dim]".to_string(),
+        ));
     }
-    max_val = shared[0];
-    __syncthreads();
 
-    float local_sum = 0.0f;
-    for (int col = tid; col < cols; col += blockDim.x) {
-        float val = scores[row * cols + col];
-        float exp_val = expf(val - max_val);
-        scores[row * cols + col] = exp_val;
-        local_sum += exp_val;
-    }
-    shared[tid] = local_sum;
-    __syncthreads();
+    let (seq_len, num_heads, head_dim) =
+        (q_shape.dims()[0], q_shape.dims()[1], q_shape.dims()[2]);
 
-    for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
-        if (tid < offset) {
-            shared[tid] += shared[tid + offset];
-        }
-        __syncthreads();
-    }
-    float sum_val = shared[0] + 1e-9f;
-    __syncthreads();
+    let (k_tensor, v_tensor) = kv_cache.retrieve(layer_id, current_seq_len)?;
 
-    for (int col = tid; col < cols; col += blockDim.x) {
-        scores[row * cols + col] = scores[row * cols + col] / sum_val;
-    }
+    let attention_shape = TensorShape::from_dims(&[seq_len, current_seq_len]);
+    let mut attention_scores = DeviceTensor::empty(backend, attention_shape)?;
+    qk_matmul.compute(q, &k_tensor, &mut attention_scores)?;
+
+    backend.scale_inplace(&mut attention_scores, 1.0 / (head_dim as f32).sqrt())?;
+
+    causal_mask.apply(&mut attention_scores, seq_len, current_seq_len)?;
+
+    let temp_buffer = DeviceTensor::empty(backend, TensorShape::from_dims(&[1, 1]))?;
+    softmax.compute(&mut attention_scores, &temp_buffer)?;
+
+    let weighted_matmul = WeightedMatmul::new(qk_matmul)?;
+    let output_shape = TensorShape::from_dims(&[seq_len, num_heads, head_dim]);
+    let mut output = DeviceTensor::empty(backend, output_shape)?;
+    weighted_matmul.compute(&attention_scores, &v_tensor, &mut output)?;
+
+    Ok(output)
 }
-"#;
 
+#[cfg(test)]
 #[cfg(feature = "rocm")]
-pub(crate) const CAUSAL_MASK_KERNEL: &str = r#"
-#include <hip/hip_runtime.h>
-
-constexpr int WARP_SIZE = 32;
-
-extern "C" __global__ void causal_mask_kernel(
-    float* __restrict__ attention,
-    const int batch_size,
-    const int seq_len,
-    const int num_heads
-) {
-    const int query_pos = blockIdx.x;
-    const int head_idx = blockIdx.y;
-    const int batch_idx = blockIdx.z;
-    const int tid = threadIdx.x;
-
-    if (batch_idx >= batch_size || head_idx >= num_heads || query_pos >= seq_len) {
-        return;
-    }
-
-    const int batch_head_offset = batch_idx * num_heads * seq_len * seq_len
-                                + head_idx * seq_len * seq_len;
-    const int row_offset = batch_head_offset + query_pos * seq_len;
-
-    for (int key_pos = tid; key_pos < seq_len; key_pos += WARP_SIZE) {
-        if (key_pos > query_pos) {
-            attention[row_offset + key_pos] = -(__builtin_inff());
-        }
-    }
-}
-"#;
+include!("causal_mask_tests.rs");
