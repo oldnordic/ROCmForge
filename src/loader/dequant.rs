@@ -10,7 +10,6 @@ use super::mxfp::MxfpBlock;
 use super::tensor_type::GgufTensorType;
 use anyhow::Result;
 use rayon::prelude::*;
-use std::sync::{Arc, RwLock};
 
 // Re-export Q8_0 from kernels
 pub use crate::kernels::quant::q8_0::dequantize_q8_0 as dequant_q8_0_kernel;
@@ -665,7 +664,9 @@ mod tests {
 
 /// Generic dequantization dispatcher
 ///
-/// Routes to the appropriate dequantization function based on tensor type
+/// Routes to the appropriate dequantization function based on tensor type.
+/// Migrated to use kernel module functions directly (26-01) to eliminate
+/// deprecation warnings.
 pub fn dequantize(tensor: &GgufTensor) -> Result<Vec<f32>> {
     match tensor.tensor_type {
         GgufTensorType::F32 => Ok(tensor
@@ -681,14 +682,16 @@ pub fn dequantize(tensor: &GgufTensor) -> Result<Vec<f32>> {
                 half::f16::from_bits(bits).to_f32()
             })
             .collect()),
-        GgufTensorType::Q8_0 => dequant_q8_0(tensor),
-        GgufTensorType::Q4_0 => dequant_q4_0(tensor),
+        // Use kernel module functions directly (migrated in 26-01)
+        GgufTensorType::Q8_0 => crate::kernels::quant::dequantize_q8_0(&tensor.data, tensor.total_elements())
+            .map_err(|e| anyhow::anyhow!("Q8_0 dequantization failed: {}", e)),
+        GgufTensorType::Q4_0 => Ok(crate::kernels::quant::dequantize_q4_0_cpu(&tensor.data, tensor.total_elements())),
         GgufTensorType::Mxfp4 => dequant_mxfp4(tensor),
         GgufTensorType::Mxfp6E2m3 | GgufTensorType::Mxfp6E3m2 => dequant_mxfp6(tensor),
         GgufTensorType::Q2_K => dequant_q2_k(tensor),
         GgufTensorType::Q3_K => dequant_q3_k(tensor),
-        GgufTensorType::Q4_K => dequant_q4_k(tensor),
+        GgufTensorType::Q4_K => Ok(crate::kernels::quant::dequantize_q4_k_cpu(&tensor.data, tensor.total_elements())),
         GgufTensorType::Q5_K => dequant_q5_k(tensor),
-        GgufTensorType::Q6_K => dequant_q6_k(tensor),
+        GgufTensorType::Q6_K => Ok(crate::kernels::quant::dequantize_q6_k_cpu(&tensor.data, tensor.total_elements())),
     }
 }
