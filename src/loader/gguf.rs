@@ -7,6 +7,7 @@
 //! - GPU memory allocation via DeviceTensor
 
 use crate::backend::hip_backend::{AsyncLoader, DeviceTensor, HipBackend, HipBuffer};
+use crate::memory::MemoryCalculator;
 
 // GPU dequantization kernels (require ROCm feature)
 #[cfg(feature = "rocm")]
@@ -18,7 +19,7 @@ use crate::loader::mmap::MmapGguf;
 use crate::loader::tensor_type::GgufTensorType;
 use crate::loader::TensorShape;
 use crate::model::config::ModelConfig;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs::File;
@@ -1175,6 +1176,57 @@ impl GgufLoader {
                 .len()
         );
 
+        // Phase A-1: Memory Requirements Calculation (Phase 22-02)
+        // Calculate total GPU memory needed BEFORE any allocation
+        // This enables pre-flight checks and clean error messages
+        tracing::info!("load_to_gpu_async: Phase A-1 - Memory requirements calculation");
+
+        let shapes = tensor_shapes
+            .lock()
+            .map_err(|e| anyhow!("Failed to lock tensor_shapes for memory calculation: {}", e))?;
+
+        let mut memory_calc = MemoryCalculator::new();
+        for (name, shape) in shapes.iter() {
+            let elements: usize = shape.iter().product();
+            memory_calc.add_tensor(name.clone(), elements, std::mem::size_of::<f32>());
+        }
+
+        let total_needed_bytes = memory_calc.total_bytes();
+        let tensor_count = memory_calc.tensor_count();
+        tracing::info!(
+            "Memory calculation: {} tensors, {} MB needed (base)",
+            tensor_count,
+            total_needed_bytes / 1024 / 1024
+        );
+
+        // Query GPU memory and check if sufficient
+        let (has_enough, free_mb, needed_mb) = backend
+            .check_memory_for_model(total_needed_bytes)
+            .map_err(|e| anyhow!("Failed to query GPU memory: {}", e))?;
+
+        if !has_enough {
+            bail!(
+                "Insufficient GPU memory for model loading\n\
+                 Required: {} MB (including 10%% safety margin)\n\
+                 Available: {} MB\n\
+                 Deficit: {} MB\n\
+                 \n\
+                 Suggestions:\n\
+                 - Use a smaller model\n\
+                 - Reduce context length\n\
+                 - Close other GPU-intensive applications",
+                needed_mb, free_mb, needed_mb.saturating_sub(free_mb)
+            );
+        }
+
+        tracing::info!(
+            "GPU memory check passed: {} MB available for {} MB needed (safety margin included)",
+            free_mb, needed_mb
+        );
+
+        // Release the shapes lock before Phase B
+        drop(shapes);
+
         // Phase B: Concurrent GPU Uploads (AsyncLoader)
         // Upload all dequantized tensors to GPU in parallel using 4 streams
         tracing::info!("load_to_gpu_async: Phase B - Concurrent GPU uploads");
@@ -1662,6 +1714,10 @@ impl GgufLoader {
             // Qwen2-specific keys
             "qwen2.block_count" => self.metadata.num_layers = value.parse().unwrap_or(0),
             "qwen2.attention.head_count" => self.metadata.num_heads = value.parse().unwrap_or(0),
+            "qwen2.attention.head_count_kv" => {
+                eprintln!(">>> GGUF: Found qwen2.attention.head_count_kv = {}", value);
+                self.metadata.num_kv_heads = Some(value.parse().unwrap_or(0))
+            }
             "qwen2.embedding_length" => self.metadata.hidden_size = value.parse().unwrap_or(0),
             "qwen2.intermediate_size" => {
                 self.metadata.intermediate_size = value.parse().unwrap_or(0)
