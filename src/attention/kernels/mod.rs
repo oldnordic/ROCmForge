@@ -6,15 +6,13 @@
 #![allow(non_snake_case)] // Kernel parameter names follow HIP conventions
 
 // Private sub-modules for kernel organization
+// kernels_basic and kernels_flash are submodules of kernels_cache
+// to access private KernelCache fields
 mod kernels_cache;
-
-// Public kernel function modules - not exposed directly, only through re-exports
-mod kernels_basic;
-mod kernels_flash;
 
 // Re-export all kernel functions (only available with rocm feature)
 #[cfg(feature = "rocm")]
-pub use kernels_basic::{
+pub use kernels_cache::kernels_basic::{
     mask_gpu_kernel,
     position_embeddings_gpu_kernel,
     rope_gpu_kernel,
@@ -22,7 +20,7 @@ pub use kernels_basic::{
     softmax_gpu_kernel,
 };
 #[cfg(feature = "rocm")]
-pub use kernels_flash::{
+pub use kernels_cache::kernels_flash::{
     causal_mask_gpu_kernel,
     flash_attention_causal_gpu_kernel,
     flash_attention_gpu_kernel,

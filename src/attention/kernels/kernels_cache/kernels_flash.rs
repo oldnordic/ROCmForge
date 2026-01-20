@@ -9,7 +9,8 @@ use std::ffi::c_void;
 use crate::backend::hip_backend::HipKernel;
 
 #[cfg(feature = "rocm")]
-use super::kernels_cache::{get_attention_kernels, get_mqa_kernel_and_backend, get_or_init_cache};
+// kernels_flash is now a submodule of kernels_cache, so use super
+use super::{get_attention_kernels, get_mqa_kernel_and_backend, get_or_init_cache};
 
 // RDNA3 (wave32) tuning constants for AMD Radeon RX 7900 XT
 const BLOCK_SIZE: u32 = 256; // 8 waves of 32 threads

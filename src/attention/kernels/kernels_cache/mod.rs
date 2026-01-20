@@ -9,6 +9,10 @@ use std::ffi::c_void;
 
 use crate::backend::hip_backend::{HipBackend, HipError, HipKernel, HipModule};
 
+// Public sub-modules that can access private KernelCache fields
+pub mod kernels_basic;
+pub mod kernels_flash;
+
 // RDNA3 (wave32) tuning constants for AMD Radeon RX 7900 XT
 const BLOCK_SIZE: u32 = 256; // 8 waves of 32 threads
 const WARP_SIZE: u32 = 32; // RDNA3 wavefront size

@@ -7,7 +7,8 @@
 #[cfg(feature = "rocm")]
 mod tests {
     use crate::backend::hip_backend::{DeviceTensor, HipBackend, HipError};
-    use crate::kv_cache::kv_cache::{CacheConfig, KvCache};
+use serial_test::serial;
+    use crate::kv_cache::{CacheConfig, KvCache};
     use crate::loader::TensorShape;
     use std::sync::Arc;
 
@@ -47,6 +48,7 @@ mod tests {
 
     // Test 1: Verify PageTable has blocks after paged token appends
     #[test]
+    #[serial]
     fn test_page_table_has_blocks_after_paged_append() {
         let (_backend, cache, sequence_id) = create_paged_kv_cache();
 
@@ -75,6 +77,7 @@ mod tests {
 
     // Test 2: Verify block allocation from BlockAllocator
     #[test]
+    #[serial]
     fn test_block_allocator_allocates_blocks() {
         let (_backend, cache, _sequence_id) = create_paged_kv_cache();
 
@@ -92,6 +95,7 @@ mod tests {
 
     // Test 3: Verify get_block_for_position returns valid mappings
     #[test]
+    #[serial]
     fn test_get_block_for_position() {
         let (_backend, cache, sequence_id) = create_paged_kv_cache();
 
@@ -137,6 +141,7 @@ mod tests {
 
     // Test 4: Verify multiple blocks are allocated for long sequences
     #[test]
+    #[serial]
     fn test_multiple_blocks_for_long_sequence() {
         let backend = get_backend_or_skip();
         let config = CacheConfig::new(4, 10, 32, 128, 24).expect("Invalid config");
@@ -167,6 +172,7 @@ mod tests {
 
     // Test 5: Verify block ID mappings are consistent
     #[test]
+    #[serial]
     fn test_block_id_mappings_consistent() {
         let (_backend, cache, sequence_id) = create_paged_kv_cache();
 
@@ -185,6 +191,7 @@ mod tests {
 
     // Test 6: Verify fallback when PageTable is empty
     #[test]
+    #[serial]
     fn test_fallback_when_page_table_empty() {
         let backend = get_backend_or_skip();
         let config = CacheConfig::new(16, 10, 32, 128, 24).expect("Invalid config");
@@ -207,6 +214,7 @@ mod tests {
 
     // Test 7: Verify block reference counting works
     #[test]
+    #[serial]
     fn test_block_reference_counting() {
         let backend = get_backend_or_skip();
         let config = CacheConfig::new(16, 10, 32, 128, 24).expect("Invalid config");
