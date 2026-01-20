@@ -305,9 +305,9 @@ impl FlashAttentionBackend {
 // ============================================================================
 
 #[cfg(test)]
-    use serial_test::serial;
 mod tests {
-    
+    use super::*;
+    use serial_test::serial;
 
     #[test]
     #[serial]
