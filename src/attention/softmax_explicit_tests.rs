@@ -87,6 +87,7 @@ mod softmax_explicit_tests {
     /// Test softmax with explicit [batch, heads, seq_q, seq_k] layout - small
     #[test]
     #[serial]
+    #[ignore] // Requires HSACO kernels - GPU memory access without kernels
     fn test_softmax_explicit_layout_small() {
         let batch = 1;
         let heads = 2;
@@ -176,6 +177,7 @@ mod softmax_explicit_tests {
     /// Test softmax with non-square sequences (seq_q != seq_k)
     #[test]
     #[serial]
+    #[ignore] // Requires HSACO kernels - GPU memory access without kernels
     fn test_softmax_explicit_non_square() {
         let batch = 1;
         let heads = 2;
@@ -244,6 +246,7 @@ mod softmax_explicit_tests {
     /// Test softmax with larger dimensions (32×32)
     #[test]
     #[serial]
+    #[ignore] // Requires HSACO kernels - GPU memory access without kernels
     fn test_softmax_explicit_32x32() {
         let batch = 2;
         let heads = 4;
@@ -310,6 +313,7 @@ mod softmax_explicit_tests {
     /// Test numerical stability with large values
     #[test]
     #[serial]
+    #[ignore] // Requires HSACO kernels - GPU memory access without kernels
     fn test_softmax_explicit_numerical_stability() {
         let batch = 1;
         let heads = 2;
