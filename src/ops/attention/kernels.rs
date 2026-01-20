@@ -4,16 +4,12 @@ use crate::backend::{
     hip_blas::{HipBlasHandle, HIPBLAS_OP_N, HIPBLAS_OP_T},
     DeviceTensor, HipBackend, HipError, HipResult,
 };
-#[cfg(feature = "rocm")]
 use crate::backend::{HipKernel, HipModule};
-#[cfg(feature = "rocm")]
 use once_cell::sync::OnceCell;
 use crate::tensor::matmul::matmul_f32;
 
-#[cfg(feature = "rocm")]
 use super::hiprtc;
 
-#[cfg(feature = "rocm")]
 pub struct CompiledKernel {
     #[allow(dead_code)]
     module: HipModule,
@@ -23,9 +19,7 @@ pub struct CompiledKernel {
 pub struct HipAttentionKernels {
     backend: HipBackend,
     blas_handle: HipBlasHandle,
-    #[cfg(feature = "rocm")]
     attention_softmax_kernel: OnceCell<CompiledKernel>,
-    #[cfg(feature = "rocm")]
     causal_mask_kernel: OnceCell<CompiledKernel>,
 }
 
@@ -42,9 +36,7 @@ impl HipAttentionKernels {
         Ok(HipAttentionKernels {
             backend: backend.clone(),
             blas_handle,
-            #[cfg(feature = "rocm")]
             attention_softmax_kernel: OnceCell::new(),
-            #[cfg(feature = "rocm")]
             causal_mask_kernel: OnceCell::new(),
         })
     }
@@ -57,7 +49,6 @@ impl HipAttentionKernels {
         &self.blas_handle
     }
 
-    #[cfg(feature = "rocm")]
     fn compile_attention_softmax_kernel(&self) -> HipResult<CompiledKernel> {
         let code = hiprtc::compile_kernel("attention_softmax", ATTENTION_SOFTMAX_KERNEL)?;
         let module = self.backend.load_module_from_data(&code)?;
@@ -67,13 +58,11 @@ impl HipAttentionKernels {
         Ok(CompiledKernel { module, kernel })
     }
 
-    #[cfg(feature = "rocm")]
     pub fn get_attention_softmax_kernel(&self) -> HipResult<&CompiledKernel> {
         self.attention_softmax_kernel
             .get_or_try_init(|| self.compile_attention_softmax_kernel())
     }
 
-    #[cfg(feature = "rocm")]
     fn compile_causal_mask_kernel(&self) -> HipResult<CompiledKernel> {
         let code = hiprtc::compile_kernel("causal_mask", CAUSAL_MASK_KERNEL)?;
         let module = self.backend.load_module_from_data(&code)?;
@@ -83,7 +72,6 @@ impl HipAttentionKernels {
         Ok(CompiledKernel { module, kernel })
     }
 
-    #[cfg(feature = "rocm")]
     pub fn get_causal_mask_kernel(&self) -> HipResult<&CompiledKernel> {
         self.causal_mask_kernel
             .get_or_try_init(|| self.compile_causal_mask_kernel())
@@ -177,9 +165,6 @@ impl HipAttentionKernels {
         seq_len: usize,
         cache_len: usize,
     ) -> HipResult<()> {
-        
-
-        #[cfg(feature = "rocm")]
         {
             if let Err(err) = self.apply_causal_mask_gpu(attention, seq_len, cache_len) {
                 tracing::warn!("hip attention mask fallback to CPU: {}", err);
@@ -191,7 +176,6 @@ impl HipAttentionKernels {
         self.apply_causal_mask_cpu_fallback(attention, seq_len, cache_len)
     }
 
-    #[cfg(feature = "rocm")]
     fn apply_causal_mask_gpu(
         &self,
         attention: &mut DeviceTensor,
@@ -290,9 +274,7 @@ impl HipAttentionKernels {
         attention: &mut DeviceTensor,
         _temp_buffer: &DeviceTensor,
     ) -> HipResult<()> {
-        
 
-        #[cfg(feature = "rocm")]
         {
             if let Err(err) = self.compute_softmax_gpu(attention) {
                 tracing::warn!("hip attention softmax fallback to CPU: {}", err);
@@ -305,7 +287,6 @@ impl HipAttentionKernels {
         self.compute_softmax_cpu_fallback(attention, _temp_buffer)
     }
 
-    #[cfg(feature = "rocm")]
     fn compute_softmax_gpu(&self, attention: &mut DeviceTensor) -> HipResult<()> {
         use std::ffi::c_void;
 
@@ -516,7 +497,6 @@ impl HipAttentionKernels {
     }
 }
 
-#[cfg(feature = "rocm")]
 pub(crate) const ATTENTION_SOFTMAX_KERNEL: &str = r#"
 extern "C" __global__ void attention_softmax(float* scores, int rows, int cols) {
     int row = blockIdx.x;
@@ -567,7 +547,6 @@ extern "C" __global__ void attention_softmax(float* scores, int rows, int cols) 
 }
 "#;
 
-#[cfg(feature = "rocm")]
 pub(crate) const CAUSAL_MASK_KERNEL: &str = r#"
 #include <hip/hip_runtime.h>
 

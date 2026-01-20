@@ -7,7 +7,6 @@
 //! This is a standalone atomic operation - no fusion yet.
 //! Test first, implement kernel after tests fail (TDD).
 
-#[cfg(feature = "rocm")]
 #[cfg(test)]
 mod causal_mask_tests {
     use crate::backend::{DeviceTensor, HipBackend};

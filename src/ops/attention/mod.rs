@@ -6,7 +6,6 @@
 pub mod kernels;
 pub mod softmax;
 
-#[cfg(feature = "rocm")]
 pub mod hiprtc;
 
 // Re-export public API

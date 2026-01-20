@@ -27,7 +27,6 @@ fn create_cpu_causal_mask(seq_len: usize) -> Vec<f32> {
 }
 
 /// Test 1: Correct mask application (upper triangle set to -inf)
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn test_gpu_causal_mask_upper_triangle() {
@@ -96,7 +95,6 @@ fn test_gpu_causal_mask_upper_triangle() {
 }
 
 /// Test 2: Lower triangle preserved
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn test_gpu_causal_mask_lower_triangle_preserved() {
@@ -161,7 +159,6 @@ fn test_gpu_causal_mask_lower_triangle_preserved() {
 }
 
 /// Test 3: Batch dimension handled correctly
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn test_gpu_causal_mask_batch_dimension() {
@@ -218,7 +215,6 @@ fn test_gpu_causal_mask_batch_dimension() {
 }
 
 /// Test 4: Multiple heads handled correctly
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn test_gpu_causal_mask_multiple_heads() {
@@ -275,7 +271,6 @@ fn test_gpu_causal_mask_multiple_heads() {
 }
 
 /// Test 5: Comparison with CPU implementation (accuracy)
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn test_gpu_causal_mask_matches_cpu() {
@@ -353,7 +348,6 @@ fn test_gpu_causal_mask_matches_cpu() {
 }
 
 /// Test 6: Edge case - seq_len = 1
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn test_gpu_causal_mask_single_element() {
@@ -396,7 +390,6 @@ fn test_gpu_causal_mask_single_element() {
 }
 
 /// Test 7: Large sequence performance test
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn test_gpu_causal_mask_large_sequence() {
