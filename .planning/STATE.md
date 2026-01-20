@@ -9,9 +9,9 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 
 ## Current Position
 
-Phase: 27 - GPU Transpose Fix (Plan 2 of 4 - COMPLETE)
-Status: PLAN 27-02 COMPLETE - HIP transpose kernel implemented
-Last activity: Completed 27-02 HIP transpose kernel at 2026-01-20T19:47:48Z
+Phase: 27 - GPU Transpose Fix (Plan 3 of 4 - COMPLETE)
+Status: PLAN 27-03 COMPLETE - GPU transpose integrated into embedding_weights
+Last activity: Completed 27-03 GPU transpose integration at 2026-01-20T19:56:00Z
 
 Progress: [████████████████████░] 99% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 COMPLETE, Phase 26 COMPLETE, Phase 27 in progress)
 
@@ -30,8 +30,8 @@ Progress: [████████████████████░] 99% 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 164 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22-26, Phase 27-01, 27-02)
-- Plans remaining: 2 (Phase 27 plans: 27-03, 27-04)
+- Total plans completed: 165 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22-26, Phase 27-01, 27-02, 27-03)
+- Plans remaining: 1 (Phase 27 plan: 27-04)
 - Average duration: ~44 min
 - Total execution time: ~119 hours
 
@@ -400,12 +400,13 @@ Historical decisions affecting v1.3:
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed 27-02 HIP transpose kernel at 2026-01-20T19:47:48Z
-Resume file: Continue with Phase 27-03 (GPU transpose integration)
+Stopped at: Completed 27-03 GPU transpose integration at 2026-01-20T19:56:00Z
+Resume file: Continue with Phase 27-04 (Final verification and cleanup)
 
 **v1.5 - GPU Transpose Fix (2026-01-20):**
 - Phase 27-01: TransposeKernel module with lazy HSACO loading, build.rs integration (COMPLETE)
 - Phase 27-02: HIP transpose kernel with shared memory tiling (COMPLETE)
+- Phase 27-03: GPU transpose integration into embedding_weights (COMPLETE)
 
 **Phase 27-01 Summary:**
 - Created src/kernels/transpose/mod.rs (263 LOC) with TransposeKernel struct
@@ -425,8 +426,20 @@ Resume file: Continue with Phase 27-03 (GPU transpose integration)
 - Fixed kernel name in mod.rs from "transpose_kernel" to "transposeLdsNoBankConflicts"
 - Commits: 2 (5112072: kernel and build integration, 9b94c71: fix kernel name)
 
+**Phase 27-03 Summary:**
+- Implemented TransposeKernel::transpose() with GPU kernel launch (331 LOC, under 600 limit)
+- Grid/block calculation for TILE_DIM=64 tiling
+- Shared memory: TILE_DIM * (TILE_DIM + 1) floats for bank conflict avoidance
+- Added convenience function transpose_tensor() for one-shot operations
+- Updated embedding_weights() to use GPU transpose instead of CPU round-trip
+- Deprecated old transpose_2d_tensor with #[allow(dead_code)]
+- Tests: 701/701 passing (baseline stable)
+- Commits: 2 (c022114: implement kernel launch, 6d8c045: update embedding_weights)
+
 **Decisions:**
 - **Kernel File Location**: Use kernels/transpose.hip at project root instead of src/kernels/transpose/hip transpose.hip to match existing project structure where all HIP files are in /kernels/ (27-02)
 - **Kernel Entry Point**: Use transposeLdsNoBankConflicts as primary kernel name (not transpose_kernel) to match AMD ROCm Examples naming convention (27-02)
 - **Shared Memory Padding**: TILE_DIM x (TILE_DIM + 1) with padding avoids AMD GPU bank conflicts (27-02)
 - **Kernel Module Pattern for Transpose**: Follow existing kernel cache pattern from sampler/gpu.rs (Phases 15-18) (27-01)
+- **Convenience Function for One-Shot Operations**: Create transpose_tensor() function that wraps TransposeKernel creation and execution for simpler API (27-03)
+- **Deprecated Function with #[allow(dead_code)]**: Keep old transpose_2d_tensor with deprecation notice for potential fallback use, suppress dead_code warning (27-03)

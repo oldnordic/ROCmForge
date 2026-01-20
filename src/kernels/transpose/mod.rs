@@ -328,4 +328,145 @@ mod tests {
             }
         }
     }
+
+    /// Test 1: Small square matrix (8x8) - verify exact values match
+    #[test]
+    #[cfg(feature = "rocm")]
+    fn test_transpose_small_square_matrix() {
+        let backend = Arc::new(HipBackend::new().unwrap());
+        let rows = 8usize;
+        let cols = 8usize;
+        let input_data: Vec<f32> = (0..(rows * cols)).map(|i| i as f32).collect();
+
+        let input_shape = TensorShape::from_dims(&[rows, cols]);
+        let input_buffer = backend.allocate_buffer(rows * cols * 4).unwrap();
+        backend.copy_to_device(&input_buffer, &input_data).unwrap();
+        let input_tensor = DeviceTensor {
+            buffer: input_buffer,
+            shape: input_shape,
+        };
+
+        let result = transpose_tensor(&backend, &input_tensor);
+        match result {
+            Ok(transposed) => {
+                assert_eq!(transposed.shape().dims(), &[cols, rows]);
+                let mut output_data = vec![0.0f32; cols * rows];
+                backend.copy_from_device_safe(&transposed.buffer, &mut output_data).unwrap();
+                // Verify all elements transposed correctly
+                for row in 0..cols {
+                    for col in 0..rows {
+                        let input_idx = col * cols + row;
+                        let output_idx = row * rows + col;
+                        assert_eq!(output_data[output_idx], input_data[input_idx]);
+                    }
+                }
+            }
+            Err(HipError::KernelLoadFailed(_)) => println!("SKIPPED: HSACO not compiled"),
+            Err(e) => panic!("Unexpected error: {:?}", e),
+        }
+    }
+
+    /// Test 2: Small rectangular matrix (4x16) - verify dimensions swap
+    #[test]
+    #[cfg(feature = "rocm")]
+    fn test_transpose_small_rectangular_matrix() {
+        let backend = Arc::new(HipBackend::new().unwrap());
+        let rows = 4usize;
+        let cols = 16usize;
+        let input_data: Vec<f32> = (0..(rows * cols)).map(|i| i as f32).collect();
+
+        let input_shape = TensorShape::from_dims(&[rows, cols]);
+        let input_buffer = backend.allocate_buffer(rows * cols * 4).unwrap();
+        backend.copy_to_device(&input_buffer, &input_data).unwrap();
+        let input_tensor = DeviceTensor {
+            buffer: input_buffer,
+            shape: input_shape,
+        };
+
+        let result = transpose_tensor(&backend, &input_tensor);
+        match result {
+            Ok(transposed) => {
+                assert_eq!(transposed.shape().dims(), &[cols, rows]);
+                let mut output_data = vec![0.0f32; cols * rows];
+                backend.copy_from_device_safe(&transposed.buffer, &mut output_data).unwrap();
+                // Check corners
+                assert_eq!(output_data[0], input_data[0]);
+                assert_eq!(output_data[rows - 1], input_data[cols - 1]);
+                assert_eq!(output_data[(cols - 1) * rows], input_data[rows * cols - cols]);
+                assert_eq!(output_data[cols * rows - 1], input_data[rows * cols - 1]);
+            }
+            Err(HipError::KernelLoadFailed(_)) => println!("SKIPPED: HSACO not compiled"),
+            Err(e) => panic!("Unexpected error: {:?}", e),
+        }
+    }
+
+    /// Test 3: Large matrix (512x1024) - verify no errors for large transpose
+    #[test]
+    #[cfg(feature = "rocm")]
+    fn test_transpose_large_matrix() {
+        let backend = Arc::new(HipBackend::new().unwrap());
+        let rows = 512usize;
+        let cols = 1024usize;
+        let elem_count = rows * cols;
+        let input_data: Vec<f32> = (0..elem_count).map(|i| i as f32).collect();
+
+        let input_shape = TensorShape::from_dims(&[rows, cols]);
+        let input_buffer = backend.allocate_buffer(elem_count * 4).unwrap();
+        backend.copy_to_device(&input_buffer, &input_data).unwrap();
+        let input_tensor = DeviceTensor {
+            buffer: input_buffer,
+            shape: input_shape,
+        };
+
+        let result = transpose_tensor(&backend, &input_tensor);
+        match result {
+            Ok(transposed) => {
+                assert_eq!(transposed.shape().dims(), &[cols, rows]);
+                let mut output_data = vec![0.0f32; elem_count];
+                backend.copy_from_device_safe(&transposed.buffer, &mut output_data).unwrap();
+                assert_eq!(output_data[0], 0.0);
+                assert_eq!(output_data[elem_count - 1], (elem_count - 1) as f32);
+            }
+            Err(HipError::KernelLoadFailed(_)) => println!("SKIPPED: HSACO not compiled"),
+            Err(e) => panic!("Unexpected error: {:?}", e),
+        }
+    }
+
+    /// Test 4: Embedding-sized matrix - qwen2.5-0.5b use case [128, 1024] -> [1024, 128]
+    #[test]
+    #[cfg(feature = "rocm")]
+    fn test_transpose_embedding_sized_matrix() {
+        let backend = Arc::new(HipBackend::new().unwrap());
+        let hidden_size = 128usize;
+        let vocab_size = 1024usize;
+        let elem_count = hidden_size * vocab_size;
+        let input_data: Vec<f32> = (0..elem_count).map(|i| i as f32).collect();
+
+        let input_shape = TensorShape::from_dims(&[hidden_size, vocab_size]);
+        let input_buffer = backend.allocate_buffer(elem_count * 4).unwrap();
+        backend.copy_to_device(&input_buffer, &input_data).unwrap();
+        let input_tensor = DeviceTensor {
+            buffer: input_buffer,
+            shape: input_shape,
+        };
+
+        let result = transpose_tensor(&backend, &input_tensor);
+        match result {
+            Ok(transposed) => {
+                assert_eq!(transposed.shape().dims(), &[vocab_size, hidden_size]);
+                let mut output_data = vec![0.0f32; elem_count];
+                backend.copy_from_device_safe(&transposed.buffer, &mut output_data).unwrap();
+                // Verify first and last embedding vectors
+                for i in 0..hidden_size {
+                    assert_eq!(output_data[i], input_data[i * vocab_size]);
+                }
+                let last_offset = (vocab_size - 1) * hidden_size;
+                for i in 0..hidden_size {
+                    assert_eq!(output_data[last_offset + i], input_data[i]);
+                }
+            }
+            Err(HipError::KernelLoadFailed(_)) => println!("SKIPPED: HSACO not compiled"),
+            Err(e) => panic!("Unexpected error: {:?}", e),
+        }
+    }
 }

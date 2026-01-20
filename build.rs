@@ -189,9 +189,9 @@ fn compile_hip_kernels() {
             "topk_topp_sampling_kernel",
         ),
         (
-            "src/kernels/transpose/hip transpose.hip",
+            "kernels/transpose.hip",
             "TRANSPOSE_HSACO",
-            "transpose_kernel",
+            "transposeLdsNoBankConflicts",
         ),
     ];
 
