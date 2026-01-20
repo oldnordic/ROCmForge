@@ -18,5 +18,7 @@
 //! 4. Track allocations and free blocks for reuse
 
 pub mod arena;
+pub mod calculator;
 
 pub use arena::ModelWeightArena;
+pub use calculator::MemoryCalculator;

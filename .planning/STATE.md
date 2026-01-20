@@ -5,15 +5,15 @@
 See: .planning/PROJECT.md (updated 2026-01-20)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Phase 12.1B - Context Engine
+**Current focus:** Phase 22 - Memory Pool Implementation
 
 ## Current Position
 
-Phase: 12.1B - Context Engine (Plan 01 of 1)
-Status: Complete 2026-01-20
-Last activity: SQLiteGraph context integration with CLI commands
+Phase: 22 - Memory Pool Implementation (Plan 01 of 5)
+Status: In progress - Plan 22-01 complete
+Last activity: ModelWeightArena structure implementation
 
-Progress: [████████░░░░░░░░░░░░░░░] 10% (Phase 12.1B Plan 1 complete, v1.3 complete, v1.4 planning paused)
+Progress: [████████░░░░░░░░░░░░░░] 10% (Phase 22 Plan 1 of 5 complete, v1.3 complete, v1.4 planning paused)
 
 ## Milestone v1.3 Summary
 
@@ -43,6 +43,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 Recent decisions:
 
+- **Memory Arena for GPU Weights**: Use ModelWeightArena with single HipBuffer backing store to prevent RDNA3 GPU hangs from multiple small allocations. Best-fit allocation with 256-byte alignment (22-01)
 - **HTTP Context Endpoint Deferred**: HNSW index in sqlitegraph is not Send+Sync due to internal `Rc<RefCell<>>`, making it incompatible with Axum's async State extractor. CLI commands provide full context management functionality as alternative (12.1B-01)
 - **Performance Validation Deferred**: GPU benchmarking (21-06) skipped by user to avoid desktop GPU stress testing
 
@@ -92,8 +93,11 @@ Historical decisions affecting v1.3:
 
 **Milestone v1.3 COMPLETE**
 
+**v1.4 - Memory & Performance (2026-01-20):**
+- Phase 22-01: ModelWeightArena structure with best-fit allocation and 256-byte alignment
+
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed Phase 12.1B-01 (SQLiteGraph context integration)
+Stopped at: Completed Phase 22-01 (ModelWeightArena structure)
 Resume file: None
