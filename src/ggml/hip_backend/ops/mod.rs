@@ -53,3 +53,6 @@ pub use q6_k_dequant::{
     get_or_init_q6_k_dequant_cache,
     dequantize_q6_k_cpu,
 };
+
+// Element-wise operations are now in kernels::element
+// The modules below (rms_norm, swiglu, add_scale) now re-export from there
