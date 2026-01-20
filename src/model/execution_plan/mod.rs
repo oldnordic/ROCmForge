@@ -24,23 +24,29 @@
 //! - **Caching**: GPU cache in `GgufLoader` (thread-safe RwLock)
 //! - **Thread Safety**: `Arc<LazyTensor>` is Send + Sync, OnceCell for cached tensors
 
-// Modular structure
+// Existing modular structure
 mod architecture;
 mod layer_plan;
 mod ggml_plan;
 
-// Private modules (not yet fully extracted)
+// New modular structure (Phase 25-05)
+mod types;
+mod embedding;
+mod layer_tensors;
+mod rope;
+mod matmul;
+mod execute;
+mod position;
+
+// Legacy source file (deprecated, keeping for GGML integration)
 mod execution_plan_src;
 
 // Public exports from modules
 pub use architecture::Architecture;
 pub use layer_plan::LayerPlan;
 
-// Re-export from the main source file
-pub use execution_plan_src::{
-    ExecutionPlan, LoadingStats,
-    // Note: EmbeddingGgmlPlan, RopeCache, LayerGgmlPlan are currently private
-};
+// Re-export ExecutionPlan and LoadingStats from types module
+pub use types::{ExecutionPlan, LoadingStats};
 
 // Include test files
 // TODO: Re-enable when test files are created
