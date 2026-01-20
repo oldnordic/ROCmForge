@@ -1,0 +1,1207 @@
+//! ggml IR operation execution for HIP backend.
+
+use crate::ggml::{GgmlBackend, GgmlError, GgmlResult, Op, TensorId};
+use super::backend::HipGgmlBackend;
+
+impl HipGgmlBackend {
+    /// Execute a ggml IR operation.
+    pub fn execute_op(
+        &mut self,
+        op: &Op,
+        inputs: &[TensorId],
+        outputs: &[TensorId],
+    ) -> GgmlResult<()> {
+        eprintln!(">>> execute_op: op={:?}", op);
+        match op {
+            Op::GetRows => {
+                self.execute_get_rows(inputs, outputs)
+            }
+            Op::MatMul => {
+                self.execute_matmul(inputs, outputs)
+            }
+            Op::Add => {
+                self.execute_add(inputs, outputs)
+            }
+            Op::Scale { factor } => {
+                self.execute_scale(inputs, outputs, *factor)
+            }
+            Op::LayerNorm { eps } => {
+                self.execute_layernorm(inputs, outputs, *eps)
+            }
+            Op::RmsNorm { eps } => {
+                self.execute_rmsnorm(inputs, outputs, *eps)
+            }
+            Op::Rope => {
+                self.execute_rope(inputs, outputs)
+            }
+            Op::Softmax => {
+                self.execute_softmax(inputs, outputs)
+            }
+            Op::Attention => {
+                self.execute_attention(inputs, outputs)
+            }
+            Op::Mask => {
+                self.execute_mask(inputs, outputs)
+            }
+            Op::SwiGlu => {
+                self.execute_swiglu(inputs, outputs)
+            }
+            Op::MlpSwiglu => {
+                self.execute_mlp_swiglu(inputs, outputs)
+            }
+            Op::SplitQkv => {
+                self.execute_split_qkv(inputs, outputs)
+            }
+            Op::View | Op::Reshape => {
+                self.execute_view_reshape(inputs, outputs)
+            }
+            Op::Copy => {
+                self.execute_copy(inputs, outputs)
+            }
+            Op::MatMulQ4_0 => {
+                self.execute_matmul_q4_0(inputs, outputs)
+            }
+            Op::MatMulQ8_0 => {
+                self.execute_matmul_q8_0(inputs, outputs)
+            }
+            Op::Accumulate { offset } => {
+                self.execute_accumulate(inputs, outputs, *offset)
+            }
+        }
+    }
+
+    fn execute_get_rows(&self, inputs: &[TensorId], outputs: &[TensorId]) -> GgmlResult<()> {
+        eprintln!(">>> execute_op: GetRows START");
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(GgmlError::InvalidShape(
+                "GetRows expects 2 inputs and 1 output".to_string(),
+            ));
+        }
+        eprintln!(">>> execute_op: GetRows input/output count validated");
+
+        let weights_desc = self
+            .tensor_desc(inputs[0])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing weights desc".to_string()))?;
+        let tokens_desc = self
+            .tensor_desc(inputs[1])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing tokens desc".to_string()))?;
+        let output_desc = self
+            .tensor_desc(outputs[0])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing output desc".to_string()))?;
+        eprintln!(">>> execute_op: GetRows tensor descriptors obtained");
+
+        if weights_desc.shape.len() != 2 {
+            return Err(GgmlError::InvalidShape(
+                "Weights must be 2D".to_string(),
+            ));
+        }
+        let (n_embd, vocab_size) = match weights_desc.layout {
+            crate::ggml::Layout::RowMajor => (weights_desc.shape[1], weights_desc.shape[0]),
+            crate::ggml::Layout::ColMajor => (weights_desc.shape[0], weights_desc.shape[1]),
+            crate::ggml::Layout::Strided => {
+                return Err(GgmlError::InvalidLayout(
+                    "Strided layout not supported for GetRows".to_string(),
+                ));
+            }
+        };
+        let actual_n_tokens = output_desc.shape[0];
+        let buffer_n_tokens = tokens_desc.element_count();
+        eprintln!(">>> execute_op: GetRows n_embd={}, vocab_size={}, actual_n_tokens={}, buffer_n_tokens={}, layout={:?}",
+            n_embd, vocab_size, actual_n_tokens, buffer_n_tokens, weights_desc.layout);
+
+        if output_desc.element_count() != n_embd * actual_n_tokens {
+            return Err(GgmlError::InvalidShape(
+                "Output size does not match n_embd * actual_n_tokens".to_string(),
+            ));
+        }
+
+        let weights = self
+            .buffer(inputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing weights buffer".to_string()))?;
+        let tokens_buf = self
+            .buffer(inputs[1])
+            .ok_or_else(|| GgmlError::Backend("Missing tokens buffer".to_string()))?;
+        let output = self
+            .buffer(outputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing output buffer".to_string()))?;
+        eprintln!(">>> execute_op: GetRows buffers obtained");
+
+        eprintln!(">>> execute_op: GetRows about to copy tokens to host (actual_n_tokens={})...", actual_n_tokens);
+        let mut tokens = vec![0u32; actual_n_tokens];
+        self.hip_backend()
+            .copy_from_device_safe(&tokens_buf, &mut tokens)
+            .map_err(|e| GgmlError::Backend(e.to_string()))?;
+        eprintln!(">>> execute_op: GetRow tokens copied to host (full buffer): {:?}", &tokens[..tokens.len().min(10)]);
+
+        let actual_tokens: Vec<u32> = tokens.iter()
+            .take_while(|&&t| t != 0)
+            .copied()
+            .collect();
+        eprintln!(">>> execute_op: GetRows actual (non-padded) tokens: {:?}, count={}", actual_tokens, actual_tokens.len());
+
+        crate::ggml::hip_backend::ops::get_rows::validate_token_ids(
+            &actual_tokens,
+            vocab_size,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))?;
+        eprintln!(">>> execute_op: GetRows token IDs validated");
+
+        eprintln!(">>> execute_op: GetRows about to call get_rows with {} tokens...", actual_tokens.len());
+        crate::ggml::hip_backend::ops::get_rows::get_rows(
+            self.hip_backend(),
+            weights,
+            &actual_tokens,
+            n_embd,
+            vocab_size,
+            weights_desc.layout,
+            output,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))?;
+        eprintln!(">>> execute_op: GetRows complete");
+        Ok(())
+    }
+
+    fn execute_matmul(&self, inputs: &[TensorId], outputs: &[TensorId]) -> GgmlResult<()> {
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(GgmlError::InvalidShape(
+                "MatMul expects 2 inputs and 1 output".to_string(),
+            ));
+        }
+
+        let a_desc = self
+            .tensor_desc(inputs[0])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing A desc".to_string()))?;
+        let b_desc = self
+            .tensor_desc(inputs[1])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing B desc".to_string()))?;
+        let output_desc = self
+            .tensor_desc(outputs[0])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing output desc".to_string()))?;
+
+        if a_desc.shape.len() != 2 || b_desc.shape.len() != 2 {
+            return Err(GgmlError::InvalidShape(
+                "MatMul expects 2D tensors".to_string(),
+            ));
+        }
+
+        let m = a_desc.shape[0] as i32;
+        let k = a_desc.shape[1] as i32;
+        let b_k = b_desc.shape[0] as i32;
+        let n = b_desc.shape[1] as i32;
+
+        eprintln!(">>> MatMul validation: A shape={:?}, B shape={:?}, output shape={:?}",
+                 a_desc.shape, b_desc.shape, output_desc.shape);
+        eprintln!(">>> MatMul: m={}, k={}, b_k={}, n={}", m, k, b_k, n);
+        eprintln!(">>> MatMul: expected output elements={}*{}={}, actual output elements={}",
+                 m, n, m as usize * n as usize, output_desc.element_count());
+
+        if k != b_k {
+            return Err(GgmlError::InvalidShape(format!(
+                "MatMul dimension mismatch: k={} b_k={}",
+                k, b_k
+            )));
+        }
+        if output_desc.element_count() != (m as usize * n as usize) {
+            return Err(GgmlError::InvalidShape(format!(
+                "Output shape does not match matmul result: expected shape=[{}, {}] ({} elements), got shape={:?} ({} elements)",
+                m, n, m as usize * n as usize, output_desc.shape, output_desc.element_count()
+            )));
+        }
+
+        let a_buf = self
+            .buffer(inputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing A buffer".to_string()))?;
+        let b_buf = self
+            .buffer(inputs[1])
+            .ok_or_else(|| GgmlError::Backend("Missing B buffer".to_string()))?;
+        let out_buf = self
+            .buffer(outputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing output buffer".to_string()))?;
+
+        crate::ggml::hip_backend::ops::matmul::matmul(
+            self.hip_backend(),
+            a_buf,
+            b_buf,
+            m,
+            n,
+            k,
+            out_buf,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))
+    }
+
+    fn execute_add(&self, inputs: &[TensorId], outputs: &[TensorId]) -> GgmlResult<()> {
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(GgmlError::InvalidShape(
+                "Add expects 2 inputs and 1 output".to_string(),
+            ));
+        }
+
+        let a_buf = self
+            .buffer(inputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing A buffer".to_string()))?;
+        let b_buf = self
+            .buffer(inputs[1])
+            .ok_or_else(|| GgmlError::Backend("Missing B buffer".to_string()))?;
+        let out_buf = self
+            .buffer(outputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing output buffer".to_string()))?;
+
+        crate::ggml::hip_backend::ops::add_scale::add(
+            self.hip_backend(),
+            a_buf,
+            b_buf,
+            out_buf,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))
+    }
+
+    fn execute_scale(&self, inputs: &[TensorId], outputs: &[TensorId], factor: f32) -> GgmlResult<()> {
+        if inputs.len() != 1 || outputs.len() != 1 {
+            return Err(GgmlError::InvalidShape(
+                "Scale expects 1 input and 1 output".to_string(),
+            ));
+        }
+
+        let in_buf = self
+            .buffer(inputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing input buffer".to_string()))?;
+        let out_buf = self
+            .buffer(outputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing output buffer".to_string()))?;
+
+        crate::ggml::hip_backend::ops::add_scale::scale(
+            self.hip_backend(),
+            in_buf,
+            factor,
+            out_buf,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))
+    }
+
+    fn execute_layernorm(&mut self, inputs: &[TensorId], outputs: &[TensorId], eps: f32) -> GgmlResult<()> {
+        if outputs.len() != 1 || (inputs.len() != 2 && inputs.len() != 3) {
+            return Err(GgmlError::InvalidShape(
+                "LayerNorm expects 2 or 3 inputs and 1 output".to_string(),
+            ));
+        }
+
+        let input_desc = self
+            .tensor_desc(inputs[0])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing input desc".to_string()))?;
+        let weight_desc = self
+            .tensor_desc(inputs[1])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing weight desc".to_string()))?;
+        let output_desc = self
+            .tensor_desc(outputs[0])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing output desc".to_string()))?;
+
+        if weight_desc.shape.len() != 1 {
+            return Err(GgmlError::InvalidShape(
+                "LayerNorm weight must be 1D".to_string(),
+            ));
+        }
+        if output_desc.shape != input_desc.shape {
+            return Err(GgmlError::InvalidShape(
+                "LayerNorm output shape mismatch".to_string(),
+            ));
+        }
+
+        let input_buf = self
+            .buffer(inputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing input buffer".to_string()))?;
+        let weight_buf = self
+            .buffer(inputs[1])
+            .ok_or_else(|| GgmlError::Backend("Missing weight buffer".to_string()))?;
+        let output_buf = self
+            .buffer(outputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing output buffer".to_string()))?;
+
+        let input_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&input_desc.shape);
+        let weight_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&weight_desc.shape);
+        let output_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&output_desc.shape);
+
+        let input_tensor = crate::backend::DeviceTensor::from_buffer(
+            self.hip_backend(),
+            input_buf.clone(),
+            input_shape,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))?;
+        let weight_tensor = crate::backend::DeviceTensor::from_buffer(
+            self.hip_backend(),
+            weight_buf.clone(),
+            weight_shape,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))?;
+        let mut output_tensor = crate::backend::DeviceTensor::from_buffer(
+            self.hip_backend(),
+            output_buf.clone(),
+            output_shape,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))?;
+
+        let bias_tensor = if inputs.len() == 3 {
+            let bias_desc = self
+                .tensor_desc(inputs[2])
+                .ok_or_else(|| GgmlError::InvalidShape("Missing bias desc".to_string()))?;
+            let bias_buf = self
+                .buffer(inputs[2])
+                .ok_or_else(|| GgmlError::Backend("Missing bias buffer".to_string()))?;
+            let bias_shape =
+                crate::loader::mmap_loader::TensorShape::from_dims(&bias_desc.shape);
+            Some(
+                crate::backend::DeviceTensor::from_buffer(
+                    self.hip_backend(),
+                    bias_buf.clone(),
+                    bias_shape,
+                )
+                .map_err(|e| GgmlError::Backend(e.to_string()))?,
+            )
+        } else {
+            None
+        };
+
+        self.hip_backend()
+            .layernorm(
+                &input_tensor,
+                &weight_tensor,
+                bias_tensor.as_ref(),
+                &mut output_tensor,
+                eps,
+            )
+            .map_err(|e| GgmlError::Backend(e.to_string()))
+    }
+
+    fn execute_rmsnorm(&self, inputs: &[TensorId], outputs: &[TensorId], eps: f32) -> GgmlResult<()> {
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(GgmlError::InvalidShape(
+                "RmsNorm expects 2 inputs and 1 output".to_string(),
+            ));
+        }
+
+        let input_desc = self
+            .tensor_desc(inputs[0])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing input desc".to_string()))?;
+        let weight_desc = self
+            .tensor_desc(inputs[1])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing weight desc".to_string()))?;
+
+        if input_desc.shape.len() != 2 || weight_desc.shape.len() != 1 {
+            return Err(GgmlError::InvalidShape(
+                "RmsNorm expects [seq_len, hidden] input and [hidden] weight".to_string(),
+            ));
+        }
+
+        let seq_len = input_desc.shape[0] as u32;
+        let hidden = input_desc.shape[1] as u32;
+        if weight_desc.shape[0] as u32 != hidden {
+            return Err(GgmlError::InvalidShape(
+                "RmsNorm weight hidden size mismatch".to_string(),
+            ));
+        }
+
+        let input_buf = self
+            .buffer(inputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing input buffer".to_string()))?;
+        let weight_buf = self
+            .buffer(inputs[1])
+            .ok_or_else(|| GgmlError::Backend("Missing weight buffer".to_string()))?;
+        let out_buf = self
+            .buffer(outputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing output buffer".to_string()))?;
+
+        crate::ggml::hip_backend::ops::rms_norm::rms_norm(
+            self.hip_backend(),
+            input_buf,
+            weight_buf,
+            out_buf,
+            seq_len,
+            hidden,
+            eps,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))
+    }
+
+    fn execute_rope(&self, inputs: &[TensorId], outputs: &[TensorId]) -> GgmlResult<()> {
+        if inputs.len() != 3 || outputs.len() != 1 {
+            return Err(GgmlError::InvalidShape(
+                "RoPE expects 3 inputs and 1 output".to_string(),
+            ));
+        }
+
+        let input_desc = self
+            .tensor_desc(inputs[0])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing input desc".to_string()))?;
+        if input_desc.shape.len() != 3 {
+            return Err(GgmlError::InvalidShape(
+                "RoPE expects input shape [seq_len, heads, head_dim]".to_string(),
+            ));
+        }
+
+        let seq_len = input_desc.shape[0] as u32;
+        let num_heads = input_desc.shape[1] as u32;
+        let head_dim = input_desc.shape[2] as u32;
+
+        let input_buf = self
+            .buffer(inputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing input buffer".to_string()))?;
+        let cos_buf = self
+            .buffer(inputs[1])
+            .ok_or_else(|| GgmlError::Backend("Missing cos buffer".to_string()))?;
+        let sin_buf = self
+            .buffer(inputs[2])
+            .ok_or_else(|| GgmlError::Backend("Missing sin buffer".to_string()))?;
+        let out_buf = self
+            .buffer(outputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing output buffer".to_string()))?;
+
+        crate::ggml::hip_backend::ops::rope::rope(
+            self.hip_backend(),
+            input_buf,
+            cos_buf,
+            sin_buf,
+            out_buf,
+            seq_len,
+            num_heads,
+            head_dim,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))
+    }
+
+    fn execute_softmax(&self, inputs: &[TensorId], outputs: &[TensorId]) -> GgmlResult<()> {
+        if inputs.len() != 1 || outputs.len() != 1 {
+            return Err(GgmlError::InvalidShape(
+                "Softmax expects 1 input and 1 output".to_string(),
+            ));
+        }
+
+        let input_desc = self
+            .tensor_desc(inputs[0])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing input desc".to_string()))?;
+        let shape = &input_desc.shape;
+        let (batch_size, seq_len) = match shape.len() {
+            4 => {
+                if shape[2] != shape[3] {
+                    return Err(GgmlError::InvalidShape(
+                        "Softmax expects square last two dims".to_string(),
+                    ));
+                }
+                ((shape[0] * shape[1]) as u32, shape[2] as u32)
+            }
+            3 => {
+                if shape[1] != shape[2] {
+                    return Err(GgmlError::InvalidShape(
+                        "Softmax expects square last two dims".to_string(),
+                    ));
+                }
+                (shape[0] as u32, shape[1] as u32)
+            }
+            2 => {
+                if shape[0] != shape[1] {
+                    return Err(GgmlError::InvalidShape(
+                        "Softmax expects square matrix".to_string(),
+                    ));
+                }
+                (1, shape[0] as u32)
+            }
+            _ => {
+                return Err(GgmlError::InvalidShape(
+                    "Softmax expects 2D, 3D, or 4D tensor".to_string(),
+                ));
+            }
+        };
+
+        let input_buf = self
+            .buffer(inputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing input buffer".to_string()))?;
+        let out_buf = self
+            .buffer(outputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing output buffer".to_string()))?;
+
+        crate::ggml::hip_backend::ops::softmax::softmax(
+            self.hip_backend(),
+            input_buf,
+            out_buf,
+            batch_size,
+            seq_len,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))
+    }
+
+    fn execute_attention(&mut self, inputs: &[TensorId], outputs: &[TensorId]) -> GgmlResult<()> {
+        if inputs.len() != 5 || outputs.len() != 1 {
+            return Err(GgmlError::InvalidShape(
+                "Attention expects 5 inputs and 1 output".to_string(),
+            ));
+        }
+
+        let q_desc = self
+            .tensor_desc(inputs[0])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing Q desc".to_string()))?;
+        let k_desc = self
+            .tensor_desc(inputs[1])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing K desc".to_string()))?;
+        let v_desc = self
+            .tensor_desc(inputs[2])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing V desc".to_string()))?;
+        let scores_desc = self
+            .tensor_desc(inputs[3])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing scores desc".to_string()))?;
+        let softmax_desc = self
+            .tensor_desc(inputs[4])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing softmax desc".to_string()))?;
+        let output_desc = self
+            .tensor_desc(outputs[0])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing output desc".to_string()))?;
+
+        if q_desc.shape.len() != 3 || k_desc.shape.len() != 3 || v_desc.shape.len() != 3
+        {
+            return Err(GgmlError::InvalidShape(
+                "Q, K, V must be 3D [seq_len, num_heads, head_dim]".to_string(),
+            ));
+        }
+
+        let seq_q = q_desc.shape[0];
+        let seq_k = k_desc.shape[0];
+        if scores_desc.shape != vec![seq_q, seq_k]
+            || softmax_desc.shape != vec![seq_q, seq_k]
+        {
+            return Err(GgmlError::InvalidShape(
+                "Attention scores/softmax shape mismatch".to_string(),
+            ));
+        }
+        if output_desc.shape != q_desc.shape {
+            return Err(GgmlError::InvalidShape(
+                "Attention output shape mismatch".to_string(),
+            ));
+        }
+
+        let q_buf = self
+            .buffer(inputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing Q buffer".to_string()))?;
+        let k_buf = self
+            .buffer(inputs[1])
+            .ok_or_else(|| GgmlError::Backend("Missing K buffer".to_string()))?;
+        let v_buf = self
+            .buffer(inputs[2])
+            .ok_or_else(|| GgmlError::Backend("Missing V buffer".to_string()))?;
+        let scores_buf = self
+            .buffer(inputs[3])
+            .ok_or_else(|| GgmlError::Backend("Missing scores buffer".to_string()))?;
+        let softmax_buf = self
+            .buffer(inputs[4])
+            .ok_or_else(|| GgmlError::Backend("Missing softmax buffer".to_string()))?;
+        let out_buf = self
+            .buffer(outputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing output buffer".to_string()))?;
+
+        let q_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&q_desc.shape);
+        let k_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&k_desc.shape);
+        let v_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&v_desc.shape);
+        let scores_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&scores_desc.shape);
+        let softmax_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&softmax_desc.shape);
+        let out_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&output_desc.shape);
+
+        let q_tensor = crate::backend::DeviceTensor::from_buffer(
+            self.hip_backend(),
+            q_buf.clone(),
+            q_shape,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))?;
+        let k_tensor = crate::backend::DeviceTensor::from_buffer(
+            self.hip_backend(),
+            k_buf.clone(),
+            k_shape,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))?;
+        let v_tensor = crate::backend::DeviceTensor::from_buffer(
+            self.hip_backend(),
+            v_buf.clone(),
+            v_shape,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))?;
+        let mut scores_tensor = crate::backend::DeviceTensor::from_buffer(
+            self.hip_backend(),
+            scores_buf.clone(),
+            scores_shape,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))?;
+        let softmax_tensor = crate::backend::DeviceTensor::from_buffer(
+            self.hip_backend(),
+            softmax_buf.clone(),
+            softmax_shape,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))?;
+        let mut out_tensor = crate::backend::DeviceTensor::from_buffer(
+            self.hip_backend(),
+            out_buf.clone(),
+            out_shape,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))?;
+
+        let kernels = crate::ops::attention_gpu::HipAttentionKernels::new(self.hip_backend())
+            .map_err(|e| GgmlError::Backend(e.to_string()))?;
+
+        kernels
+            .compute_qk_t(&q_tensor, &k_tensor, &mut scores_tensor)
+            .map_err(|e| GgmlError::Backend(e.to_string()))?;
+        let head_dim = q_desc.shape[2];
+        let scale = 1.0 / (head_dim as f32).sqrt();
+        self.hip_backend()
+            .scale_inplace(&mut scores_tensor, scale)
+            .map_err(|e| GgmlError::Backend(e.to_string()))?;
+        kernels
+            .apply_causal_mask(&mut scores_tensor, seq_q, seq_k)
+            .map_err(|e| GgmlError::Backend(e.to_string()))?;
+        kernels
+            .compute_softmax(&mut scores_tensor, &softmax_tensor)
+            .map_err(|e| GgmlError::Backend(e.to_string()))?;
+        kernels
+            .compute_attention_weighted_v(&scores_tensor, &v_tensor, &mut out_tensor)
+            .map_err(|e| GgmlError::Backend(e.to_string()))
+    }
+
+    fn execute_mask(&self, inputs: &[TensorId], outputs: &[TensorId]) -> GgmlResult<()> {
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(GgmlError::InvalidShape(
+                "Mask expects 2 inputs and 1 output".to_string(),
+            ));
+        }
+
+        let scores_desc = self
+            .tensor_desc(inputs[0])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing scores desc".to_string()))?;
+        let mask_desc = self
+            .tensor_desc(inputs[1])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing mask desc".to_string()))?;
+
+        let (batch_size, seq_len) = match scores_desc.shape.len() {
+            4 => {
+                if scores_desc.shape[2] != scores_desc.shape[3] {
+                    return Err(GgmlError::InvalidShape(
+                        "Mask expects square last two dims".to_string(),
+                    ));
+                }
+                (
+                    (scores_desc.shape[0] * scores_desc.shape[1]) as u32,
+                    scores_desc.shape[2] as u32,
+                )
+            }
+            3 => {
+                if scores_desc.shape[1] != scores_desc.shape[2] {
+                    return Err(GgmlError::InvalidShape(
+                        "Mask expects square last two dims".to_string(),
+                    ));
+                }
+                (scores_desc.shape[0] as u32, scores_desc.shape[1] as u32)
+            }
+            _ => {
+                return Err(GgmlError::InvalidShape(
+                    "Mask expects 3D or 4D scores tensor".to_string(),
+                ));
+            }
+        };
+
+        let mask_elements = mask_desc.element_count();
+        let expected_mask = (seq_len as usize) * (seq_len as usize);
+        if mask_elements != expected_mask {
+            return Err(GgmlError::InvalidShape(format!(
+                "Mask expects {} elements, got {}",
+                expected_mask, mask_elements
+            )));
+        }
+
+        let scores_buf = self
+            .buffer(inputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing scores buffer".to_string()))?;
+        let mask_buf = self
+            .buffer(inputs[1])
+            .ok_or_else(|| GgmlError::Backend("Missing mask buffer".to_string()))?;
+        let out_buf = self
+            .buffer(outputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing output buffer".to_string()))?;
+
+        crate::ggml::hip_backend::ops::mask::mask(
+            self.hip_backend(),
+            scores_buf,
+            mask_buf,
+            out_buf,
+            batch_size,
+            seq_len,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))
+    }
+
+    fn execute_swiglu(&self, inputs: &[TensorId], outputs: &[TensorId]) -> GgmlResult<()> {
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(GgmlError::InvalidShape(
+                "SwiGlu expects 2 inputs and 1 output".to_string(),
+            ));
+        }
+
+        let gate_desc = self
+            .tensor_desc(inputs[0])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing gate desc".to_string()))?;
+        let up_desc = self
+            .tensor_desc(inputs[1])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing up desc".to_string()))?;
+
+        if gate_desc.shape != up_desc.shape || gate_desc.shape.len() != 2 {
+            return Err(GgmlError::InvalidShape(
+                "SwiGlu expects matching 2D gate/up tensors".to_string(),
+            ));
+        }
+
+        let seq_len = gate_desc.shape[0] as u32;
+        let intermediate_size = gate_desc.shape[1] as u32;
+
+        let gate_buf = self
+            .buffer(inputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing gate buffer".to_string()))?;
+        let up_buf = self
+            .buffer(inputs[1])
+            .ok_or_else(|| GgmlError::Backend("Missing up buffer".to_string()))?;
+        let out_buf = self
+            .buffer(outputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing output buffer".to_string()))?;
+
+        crate::ggml::hip_backend::ops::swiglu::swiglu(
+            self.hip_backend(),
+            gate_buf,
+            up_buf,
+            out_buf,
+            seq_len,
+            intermediate_size,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))
+    }
+
+    fn execute_mlp_swiglu(&mut self, inputs: &[TensorId], outputs: &[TensorId]) -> GgmlResult<()> {
+        if inputs.len() != 4 || outputs.len() != 1 {
+            return Err(GgmlError::InvalidShape(
+                "MlpSwiglu expects 4 inputs and 1 output".to_string(),
+            ));
+        }
+
+        let input_desc = self
+            .tensor_desc(inputs[0])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing input desc".to_string()))?;
+        let output_desc = self
+            .tensor_desc(outputs[0])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing output desc".to_string()))?;
+
+        if output_desc.shape != input_desc.shape {
+            return Err(GgmlError::InvalidShape(
+                "MlpSwiglu output shape mismatch".to_string(),
+            ));
+        }
+
+        let input_buf = self
+            .buffer(inputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing input buffer".to_string()))?;
+        let gate_buf = self
+            .buffer(inputs[1])
+            .ok_or_else(|| GgmlError::Backend("Missing gate buffer".to_string()))?;
+        let up_buf = self
+            .buffer(inputs[2])
+            .ok_or_else(|| GgmlError::Backend("Missing up buffer".to_string()))?;
+        let down_buf = self
+            .buffer(inputs[3])
+            .ok_or_else(|| GgmlError::Backend("Missing down buffer".to_string()))?;
+        let output_buf = self
+            .buffer(outputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing output buffer".to_string()))?;
+
+        let input_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&input_desc.shape);
+        let output_shape =
+            crate::loader::mmap_loader::TensorShape::from_dims(&output_desc.shape);
+
+        let input_tensor = crate::backend::DeviceTensor::from_buffer(
+            self.hip_backend(),
+            input_buf.clone(),
+            input_shape,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))?;
+        let gate_tensor = crate::backend::DeviceTensor::from_buffer(
+            self.hip_backend(),
+            gate_buf.clone(),
+            crate::loader::mmap_loader::TensorShape::from_dims(
+                &self.tensor_desc(inputs[1])
+                    .ok_or_else(|| {
+                        GgmlError::InvalidShape("Missing gate desc".to_string())
+                    })?
+                    .shape,
+            ),
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))?;
+        let up_tensor = crate::backend::DeviceTensor::from_buffer(
+            self.hip_backend(),
+            up_buf.clone(),
+            crate::loader::mmap_loader::TensorShape::from_dims(
+                &self.tensor_desc(inputs[2])
+                    .ok_or_else(|| {
+                        GgmlError::InvalidShape("Missing up desc".to_string())
+                    })?
+                    .shape,
+            ),
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))?;
+        let down_tensor = crate::backend::DeviceTensor::from_buffer(
+            self.hip_backend(),
+            down_buf.clone(),
+            crate::loader::mmap_loader::TensorShape::from_dims(
+                &self.tensor_desc(inputs[3])
+                    .ok_or_else(|| {
+                        GgmlError::InvalidShape("Missing down desc".to_string())
+                    })?
+                    .shape,
+            ),
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))?;
+        let mut output_tensor = crate::backend::DeviceTensor::from_buffer(
+            self.hip_backend(),
+            output_buf.clone(),
+            output_shape,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))?;
+
+        self.hip_backend()
+            .mlp_swiglu(
+                &input_tensor,
+                &gate_tensor,
+                &up_tensor,
+                &down_tensor,
+                &mut output_tensor,
+            )
+            .map_err(|e| GgmlError::Backend(e.to_string()))
+    }
+
+    fn execute_split_qkv(&self, inputs: &[TensorId], outputs: &[TensorId]) -> GgmlResult<()> {
+        if inputs.len() != 1 || outputs.len() != 3 {
+            return Err(GgmlError::InvalidShape(
+                "SplitQkv expects 1 input and 3 outputs".to_string(),
+            ));
+        }
+
+        let input_desc = self
+            .tensor_desc(inputs[0])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing input desc".to_string()))?;
+        if input_desc.shape.len() != 2 {
+            return Err(GgmlError::InvalidShape(
+                "SplitQkv expects 2D input tensor".to_string(),
+            ));
+        }
+        let seq_len = input_desc.shape[0];
+        let total_hidden = input_desc.shape[1];
+        if total_hidden % 3 != 0 {
+            return Err(GgmlError::InvalidShape(
+                "SplitQkv expects last dim to be 3 * hidden".to_string(),
+            ));
+        }
+        let hidden = total_hidden / 3;
+
+        let output_descs: Vec<_> = outputs
+            .iter()
+            .map(|id| {
+                self.tensor_desc(*id).ok_or_else(|| {
+                    GgmlError::InvalidShape("Missing output desc".to_string())
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        for desc in &output_descs {
+            if desc.shape.len() != 2
+                || desc.shape[0] != seq_len
+                || desc.shape[1] != hidden
+            {
+                return Err(GgmlError::InvalidShape(
+                    "SplitQkv output shape mismatch".to_string(),
+                ));
+            }
+        }
+
+        let input_buf = self
+            .buffer(inputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing input buffer".to_string()))?;
+        let out_q = self
+            .buffer(outputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing Q buffer".to_string()))?;
+        let out_k = self
+            .buffer(outputs[1])
+            .ok_or_else(|| GgmlError::Backend("Missing K buffer".to_string()))?;
+        let out_v = self
+            .buffer(outputs[2])
+            .ok_or_else(|| GgmlError::Backend("Missing V buffer".to_string()))?;
+
+        crate::ggml::hip_backend::ops::split_qkv::split_qkv(
+            input_buf,
+            out_q,
+            out_k,
+            out_v,
+            seq_len,
+            hidden,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))
+    }
+
+    fn execute_view_reshape(&mut self, inputs: &[TensorId], outputs: &[TensorId]) -> GgmlResult<()> {
+        if inputs.len() != 1 || outputs.len() != 1 {
+            return Err(GgmlError::InvalidShape(
+                "View/Reshape expects 1 input and 1 output".to_string(),
+            ));
+        }
+
+        eprintln!(">>> View/Reshape: inputs={:?}, outputs={:?}", inputs, outputs);
+        eprintln!(">>> View/Reshape: Available tensor IDs in backend: {:?}",
+                 self.tensors().keys().collect::<Vec<_>>());
+
+        let output_desc = self
+            .tensor_desc(outputs[0])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing output desc".to_string()))?;
+        let source_id = output_desc.view_of.unwrap_or(inputs[0]);
+        if source_id != inputs[0] {
+            return Err(GgmlError::InvalidShape(
+                "View/Reshape source tensor mismatch".to_string(),
+            ));
+        }
+
+        let input_buf = self
+            .buffer(source_id)
+            .ok_or_else(|| GgmlError::Backend("Missing input buffer".to_string()))?;
+        let view_buf = input_buf
+            .sub_buffer_view(output_desc.byte_offset, output_desc.byte_size())
+            .map_err(|e| GgmlError::Backend(e.to_string()))?;
+
+        let output_desc = output_desc.clone();
+        self.bind(&output_desc, view_buf)?;
+        Ok(())
+    }
+
+    fn execute_copy(&self, inputs: &[TensorId], outputs: &[TensorId]) -> GgmlResult<()> {
+        if inputs.len() != 1 || outputs.len() != 1 {
+            return Err(GgmlError::InvalidShape(
+                "Copy expects 1 input and 1 output".to_string(),
+            ));
+        }
+
+        let input_buf = self
+            .buffer(inputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing input buffer".to_string()))?;
+        let out_buf = self
+            .buffer(outputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing output buffer".to_string()))?;
+        out_buf
+            .copy_from_buffer(input_buf)
+            .map_err(|e| GgmlError::Backend(e.to_string()))
+    }
+
+    fn execute_matmul_q4_0(&self, inputs: &[TensorId], outputs: &[TensorId]) -> GgmlResult<()> {
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(GgmlError::InvalidShape(
+                "MatMulQ4_0 expects 2 inputs and 1 output".to_string(),
+            ));
+        }
+
+        let weights_desc = self
+            .tensor_desc(inputs[0])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing weights desc".to_string()))?;
+        let input_desc = self
+            .tensor_desc(inputs[1])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing input desc".to_string()))?;
+
+        if weights_desc.shape.len() != 2 || input_desc.shape.len() != 2 {
+            return Err(GgmlError::InvalidShape(
+                "MatMulQ4_0 expects 2D tensors".to_string(),
+            ));
+        }
+
+        let n_rows = weights_desc.shape[0];
+        let n_cols = weights_desc.shape[1];
+        let expected_q4_bytes = ((n_rows * n_cols + 31) / 32) * 20;
+        if weights_desc.byte_size() != expected_q4_bytes {
+            return Err(GgmlError::InvalidShape(format!(
+                "MatMulQ4_0 weights size mismatch: expected {} bytes, got {}",
+                expected_q4_bytes, weights_desc.byte_size()
+            )));
+        }
+
+        let _m = input_desc.shape[0] as i32;
+        let k = input_desc.shape[1] as i32;
+        let weights_k = n_cols as i32;
+        if k != weights_k {
+            return Err(GgmlError::InvalidShape(format!(
+                "MatMulQ4_0 dimension mismatch: k={} weights_k={}",
+                k, weights_k
+            )));
+        }
+
+        let weights_buf = self
+            .buffer(inputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing weights buffer".to_string()))?;
+        let input_buf = self
+            .buffer(inputs[1])
+            .ok_or_else(|| GgmlError::Backend("Missing input buffer".to_string()))?;
+        let out_buf = self
+            .buffer(outputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing output buffer".to_string()))?;
+
+        let mut quantized_data = vec![0u8; weights_desc.byte_size()];
+        self.hip_backend()
+            .copy_from_device_safe(&weights_buf, &mut quantized_data)
+            .map_err(|e| GgmlError::Backend(format!("Failed to read weights: {}", e)))?;
+
+        crate::kernels::matmul::quantized::matmul_q4_0(
+            self.hip_backend(),
+            &quantized_data,
+            input_buf,
+            n_rows,
+            n_cols,
+            out_buf,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))
+    }
+
+    fn execute_matmul_q8_0(&self, inputs: &[TensorId], outputs: &[TensorId]) -> GgmlResult<()> {
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(GgmlError::InvalidShape(
+                "MatMulQ8_0 expects 2 inputs and 1 output".to_string(),
+            ));
+        }
+
+        let weights_desc = self
+            .tensor_desc(inputs[0])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing weights desc".to_string()))?;
+        let input_desc = self
+            .tensor_desc(inputs[1])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing input desc".to_string()))?;
+
+        if weights_desc.shape.len() != 2 || input_desc.shape.len() != 2 {
+            return Err(GgmlError::InvalidShape(
+                "MatMulQ8_0 expects 2D tensors".to_string(),
+            ));
+        }
+
+        let n_rows = weights_desc.shape[0];
+        let n_cols = weights_desc.shape[1];
+        let expected_q8_bytes = ((n_rows * n_cols + 31) / 32) * 36;
+        if weights_desc.byte_size() != expected_q8_bytes {
+            return Err(GgmlError::InvalidShape(format!(
+                "MatMulQ8_0 weights size mismatch: expected {} bytes, got {}",
+                expected_q8_bytes, weights_desc.byte_size()
+            )));
+        }
+
+        let _m = input_desc.shape[0] as i32;
+        let k = input_desc.shape[1] as i32;
+        let weights_k = n_cols as i32;
+        if k != weights_k {
+            return Err(GgmlError::InvalidShape(format!(
+                "MatMulQ8_0 dimension mismatch: k={} weights_k={}",
+                k, weights_k
+            )));
+        }
+
+        let weights_buf = self
+            .buffer(inputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing weights buffer".to_string()))?;
+        let input_buf = self
+            .buffer(inputs[1])
+            .ok_or_else(|| GgmlError::Backend("Missing input buffer".to_string()))?;
+        let out_buf = self
+            .buffer(outputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing output buffer".to_string()))?;
+
+        let mut quantized_data = vec![0u8; weights_desc.byte_size()];
+        self.hip_backend()
+            .copy_from_device_safe(&weights_buf, &mut quantized_data)
+            .map_err(|e| GgmlError::Backend(format!("Failed to read weights: {}", e)))?;
+
+        crate::kernels::matmul::quantized::matmul_q8_0(
+            self.hip_backend(),
+            &quantized_data,
+            input_buf,
+            n_rows,
+            n_cols,
+            out_buf,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))
+    }
+
+    fn execute_accumulate(&self, inputs: &[TensorId], outputs: &[TensorId], offset: usize) -> GgmlResult<()> {
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(GgmlError::InvalidShape(
+                "Accumulate expects 2 inputs and 1 output".to_string(),
+            ));
+        }
+
+        let src_desc = self
+            .tensor_desc(inputs[0])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing src desc".to_string()))?;
+        let dst_desc = self
+            .tensor_desc(inputs[1])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing dst desc".to_string()))?;
+        let output_desc = self
+            .tensor_desc(outputs[0])
+            .ok_or_else(|| GgmlError::InvalidShape("Missing output desc".to_string()))?;
+
+        if src_desc.shape != output_desc.shape {
+            return Err(GgmlError::InvalidShape(
+                "Accumulate src shape must match output shape".to_string(),
+            ));
+        }
+
+        let src_elements = src_desc.element_count();
+        let _dst_elements = dst_desc.element_count();
+        let byte_offset = offset * std::mem::size_of::<f32>();
+        if byte_offset + src_desc.byte_size() > dst_desc.byte_size() {
+            return Err(GgmlError::InvalidShape(format!(
+                "Accumulate offset {} exceeds dst size (src={}, dst={})",
+                offset, src_desc.byte_size(), dst_desc.byte_size()
+            )));
+        }
+
+        let src_buf = self
+            .buffer(inputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing src buffer".to_string()))?;
+        let dst_buf = self
+            .buffer(inputs[1])
+            .ok_or_else(|| GgmlError::Backend("Missing dst buffer".to_string()))?;
+        let out_buf = self
+            .buffer(outputs[0])
+            .ok_or_else(|| GgmlError::Backend("Missing output buffer".to_string()))?;
+
+        crate::ggml::hip_backend::ops::accumulate::accumulate(
+            self.hip_backend(),
+            src_buf,
+            dst_buf,
+            out_buf,
+            src_elements,
+            byte_offset,
+        )
+        .map_err(|e| GgmlError::Backend(e.to_string()))
+    }
+
+    // Helper methods for accessing tensor data
+    fn tensor_desc(&self, id: TensorId) -> Option<&crate::ggml::TensorDesc> {
+        self.tensors().get(&id).map(|(desc, _)| desc)
+    }
+
+    fn buffer(&self, id: TensorId) -> Option<&crate::backend::HipBuffer> {
+        self.tensors().get(&id).map(|(_, buf)| buf)
+    }
+
+    fn bind(&mut self, desc: &crate::ggml::TensorDesc, buffer: crate::backend::HipBuffer) -> GgmlResult<()> {
+        self.tensors_mut().insert(desc.id, (desc.clone(), buffer));
+        Ok(())
+    }
+}
