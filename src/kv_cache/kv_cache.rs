@@ -178,7 +178,10 @@ impl KvCache {
     }
 
     /// Evict least recently used sequences to free up space for new sequences
-    /// This is called automatically when capacity is exceeded during allocation
+    ///
+    /// This method is part of the cache eviction API but currently
+    /// unused because the cache uses a simpler capacity-based eviction.
+    #[allow(dead_code)] // Reserved for future LRU eviction implementation
     fn evict_lru_sequences(&mut self, required_pages: usize) -> KvCacheResult<()> {
         let sequences = self.sequences.read()?;
         let pages = self.pages.read()?;

@@ -11,21 +11,24 @@
 
 use super::server::InferenceServer;
 use super::types::{GenerateRequest, GenerateResponse, ServerError, TracesQuery};
-use super::types::ServerResult;
 use crate::models::discover_models_with_cache;
 use crate::otel_traces::{export_traces, clear_traces, TraceExport, ScopeSpans, ResourceSpans};
 use crate::tokenizer::tokenizer_cache_counters;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    response::{sse::Event, IntoResponse, Response, Sse},
+    response::{sse::Event, Sse},
     Json,
 };
-use futures::stream::{self, Stream};
+use futures::stream::Stream;
 use std::convert::Infallible;
 use std::pin::Pin;
 use tracing::info;
 
+/// Result type for server-sent event streaming
+///
+/// Reserved for future SSE (Server-Sent Events) implementation.
+#[allow(dead_code)] // Reserved for future SSE streaming endpoint
 type EventStreamResult = Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>>;
 
 /// Main text generation handler
