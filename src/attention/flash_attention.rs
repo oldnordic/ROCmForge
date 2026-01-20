@@ -35,7 +35,7 @@ const MAX_FLASH_SEQ_LEN: usize = 2048;
 #[derive(Debug)]
 pub struct FlashAttentionBackend {
     #[cfg(feature = "rocm")]
-    _handle: HipBlasHandle,
+    handle: HipBlasHandle,
 }
 
 impl FlashAttentionBackend {
@@ -47,7 +47,7 @@ impl FlashAttentionBackend {
         {
             let handle = HipBlasHandle::new()
                 .map_err(|e| format!("Failed to create HIP BLAS handle: {}", e))?;
-            Ok(FlashAttentionBackend { _handle: handle })
+            Ok(FlashAttentionBackend { handle })
         }
 
         #[cfg(not(feature = "rocm"))]
@@ -110,10 +110,10 @@ impl BackendImplementation for FlashAttentionBackend {
     fn forward(
         &self,
         config: &AttentionConfig,
-        _q: &[f32],
-        _k: &[f32],
-        _v: &[f32],
-        _mask: Option<&[f32]>,
+        q: &[f32],
+        k: &[f32],
+        v: &[f32],
+        mask: Option<&[f32]>,
     ) -> AttentionBackendResult<Vec<f32>> {
         // Validate config
         config.validate()
