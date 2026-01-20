@@ -542,6 +542,11 @@ impl F16 {
     }
 }
 
+/// Transpose a 2D f32 matrix (row-major to column-major)
+///
+/// This function is kept for potential future use in tensor operations.
+/// Currently unused but may be needed for GGUF tensor layout conversions.
+#[allow(dead_code)] // Reserved for future tensor layout conversions
 fn transpose_f32_matrix(data: &[f32], rows: usize, cols: usize) -> Vec<f32> {
     let mut transposed = vec![0.0f32; data.len()];
     for r in 0..rows {
