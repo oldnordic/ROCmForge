@@ -214,25 +214,32 @@ mod tests {
     #[test]
     fn test_qkt_matmul_cpu_basic() {
         // batch_size=1, seq_q=2, seq_k=3, num_heads=1, head_dim=4
+        // Q layout: [batch_size, num_heads, seq_q, head_dim]
+        // K layout: [batch_size, num_heads, head_dim, seq_k]
         let q = vec![
-            1.0, 2.0, 3.0, 4.0,  // seq_q=0
-            5.0, 6.0, 7.0, 8.0,  // seq_q=1
+            1.0, 0.0, 0.0, 0.0,  // seq_q=0: only first dim is 1
+            0.0, 1.0, 0.0, 0.0,  // seq_q=1: only second dim is 1
         ];
         let k = vec![
-            1.0, 0.0, 0.0, 0.0,  // seq_k=0
-            0.0, 1.0, 0.0, 0.0,  // seq_k=1
-            0.0, 0.0, 1.0, 0.0,  // seq_k=2
+            1.0, 2.0, 3.0,  // head_dim=0 row
+            0.0, 0.0, 0.0,  // head_dim=1 row
+            0.0, 0.0, 0.0,  // head_dim=2 row
+            0.0, 0.0, 0.0,  // head_dim=3 row
         ];
 
         let result = qkt_matmul_cpu(&q, &k, 1, 2, 3, 1, 4).unwrap();
 
         // Expected: Q @ K^T
-        // [1, 2, 3, 4] @ [[1, 0, 0], [0, 1, 0], [0, 0, 1], [0, 0, 0]]^T
-        // = [1, 2, 3] for first row
+        // First row of Q [1,0,0,0] @ K = first row of K^T = [1, 2, 3]
+        // Second row of Q [0,1,0,0] @ K = second row of K^T = [0, 0, 0]
         assert_eq!(result.len(), 6); // 1 * 1 * 2 * 3
         assert!((result[0] - 1.0).abs() < 1e-6);
         assert!((result[1] - 2.0).abs() < 1e-6);
         assert!((result[2] - 3.0).abs() < 1e-6);
+        // Second row is all zeros since K[1, :] = [0, 0, 0]
+        assert!((result[3] - 0.0).abs() < 1e-6);
+        assert!((result[4] - 0.0).abs() < 1e-6);
+        assert!((result[5] - 0.0).abs() < 1e-6);
     }
 
     #[test]

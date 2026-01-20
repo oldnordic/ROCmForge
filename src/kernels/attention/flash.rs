@@ -103,7 +103,12 @@ mod tests {
 
     #[test]
     fn test_can_use_flash_attention_valid() {
+        // When ROCm feature is enabled, should return true for valid config
+        // When ROCm is not enabled, returns false
+        #[cfg(feature = "rocm")]
         assert!(can_use_flash_attention(64, 1024));
+        #[cfg(not(feature = "rocm"))]
+        assert!(!can_use_flash_attention(64, 1024));
     }
 
     #[test]

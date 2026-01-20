@@ -159,28 +159,29 @@ mod tests {
 
     #[test]
     fn test_apply_mask_batched() {
+        // Test with batch_size=2, num_heads=1, seq_len=2
+        // Total elements: 2 * 1 * 2 * 2 = 8
         let mut scores = vec![
-            1.0, 2.0, 3.0,  // batch 0, row 0
-            4.0, 5.0, 6.0,  // batch 0, row 1
-            7.0, 8.0, 9.0,  // batch 1, row 0
-            10.0, 11.0, 12.0,  // batch 1, row 1
+            1.0, 2.0,  // batch 0, row 0 (2 seq positions)
+            3.0, 4.0,  // batch 0, row 1 (2 seq positions)
+            5.0, 6.0,  // batch 1, row 0 (2 seq positions)
+            7.0, 8.0,  // batch 1, row 1 (2 seq positions)
         ];
-        let mask = create_causal_mask(2); // For seq_len=2
 
-        // Apply mask to batch_size=2, num_heads=1, seq_len=2
-        // We need a 2x2 mask: [[0, -inf], [0, 0]]
-        let mask_2x2 = vec![0.0, f32::NEG_INFINITY, 0.0, 0.0];
+        // 2x2 causal mask: [[0, -inf], [0, 0]]
+        let _mask_2x2 = vec![0.0, f32::NEG_INFINITY, 0.0, 0.0];
 
-        apply_mask_in_place(&mut scores, &mask_2x2, 2, 1, 2);
+        apply_mask_in_place(&mut scores, &_mask_2x2, 2, 1, 2);
 
-        // First row of each batch should have -inf at position 1
+        // First row of each batch: [value, -inf]
         assert_eq!(scores[0], 1.0f32);
         assert_eq!(scores[1], f32::NEG_INFINITY);
-        assert_eq!(scores[2], 4.0f32);
-        assert_eq!(scores[3], 5.0f32);
-        assert_eq!(scores[4], 7.0f32);
+        // Second row of each batch: [value, value]
+        assert_eq!(scores[2], 3.0f32);
+        assert_eq!(scores[3], 4.0f32);
+        assert_eq!(scores[4], 5.0f32);
         assert_eq!(scores[5], f32::NEG_INFINITY);
-        assert_eq!(scores[6], 10.0f32);
-        assert_eq!(scores[7], 11.0f32);
+        assert_eq!(scores[6], 7.0f32);
+        assert_eq!(scores[7], 8.0f32);
     }
 }
