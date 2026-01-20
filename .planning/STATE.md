@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 ## Current Position
 
 Phase: 28 - ROCm Compilation Fix
-Plan: 02 of N (Wave 2 - Variable naming fixes)
-Status: In Progress - Import errors fixed, underscore-prefixed parameters fixed
-Last activity: Completed 28-02 underscore prefix fixes at 2026-01-20T21:26:07Z
+Plan: 04 of N (Wave 4 - cfg gate removal from ops/attention/)
+Status: In Progress - Import errors fixed, underscore-prefixed parameters fixed, ops/attention cfg gates removed
+Last activity: Completed 28-04 cfg gate removal from ops/attention/ at 2026-01-20T21:33:42Z
 
-Progress: [███████████████████░░] 99.5% (Phase 27 COMPLETE, Phase 28-01 COMPLETE, Phase 28-02 COMPLETE)
+Progress: [███████████████████░░] 99.5% (Phase 27 COMPLETE, Phase 28-01 COMPLETE, Phase 28-02 COMPLETE, Phase 28-04 COMPLETE)
 
 ### Blockers/Concerns
 
@@ -31,6 +31,11 @@ When attempting to enable `rocm` as default feature (required for GPU kernel run
 - Fixed: Removed underscore prefixes from `mask`, `q`, `k`, `v` parameters in flash_attention.rs
 - Fixed: Renamed `_handle` to `handle` in FlashAttentionBackend struct
 - Verified: simple_transformer.rs already has correct `let mut linear` (fixed in 27-04)
+
+**Progress - Phase 28-04 COMPLETE (cfg gate removal from ops/attention/):**
+- Fixed: Removed 63 #[cfg(feature = "rocm")] gates from 5 files in src/ops/attention/
+- Files: attention_gpu.rs (19), ops/attention/mod.rs (1), ops/attention/kernels.rs (18), ops/attention/softmax.rs (17), ops/causal_mask_tests.rs (8)
+- GPU attention operations are now always compiled unconditionally
 
 **Remaining Issues (for subsequent plans):**
 1. **kernels/transpose/mod.rs**: Type mismatch `Arc<Arc<HipBackend>>` (next plan)
@@ -432,8 +437,8 @@ Historical decisions affecting v1.3:
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed 28-02 underscore prefix fixes at 2026-01-20T21:26:07Z
-Resume file: .planning/phases/28-rocm-compilation-fix/28-02-SUMMARY.md
+Stopped at: Completed 28-04 cfg gate removal from ops/attention/ at 2026-01-20T21:33:42Z
+Resume file: .planning/phases/28-rocm-compilation-fix/28-04-SUMMARY.md
 
 **v1.5 - GPU Transpose Fix (2026-01-20):**
 - Phase 27-01: TransposeKernel module with lazy HSACO loading, build.rs integration (COMPLETE)
