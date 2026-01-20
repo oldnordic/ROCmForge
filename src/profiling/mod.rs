@@ -9,7 +9,9 @@
 //! - [`kernel_launch`] - Kernel launch overhead profiling and batching optimization
 //! - [`ttft`] - Time to First Token (TTFT) profiling for inference latency analysis
 //! - [`baseline`] - Performance baseline storage and regression detection
-//! - [`rocprof_integration`] - Integration with ROCm profiling tools (rocprof, omniperf, rocperf)
+//! - [`types`] - Common types for ROCm profiling tools
+//! - [`rocprof`] - rocprof profiling tool integration
+//! - [`omniperf`] - omniperf profiling tool integration
 //!
 //! # Example
 //!
@@ -35,14 +37,16 @@
 //!
 //! # ROCm Profiling Tools Integration
 //!
-//! The [`rocprof_integration`] module provides helpers for working with external
-//! ROCm profiling tools:
+//! The profiling modules provide helpers for working with external ROCm profiling tools:
 //!
 //! ```rust,ignore
-//! use rocmforge::profiling::rocprof_integration::{RocprofSession, ProfilingConfig};
+//! use rocmforge::profiling::{RocprofSession, ProfilingConfig};
 //!
 //! // Create a profiling session
-//! let session = RocprofSession::new("/tmp/profile")?;
+//! let config = ProfilingConfig::default()
+//!     .with_counters(vec!["SQ_WAVES", "SQ_INSTS"]);
+//!
+//! let session = RocprofSession::with_config(config)?;
 //!
 //! // Build command to run application under rocprof
 //! let cmd = session.build_command("./my_app", &["--arg1"]);
@@ -71,36 +75,53 @@
 //! let breakdown = profiler.finish_ttft();
 //! println!("{}", breakdown);
 //! ```
-//!
-//! # ROCm Profiling Tools Integration
-//!
-//! The [`rocprof_integration`] module provides helpers for working with external
-//! ROCm profiling tools:
-//!
-//! ```rust,ignore
-//! use rocmforge::profiling::rocprof_integration::{RocprofSession, ProfilingConfig};
-//!
-//! // Create a profiling session
-//! let session = RocprofSession::new("/tmp/profile")?;
-//!
-//! // Build command to run application under rocprof
-//! let cmd = session.build_command("./my_app", &["--arg1"]);
-//! ```
-//!
-//! See [`rocprof_integration`] for more details on profiling tool integration.
 
 pub mod baseline;
+pub mod baseline_types;
+pub mod baseline_storage;
 pub mod kernel_timer;
 pub mod kernel_launch;
-pub mod rocprof_integration;
 pub mod ttft;
 
-// Public exports from baseline
-pub use baseline::{
+// ROCm profiling tools modules
+pub mod types;
+pub mod rocprof;
+pub mod omniperf;
+
+// Legacy re-export for backward compatibility
+pub mod rocprof_integration {
+    //! Re-export of profiling types for backward compatibility.
+    //!
+    //! This module re-exports all public types from the decomposed profiling modules.
+    //! New code should import directly from `rocmforge::profiling::{rocprof, omniperf, types}`.
+
+    // Re-export common types
+    pub use crate::profiling::types::{
+        ProfilingError, ProfilingResult, ProfilingTool, CounterCategory,
+    };
+
+    // Re-export rocprof types
+    pub use crate::profiling::rocprof::{
+        ProfilingConfig, RocprofSession, ProfilingResults, ProfilingMetrics,
+        KernelExecution,
+    };
+
+    // Re-export rocprof helpers
+    pub use crate::profiling::rocprof::helpers;
+
+    // Re-export omniperf types
+    pub use crate::profiling::omniperf::{
+        OmniperfProfileBuilder, MemoryBandwidthAnalysis, MemoryAccessPattern,
+    };
+}
+
+// Public exports from baseline (re-exports from baseline_types)
+pub use baseline_types::{
     PerformanceBaseline, BaselineMetrics, BaselineCollection,
     ComparisonResult, HardwareInfo, BaselineError, RegressionThreshold,
-    RegressionReport, BenchmarkBaseline,
+    RegressionReport,
 };
+pub use baseline::BenchmarkBaseline;
 
 // Public exports from kernel_timer
 pub use kernel_timer::{KernelTimer, ScopedTimer};
@@ -111,10 +132,26 @@ pub use kernel_launch::{
     OverheadOptimizationRecommendation, RecommendationType,
 };
 
-// Public exports from rocprof_integration
-pub use rocprof_integration::{
-    ProfilingTool, CounterCategory, ProfilingConfig, RocprofSession,
-    ProfilingResults, ProfilingMetrics, ProfilingError, KernelExecution,
+// Public exports from types (common profiling types)
+pub use types::{
+    ProfilingError, ProfilingResult, ProfilingTool, CounterCategory,
+};
+
+// Public exports from rocprof
+pub use rocprof::{
+    ProfilingConfig, RocprofSession, ProfilingResults, ProfilingMetrics,
+    KernelExecution,
+};
+
+// Public exports from rocprof helpers
+pub use rocprof::helpers::{
+    profile_kernel, profile_memory, profile_memory_detailed,
+    profile_matmul_memory, profile_compute_unit,
+    available_tools, print_available_tools,
+};
+
+// Public exports from omniperf
+pub use omniperf::{
     OmniperfProfileBuilder, MemoryBandwidthAnalysis, MemoryAccessPattern,
 };
 
