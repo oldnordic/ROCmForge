@@ -854,7 +854,6 @@ impl HipBackend {
 
         self.synchronize()?;
 
-        #[cfg(feature = "rocm")]
         {
             let swiglu_buffer = HipBuffer::new((seq_len * intermediate_size) * std::mem::size_of::<f32>())
                 .map_err(|e| HipError::GenericError(format!("Failed to allocate SwiGLU buffer: {}", e)))?;

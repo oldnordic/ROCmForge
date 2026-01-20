@@ -34,11 +34,9 @@ impl HipBuffer {
     /// Create a new GPU buffer
     pub fn new(size: usize) -> HipResult<Self> {
         // Capture stack trace for debugging segfaults
-        #[cfg(feature = "rocm")]
         let backtrace = std::backtrace::Backtrace::capture();
 
         tracing::trace!("HipBuffer::new: Allocating {} bytes of GPU memory", size);
-        #[cfg(feature = "rocm")]
         tracing::trace!("HipBuffer::new: Call stack:\n{}", backtrace);
 
         // Validate allocation size to prevent segfaults

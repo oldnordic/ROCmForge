@@ -5,14 +5,12 @@
 
 #![allow(dead_code)]
 
-#[cfg(feature = "rocm")]
 use crate::backend::hip_backend::{HipBackend, HipBuffer};
 use crate::sampler::{SamplerError, SamplerResult};
 use rand::Rng;
 use std::sync::Arc;
 
 /// GPU sampler for fused top-k + top-p sampling
-#[cfg(feature = "rocm")]
 #[derive(Debug, Clone)]
 pub struct GpuFusedSampler {
     backend: Arc<HipBackend>,
@@ -20,7 +18,6 @@ pub struct GpuFusedSampler {
     top_p: f32,
 }
 
-#[cfg(feature = "rocm")]
 impl GpuFusedSampler {
     /// Create a new GPU fused sampler
     pub fn new(backend: Arc<HipBackend>, top_k: usize, top_p: f32) -> SamplerResult<Self> {

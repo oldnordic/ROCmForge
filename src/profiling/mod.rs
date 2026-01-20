@@ -20,17 +20,11 @@
 //!
 //! // Time a GPU kernel
 //! let mut timer = KernelTimer::for_kernel("matmul");
-//! #[cfg(feature = "rocm")]
 //! timer.start(&stream)?;
-//! #[cfg(not(feature = "rocm"))]
-//! timer.start_cpu();
 //!
 //! // ... execute kernel ...
 //!
-//! #[cfg(feature = "rocm")]
 //! timer.stop(&stream)?;
-//! #[cfg(not(feature = "rocm"))]
-//! timer.stop_cpu();
 //!
 //! println!("Elapsed: {:.2} ms", timer.elapsed_unwrap());
 //! ```

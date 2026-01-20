@@ -13,7 +13,6 @@
 //! let mut timer = KernelTimer::for_kernel("my_kernel");
 //!
 //! // For GPU timing (requires HIP stream):
-//! #[cfg(feature = "rocm")]
 //! {
 //!     use rocmforge::backend::HipStream;
 //!     let stream = HipStream::default();
@@ -28,7 +27,6 @@
 //! }
 //!
 //! // For CPU timing fallback:
-//! #[cfg(not(feature = "rocm"))]
 //! {
 //!     timer.start_cpu();
 //!     // ... execute operation ...
@@ -38,7 +36,6 @@
 //! }
 //! ```
 
-#[cfg(feature = "rocm")]
 use crate::backend::{HipError, HipResult, HipStream, HipEvent};
 use std::time::Instant;
 
@@ -73,7 +70,6 @@ pub struct KernelTimer {
 #[derive(Debug)]
 enum TimerStart {
     /// GPU timing using HIP events
-    #[cfg(feature = "rocm")]
     Gpu {
         event: HipEvent,
     },
@@ -87,7 +83,6 @@ enum TimerStart {
 #[derive(Debug)]
 enum TimerStop {
     /// GPU timing using HIP events
-    #[cfg(feature = "rocm")]
     Gpu {
         #[allow(dead_code)] // Event stored for Debug impl; timing is done via HipEvent::elapsed
         event: HipEvent,
@@ -152,7 +147,6 @@ impl KernelTimer {
     ///
     /// timer.stop(&stream)?;
     /// ```
-    #[cfg(feature = "rocm")]
     pub fn start(&mut self, stream: &HipStream) -> HipResult<()> {
         // Create start event
         let start_event = HipEvent::new()?;
@@ -217,7 +211,6 @@ impl KernelTimer {
     /// // ... execute kernel ...
     /// timer.stop(&stream)?;
     /// ```
-    #[cfg(feature = "rocm")]
     pub fn stop(&mut self, stream: &HipStream) -> HipResult<()> {
         let start_event = match &self.start {
             Some(TimerStart::Gpu { event }) => event,

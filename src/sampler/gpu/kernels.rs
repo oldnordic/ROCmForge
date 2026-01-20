@@ -5,13 +5,11 @@
 
 #![allow(dead_code)]
 
-#[cfg(feature = "rocm")]
 use crate::backend::hip_backend::{HipBackend, HipError, HipKernel, HipModule};
 use std::ffi::c_void;
 use std::path::Path;
 use std::sync::Mutex;
 
-#[cfg(feature = "rocm")]
 const BLOCK_SIZE: u32 = 256;
 
 /// Cached kernel modules and functions for sampling operations
@@ -28,7 +26,6 @@ const BLOCK_SIZE: u32 = 256;
 /// - topp_threshold_kernel: from TOPP_THRESHOLD_HSACO
 /// - topp_sample_kernel: from TOPP_SAMPLE_HSACO
 /// - topk_topp_sampling_kernel: from FUSED_SAMPLING_HSACO
-#[cfg(feature = "rocm")]
 #[derive(Debug)]
 pub struct SamplingKernelCache {
     // softmax_kernel from SAMPLING_UTILS_HSACO
@@ -55,14 +52,12 @@ pub struct SamplingKernelCache {
 }
 
 // Global kernel cache (lazy initialization)
-#[cfg(feature = "rocm")]
 pub static GLOBAL_SAMPLING_CACHE: Mutex<Option<SamplingKernelCache>> = Mutex::new(None);
 
 /// Get or initialize the global sampling kernel cache
 ///
 /// Returns cached kernel modules and functions. The caller must provide
 /// their own HipBackend for launching kernels to ensure stream consistency.
-#[cfg(feature = "rocm")]
 pub fn get_or_init_sampling_cache() -> Result<&'static Mutex<Option<SamplingKernelCache>>, HipError> {
     use super::super::SamplerError;
 
@@ -217,7 +212,6 @@ pub fn get_or_init_sampling_cache() -> Result<&'static Mutex<Option<SamplingKern
 ///
 /// # Safety
 /// Caller must ensure all GPU pointers are valid and synchronized after this call.
-#[cfg(feature = "rocm")]
 pub unsafe fn temperature_scale_kernel(
     backend: &HipBackend,
     logits: *mut f32,
@@ -278,7 +272,6 @@ pub unsafe fn temperature_scale_kernel(
 ///
 /// # Safety
 /// Caller must ensure all GPU pointers are valid and synchronized after this call.
-#[cfg(feature = "rocm")]
 pub unsafe fn topk_sampling_kernel(
     backend: &HipBackend,
     probabilities: *const f32,
@@ -346,7 +339,6 @@ pub unsafe fn topk_sampling_kernel(
 ///
 /// # Safety
 /// Caller must ensure all GPU pointers are valid and synchronized after this call.
-#[cfg(feature = "rocm")]
 pub unsafe fn topp_prefix_sum_kernel(
     backend: &HipBackend,
     probs: *const f32,
@@ -408,7 +400,6 @@ pub unsafe fn topp_prefix_sum_kernel(
 ///
 /// # Safety
 /// Caller must ensure all GPU pointers are valid and synchronized after this call.
-#[cfg(feature = "rocm")]
 pub unsafe fn topp_threshold_kernel(
     backend: &HipBackend,
     prefix_sum: *const f32,
@@ -474,7 +465,6 @@ pub unsafe fn topp_threshold_kernel(
 ///
 /// # Safety
 /// Caller must ensure all GPU pointers are valid and synchronized after this call.
-#[cfg(feature = "rocm")]
 pub unsafe fn topp_sample_kernel(
     backend: &HipBackend,
     prefix_sum: *const f32,
@@ -545,7 +535,6 @@ pub unsafe fn topp_sample_kernel(
 ///
 /// # Safety
 /// Caller must ensure all GPU pointers are valid and synchronized after this call.
-#[cfg(feature = "rocm")]
 #[deprecated(since = "0.2.0", note = "Use topp_prefix_sum_kernel, topp_threshold_kernel, and topp_sample_kernel instead")]
 pub unsafe fn topp_sampling_kernel(
     _backend: &HipBackend,
@@ -573,7 +562,6 @@ pub unsafe fn topp_sampling_kernel(
 ///
 /// # Safety
 /// Caller must ensure all GPU pointers are valid and synchronized after this call.
-#[cfg(feature = "rocm")]
 pub unsafe fn fused_sampling_kernel(
     backend: &HipBackend,
     probabilities: *const f32,
@@ -634,7 +622,6 @@ pub unsafe fn fused_sampling_kernel(
 /// Generate random values for GPU sampling
 ///
 /// For now, generates on CPU. In the future, this could use GPU RNG.
-#[cfg(feature = "rocm")]
 pub fn generate_random(_backend: &crate::backend::HipBackend, count: usize) -> Vec<f32> {
     let mut rng = rand::thread_rng();
     (0..count).map(|_| rng.gen()).collect()

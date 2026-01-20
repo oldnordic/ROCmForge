@@ -11,7 +11,6 @@ pub use top_k::GpuTopKSampler;
 pub use top_p::GpuTopPSampler;
 
 // Re-export kernel functions for external use
-#[cfg(feature = "rocm")]
 pub use kernels::{
     fused_sampling_kernel,
     generate_random,
@@ -38,7 +37,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_gpu_topp_sampler_creation() {
         let backend = crate::backend::HipBackend::new().unwrap();
         let sampler = GpuTopPSampler::new(backend, 0.9).unwrap();
@@ -47,7 +45,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_gpu_topp_invalid_params() {
         let backend = crate::backend::HipBackend::new().unwrap();
         let result = GpuTopPSampler::new(backend.clone(), 0.0);
@@ -59,7 +56,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_gpu_topk_sampler_creation() {
         let backend = crate::backend::HipBackend::new().unwrap();
         let sampler = GpuTopKSampler::new(backend, 50).unwrap();
@@ -68,7 +64,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_gpu_topk_invalid_params() {
         let backend = crate::backend::HipBackend::new().unwrap();
         let result = GpuTopKSampler::new(backend, 0);
@@ -77,7 +72,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_gpu_fused_sampler_creation() {
         let backend = crate::backend::HipBackend::new().unwrap();
         let sampler = GpuFusedSampler::new(backend, 50, 0.9).unwrap();
@@ -94,28 +88,18 @@ mod tests {
             0.5, 0.3, 0.1, 0.05, 0.05,  // Row 2 (sum = 1.0)
         ];
 
-        #[cfg(feature = "rocm")]
-        {
-            let backend = crate::backend::HipBackend::new().unwrap();
-            let sampler = GpuTopPSampler::new(backend, 0.9).unwrap();
+        let backend = crate::backend::HipBackend::new().unwrap();
+        let sampler = GpuTopPSampler::new(backend, 0.9).unwrap();
 
-            let results = sampler.sample(&probabilities, 2, 5).unwrap();
+        let results = sampler.sample(&probabilities, 2, 5).unwrap();
 
-            assert_eq!(results.len(), 2);
-            assert!(results[0] < 5);
-            assert!(results[1] < 5);
-        }
-
-        #[cfg(not(feature = "rocm"))]
-        {
-            // Without ROCm, tests should still compile
-            assert!(true);
-        }
+        assert_eq!(results.len(), 2);
+        assert!(results[0] < 5);
+        assert!(results[1] < 5);
     }
 
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_topk_fallback_correctness() {
         let probabilities = vec![
             0.1, 0.2, 0.3, 0.15, 0.25,
@@ -136,7 +120,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_fused_fallback_correctness() {
         let probabilities = vec![
             0.1, 0.2, 0.3, 0.15, 0.25,
@@ -160,7 +143,6 @@ mod tests {
     /// When HSACO files are absent, cache should still initialize (with None for kernels).
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_kernel_cache_initialization() {
         // This should always succeed - cache initializes even if kernels aren't found
         let result = get_or_init_sampling_cache();
@@ -189,7 +171,6 @@ mod tests {
     /// TDD Step 3: After HSACO compilation, GPU path will be used
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_topp_sampling_deterministic() {
         // Use deterministic probabilities where result is predictable
         let probabilities = vec![
@@ -215,7 +196,6 @@ mod tests {
     /// Test GPU top-k sampling with known inputs
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_topk_sampling_deterministic() {
         // Clear top-2 tokens: token 2 (80%), token 4 (10%)
         let probabilities = vec![
@@ -242,7 +222,6 @@ mod tests {
     /// TDD test for combined top-k + top-p sampling.
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_gpu_fused_sampling_deterministic() {
         // Create distribution where top-k and top-p both apply
         let probabilities = vec![
@@ -278,7 +257,6 @@ mod tests {
             0.3, 0.3, 0.2, 0.1, 0.1,  // Sum = 1.0
         ];
 
-        #[cfg(feature = "rocm")]
         {
             let backend = crate::backend::HipBackend::new().unwrap();
             let sampler = GpuTopPSampler::new(backend, 0.9).unwrap();
@@ -292,12 +270,6 @@ mod tests {
             assert!(results[0] < 5);
             assert!(results[1] < 5);
         }
-
-        #[cfg(not(feature = "rocm"))]
-        {
-            // Without ROCm, tests should still compile
-            assert!(true);
-        }
     }
 
     /// Test GPU top-k sampling with single dominant token
@@ -305,7 +277,6 @@ mod tests {
     /// Edge case: One token has overwhelming probability.
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     #[ignore] // Requires actual GPU hardware
     fn test_gpu_topk_single_dominant() {
         let probabilities = vec![
@@ -330,7 +301,6 @@ mod tests {
     /// Edge case: All probabilities are equal.
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_gpu_topp_uniform_distribution() {
         let probabilities = vec![
             0.2, 0.2, 0.2, 0.2, 0.2,  // Uniform distribution
@@ -352,7 +322,6 @@ mod tests {
     /// Edge case: Vocabulary size of 1 (only one possible token).
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_gpu_sampling_single_token_vocab() {
         let probabilities = vec![1.0; 2]; // batch_size=2, vocab_size=1
 

@@ -8,7 +8,6 @@
 //!
 //! This follows TDD: write tests first, prove they fail, then implement kernel.
 
-#[cfg(feature = "rocm")]
 #[cfg(test)]
 mod swiglu_tests {
     use crate::backend::{DeviceTensor, HipBackend};

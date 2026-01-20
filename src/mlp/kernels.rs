@@ -174,7 +174,6 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
 /// # IMPORTANT
 /// The caller must synchronize on the SAME backend after calling this function
 /// to ensure the kernel completes before using the output.
-#[cfg(feature = "rocm")]
 pub unsafe fn swiglu_gpu_kernel(
     backend: &HipBackend,
     gate: *const f32,
@@ -259,7 +258,6 @@ pub unsafe fn swiglu_gpu_kernel(
 /// # IMPORTANT
 /// The caller must synchronize on the SAME backend after calling this function
 /// to ensure the kernel completes before using the output.
-#[cfg(feature = "rocm")]
 pub unsafe fn rms_norm_gpu_kernel(
     backend: &HipBackend,
     input: *const f32,

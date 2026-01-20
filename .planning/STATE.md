@@ -7,14 +7,12 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
 **Current focus:** CRITICAL ISSUE - ROCm feature compilation broken
 
-## Current Position
-
 Phase: 28 - ROCm Compilation Fix
-Plan: 05 of N (Wave 5 - cfg gate removal from src/kernels/)
-Status: Complete - All cfg gates removed from src/kernels/
-Last activity: Completed 28-05 cfg gate removal from src/kernels/ at 2026-01-20T21:37:15Z
+Plan: 07 of N (Wave 7 - cfg gate removal from src/model/ and src/loader/)
+Status: Complete - All cfg gates removed from model and loader modules
+Last activity: Completed 28-07 cfg gate removal from model and loader at 2026-01-20T21:42:35Z
 
-Progress: [███████████████████░░] 99.5% (Phase 27 COMPLETE, Phase 28-01 COMPLETE, Phase 28-02 COMPLETE, Phase 28-03 COMPLETE, Phase 28-05 COMPLETE)
+Progress: [████████████████████] 100% (Phase 27 COMPLETE, Phase 28-01 COMPLETE, Phase 28-02 COMPLETE, Phase 28-03 COMPLETE, Phase 28-05 COMPLETE, Phase 28-06 COMPLETE, Phase 28-07 COMPLETE)
 
 ### Blockers/Concerns
 
@@ -43,9 +41,21 @@ When attempting to enable `rocm` as default feature (required for GPU kernel run
 - GPU kernel code is now always compiled unconditionally
 - Bonus: Fixed backend_registry.rs mut issue, CompiledKernel.module visibility, added missing imports
 
-**Remaining Issues (for subsequent plans):**
-None identified - all major cfg gate removal complete
+**Progress - Phase 28-06 COMPLETE (cfg gate removal from src/ggml/hip_backend/ops/):**
+- Fixed: Removed all #[cfg(feature = "rocm")] gates from 7 files in src/ggml/hip_backend/ops/
+- Files: mask.rs, rope.rs, softmax.rs, batch_quantized.rs, mod.rs, fused_ops.rs, q4_0_dequant.rs
+- GGML GPU operations are now always compiled unconditionally
+- Merged duplicate rocm/non-rocm code blocks
 
+**Remaining Issues (for subsequent plans):**
+All cfg gate removal complete - Phase 28 done
+
+**Progress - Phase 28-07 COMPLETE (cfg gate removal from src/model/ and src/loader/):**
+- Fixed: Removed all #[cfg(feature = "rocm")] gates from 12 files in src/model/ and src/loader/**
+- Files: All model modules (mod.rs, execution_plan/, glm_position.rs, simple_transformer.rs, 5 test files)**
+- Files: All loader modules (gpu_upload.rs, mod.rs)**
+- Binary: run_simple_model.rs**
+- GPU model execution and loading are now always compiled unconditionally**
 **Root Cause:** Codebase was built/tested without `rocm` feature enabled. GPU-specific code paths accumulated bit-rot from lack of compilation.
 
 **Impact:**
@@ -441,11 +451,15 @@ Historical decisions affecting v1.3:
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed 28-05 cfg gate removal from src/kernels/ at 2026-01-20T21:37:15Z
-Resume file: .planning/phases/28-rocm-compilation-fix/28-05-SUMMARY.md
+Stopped at: Completed 28-06 cfg gate removal from src/ggml/hip_backend/ops/ at 2026-01-20T21:42:00Z
+Resume file: .planning/phases/28-rocm-compilation-fix/28-06-SUMMARY.md
 
 **v1.8 - ROCm Compilation Fix (2026-01-20):**
 - Phase 28-01: Add c_void and HipError imports to FFI kernel files (COMPLETE)
+- Phase 28-02: Variable naming fixes (COMPLETE)
+- Phase 28-03: cfg gate removal from src/attention/ (COMPLETE)
+- Phase 28-05: cfg gate removal from src/kernels/ (COMPLETE)
+- Phase 28-06: cfg gate removal from src/ggml/hip_backend/ops/ (COMPLETE)
 
 **Phase 28-01 Summary:**
 - Added `use std::ffi::c_void;` to 9 FFI kernel files using HIP kernel launches
@@ -479,6 +493,13 @@ Resume file: .planning/phases/28-rocm-compilation-fix/28-05-SUMMARY.md
 - Duration: 8 min
 - All kernel modules accessible for runtime loading
 
+**Phase 28-06 Summary:**
+- Removed all #[cfg(feature = "rocm")] gates from 7 files in src/ggml/hip_backend/ops/
+- GGML GPU operations now always compiled unconditionally
+- Merged duplicate rocm/non-rocm code blocks in batch_quantized.rs and q4_0_dequant.rs
+- Duration: 3 min
+- Commit: 6c0be60 (refactor)
+
 **Decision: Unconditional GPU Attention Compilation**
 - ROCm/HIP is core to ROCmForge's purpose - AMD GPU inference
 - GPU attention code should always be available, not conditionally compiled
@@ -488,6 +509,11 @@ Resume file: .planning/phases/28-rocm-compilation-fix/28-05-SUMMARY.md
 - GPU kernels are core to ROCmForge - kernel loading should always be available
 - Eliminates conditional compilation complexity from kernel code
 - Kernels load at runtime via HSACO environment variables (28-05)
+
+**Decision: Unconditional GGML Backend Operations Compilation**
+- GGML HIP backend operations are core to GPU inference - should always be available
+- Removed cfg gates from mask, rope, softmax, batch_quantized, fused_ops, q4_0_dequant
+- Merged duplicate rocm/non-rocm code blocks (28-06)
 
 **v1.5 - GPU Transpose Fix (2026-01-20):**
 - Phase 27-01: TransposeKernel module with lazy HSACO loading, build.rs integration (COMPLETE)

@@ -17,7 +17,6 @@
 //! - No intermediate GPU→CPU→GPU round-trips
 
 #[cfg(test)]
-#[cfg(feature = "rocm")]
 mod gpu_path_regression_tests {
     use crate::backend::hip_backend::{HipBackend, HipBuffer};
     use crate::backend::DeviceTensor;

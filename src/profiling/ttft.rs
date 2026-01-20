@@ -550,7 +550,6 @@ impl TtftProfiler {
     }
 
     /// Record a kernel execution timing from a KernelTimer
-    #[cfg(feature = "rocm")]
     pub fn record_kernel_from_timer(&mut self, name: impl Into<String>, timer: &crate::profiling::KernelTimer, element_count: usize) {
         if let Some(duration) = timer.elapsed() {
             self.record_kernel(name, duration as f64, element_count);

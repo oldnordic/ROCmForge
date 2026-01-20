@@ -7,7 +7,6 @@
 //!
 //! This follows TDD: write tests first, prove they fail, then implement kernel.
 
-#[cfg(feature = "rocm")]
 #[cfg(test)]
 mod rms_norm_tests {
     use crate::backend::{DeviceTensor, HipBackend};

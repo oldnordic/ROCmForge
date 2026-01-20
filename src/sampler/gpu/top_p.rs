@@ -5,14 +5,12 @@
 
 #![allow(dead_code)]
 
-#[cfg(feature = "rocm")]
 use crate::backend::hip_backend::{HipBackend, HipBuffer};
 use crate::sampler::{SamplerError, SamplerResult};
 use rand::Rng;
 use std::sync::Arc;
 
 /// GPU sampler for top-p (nucleus) sampling with temperature support
-#[cfg(feature = "rocm")]
 #[derive(Debug, Clone)]
 pub struct GpuTopPSampler {
     backend: Arc<HipBackend>,
@@ -20,7 +18,6 @@ pub struct GpuTopPSampler {
     temperature: f32,
 }
 
-#[cfg(feature = "rocm")]
 impl GpuTopPSampler {
     /// Create a new GPU top-p sampler with default temperature (1.0)
     pub fn new(backend: Arc<HipBackend>, top_p: f32) -> SamplerResult<Self> {
