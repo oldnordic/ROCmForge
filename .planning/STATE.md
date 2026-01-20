@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-19)
 ## Current Position
 
 Phase: 21 of 21 (Test Health and Performance Validation)
-Plan: 3 of 6 in current phase
+Plan: 4 of 6 in current phase
 Status: In progress
-Last activity: 2026-01-20 — Completed Phase 21-03: Decode step integration tests fix
+Last activity: 2026-01-20 — Completed Phase 21-04: E2E test graceful skip verification
 
-Progress: [████████████████████░░] 95% (20 of 21 phases complete, 3 plans done in Phase 21)
+Progress: [████████████████████░░] 95% (20 of 21 phases complete, 4 plans done in Phase 21)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 142 (v1.0 + v1.1 + v1.2 through 21-03)
+- Total plans completed: 143 (v1.0 + v1.1 + v1.2 through 21-04)
 - Average duration: ~44 min
-- Total execution time: ~83.6 hours
+- Total execution time: ~83.7 hours
 
 **By Phase:**
 
@@ -74,6 +74,7 @@ Progress: [████████████████████░░] 9
 | 21-01 | 1 | ~3min | 3 min |
 | 21-02 | 1 | ~7min | 7 min |
 | 21-03 | 1 | ~4min | 4 min |
+| 21-04 | 1 | ~2min | 2 min |
 
 **Recent Trend:**
 - Last 5 phases: Stable (3-13 min/plan)
@@ -175,9 +176,10 @@ None yet.
 - Phase 21-01: cfg(feature) gates fix for GPU dequant exports; split Q4_0 exports into CPU-only and GPU-only; gated imports in gguf.rs; TEST-01 prerequisite satisfied
 - Phase 21-02: KV cache capacity enforcement fix; removed automatic LRU eviction from allocate_page; strict max_pages limit enforced; TEST-02 satisfied
 - Phase 21-03: Decode step integration tests fix; removed synthetic GGUF creation causing memory crashes; added serial test attributes; graceful skip for GPU/model unavailable; TEST-01 satisfied
+- Phase 21-04: E2E test graceful skip verification; verified 11 E2E tests have #[ignore] attribute and has_test_model() check; tests run with --ignored flag when ROCFORGE_TEST_MODEL is set; TEST-03 and TEST-04 satisfied
 
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed 21-03 — Decode step integration tests fix
+Stopped at: Completed 21-04 — E2E test graceful skip verification
 Resume file: None
