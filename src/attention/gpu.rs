@@ -1,21 +1,15 @@
 //! GPU backend implementation for attention computation using ROCm/HIP
 
-#[cfg(feature = "rocm")]
 use crate::attention::{compute, AttentionError, AttentionResult};
-#[cfg(feature = "rocm")]
 use crate::backend::{DeviceTensor, HipBackend, HipBlasHandle, HipBuffer};
-#[cfg(feature = "rocm")]
 use crate::loader::mmap_loader::TensorShape;
-#[cfg(feature = "rocm")]
 use crate::tensor::matmul::matmul_f32;
 
 /// GPU backend for attention computation
-#[cfg(feature = "rocm")]
 pub struct GpuBackend {
     _handle: HipBlasHandle,
 }
 
-#[cfg(feature = "rocm")]
 impl GpuBackend {
     /// Create new GPU backend
     pub fn new() -> Result<Self, AttentionError> {
@@ -372,7 +366,6 @@ impl GpuBackend {
     }
 
     /// GPU forward pass using DeviceTensor inputs for zero-copy computation
-    #[cfg(feature = "rocm")]
     pub fn forward_device(
         dim: usize,
         q: &DeviceTensor,
@@ -424,44 +417,5 @@ impl GpuBackend {
         DeviceTensor::from_host_vec(&backend, output, shape).map_err(|e| {
             AttentionError::MemoryAllocation(format!("Failed to create output tensor: {}", e))
         })
-    }
-}
-
-/// Fallback implementation when ROCm feature is not enabled
-#[cfg(not(feature = "rocm"))]
-pub struct GpuBackend;
-
-#[cfg(not(feature = "rocm"))]
-impl GpuBackend {
-    pub fn new() -> Result<Self, crate::attention::AttentionError> {
-        Err(crate::attention::AttentionError::DimensionError(
-            "GPU backend not available without 'rocm' feature".to_string(),
-        ))
-    }
-
-    pub fn forward(
-        _dim: usize,
-        _q: &[f32],
-        _k: &[f32],
-        _v: &[f32],
-        _mask: Option<&[f32]>,
-        _dropout: Option<f32>,
-    ) -> crate::attention::AttentionResult<Vec<f32>> {
-        Err(crate::attention::AttentionError::DimensionError(
-            "GPU backend not available without 'rocm' feature".to_string(),
-        ))
-    }
-
-    pub fn forward_device(
-        _dim: usize,
-        _q: &crate::backend::DeviceTensor,
-        _k: &crate::backend::DeviceTensor,
-        _v: &crate::backend::DeviceTensor,
-        _mask: Option<&crate::backend::DeviceTensor>,
-        _dropout: Option<f32>,
-    ) -> crate::attention::AttentionResult<crate::backend::DeviceTensor> {
-        Err(crate::attention::AttentionError::DimensionError(
-            "GPU backend not available without 'rocm' feature".to_string(),
-        ))
     }
 }

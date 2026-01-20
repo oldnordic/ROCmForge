@@ -546,7 +546,6 @@ impl PagedAttentionKernels {
 // NOTE: This kernel source is a template for future GPU implementation of paged attention.
 // It is not currently used - the paged attention module falls back to CPU computation.
 // TODO: Implement HIPRTC compilation and launch of this kernel (see Phase 3 docs).
-#[cfg(feature = "rocm")]
 #[allow(dead_code)]
 const PAGED_ATTENTION_KERNEL: &str = r#"
 #include <hip/hip_runtime.h>

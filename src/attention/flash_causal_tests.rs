@@ -7,7 +7,6 @@
 //! This extends Phase 3a.5 (non-causal) by adding causal masking.
 //! Test first, implement kernel after tests fail (TDD).
 
-#[cfg(feature = "rocm")]
 #[cfg(test)]
 mod flash_causal_tests {
     use crate::backend::{DeviceTensor, HipBackend};

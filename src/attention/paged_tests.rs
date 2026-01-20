@@ -3,7 +3,6 @@
 //! Tests for paged attention computation with non-contiguous KV blocks.
 
 #[cfg(test)]
-#[cfg(feature = "rocm")]
 mod tests {
     use super::super::paged_kernel::{PagedAttentionConfig, PagedAttentionKernels};
 use serial_test::serial;

@@ -150,7 +150,6 @@ pub fn dequantize_q4_0(data: &[u8], n_elements: usize) -> Vec<f32> {
 /// # GPU Implementation
 /// Uses fused kernel that dequantizes weights on-the-fly during matmul,
 /// eliminating the intermediate FP32 weight buffer.
-#[cfg(feature = "rocm")]
 pub fn matmul_q4_0(
     backend: &HipBackend,
     quantized_weights: &[u8],
@@ -203,28 +202,10 @@ pub fn matmul_q4_0(
     Ok(())
 }
 
-/// MatMul with Q4_0 quantized weights (non-rocm fallback)
-///
-/// This version is used when the rocm feature is not enabled.
-/// It uses CPU dequantization followed by the standard matmul operation.
-#[cfg(not(feature = "rocm"))]
-pub fn matmul_q4_0(
-    backend: &HipBackend,
-    quantized_weights: &[u8],
-    input: &HipBuffer,
-    n_rows: usize,
-    n_cols: usize,
-    output: &HipBuffer,
-) -> QuantizedResult<()> {
-    // Use CPU fallback
-    matmul_q4_0_cpu_fallback(backend, quantized_weights, input, n_rows, n_cols, output)
-}
-
 /// Launch Q4_0 fused dequant+matmul kernel
 ///
 /// # Safety
 /// Caller must ensure all pointers are valid and synchronized.
-#[cfg(feature = "rocm")]
 pub unsafe fn matmul_q4_0_gpu(
     backend: &HipBackend,
     activations: *const f32,
@@ -357,7 +338,6 @@ mod tests {
     }
 
     /// Test fused kernel against CPU reference
-    #[cfg(feature = "rocm")]
     #[test]
     #[ignore] // Requires GPU hardware
     fn test_q4_0_matmul_fused_vs_reference() {

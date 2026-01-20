@@ -2,7 +2,6 @@
 //!
 //! Tests verify that GPU RoPE implementation matches CPU reference.
 
-#[cfg(feature = "rocm")]
 #[cfg(test)]
 mod phase2_rope_tests {
     use crate::attention::rope::{Rope, RopeConfig};

@@ -17,60 +17,48 @@ pub mod softmax;
 
 // Phase 1 kernel tests (CPU vs GPU comparison)
 #[cfg(test)]
-#[cfg(feature = "rocm")]
 mod kernel_tests;
 
 // Phase 2 RoPE GPU tests
 #[cfg(test)]
-#[cfg(feature = "rocm")]
 mod rope_gpu_tests;
 
 // Phase 3 FlashAttention tests
 #[cfg(test)]
-#[cfg(feature = "rocm")]
 mod flash_attention_tests;
 
 // Phase 3a.1 QK^T matmul tests (divide & conquer)
 #[cfg(test)]
-#[cfg(feature = "rocm")]
 mod qkt_matmul_tests;
 
 // Phase 3a.3.1 Softmax with explicit layout tests
 #[cfg(test)]
-#[cfg(feature = "rocm")]
 mod softmax_explicit_tests;
 
 // Phase 3a.4 Weighted × V matmul tests
 #[cfg(test)]
-#[cfg(feature = "rocm")]
 mod weighted_matmul_tests;
 
 // Phase 3a.5 Fused non-causal FlashAttention tests
 #[cfg(test)]
-#[cfg(feature = "rocm")]
 mod flash_nocausal_tests;
 
 // Phase 3b.1 Causal mask tests (standalone, before fusion)
 #[cfg(test)]
-#[cfg(feature = "rocm")]
 mod causal_mask_tests;
 
 // Phase 3b.2 Fused causal FlashAttention tests
 #[cfg(test)]
-#[cfg(feature = "rocm")]
 mod flash_causal_tests;
 
 // Phase 3: Paged Attention tests
 #[cfg(test)]
-#[cfg(feature = "rocm")]
 mod paged_tests;
 
 // Phase 19.2: MQA KV Replication Kernel Integration tests
 #[cfg(test)]
-#[cfg(feature = "rocm")]
 mod mqa_kernel_tests;
 
-#[cfg(feature = "rocm")]
 use crate::backend::{DeviceTensor, HipBackend};
 pub use backend::AttentionBackend;
 // Re-export backend registry types for public API
@@ -142,7 +130,6 @@ impl Attention {
                 println!("DEBUG: Using CPU backend");
                 cpu::CpuBackend::forward(self.dim, q, k, v, mask, dropout)
             }
-            #[cfg(feature = "rocm")]
             AttentionBackend::Gpu => {
                 println!("DEBUG: Using GPU backend");
                 gpu::GpuBackend::forward(self.dim, q, k, v, mask, dropout)
@@ -151,7 +138,6 @@ impl Attention {
     }
 
     /// Forward pass with DeviceTensor inputs for zero-copy GPU computation
-    #[cfg(feature = "rocm")]
     pub fn forward_device(
         &self,
         q: &DeviceTensor,
@@ -234,7 +220,6 @@ impl Attention {
                     }
                 }
             }
-            #[cfg(feature = "rocm")]
             AttentionBackend::Gpu => {
                 gpu::GpuBackend::forward_device(self.dim, q, k, v, mask, dropout)
             }

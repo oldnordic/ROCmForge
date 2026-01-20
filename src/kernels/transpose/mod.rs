@@ -247,7 +247,6 @@ mod tests {
     use crate::backend::HipBackend;
 
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_transpose_kernel_creation() {
         let backend = Arc::new(HipBackend::new().unwrap());
         let kernel = TransposeKernel::new(backend);
@@ -255,7 +254,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_transpose_kernel_initialize_failure_no_env() {
         // Temporarily unset env var to test error handling
         let backend = Arc::new(HipBackend::new().unwrap());
@@ -278,7 +276,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_transpose_2d_tensor_shape_check() {
         let backend = Arc::new(HipBackend::new().unwrap());
         let mut kernel = TransposeKernel::new(backend);
@@ -306,7 +303,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_transpose_rejects_non_2d_tensor() {
         let backend = Arc::new(HipBackend::new().unwrap());
         let mut kernel = TransposeKernel::new(backend);
@@ -331,7 +327,6 @@ mod tests {
 
     /// Test 1: Small square matrix (8x8) - verify exact values match
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_transpose_small_square_matrix() {
         let backend = Arc::new(HipBackend::new().unwrap());
         let rows = 8usize;
@@ -368,7 +363,6 @@ mod tests {
 
     /// Test 2: Small rectangular matrix (4x16) - verify dimensions swap
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_transpose_small_rectangular_matrix() {
         let backend = Arc::new(HipBackend::new().unwrap());
         let rows = 4usize;
@@ -402,7 +396,6 @@ mod tests {
 
     /// Test 3: Large matrix (512x1024) - verify no errors for large transpose
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_transpose_large_matrix() {
         let backend = Arc::new(HipBackend::new().unwrap());
         let rows = 512usize;
@@ -434,7 +427,6 @@ mod tests {
 
     /// Test 4: Embedding-sized matrix - qwen2.5-0.5b use case [128, 1024] -> [1024, 128]
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_transpose_embedding_sized_matrix() {
         let backend = Arc::new(HipBackend::new().unwrap());
         let hidden_size = 128usize;

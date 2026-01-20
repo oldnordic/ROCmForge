@@ -14,9 +14,7 @@ use crate::attention::{
     backend_registry::{BackendImplementation, AttentionConfig, AttentionBackendError, AttentionBackendResult, KvCacheLayout},
 };
 
-#[cfg(feature = "rocm")]
 use crate::backend::{HipBuffer, HipBackend, HipBlasHandle};
-#[cfg(feature = "rocm")]
 use crate::backend::hip_backend::synchronize_device;
 
 /// Maximum head dimension supported by flash attention kernels
@@ -34,32 +32,20 @@ const MAX_FLASH_SEQ_LEN: usize = 2048;
 /// multi-kernel attention computation.
 #[derive(Debug)]
 pub struct FlashAttentionBackend {
-    #[cfg(feature = "rocm")]
     handle: HipBlasHandle,
 }
 
 impl FlashAttentionBackend {
     /// Create a new FlashAttention backend
-    ///
-    /// Returns an error if the ROCm feature is not enabled.
     pub fn new() -> Result<Self, String> {
-        #[cfg(feature = "rocm")]
-        {
-            let handle = HipBlasHandle::new()
-                .map_err(|e| format!("Failed to create HIP BLAS handle: {}", e))?;
-            Ok(FlashAttentionBackend { handle })
-        }
-
-        #[cfg(not(feature = "rocm"))]
-        {
-            Err("FlashAttention backend requires 'rocm' feature".to_string())
-        }
+        let handle = HipBlasHandle::new()
+            .map_err(|e| format!("Failed to create HIP BLAS handle: {}", e))?;
+        Ok(FlashAttentionBackend { handle })
     }
 
     /// Check if flash attention can be used for the given configuration
     pub fn can_use_flash_attention(config: &AttentionConfig) -> bool {
-        cfg!(feature = "rocm")
-            && config.head_dim <= MAX_FLASH_HEAD_DIM
+        config.head_dim <= MAX_FLASH_HEAD_DIM
             && config.max_sequence_length <= MAX_FLASH_SEQ_LEN
     }
 
@@ -77,15 +63,7 @@ impl FlashAttentionBackend {
 
 impl Default for FlashAttentionBackend {
     fn default() -> Self {
-        #[cfg(feature = "rocm")]
-        {
-            Self::new().expect("Failed to create FlashAttention backend")
-        }
-
-        #[cfg(not(feature = "rocm"))]
-        {
-            panic!("FlashAttention backend requires 'rocm' feature");
-        }
+        Self::new().expect("Failed to create FlashAttention backend")
     }
 }
 
@@ -119,41 +97,30 @@ impl BackendImplementation for FlashAttentionBackend {
         config.validate()
             .map_err(|e| AttentionBackendError::NotSupported(e))?;
 
-        #[cfg(feature = "rocm")]
-        {
-            // Use GPU flash attention kernels
-            // Layout: [batch, heads, seq, dim] but BackendImplementation uses [batch, seq, heads*dim]
-            // We need to handle the layout conversion
-            let batch_size = 1; // BackendImplementation uses batch=1
-            let seq_len = config.dim;
-            let num_heads = config.num_heads;
-            let head_dim = config.head_dim;
+        // Use GPU flash attention kernels
+        // Layout: [batch, heads, seq, dim] but BackendImplementation uses [batch, seq, heads*dim]
+        // We need to handle the layout conversion
+        let batch_size = 1; // BackendImplementation uses batch=1
+        let seq_len = config.dim;
+        let num_heads = config.num_heads;
+        let head_dim = config.head_dim;
 
-            // Check if we have a custom mask (not supported by flash kernels yet)
-            if mask.is_some() && !config.is_causal {
-                return Err(AttentionBackendError::NotSupported(
-                    "FlashAttention does not support custom masks yet, only causal or no mask".to_string()
-                ));
-            }
-
-            // Select kernel based on causal masking
-            if config.is_causal {
-                self.forward_causal_gpu(q, k, v, batch_size, seq_len, num_heads, head_dim)
-            } else {
-                self.forward_nocausal_gpu(q, k, v, batch_size, seq_len, num_heads, head_dim)
-            }
+        // Check if we have a custom mask (not supported by flash kernels yet)
+        if mask.is_some() && !config.is_causal {
+            return Err(AttentionBackendError::NotSupported(
+                "FlashAttention does not support custom masks yet, only causal or no mask".to_string()
+            ));
         }
 
-        #[cfg(not(feature = "rocm"))]
-        {
-            Err(AttentionBackendError::NotSupported(
-                "FlashAttention requires 'rocm' feature".to_string()
-            ))
+        // Select kernel based on causal masking
+        if config.is_causal {
+            self.forward_causal_gpu(q, k, v, batch_size, seq_len, num_heads, head_dim)
+        } else {
+            self.forward_nocausal_gpu(q, k, v, batch_size, seq_len, num_heads, head_dim)
         }
     }
 }
 
-#[cfg(feature = "rocm")]
 impl FlashAttentionBackend {
     /// Forward pass using flash attention causal kernel
     ///
@@ -311,7 +278,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_flash_attention_backend_creation() {
         let backend = FlashAttentionBackend::new();
         assert!(backend.is_ok());
@@ -319,16 +285,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[cfg(not(feature = "rocm"))]
-    fn test_flash_attention_backend_fails_without_rocm() {
-        let result = FlashAttentionBackend::new();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("rocm"));
-    }
-
-    #[test]
-    #[serial]
-    #[cfg(feature = "rocm")]
     fn test_can_use_flash_attention_valid_config() {
         let config = AttentionConfig::new(512, 8, 64)
             .with_max_sequence_length(1024);
@@ -338,7 +294,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_can_use_flash_attention_head_dim_too_large() {
         let config = AttentionConfig::new(512, 4, 129) // head_dim > 128
             .with_max_sequence_length(1024);
@@ -348,7 +303,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_can_use_flash_attention_seq_len_too_large() {
         let config = AttentionConfig::new(512, 8, 64)
             .with_max_sequence_length(2049); // > 2048
@@ -386,7 +340,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_backend_name() {
         let backend = FlashAttentionBackend::new().unwrap();
         assert_eq!(backend.name(), "flash_attention");
@@ -394,7 +347,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_backend_supports_valid_config() {
         let backend = FlashAttentionBackend::new().unwrap();
         let config = AttentionConfig::new(512, 8, 64)
@@ -405,7 +357,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_backend_does_not_support_invalid_config() {
         let backend = FlashAttentionBackend::new().unwrap();
         let config = AttentionConfig::new(512, 4, 129) // head_dim too large
@@ -416,7 +367,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_backend_required_kv_layout() {
         let backend = FlashAttentionBackend::new().unwrap();
         assert_eq!(
@@ -427,7 +377,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_backend_forward_simple() {
         let backend = FlashAttentionBackend::new().unwrap();
         let config = AttentionConfig::new(16, 4, 4)
@@ -463,7 +412,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_backend_forward_with_causal_mask() {
         let backend = FlashAttentionBackend::new().unwrap();
         let config = AttentionConfig::new(16, 4, 4)
@@ -494,7 +442,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_backend_custom_mask_not_supported() {
         let backend = FlashAttentionBackend::new().unwrap();
         let config = AttentionConfig::new(16, 4, 4)
@@ -516,7 +463,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[cfg(feature = "rocm")]
     fn test_backend_forward_nocausal() {
         let backend = FlashAttentionBackend::new().unwrap();
         let config = AttentionConfig::new(16, 4, 4)

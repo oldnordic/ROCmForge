@@ -7,12 +7,12 @@
 //! - Signed 4-bit range: [-8, 7]
 
 
-#[cfg(feature = "rocm")]
 use crate::backend::hip_backend::{HipBackend, HipError, HipKernel, HipModule};
 
 use std::ffi::c_void;
+use std::path::Path;
+use std::sync::Mutex;
 
-#[cfg(feature = "rocm")]
 use crate::backend::HipBuffer;
 
 /// Result type for Q4_0 dequantization operations
@@ -28,7 +28,6 @@ pub struct Q4_0Block {
 }
 
 /// Cached kernel modules and functions for Q4_0 dequantization
-#[cfg(feature = "rocm")]
 #[derive(Debug)]
 pub struct Q4_0DequantCache {
     #[allow(dead_code)] // Module kept alive to keep HSACO loaded in memory
@@ -37,14 +36,12 @@ pub struct Q4_0DequantCache {
 }
 
 // Global kernel cache for Q4_0 dequantization
-#[cfg(feature = "rocm")]
 static Q4_0_DEQUANT_CACHE: Mutex<Option<Q4_0DequantCache>> = Mutex::new(None);
 
 /// Get or initialize the global Q4_0 dequantization kernel cache
 ///
 /// Loads the HSACO kernel from the path specified by Q4_0_DEQUANT_HSACO env var.
 /// Returns error if env var not set or HSACO file not found (graceful degradation).
-#[cfg(feature = "rocm")]
 pub fn get_or_init_q4_0_dequant_cache(
 ) -> Result<&'static Mutex<Option<Q4_0DequantCache>>, HipError> {
     // First check if already initialized
@@ -108,7 +105,6 @@ pub fn get_or_init_q4_0_dequant_cache(
 /// Uses q4_0_to_fp32_batch_kernel with:
 /// - Block size: 256 threads
 /// - Grid size: (num_elements + 255) / 256
-#[cfg(feature = "rocm")]
 pub fn dequantize_q4_0_kernel_cached(
     backend: &HipBackend,
     quantized_data: &[u8],
@@ -170,7 +166,6 @@ pub fn dequantize_q4_0_kernel_cached(
 ///
 /// # Note
 /// This uses ~17x more memory bandwidth than GPU kernel path.
-#[cfg(feature = "rocm")]
 pub fn dequantize_q4_0_cpu_upload(
     _backend: &HipBackend,
     quantized_data: &[u8],
@@ -239,7 +234,6 @@ pub fn dequantize_q4_0_cpu_upload(
 /// - `quantized_data`: Raw Q4_0 quantized data
 /// - `output`: Output GPU buffer for FP32 values
 /// - `num_elements`: Number of elements to dequantize
-#[cfg(feature = "rocm")]
 pub fn dequantize_q4_0_with_fallback(
     backend: &HipBackend,
     quantized_data: &[u8],

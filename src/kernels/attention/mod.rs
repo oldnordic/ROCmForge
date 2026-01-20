@@ -54,21 +54,18 @@ pub use softmax::{
     softmax_in_place_cpu,
 };
 
-// ROCm-specific exports
-#[cfg(feature = "rocm")]
+// ROCm-specific exports (always available)
 pub use mask::{
     hip_mask_op,
     mask_gpu_kernel,
 };
 
-#[cfg(feature = "rocm")]
 pub use matmul::{
     qkt_matmul_gpu_kernel,
     qkt_matmul_gpu_kernel_scaled,
     weighted_matmul_gpu_kernel,
 };
 
-#[cfg(feature = "rocm")]
 pub use flash::{
     causal_mask_gpu_kernel,
     flash_attention_causal_gpu_kernel,
@@ -76,11 +73,9 @@ pub use flash::{
     flash_attention_nocausal_gpu_kernel,
 };
 
-#[cfg(feature = "rocm")]
 pub use rope::{
     hip_rope_op,
     rope_gpu_kernel,
 };
 
-#[cfg(feature = "rocm")]
 pub use softmax::softmax_with_fallback;

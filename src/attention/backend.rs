@@ -7,6 +7,5 @@ pub enum AttentionBackend {
     #[default]
     Cpu,
     /// GPU backend using ROCm/HIP acceleration
-    #[cfg(feature = "rocm")]
     Gpu,
 }

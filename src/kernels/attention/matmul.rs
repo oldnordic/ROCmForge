@@ -134,7 +134,6 @@ pub fn weighted_matmul_cpu(
 // GPU Kernels (re-exported from attention::kernels)
 // ============================================================================
 
-#[cfg(feature = "rocm")]
 pub use crate::attention::kernels::{
     qkt_matmul_gpu_kernel,
     qkt_matmul_gpu_kernel_scaled,
@@ -146,7 +145,6 @@ pub use crate::attention::kernels::{
 // ============================================================================
 
 /// QK^T matmul with automatic CPU fallback
-#[cfg(feature = "rocm")]
 pub fn qkt_matmul_with_fallback(
     q: &[f32],
     k: &[f32],
@@ -157,25 +155,10 @@ pub fn qkt_matmul_with_fallback(
     head_dim: usize,
 ) -> Result<Vec<f32>, AttentionError> {
     // For now, use CPU implementation
-    qkt_matmul_cpu(q, k, batch_size, seq_q, seq_k, num_heads, head_dim)
-}
-
-/// QK^T matmul with automatic CPU fallback (non-ROCm)
-#[cfg(not(feature = "rocm"))]
-pub fn qkt_matmul_with_fallback(
-    q: &[f32],
-    k: &[f32],
-    batch_size: usize,
-    seq_q: usize,
-    seq_k: usize,
-    num_heads: usize,
-    head_dim: usize,
-) -> Result<Vec<f32>, AttentionError> {
     qkt_matmul_cpu(q, k, batch_size, seq_q, seq_k, num_heads, head_dim)
 }
 
 /// Weighted matmul with automatic CPU fallback
-#[cfg(feature = "rocm")]
 pub fn weighted_matmul_with_fallback(
     weights: &[f32],
     v: &[f32],
@@ -186,20 +169,6 @@ pub fn weighted_matmul_with_fallback(
     head_dim: usize,
 ) -> Result<Vec<f32>, AttentionError> {
     // For now, use CPU implementation
-    weighted_matmul_cpu(weights, v, batch_size, seq_q, seq_k, num_heads, head_dim)
-}
-
-/// Weighted matmul with automatic CPU fallback (non-ROCm)
-#[cfg(not(feature = "rocm"))]
-pub fn weighted_matmul_with_fallback(
-    weights: &[f32],
-    v: &[f32],
-    batch_size: usize,
-    seq_q: usize,
-    seq_k: usize,
-    num_heads: usize,
-    head_dim: usize,
-) -> Result<Vec<f32>, AttentionError> {
     weighted_matmul_cpu(weights, v, batch_size, seq_q, seq_k, num_heads, head_dim)
 }
 

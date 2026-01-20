@@ -161,7 +161,6 @@ pub fn dequantize_q6_k(data: &[u8], n_elements: usize) -> Vec<f32> {
 /// - Input: [M x K] row-major (FP32), typically M=1, K=n_cols
 /// - Weights: [n_rows x n_cols] row-major (Q6_K format)
 /// - Output: [M x n_rows] row-major (FP32)
-#[cfg(feature = "rocm")]
 pub fn matmul_q6_k(
     backend: &HipBackend,
     quantized_weights: &[u8],
@@ -206,50 +205,10 @@ pub fn matmul_q6_k(
     Ok(())
 }
 
-/// MatMul with Q6_K quantized weights (non-rocm fallback)
-#[cfg(not(feature = "rocm"))]
-pub fn matmul_q6_k(
-    backend: &HipBackend,
-    quantized_weights: &[u8],
-    input: &HipBuffer,
-    n_rows: usize,
-    n_cols: usize,
-    output: &HipBuffer,
-) -> QuantizedResult<()> {
-    // Use CPU fallback - dequantize then standard matmul
-    let n_elements = n_rows * n_cols;
-    let dequant_weights = dequantize_q6_k(quantized_weights, n_elements);
-
-    let weight_bytes = n_elements * 4;
-    let weight_buffer = backend
-        .allocate_buffer(weight_bytes)
-        .map_err(|e| format!("Failed to allocate weight buffer: {}", e))?;
-
-    weight_buffer
-        .copy_from_host(&dequant_weights)
-        .map_err(|e| format!("Failed to upload weights: {}", e))?;
-
-    let m = 1i32;
-    let k = n_cols as i32;
-    let n = n_rows as i32;
-
-    crate::ggml::hip_backend::ops::matmul::matmul(
-        backend,
-        input,
-        &weight_buffer,
-        m,
-        n,
-        k,
-        output,
-    )
-    .map_err(|e| format!("MatMul failed: {}", e))
-}
-
 /// Launch Q6_K fused dequant+matmul kernel
 ///
 /// # Safety
 /// Caller must ensure all pointers are valid and synchronized.
-#[cfg(feature = "rocm")]
 unsafe fn matmul_q6_k_gpu(
     backend: &HipBackend,
     activations: *const f32,

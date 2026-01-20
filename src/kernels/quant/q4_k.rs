@@ -9,10 +9,11 @@
 //! - Dequantization: value = min + (quant * scale)
 
 
-#[cfg(feature = "rocm")]
 use crate::backend::{HipBackend, HipKernel, HipModule};
 
 use std::ffi::c_void;
+use std::path::Path;
+use std::sync::Mutex;
 
 #[cfg(test)]
 use half::f16;
@@ -21,7 +22,6 @@ use half::f16;
 pub type Q4KdequantResult<T> = Result<T, String>;
 
 /// Q4_K dequantization cache containing loaded module and kernel
-#[cfg(feature = "rocm")]
 pub struct Q4KdequantCache {
     #[allow(dead_code)] // Module kept alive to keep HSACO loaded in memory
     module: HipModule,
@@ -29,14 +29,12 @@ pub struct Q4KdequantCache {
 }
 
 /// Global cache for Q4_K dequantization kernel
-#[cfg(feature = "rocm")]
 static Q4_K_DEQUANT_CACHE: Mutex<Option<Q4KdequantCache>> = Mutex::new(None);
 
 /// Initialize or retrieve the cached Q4_K dequantization kernel
 ///
 /// Loads the HSACO file specified by Q4_K_DEQUANT_HSACO environment variable
 /// and extracts the q4_k_to_fp32_kernel function.
-#[cfg(feature = "rocm")]
 pub fn get_or_init_q4_k_dequant_cache(
     backend: &HipBackend,
 ) -> Q4KdequantResult<&'static Q4KdequantCache> {
@@ -98,7 +96,6 @@ pub fn get_or_init_q4_k_dequant_cache(
 /// # Returns
 /// - Ok(()) on success
 /// - Err(String) if kernel launch fails
-#[cfg(feature = "rocm")]
 pub fn dequantize_q4_k_gpu_kernel(
     backend: &HipBackend,
     quantized_data: &[u8],
@@ -164,7 +161,6 @@ pub fn dequantize_q4_k_gpu_kernel(
 /// # Returns
 /// - Ok(()) on success
 /// - Err(String) if both GPU and CPU paths fail
-#[cfg(feature = "rocm")]
 pub fn dequantize_q4_k_with_fallback(
     backend: &HipBackend,
     quantized_data: &[u8],

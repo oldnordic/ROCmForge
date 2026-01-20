@@ -2,13 +2,10 @@
 
 #![allow(non_snake_case)] // Kernel parameter names follow HIP conventions
 
-#[cfg(feature = "rocm")]
 use std::ffi::c_void;
 
-#[cfg(feature = "rocm")]
 use crate::backend::hip_backend::{HipError, HipKernel};
 
-#[cfg(feature = "rocm")]
 // kernels_flash is now a submodule of kernels_cache, so use super
 use super::{get_attention_kernels, get_mqa_kernel_and_backend, get_or_init_cache};
 
@@ -33,7 +30,6 @@ const WARP_SIZE: u32 = 32; // RDNA3 wavefront size
 /// - The dimensions are correct and consistent
 /// - head_dim <= 128 (register limit in kernel)
 /// - No other threads are accessing the same memory concurrently
-#[cfg(feature = "rocm")]
 pub unsafe fn qkt_matmul_gpu_kernel(
     q: *const f32,
     k: *const f32,
@@ -56,7 +52,6 @@ pub unsafe fn qkt_matmul_gpu_kernel(
 ///
 /// # Safety
 /// This function is unsafe because it calls HIP kernels directly.
-#[cfg(feature = "rocm")]
 pub unsafe fn qkt_matmul_gpu_kernel_scaled(
     q: *const f32,
     k: *const f32,
@@ -129,7 +124,6 @@ pub unsafe fn qkt_matmul_gpu_kernel_scaled(
 /// - The dimensions are correct and consistent
 /// - head_dim <= 128 (register limit in kernel)
 /// - No other threads are accessing the same memory concurrently
-#[cfg(feature = "rocm")]
 pub unsafe fn weighted_matmul_gpu_kernel(
     weights: *const f32,
     v: *const f32,
@@ -200,7 +194,6 @@ pub unsafe fn weighted_matmul_gpu_kernel(
 /// - The dimensions are correct and consistent
 /// - head_dim <= 128 (register limit in kernel)
 /// - No other threads are accessing the same memory concurrently
-#[cfg(feature = "rocm")]
 pub unsafe fn flash_attention_nocausal_gpu_kernel(
     q: *const f32,
     k: *const f32,
@@ -285,7 +278,6 @@ pub unsafe fn flash_attention_nocausal_gpu_kernel(
 /// - mask points to valid GPU memory with sufficient size
 /// - The dimensions are correct
 /// - No other threads are accessing the same memory concurrently
-#[cfg(feature = "rocm")]
 pub unsafe fn causal_mask_gpu_kernel(
     mask: *mut f32,
     batch_size: u32,
@@ -354,7 +346,6 @@ pub unsafe fn causal_mask_gpu_kernel(
 /// - The dimensions are correct and consistent
 /// - seq_k <= 32 (shared memory limitation)
 /// - No other threads are accessing the same memory concurrently
-#[cfg(feature = "rocm")]
 pub unsafe fn flash_attention_causal_gpu_kernel(
     q: *const f32,
     k: *const f32,
@@ -443,7 +434,6 @@ pub unsafe fn flash_attention_causal_gpu_kernel(
 /// - head_dim <= 128 (register limit in kernel)
 /// - mask can be nullptr for no masking
 /// - No other threads are accessing the same memory concurrently
-#[cfg(feature = "rocm")]
 pub unsafe fn flash_attention_gpu_kernel(
     Q: *const f32,
     K: *const f32,
@@ -535,7 +525,6 @@ pub unsafe fn flash_attention_gpu_kernel(
 /// - Output tensors have sufficient capacity
 /// - Dimensions are correct and consistent
 /// - No other threads are accessing the same memory concurrently
-#[cfg(feature = "rocm")]
 pub unsafe fn mqa_kv_replicate_gpu_kernel(
     k: *const f32,
     v: *const f32,

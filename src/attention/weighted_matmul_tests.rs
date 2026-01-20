@@ -5,7 +5,6 @@
 //!
 //! This computes: output[query_pos, dim] = sum over seq_k of (weights[query_pos, key_pos] * V[key_pos, dim])
 
-#[cfg(feature = "rocm")]
 #[cfg(test)]
 mod weighted_matmul_tests {
     use crate::backend::{DeviceTensor, HipBackend};

@@ -10,8 +10,7 @@
 // to access private KernelCache fields
 mod kernels_cache;
 
-// Re-export all kernel functions (only available with rocm feature)
-#[cfg(feature = "rocm")]
+// Re-export all kernel functions (always available)
 pub use kernels_cache::kernels_basic::{
     mask_gpu_kernel,
     position_embeddings_gpu_kernel,
@@ -19,7 +18,6 @@ pub use kernels_cache::kernels_basic::{
     scale_gpu_kernel,
     softmax_gpu_kernel,
 };
-#[cfg(feature = "rocm")]
 pub use kernels_cache::kernels_flash::{
     causal_mask_gpu_kernel,
     flash_attention_causal_gpu_kernel,

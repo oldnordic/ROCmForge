@@ -12,7 +12,6 @@
 //! - Run serially (one test at a time)
 
 #[cfg(test)]
-#[cfg(feature = "rocm")]
 mod tests {
     use crate::attention::multi_query::{MultiQueryAttention, MultiQueryConfig};
     use crate::backend::{DeviceTensor, HipBackend};

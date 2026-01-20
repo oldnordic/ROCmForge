@@ -12,7 +12,7 @@ use super::hiprtc;
 
 pub struct CompiledKernel {
     #[allow(dead_code)]
-    module: HipModule,
+    pub module: HipModule,
     pub kernel: HipKernel,
 }
 

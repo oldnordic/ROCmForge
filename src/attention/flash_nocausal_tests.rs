@@ -6,7 +6,6 @@
 //! This is the final piece of Phase 3a - combining all atomic operations
 //! into a single kernel for maximum efficiency.
 
-#[cfg(feature = "rocm")]
 #[cfg(test)]
 mod flash_nocausal_tests {
     use crate::backend::{DeviceTensor, HipBackend};

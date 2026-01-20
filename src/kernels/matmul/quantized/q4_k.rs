@@ -171,7 +171,6 @@ pub fn dequantize_q4_k(data: &[u8], n_elements: usize) -> Vec<f32> {
 /// # GPU Implementation
 /// Uses fused kernel that dequantizes weights on-the-fly during matmul,
 /// eliminating the intermediate FP32 weight buffer.
-#[cfg(feature = "rocm")]
 pub fn matmul_q4_k(
     backend: &HipBackend,
     quantized_weights: &[u8],
@@ -216,50 +215,10 @@ pub fn matmul_q4_k(
     Ok(())
 }
 
-/// MatMul with Q4_K quantized weights (non-rocm fallback)
-#[cfg(not(feature = "rocm"))]
-pub fn matmul_q4_k(
-    backend: &HipBackend,
-    quantized_weights: &[u8],
-    input: &HipBuffer,
-    n_rows: usize,
-    n_cols: usize,
-    output: &HipBuffer,
-) -> QuantizedResult<()> {
-    // Use CPU fallback - dequantize then standard matmul
-    let n_elements = n_rows * n_cols;
-    let dequant_weights = dequantize_q4_k(quantized_weights, n_elements);
-
-    let weight_bytes = n_elements * 4;
-    let weight_buffer = backend
-        .allocate_buffer(weight_bytes)
-        .map_err(|e| format!("Failed to allocate weight buffer: {}", e))?;
-
-    weight_buffer
-        .copy_from_host(&dequant_weights)
-        .map_err(|e| format!("Failed to upload weights: {}", e))?;
-
-    let m = 1i32;
-    let k = n_cols as i32;
-    let n = n_rows as i32;
-
-    crate::ggml::hip_backend::ops::matmul::matmul(
-        backend,
-        input,
-        &weight_buffer,
-        m,
-        n,
-        k,
-        output,
-    )
-    .map_err(|e| format!("MatMul failed: {}", e))
-}
-
 /// Launch Q4_K fused dequant+matmul kernel
 ///
 /// # Safety
 /// Caller must ensure all pointers are valid and synchronized.
-#[cfg(feature = "rocm")]
 unsafe fn matmul_q4_k_gpu(
     backend: &HipBackend,
     activations: *const f32,

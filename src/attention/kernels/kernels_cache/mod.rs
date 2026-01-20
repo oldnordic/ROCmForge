@@ -5,13 +5,12 @@
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::ffi::c_void;
 
 use crate::backend::hip_backend::{HipBackend, HipError, HipKernel, HipModule};
 
 // Public sub-modules that can access private KernelCache fields
-#[cfg(feature = "rocm")]
 pub mod kernels_basic;
-#[cfg(feature = "rocm")]
 pub mod kernels_flash;
 
 // RDNA3 (wave32) tuning constants for AMD Radeon RX 7900 XT
@@ -52,15 +51,12 @@ struct KernelCache {
 static GLOBAL_CACHE: Mutex<Option<KernelCache>> = Mutex::new(None);
 
 // MQA-specific kernel cache (separate for lazy loading)
-#[cfg(feature = "rocm")]
 pub static MQA_KERNEL_CACHE: Mutex<Option<MqaKernelCache>> = Mutex::new(None);
 
 // Minimal attention kernel cache (for basic attention without all kernels)
-#[cfg(feature = "rocm")]
 pub static ATTENTION_KERNEL_CACHE: Mutex<Option<AttentionKernelCache>> = Mutex::new(None);
 
 /// MQA-specific kernel cache (lazy loaded)
-#[cfg(feature = "rocm")]
 #[derive(Debug)]
 pub struct MqaKernelCache {
     pub backend: Arc<HipBackend>,
@@ -70,7 +66,6 @@ pub struct MqaKernelCache {
 }
 
 /// Minimal attention kernel cache (only QK^T, softmax, weighted matmul)
-#[cfg(feature = "rocm")]
 #[derive(Debug)]
 pub struct AttentionKernelCache {
     pub backend: Arc<HipBackend>,
@@ -86,7 +81,6 @@ pub struct AttentionKernelCache {
 }
 
 /// Get or initialize the global kernel cache
-#[cfg(feature = "rocm")]
 pub(crate) fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> {
     // First check if already initialized
     {
@@ -346,7 +340,6 @@ pub(crate) fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>,
 ///
 /// This is a minimal cache that only loads the MQA KV replication kernel,
 /// avoiding dependency on other kernels that may not be compiled.
-#[cfg(feature = "rocm")]
 pub fn get_mqa_kernel_and_backend() -> Result<(Arc<HipBackend>, *mut c_void), HipError> {
     // First check if already initialized
     {
@@ -406,7 +399,6 @@ pub fn get_mqa_kernel_and_backend() -> Result<(Arc<HipBackend>, *mut c_void), Hi
 /// - QK^T matmul
 /// - Softmax
 /// - Weighted matmul
-#[cfg(feature = "rocm")]
 pub fn get_attention_kernels() -> Result<(Arc<HipBackend>, (*mut c_void, *mut c_void, *mut c_void)), HipError> {
     // First check if already initialized
     {

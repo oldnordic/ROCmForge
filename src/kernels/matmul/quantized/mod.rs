@@ -25,10 +25,8 @@ pub use q4_0::{
     dequantize_q4_0,
     matmul_q4_0,
     matmul_q4_0_cpu_fallback,
+    matmul_q4_0_gpu,
 };
-
-#[cfg(feature = "rocm")]
-pub use q4_0::matmul_q4_0_gpu;
 
 // Re-export Q4_K functions
 pub use q4_k::{

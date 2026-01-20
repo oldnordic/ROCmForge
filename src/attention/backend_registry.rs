@@ -147,16 +147,13 @@ pub struct AttentionBackendRegistry {
 
 impl AttentionBackendRegistry {
     pub fn new() -> Self {
-        let backends: Vec<Box<dyn BackendImplementation>> =
+        let mut backends: Vec<Box<dyn BackendImplementation>> =
             vec![Box::new(cpu_backend::CpuAttentionBackend::new())];
 
-        #[cfg(feature = "rocm")]
-        {
-            backends.push(Box::new(gpu_backend::GpuAttentionBackend::new()));
-            // FlashAttention backend - registered but not auto-selected by default
-            // Users can explicitly set it as default via set_default()
-            backends.push(Box::new(flash_attention_backend::FlashAttentionBackend::new()));
-        }
+        backends.push(Box::new(gpu_backend::GpuAttentionBackend::new()));
+        // FlashAttention backend - registered but not auto-selected by default
+        // Users can explicitly set it as default via set_default()
+        backends.push(Box::new(flash_attention_backend::FlashAttentionBackend::new()));
 
         AttentionBackendRegistry {
             backends,
@@ -293,7 +290,6 @@ pub mod cpu_backend {
 // GPU Backend Implementation
 // ============================================================================
 
-#[cfg(feature = "rocm")]
 /// GPU backend implementation using existing gpu::GpuBackend
 pub mod gpu_backend {
     use super::*;
@@ -358,7 +354,6 @@ pub mod gpu_backend {
 // FlashAttention Backend Implementation
 // ============================================================================
 
-#[cfg(feature = "rocm")]
 /// FlashAttention backend implementation using fused kernels
 pub mod flash_attention_backend {
     use super::*;
@@ -433,10 +428,7 @@ mod tests {
         let registry = AttentionBackendRegistry::new();
         let backends = registry.list_backends();
 
-        #[cfg(feature = "rocm")]
         assert_eq!(backends.len(), 3); // cpu + gpu + flash_attention
-        #[cfg(not(feature = "rocm"))]
-        assert_eq!(backends.len(), 1); // cpu only
 
         assert!(backends.contains(&"cpu".to_string()));
     }
@@ -455,12 +447,9 @@ mod tests {
         let _registry = AttentionBackendRegistry::new();
         let _config = AttentionConfig::new(512, 8, 64);
 
-        #[cfg(feature = "rocm")]
-        {
-            // With rocm feature, GPU should be selected
-            // Note: Backend selection depends on available hardware
-            // This test just verifies the config can be created
-        }
+        // With rocm feature, GPU should be selected
+        // Note: Backend selection depends on available hardware
+        // This test just verifies the config can be created
     }
 
     #[test]
@@ -494,7 +483,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_get_flash_attention_backend() {
         let registry = AttentionBackendRegistry::new();
 
@@ -503,7 +491,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_set_flash_attention_as_default() {
         let mut registry = AttentionBackendRegistry::new();
 
@@ -519,7 +506,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_flash_attention_supports_valid_config() {
         let registry = AttentionBackendRegistry::new();
         let flash_backend = registry.get_backend("flash_attention").unwrap();
@@ -532,7 +518,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_flash_attention_does_not_support_large_head_dim() {
         let registry = AttentionBackendRegistry::new();
         let flash_backend = registry.get_backend("flash_attention").unwrap();

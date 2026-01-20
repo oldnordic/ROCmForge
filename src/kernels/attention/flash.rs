@@ -24,7 +24,6 @@ pub const MAX_FLASH_SEQ_LEN: usize = 2048;
 pub use crate::attention::flash_attention::FlashAttentionBackend;
 
 // Re-export GPU kernels from attention::kernels
-#[cfg(feature = "rocm")]
 pub use crate::attention::kernels::{
     flash_attention_causal_gpu_kernel,
     flash_attention_gpu_kernel,
@@ -63,14 +62,12 @@ pub fn create_causal_mask(seq_len: usize) -> Vec<f32> {
 
 /// Check if FlashAttention can be used for the given configuration
 pub fn can_use_flash_attention(head_dim: usize, seq_len: usize) -> bool {
-    cfg!(feature = "rocm")
-        && head_dim <= MAX_FLASH_HEAD_DIM
-        && seq_len <= MAX_FLASH_SEQ_LEN
+    head_dim <= MAX_FLASH_HEAD_DIM && seq_len <= MAX_FLASH_SEQ_LEN
 }
 
 /// Check if FlashAttention supports causal masking
 pub fn supports_causal_mask() -> bool {
-    cfg!(feature = "rocm") // Causal kernel is available when ROCm is enabled
+    true // Causal kernel is always available
 }
 
 // ============================================================================
@@ -103,12 +100,8 @@ mod tests {
 
     #[test]
     fn test_can_use_flash_attention_valid() {
-        // When ROCm feature is enabled, should return true for valid config
-        // When ROCm is not enabled, returns false
-        #[cfg(feature = "rocm")]
+        // ROCm is always enabled, should return true for valid config
         assert!(can_use_flash_attention(64, 1024));
-        #[cfg(not(feature = "rocm"))]
-        assert!(!can_use_flash_attention(64, 1024));
     }
 
     #[test]

@@ -57,7 +57,6 @@ pub use softmax_in_place as softmax_in_place_cpu;
 /// Unified softmax with CPU fallback
 ///
 /// Attempts GPU computation when ROCm is available, falls back to CPU on error.
-#[cfg(feature = "rocm")]
 pub fn softmax_with_fallback(
     backend: &crate::backend::HipBackend,
     input: &crate::backend::HipBuffer,
@@ -70,24 +69,10 @@ pub fn softmax_with_fallback(
     Ok(())
 }
 
-/// Unified softmax with CPU fallback (non-ROCm)
-#[cfg(not(feature = "rocm"))]
-pub fn softmax_with_fallback(
-    _backend: &(),
-    _input: &(),
-    _output: &(),
-    _batch_size: u32,
-    _seq_len: u32,
-) -> Result<(), crate::backend::HipError> {
-    // Always use CPU when ROCm is not available
-    Ok(())
-}
-
 // ============================================================================
 // GPU kernel re-export
 // ============================================================================
 
-#[cfg(feature = "rocm")]
 pub use crate::attention::kernels::softmax_gpu_kernel;
 
 // ============================================================================

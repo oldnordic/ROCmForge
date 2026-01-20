@@ -13,14 +13,12 @@ pub use crate::attention::rope::{
 };
 
 // Re-export GPU kernel from attention::kernels
-#[cfg(feature = "rocm")]
 pub use crate::attention::kernels::rope_gpu_kernel;
 
 // ============================================================================
 // HIP backend RoPE op (re-exported for convenience)
 // ============================================================================
 
-#[cfg(feature = "rocm")]
 pub use crate::ggml::hip_backend::ops::rope::rope as hip_rope_op;
 
 // ============================================================================
@@ -28,28 +26,6 @@ pub use crate::ggml::hip_backend::ops::rope::rope as hip_rope_op;
 // ============================================================================
 
 /// Apply RoPE with automatic CPU fallback
-#[cfg(feature = "rocm")]
-pub fn rope_with_fallback(
-    x: &mut [f32],
-    position_ids: &[usize],
-    num_heads: usize,
-    head_dim: usize,
-    cos: &[f32],
-    sin: &[f32],
-) -> Result<(), crate::attention::AttentionError> {
-    // Create a minimal Rope config for CPU fallback
-    let max_seq_len = position_ids.iter().max().copied().unwrap_or(0) + 1;
-    let config = RopeConfig::new(head_dim, max_seq_len);
-
-    // Create RoPE instance
-    let rope = Rope::new(config);
-
-    // Apply RoPE (CPU implementation)
-    rope.apply_q(x, position_ids, num_heads)
-}
-
-/// Apply RoPE with automatic CPU fallback (non-ROCm)
-#[cfg(not(feature = "rocm"))]
 pub fn rope_with_fallback(
     x: &mut [f32],
     position_ids: &[usize],

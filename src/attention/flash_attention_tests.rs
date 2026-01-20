@@ -2,7 +2,6 @@
 //!
 //! Tests verify that FlashAttention GPU implementation matches CPU reference.
 
-#[cfg(feature = "rocm")]
 #[cfg(test)]
 mod phase3_flash_attention_tests {
     use crate::attention::cpu::CpuBackend;
@@ -474,7 +473,6 @@ mod phase3_flash_attention_tests {
     }
 
     /// Performance benchmark: FlashAttention vs separate kernels
-    #[cfg(feature = "rocm")]
     #[test]
     #[serial]
     fn benchmark_flash_attention_vs_separate() {

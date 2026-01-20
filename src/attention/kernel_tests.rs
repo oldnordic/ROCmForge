@@ -6,7 +6,6 @@
 //! These tests skip gracefully if GPU kernels are not available or return
 //! execution errors (e.g., HSACO files not built, kernel bugs).
 
-#[cfg(feature = "rocm")]
 #[cfg(test)]
 mod phase1_kernel_tests {
     use crate::attention::kernels::{mask_gpu_kernel, scale_gpu_kernel, softmax_gpu_kernel};

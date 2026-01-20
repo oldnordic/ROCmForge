@@ -4,7 +4,6 @@
 //! This implementation supports both CPU and GPU computation.
 
 use crate::attention::{AttentionError, AttentionResult};
-#[cfg(feature = "rocm")]
 use crate::backend::DeviceTensor;
 
 /// RoPE configuration
@@ -200,7 +199,6 @@ impl Rope {
     }
 
     /// Apply RoPE to DeviceTensor on GPU
-    #[cfg(feature = "rocm")]
     pub fn apply_q_device(
         &self,
         x: &mut DeviceTensor,
@@ -211,7 +209,6 @@ impl Rope {
     }
 
     /// Apply RoPE to DeviceTensor on GPU
-    #[cfg(feature = "rocm")]
     pub fn apply_k_device(
         &self,
         x: &mut DeviceTensor,
@@ -244,7 +241,6 @@ impl Rope {
     ///
     /// If GPU kernel fails, callers should handle the error and fall back to CPU implementation.
     /// This method itself does NOT implement fallback - it returns an error on GPU failure.
-    #[cfg(feature = "rocm")]
     fn apply_rope_device(
         &self,
         x: &mut DeviceTensor,

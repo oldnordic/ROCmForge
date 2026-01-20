@@ -10,7 +10,6 @@
 //! This is the FIRST operation in the divide-and-conquer approach.
 //! Following TDD: these tests WILL FAIL until kernel is implemented.
 
-#[cfg(feature = "rocm")]
 #[cfg(test)]
 mod qkt_matmul_tests {
     use crate::backend::{DeviceTensor, HipBackend};

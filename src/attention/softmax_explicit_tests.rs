@@ -14,7 +14,6 @@
 //! - batch_size_param = batch * heads * seq_q (kernel's "batch_size")
 //! - seq_len_param = seq_k (kernel's "seq_len" = row length)
 
-#[cfg(feature = "rocm")]
 #[cfg(test)]
 mod softmax_explicit_tests {
     use crate::backend::{DeviceTensor, HipBackend};

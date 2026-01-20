@@ -63,14 +63,12 @@ pub fn apply_mask_in_place(
 // GPU mask kernel (re-exported from attention::kernels)
 // ============================================================================
 
-#[cfg(feature = "rocm")]
 pub use crate::attention::kernels::mask_gpu_kernel;
 
 // ============================================================================
 // HIP backend mask op (re-exported for convenience)
 // ============================================================================
 
-#[cfg(feature = "rocm")]
 pub use crate::ggml::hip_backend::ops::mask::mask as hip_mask_op;
 
 // ============================================================================
@@ -78,7 +76,6 @@ pub use crate::ggml::hip_backend::ops::mask::mask as hip_mask_op;
 // ============================================================================
 
 /// Apply mask with automatic CPU fallback
-#[cfg(feature = "rocm")]
 pub fn apply_mask_with_fallback(
     scores: &mut [f32],
     mask: &[f32],
@@ -87,18 +84,6 @@ pub fn apply_mask_with_fallback(
     seq_len: usize,
 ) {
     // For now, use CPU implementation
-    apply_mask_in_place(scores, mask, batch_size, num_heads, seq_len);
-}
-
-/// Apply mask with automatic CPU fallback (non-ROCm)
-#[cfg(not(feature = "rocm"))]
-pub fn apply_mask_with_fallback(
-    scores: &mut [f32],
-    mask: &[f32],
-    batch_size: usize,
-    num_heads: usize,
-    seq_len: usize,
-) {
     apply_mask_in_place(scores, mask, batch_size, num_heads, seq_len);
 }
 

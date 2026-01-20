@@ -4,7 +4,6 @@
 //! This reduces memory usage and improves inference speed while maintaining performance.
 
 use crate::attention::{rope::Rope, AttentionError, AttentionResult};
-#[cfg(feature = "rocm")]
 use crate::backend::{DeviceTensor, HipBackend};
 
 /// Multi-Query Attention configuration
@@ -168,7 +167,6 @@ impl MultiQueryAttention {
     }
 
     /// Forward pass with DeviceTensor inputs for GPU computation
-    #[cfg(feature = "rocm")]
     pub fn forward_device(
         &self,
         q: &DeviceTensor,
@@ -193,7 +191,6 @@ impl MultiQueryAttention {
     }
 
     /// Replicate K and V tensors from num_kv_heads to num_q_heads on GPU
-    #[cfg(feature = "rocm")]
     fn replicate_kv_gpu(
         &self,
         q: &DeviceTensor,
@@ -264,7 +261,6 @@ impl MultiQueryAttention {
     }
 
     /// Compute attention using GPU path (for MHA)
-    #[cfg(feature = "rocm")]
     fn forward_mha_gpu(
         &self,
         q: &DeviceTensor,
@@ -280,7 +276,6 @@ impl MultiQueryAttention {
     }
 
     /// Compute attention scores on GPU
-    #[cfg(feature = "rocm")]
     fn compute_attention_gpu(
         &self,
         q: &DeviceTensor,

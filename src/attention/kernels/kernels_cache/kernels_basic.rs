@@ -2,13 +2,10 @@
 
 #![allow(non_snake_case)] // Kernel parameter names follow HIP conventions
 
-#[cfg(feature = "rocm")]
 use std::ffi::c_void;
 
-#[cfg(feature = "rocm")]
 use crate::backend::hip_backend::{HipError, HipKernel};
 
-#[cfg(feature = "rocm")]
 // kernels_basic is now a submodule of kernels_cache, so use super
 use super::{get_attention_kernels, get_or_init_cache};
 
@@ -25,7 +22,6 @@ const WARP_SIZE: u32 = 32; // RDNA3 wavefront size
 /// - scores points to valid GPU memory
 /// - The dimensions are correct
 /// - No other threads are accessing the same memory concurrently
-#[cfg(feature = "rocm")]
 pub unsafe fn scale_gpu_kernel(
     mut scores: *mut f32,
     scale: f32,
@@ -81,7 +77,6 @@ pub unsafe fn scale_gpu_kernel(
 /// - scores and mask point to valid GPU memory
 /// - The dimensions are correct
 /// - No other threads are accessing the same memory concurrently
-#[cfg(feature = "rocm")]
 pub unsafe fn mask_gpu_kernel(
     mut scores: *mut f32,
     mask: *const f32,
@@ -136,7 +131,6 @@ pub unsafe fn mask_gpu_kernel(
 /// - scores points to valid GPU memory
 /// - The dimensions are correct
 /// - No other threads are accessing the same memory concurrently
-#[cfg(feature = "rocm")]
 pub unsafe fn softmax_gpu_kernel(mut scores: *mut f32, batch_size: u32, seq_len: u32) -> i32 {
     match get_attention_kernels() {
         Ok((backend, (_qkt_ptr, softmax_ptr, _weighted_ptr))) => {
@@ -185,7 +179,6 @@ pub unsafe fn softmax_gpu_kernel(mut scores: *mut f32, batch_size: u32, seq_len:
 /// - The dimensions are correct
 /// - head_dim must be even
 /// - No other threads are accessing the same memory concurrently
-#[cfg(feature = "rocm")]
 pub unsafe fn rope_gpu_kernel(
     mut input: *mut f32,
     cos: *const f32,
@@ -249,7 +242,6 @@ pub unsafe fn rope_gpu_kernel(
 /// - The dimensions are correct
 /// - head_dim must be even
 /// - No other threads are accessing the same memory concurrently
-#[cfg(feature = "rocm")]
 pub unsafe fn position_embeddings_gpu_kernel(
     q: *mut f32,
     k: *mut f32,
