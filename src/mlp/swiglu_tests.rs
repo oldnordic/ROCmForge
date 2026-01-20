@@ -13,6 +13,7 @@
 mod swiglu_tests {
     use crate::backend::{DeviceTensor, HipBackend};
     use crate::loader::mmap_loader::TensorShape;
+    use serial_test::serial;
 
     const TEST_TOLERANCE: f32 = 1e-4;
     const TEST_TOLERANCE_LARGE: f32 = 2e-3;
@@ -66,6 +67,7 @@ mod swiglu_tests {
 
     /// Test 1: SwiGLU matches CPU - small dimensions
     #[test]
+    #[serial]
     fn test_swiglu_matches_cpu_small() {
         let seq_len = 4;
         let intermediate_size = 8;
@@ -131,6 +133,7 @@ mod swiglu_tests {
 
     /// Test 2: SwiGLU with larger dimensions
     #[test]
+    #[serial]
     fn test_swiglu_matches_cpu_32x32() {
         let seq_len = 32;
         let intermediate_size = 32;
@@ -187,13 +190,14 @@ mod swiglu_tests {
 
     /// Test 3: SwiGLU with non-square dimensions
     #[test]
+    #[serial]
     fn test_swiglu_non_square() {
         let seq_len = 8;
         let intermediate_size = 64;
 
         let total = seq_len * intermediate_size;
         let gate: Vec<f32> = (0..total).map(|i| (i as f32) * 0.05).collect();
-        let up: Vec<f32> = (0..total).map(|i| ((i as f32) * 0.05 - 2.0)).collect();
+        let up: Vec<f32> = (0..total).map(|i| (i as f32) * 0.05 - 2.0).collect();
 
         let cpu_result = swiglu_cpu_reference(&gate, &up, seq_len, intermediate_size);
 
@@ -243,6 +247,7 @@ mod swiglu_tests {
 
     /// Test 4: Verify output is finite (no NaN/inf)
     #[test]
+    #[serial]
     fn test_swiglu_output_is_finite() {
         let seq_len = 16;
         let intermediate_size = 16;
@@ -304,6 +309,7 @@ mod swiglu_tests {
     /// - When up << 0: swish(up) ≈ 0, so output ≈ 0
     /// - When up = 0: swish(0) = 0, so output = 0
     #[test]
+    #[serial]
     fn test_swiglu_mathematical_properties() {
         let seq_len = 1;
         let intermediate_size = 3;

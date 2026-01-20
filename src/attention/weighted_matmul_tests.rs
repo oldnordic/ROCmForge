@@ -10,6 +10,7 @@
 mod weighted_matmul_tests {
     use crate::backend::{DeviceTensor, HipBackend};
     use crate::loader::mmap_loader::TensorShape;
+    use serial_test::serial;
 
     const TEST_TOLERANCE: f32 = 1e-4;
     const TEST_TOLERANCE_LARGE: f32 = 1e-3; // For larger inputs due to FP reduction order
@@ -104,6 +105,7 @@ mod weighted_matmul_tests {
 
     /// Test 1: Weighted matmul matches CPU - small dimensions
     #[test]
+    #[serial]
     fn test_weighted_matmul_matches_cpu_small() {
         let batch = 1;
         let heads = 2;
@@ -173,6 +175,7 @@ mod weighted_matmul_tests {
 
     /// Test 2: Weighted matmul matches CPU - 32×32×4×32 (larger test)
     #[test]
+    #[serial]
     fn test_weighted_matmul_matches_cpu_32x32() {
         let batch = 2;
         let heads = 4;
@@ -234,6 +237,7 @@ mod weighted_matmul_tests {
 
     /// Test 3: Non-square sequences (seq_q != seq_k)
     #[test]
+    #[serial]
     fn test_weighted_matmul_non_square_sequences() {
         let batch = 1;
         let heads = 2;
@@ -300,6 +304,7 @@ mod weighted_matmul_tests {
 
     /// Test 4: Verify explicit layout indexing is correct
     #[test]
+    #[serial]
     fn test_weighted_matmul_explicit_layout_indexing() {
         let batch = 1;
         let heads = 2;
