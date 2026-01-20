@@ -9,11 +9,11 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 
 ## Current Position
 
-Phase: 22 - Memory Pool Implementation (Plan 05 of 5)
-Status: Phase 22 COMPLETE - Memory pool fully verified
-Last activity: Memory pool verification complete - all tests passing, no GPU hang observed
+Phase: 23 - Dead/Duplicate Code Removal (Plan 03 of 5)
+Status: Phase 23 In Progress - GgufMetadata consolidated, MXFP/Q-format cleanup pending
+Last activity: GgufMetadata consolidation complete - duplicate struct removed from gguf.rs
 
-Progress: [██████████████████████] 100% (Phase 22 COMPLETE, v1.3 complete, v1.4 complete)
+Progress: [████████████████░░░░░] 60% (Phase 22 COMPLETE, Phase 23 3/5 plans complete)
 
 ## Milestone v1.3 Summary
 
@@ -30,10 +30,10 @@ Progress: [██████████████████████] 1
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 141 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22)
-- Plans remaining: 1 (21-06, skipped) + 11 (Phases 23-24)
+- Total plans completed: 143 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22, Phase 23 23-01/23-03)
+- Plans remaining: 1 (21-06, skipped) + 9 (Phases 23-24)
 - Average duration: ~44 min
-- Total execution time: ~104 hours
+- Total execution time: ~105 hours
 
 ## Accumulated Context
 
@@ -112,8 +112,20 @@ Historical decisions affecting v1.3:
 - Arc-based ownership ensures arena outlives all DeviceTensors using it (22-03)
 - Offset-based upload via AsyncLoader::upload_to_buffer_offset() (22-03)
 
+**v1.5 - Code Quality & Cleanup (2026-01-20):**
+- Phase 23-01: Remove duplicate MXFP code (E8M0, MxfpBlock) from gguf.rs - use mxfp.rs
+- Phase 23-02: Remove unused quantization formats (Q4_1, Q5_0, Q5_1) from GgufTensorType
+- Phase 23-03: Consolidate GgufMetadata - remove duplicate from gguf.rs, keep metadata.rs version
+
+**Phase 23 In Progress** - 3 of 5 plans complete
+
+**Decision: Single Source of Truth for GgufMetadata**
+- Keep GgufMetadata in src/loader/metadata.rs (has both update_from_kv() and calculate_default_head_dim())
+- Remove incomplete duplicate from src/loader/gguf.rs (only had calculate_default_head_dim())
+- Use canonical import path: crate::loader::metadata::GgufMetadata (23-03)
+
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed Phase 22-05 (Memory pool verification - all tests passing)
+Stopped at: Completed Phase 23-03 (GgufMetadata consolidation - duplicate removed from gguf.rs)
 Resume file: None
