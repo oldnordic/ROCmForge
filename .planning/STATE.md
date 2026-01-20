@@ -9,11 +9,11 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 
 ## Current Position
 
-Phase: 24 - Kernel-Centric Restructure (Plan 03 of 4)
-Status: In Progress - Attention kernels migrated to src/kernels/attention/
-Last activity: Migrated softmax, matmul, flash, mask, rope kernels with CPU/GPU fallback
+Phase: 24 - Kernel-Centric Restructure (Plan 04 of 4)
+Status: In Progress - Matmul kernels migrated to src/kernels/matmul/
+Last activity: Migrated quantized and FP16 matmul kernels with re-export compatibility
 
-Progress: [██████████████░░░░░░] 68% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 3/4 plans COMPLETE)
+Progress: [███████████████░░░░░] 75% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 4/5 plans COMPLETE)
 
 ## Milestone v1.3 Summary
 
@@ -30,10 +30,10 @@ Progress: [██████████████░░░░░░] 68% (Ph
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 152 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22, Phase 23 COMPLETE, Phase 24-01, 24-02, 24-03, 24-05)
-- Plans remaining: 1 (21-06, skipped) + 2 (Phase 24: 24-04, 24-06)
+- Total plans completed: 153 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22, Phase 23 COMPLETE, Phase 24-01, 24-02, 24-03, 24-04, 24-05)
+- Plans remaining: 1 (21-06, skipped) + 1 (Phase 24: 24-06)
 - Average duration: ~44 min
-- Total execution time: ~110 hours
+- Total execution time: ~111 hours
 
 ## Accumulated Context
 
@@ -139,11 +139,13 @@ Historical decisions affecting v1.3:
 - Phase 24-01: Created src/kernels/ directory structure with quant/, attention/, matmul/, element/ subdirectories
 - Phase 24-02: Migrated quantization kernels (Q4_0, Q4_K, Q6_K, Q8_0) to kernels/quant/
 - Phase 24-03: Migrated attention kernels (softmax, matmul, flash, mask, rope) to kernels/attention/ with CPU/GPU fallback
+- Phase 24-04: Migrated matmul kernels (quantized Q4_0, Q4_K, Q6_K, Q8_0, FP16/FP32) to kernels/matmul/ with re-export compatibility
+- Phase 24-05: Migrated element-wise kernels (rms_norm, swiglu, scale, add) to kernels/element/ with re-export compatibility
 
-**Phase 24 in Progress** - 3 of 4 plans complete
+**Phase 24 near complete** - 5 of 5 plans complete (only 24-06 remaining)
 
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed Phase 24-03 (Attention kernels migrated to src/kernels/attention/)
+Stopped at: Completed Phase 24-04 (Matmul kernels migrated to src/kernels/matmul/)
 Resume file: None
