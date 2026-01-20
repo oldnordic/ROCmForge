@@ -1,188 +1,36 @@
 //! Main inference engine for ROCmForge
+//!
+//! This module provides the core InferenceEngine implementation that coordinates
+//! backend, cache, scheduler, and sampler for LLM inference on AMD GPUs.
 
 use crate::backend::{HipBackend, ModelRuntime};
 use crate::kv_cache::{CacheConfig, KvCache};
 use crate::loader::{GgufLoader, OnnxLoader};
 use crate::sampler::{Sampler, SamplingConfig};
 use crate::scheduler::{GenerationRequest, RequestState, Scheduler, SchedulerConfig};
-use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use thiserror::Error;
+use std::time::Duration;
 use tokio::sync::{Notify, RwLock};
 use tracing::{debug, error, info, warn};
 
-#[derive(Error, Debug)]
-pub enum EngineError {
-    #[error("Backend initialization failed: {0}")]
-    BackendFailed(String),
-    #[error("Model loading failed: {0}")]
-    ModelLoadFailed(String),
-    #[error("Cache initialization failed: {0}")]
-    CacheFailed(String),
-    #[error("Scheduler error: {0}")]
-    SchedulerError(String),
-    #[error("Inference failed: {0}")]
-    InferenceFailed(String),
-    #[error("Invalid configuration: {0}")]
-    InvalidConfig(String),
-}
-
-pub type EngineResult<T> = Result<T, EngineError>;
-
-/// Retry configuration for temporary GPU errors
-///
-/// Phase 10-20: Production Hardening - Retry Logic
-///
-/// This config defines how the engine handles temporary GPU errors
-/// with exponential backoff retry. Only recoverable errors are retried.
-#[derive(Debug, Clone)]
-pub struct RetryConfig {
-    /// Maximum number of retry attempts for recoverable errors
-    pub max_retries: usize,
-
-    /// Initial delay before first retry (milliseconds)
-    pub initial_delay_ms: u64,
-
-    /// Multiplier for exponential backoff (e.g., 2.0 = double each time)
-    pub backoff_multiplier: f64,
-
-    /// Maximum delay between retries (milliseconds)
-    pub max_delay_ms: u64,
-
-    /// Whether to add jitter to retry delays (prevents thundering herd)
-    pub jitter: bool,
-}
-
-impl Default for RetryConfig {
-    fn default() -> Self {
-        RetryConfig {
-            max_retries: 3,
-            initial_delay_ms: 10,
-            backoff_multiplier: 2.0,
-            max_delay_ms: 1000,
-            jitter: true,
-        }
-    }
-}
-
-impl RetryConfig {
-    /// Create a new retry config with default values
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Create a retry config with no retries (for testing)
-    pub fn no_retry() -> Self {
-        RetryConfig {
-            max_retries: 0,
-            ..Default::default()
-        }
-    }
-
-    /// Set maximum retry attempts
-    pub fn with_max_retries(mut self, max_retries: usize) -> Self {
-        self.max_retries = max_retries;
-        self
-    }
-
-    /// Set initial delay in milliseconds
-    pub fn with_initial_delay_ms(mut self, delay_ms: u64) -> Self {
-        self.initial_delay_ms = delay_ms;
-        self
-    }
-
-    /// Set backoff multiplier (exponential)
-    pub fn with_backoff_multiplier(mut self, multiplier: f64) -> Self {
-        self.backoff_multiplier = multiplier;
-        self
-    }
-
-    /// Set maximum delay in milliseconds
-    pub fn with_max_delay_ms(mut self, max_delay_ms: u64) -> Self {
-        self.max_delay_ms = max_delay_ms;
-        self
-    }
-
-    /// Enable or disable jitter
-    pub fn with_jitter(mut self, jitter: bool) -> Self {
-        self.jitter = jitter;
-        self
-    }
-
-    /// Calculate delay for the given retry attempt
-    ///
-    /// # Arguments
-    /// * `attempt` - Retry attempt number (0-based)
-    ///
-    /// # Returns
-    /// Duration to wait before this retry attempt
-    pub fn delay_for_attempt(&self, attempt: usize) -> Duration {
-        let base_delay = self.initial_delay_ms as f64
-            * self.backoff_multiplier.powi(attempt as i32);
-
-        let delay_ms = base_delay.min(self.max_delay_ms as f64) as u64;
-
-        if self.jitter {
-            // Add up to 25% random jitter
-            let jitter_range = delay_ms / 4;
-            let jitter_amt = if jitter_range > 0 {
-                use std::time::SystemTime;
-                let nanos = SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .subsec_nanos() as u64;
-                nanos % jitter_range
-            } else {
-                0
-            };
-            Duration::from_millis(delay_ms + jitter_amt)
-        } else {
-            Duration::from_millis(delay_ms)
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct EngineConfig {
-    pub max_batch_size: usize,
-    pub max_sequence_length: usize,
-    pub cache_page_size: usize,
-    pub max_cache_pages: usize,
-    pub num_heads: usize,
-    pub head_dim: usize,
-    pub num_layers: usize,
-    pub batch_timeout: Duration,
-    /// Retry configuration for temporary GPU errors
-    pub retry_config: RetryConfig,
-}
-
-impl Default for EngineConfig {
-    fn default() -> Self {
-        EngineConfig {
-            max_batch_size: 32,
-            max_sequence_length: 4096,
-            cache_page_size: 16,
-            max_cache_pages: 1000,
-            num_heads: 32,
-            head_dim: 128,
-            num_layers: 24,
-            batch_timeout: Duration::from_millis(50),
-            retry_config: RetryConfig::default(),
-        }
-    }
-}
+// Import types from sibling modules
+use super::config::EngineConfig;
+use super::stats::{EngineStats, HealthStatus};
+use super::types::{EngineError, EngineResult};
 
 // SAFETY: InferenceEngine is Send+Sync because all its components are Send+Sync
 // and we ensure thread-safe access through Arc<RwLock<T>> wrappers
 unsafe impl Send for InferenceEngine {}
 unsafe impl Sync for InferenceEngine {}
 
+/// Main inference engine for ROCmForge
+///
+/// Coordinates backend, cache, scheduler, and sampler for LLM inference.
 #[derive(Debug)]
 pub struct InferenceEngine {
     config: EngineConfig,
-    backend: Arc<HipBackend>, // Changed to Arc<HipBackend> for shared ownership
+    backend: Arc<HipBackend>,
     kv_cache: Arc<RwLock<KvCache>>,
     scheduler: Arc<RwLock<Scheduler>>,
     sampler: Arc<RwLock<Sampler>>,
@@ -203,6 +51,7 @@ struct RequestRuntimeState {
 }
 
 impl InferenceEngine {
+    /// Create a new inference engine with the given configuration
     pub fn new(config: EngineConfig) -> EngineResult<Self> {
         info!("Initializing ROCmForge inference engine");
         debug!("InferenceEngine::new: Starting engine initialization");
@@ -298,6 +147,9 @@ impl InferenceEngine {
             EngineError::ModelLoadFailed(format!("Failed to create model config: {}", e))
         })?;
 
+        // Import RetryConfig for use in engine config
+        use super::types::RetryConfig;
+
         // Create engine with MODEL-SPECIFIC config instead of defaults
         // This prevents creating wasteful paged KV cache with wrong dimensions
         let engine_config = EngineConfig {
@@ -318,6 +170,7 @@ impl InferenceEngine {
         Ok(engine)
     }
 
+    /// Load a GGUF model from the given path
     pub async fn load_gguf_model<P: AsRef<std::path::Path>>(
         &mut self,
         path: P,
@@ -378,6 +231,7 @@ impl InferenceEngine {
         Ok(())
     }
 
+    /// Load an ONNX model from the given path
     pub async fn load_onnx_model<P: AsRef<std::path::Path>>(&self, path: P) -> EngineResult<()> {
         info!("Loading ONNX model from: {:?}", path.as_ref());
 
@@ -390,6 +244,7 @@ impl InferenceEngine {
         Ok(())
     }
 
+    /// Start the inference engine
     pub async fn start(&self) -> EngineResult<()> {
         info!("Starting ROCmForge inference engine");
         tracing::debug!("start() called, setting is_running=true");
@@ -402,6 +257,7 @@ impl InferenceEngine {
         Ok(())
     }
 
+    /// Run the inference loop in the background
     pub async fn run_inference_loop(&self) {
         debug!("run_inference_loop() ENTRY");
         let is_running = {
@@ -452,6 +308,7 @@ impl InferenceEngine {
         debug!("run_inference_loop() EXIT");
     }
 
+    /// Stop the inference engine
     pub async fn stop(&self) -> EngineResult<()> {
         info!("Stopping inference engine");
 
@@ -463,6 +320,7 @@ impl InferenceEngine {
         Ok(())
     }
 
+    /// Submit a new inference request
     pub async fn submit_request(
         &self,
         prompt_tokens: Vec<u32>,
@@ -492,6 +350,7 @@ impl InferenceEngine {
         Ok(request_id)
     }
 
+    /// Get the status of a request
     pub async fn get_request_status(
         &self,
         request_id: u32,
@@ -504,6 +363,7 @@ impl InferenceEngine {
         }
     }
 
+    /// Cancel a request
     pub async fn cancel_request(&self, request_id: u32) -> EngineResult<()> {
         {
             let mut scheduler = self.scheduler.write().await;
@@ -573,6 +433,7 @@ impl InferenceEngine {
         notifiers.get(&request_id).cloned()
     }
 
+    /// Subscribe to request completion notifications
     pub async fn subscribe_request(&self, request_id: u32) -> Option<Arc<Notify>> {
         self.request_notifier(request_id).await
     }
@@ -622,7 +483,7 @@ impl InferenceEngine {
                 debug!(iteration, "inference_loop iteration");
             }
 
-            let start_time = Instant::now();
+            let start_time = std::time::Instant::now();
 
             // Check if we can create a batch
             let (pending, can_create) = {
@@ -942,6 +803,7 @@ impl InferenceEngine {
         Ok(host_data)
     }
 
+    /// Get engine statistics
     pub async fn get_engine_stats(&self) -> EngineStats {
         let scheduler_stats = {
             let scheduler = self.scheduler.read().await;
@@ -1020,58 +882,10 @@ impl InferenceEngine {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct EngineStats {
-    pub is_running: bool,
-    pub scheduler_stats: crate::scheduler::QueueStats,
-    pub cache_stats: crate::kv_cache::CacheStats,
-    pub model_loaded: bool,
-}
-
-/// Health status information for monitoring endpoints
-#[derive(Debug, Clone, Serialize)]
-pub struct HealthStatus {
-    /// Overall health status: healthy, degraded, or unhealthy
-    pub status: String,
-    /// Whether the inference engine is running
-    pub engine_running: bool,
-    /// Whether a model is currently loaded
-    pub model_loaded: bool,
-    /// Whether GPU is available
-    pub gpu_available: bool,
-    /// Free GPU memory in bytes (if available)
-    pub gpu_memory_free: Option<usize>,
-    /// Total GPU memory in bytes (if available)
-    pub gpu_memory_total: Option<usize>,
-    /// GPU error message (if GPU query failed)
-    pub gpu_error: Option<String>,
-    /// Number of currently processing requests
-    pub active_requests: usize,
-    /// Number of queued requests
-    pub queued_requests: usize,
-    /// Number of KV cache pages in use
-    pub cache_pages_used: usize,
-    /// Total number of KV cache pages
-    pub cache_pages_total: usize,
-    /// Number of active sequences in cache
-    pub active_sequences: usize,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_engine_config_default() {
-        let config = EngineConfig::default();
-        assert_eq!(config.max_batch_size, 32);
-        assert_eq!(config.max_sequence_length, 4096);
-        assert_eq!(config.cache_page_size, 16);
-        assert_eq!(config.max_cache_pages, 1000);
-        assert_eq!(config.num_heads, 32);
-        assert_eq!(config.head_dim, 128);
-        assert_eq!(config.num_layers, 24);
-    }
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_engine_creation() {
@@ -1302,85 +1116,4 @@ mod tests {
         // If compilation fails, the method signature may have changed.
         let _ = std::marker::PhantomData::<InferenceEngine>;
     }
-
-    // ========== Phase 10-20: RetryConfig Tests ==========
-
-    #[test]
-    fn test_retry_config_default() {
-        let config = RetryConfig::default();
-        assert_eq!(config.max_retries, 3, "Default max_retries should be 3");
-        assert_eq!(config.initial_delay_ms, 10, "Default initial delay should be 10ms");
-        assert_eq!(config.backoff_multiplier, 2.0, "Default multiplier should be 2.0");
-        assert_eq!(config.max_delay_ms, 1000, "Default max delay should be 1000ms");
-        assert!(config.jitter, "Jitter should be enabled by default");
-    }
-
-    #[test]
-    fn test_retry_config_builder() {
-        let config = RetryConfig::new()
-            .with_max_retries(5)
-            .with_initial_delay_ms(100)
-            .with_backoff_multiplier(3.0)
-            .with_max_delay_ms(5000)
-            .with_jitter(false);
-
-        assert_eq!(config.max_retries, 5);
-        assert_eq!(config.initial_delay_ms, 100);
-        assert_eq!(config.backoff_multiplier, 3.0);
-        assert_eq!(config.max_delay_ms, 5000);
-        assert!(!config.jitter);
-    }
-
-    #[test]
-    fn test_retry_config_no_retry() {
-        let config = RetryConfig::no_retry();
-        assert_eq!(config.max_retries, 0, "no_retry should have 0 retries");
-    }
-
-    #[test]
-    fn test_retry_config_delay_calculation() {
-        let config = RetryConfig::new()
-            .with_initial_delay_ms(10)
-            .with_backoff_multiplier(2.0)
-            .with_max_delay_ms(100)
-            .with_jitter(false);
-
-        let delay_0 = config.delay_for_attempt(0);
-        assert_eq!(delay_0.as_millis(), 10, "First retry delay should be 10ms");
-
-        let delay_1 = config.delay_for_attempt(1);
-        assert_eq!(delay_1.as_millis(), 20, "Second retry delay should be 20ms");
-
-        let delay_2 = config.delay_for_attempt(2);
-        assert_eq!(delay_2.as_millis(), 40, "Third retry delay should be 40ms");
-
-        let delay_10 = config.delay_for_attempt(10);
-        // 10 * 2^10 = 10240, capped at 100
-        assert_eq!(delay_10.as_millis(), 100, "Delay should be capped at max_delay_ms");
-    }
-
-    #[test]
-    fn test_retry_config_jitter_in_range() {
-        let config = RetryConfig::new()
-            .with_initial_delay_ms(100)
-            .with_backoff_multiplier(1.0)
-            .with_max_delay_ms(200)
-            .with_jitter(true);
-
-        // Test that jitter adds some variability but stays within bounds
-        let delay_0 = config.delay_for_attempt(0);
-        // Base delay is 100ms, jitter adds up to 25% (125ms max)
-        assert!(delay_0.as_millis() >= 100, "Jittered delay should be >= base delay");
-        assert!(delay_0.as_millis() <= 125, "Jittered delay should be <= base + 25%");
-    }
-
-    #[test]
-    fn test_engine_config_includes_retry_config() {
-        let config = EngineConfig::default();
-        // Verify that EngineConfig includes retry_config with default values
-        assert_eq!(config.retry_config.max_retries, 3);
-        assert_eq!(config.retry_config.initial_delay_ms, 10);
-    }
-
-    // ========== End Phase 10-20 RetryConfig Tests ==========
 }
