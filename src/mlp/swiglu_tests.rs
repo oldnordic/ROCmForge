@@ -69,7 +69,6 @@ mod swiglu_tests {
     #[test]
     #[serial]
     #[ignore] // Requires HSACO kernels - GPU kernel unavailable
-    #[ignore] // Requires HSACO kernels - GPU kernel unavailable
     fn test_swiglu_matches_cpu_small() {
         let seq_len = 4;
         let intermediate_size = 8;
