@@ -111,6 +111,12 @@ pub fn matmul(
 }
 
 /// Transpose a 2D tensor on the host and upload it back to the device
+///
+/// **DEPRECATED**: Use `crate::kernels::transpose::transpose_tensor` instead.
+/// This function performs CPU round-trip (GPU->CPU->GPU) which is slow.
+/// The GPU kernel version avoids this overhead.
+#[deprecated(since = "0.26.0", note = "Use crate::kernels::transpose::transpose_tensor for GPU-only transpose")]
+#[allow(dead_code)] // Kept for potential use in tests or as fallback
 pub fn transpose_2d_tensor(backend: &HipBackend, tensor: &DeviceTensor) -> HipResult<DeviceTensor> {
     let shape = tensor.shape().dims();
     if shape.len() != 2 {

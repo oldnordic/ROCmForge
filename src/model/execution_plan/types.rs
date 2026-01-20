@@ -267,11 +267,13 @@ impl ExecutionPlan {
                         if shape.len() == 2 {
                             if shape[0] == self.config.hidden_size && shape[1] == self.config.vocab_size {
                                 // Need to transpose from [hidden_size, vocab_size] to [vocab_size, hidden_size]
-                                tracing::debug!("Transposing embedding tensor from [{}, {}] to [{}, {}]",
+                                // Use GPU transpose kernel to avoid CPU round-trip
+                                tracing::debug!("Transposing embedding tensor on GPU from [{}, {}] to [{}, {}]",
                                               shape[0], shape[1], shape[1], shape[0]);
-                                use super::matmul::transpose_2d_tensor;
-                                tensor = Arc::new(transpose_2d_tensor(&self.backend, &tensor)
-                                    .map_err(|e| HipError::GenericError(format!("Failed to transpose embedding: {}", e)))?);
+                                use crate::kernels::transpose::transpose_tensor;
+                                let transposed = transpose_tensor(&self.backend, &tensor)
+                                    .map_err(|e| HipError::GenericError(format!("Failed to transpose embedding on GPU (shape {:?}): {}", shape, e)))?;
+                                tensor = Arc::new(transposed);
                             }
                             // If already [vocab_size, hidden_size], use as-is
                         }
