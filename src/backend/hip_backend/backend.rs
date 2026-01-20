@@ -888,42 +888,6 @@ impl HipBackend {
                 .map_err(|e| HipError::GenericError(format!("Final copy failed: {}", e)))?;
         }
 
-        #[cfg(not(feature = "rocm"))]
-        {
-            let mut gate_host = vec![0.0f32; (seq_len * intermediate_size) as usize];
-            let mut up_host = vec![0.0f32; (seq_len * intermediate_size) as usize];
-
-            self.copy_from_device_safe(&gate_buffer, &mut gate_host)?;
-            self.copy_from_device_safe(&up_buffer, &mut up_host)?;
-
-            let mut swiglu_host = vec![0.0f32; (seq_len * intermediate_size) as usize];
-            for i in 0..swiglu_host.len() {
-                let gate_val = gate_host[i];
-                let up_val = up_host[i];
-                let sigmoid_up = 1.0 / (1.0 + (-up_val).exp());
-                let swish_up = up_val * sigmoid_up;
-                swiglu_host[i] = gate_val * swish_up;
-            }
-
-            let swiglu_buffer = HipBuffer::new(swiglu_host.len() * std::mem::size_of::<f32>())?;
-            swiglu_buffer.copy_from_host(&swiglu_host)?;
-
-            let final_buffer = matmul_f32(
-                self,
-                &blas_handle,
-                &swiglu_buffer,
-                down_weight.buffer(),
-                seq_len as i32,
-                hidden_size as i32,
-                intermediate_size as i32,
-            )
-            .map_err(|e| HipError::GenericError(format!("Down projection failed: {}", e)))?;
-
-            let mut output_host = vec![0.0f32; (seq_len * hidden_size) as usize];
-            self.copy_from_device_safe(&final_buffer, &mut output_host)?;
-            output.buffer().copy_from_host(&output_host)?;
-        }
-
         Ok(())
     }
 

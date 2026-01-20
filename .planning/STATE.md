@@ -8,11 +8,11 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 **Current focus:** CRITICAL ISSUE - ROCm feature compilation broken
 
 Phase: 28 - ROCm Compilation Fix
-Plan: 07 of N (Wave 7 - cfg gate removal from src/model/ and src/loader/)
-Status: Complete - All cfg gates removed from model and loader modules
-Last activity: Completed 28-07 cfg gate removal from model and loader at 2026-01-20T21:42:35Z
+Plan: 08 of N (Wave 8 - cfg gate removal from sampler/, mlp/, profiling/, backend/)
+Status: Complete - All cfg gates removed from sampler, mlp, profiling, and backend modules
+Last activity: Completed 28-08 cfg gate removal from sampler, mlp, profiling, backend at 2026-01-20T21:46:22Z
 
-Progress: [████████████████████] 100% (Phase 27 COMPLETE, Phase 28-01 COMPLETE, Phase 28-02 COMPLETE, Phase 28-03 COMPLETE, Phase 28-05 COMPLETE, Phase 28-06 COMPLETE, Phase 28-07 COMPLETE)
+Progress: [████████████████████] 100% (Phase 27 COMPLETE, Phase 28-01 COMPLETE, Phase 28-02 COMPLETE, Phase 28-03 COMPLETE, Phase 28-05 COMPLETE, Phase 28-06 COMPLETE, Phase 28-07 COMPLETE, Phase 28-08 COMPLETE)
 
 ### Blockers/Concerns
 
@@ -49,6 +49,14 @@ When attempting to enable `rocm` as default feature (required for GPU kernel run
 
 **Remaining Issues (for subsequent plans):**
 All cfg gate removal complete - Phase 28 done
+
+**Progress - Phase 28-08 COMPLETE (cfg gate removal from src/sampler/, src/mlp/, src/profiling/, src/backend/hip_backend/):**
+- Fixed: Removed all #[cfg(feature = "rocm")] gates from 15 files in src/sampler/, src/mlp/, src/profiling/, src/backend/hip_backend/
+- Files: Sampler (gpu.rs, fused.rs, kernels.rs, top_k.rs, top_p.rs)**
+- Files: MLP (mod.rs, kernels.rs, rms_norm_tests.rs, swiglu_tests.rs, gpu_path_regression_tests.rs)**
+- Files: Profiling (mod.rs, ttft.rs, kernel_timer.rs)**
+- Files: Backend (backend.rs, memory.rs)**
+- GPU sampling, MLP operations, profiling tools, and HIP backend are now always compiled unconditionally**
 
 **Progress - Phase 28-07 COMPLETE (cfg gate removal from src/model/ and src/loader/):**
 - Fixed: Removed all #[cfg(feature = "rocm")] gates from 12 files in src/model/ and src/loader/**
@@ -451,8 +459,8 @@ Historical decisions affecting v1.3:
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed 28-06 cfg gate removal from src/ggml/hip_backend/ops/ at 2026-01-20T21:42:00Z
-Resume file: .planning/phases/28-rocm-compilation-fix/28-06-SUMMARY.md
+Stopped at: Completed 28-08 cfg gate removal from sampler, mlp, profiling, backend at 2026-01-20T21:46:22Z
+Resume file: .planning/phases/28-rocm-compilation-fix/28-08-SUMMARY.md
 
 **v1.8 - ROCm Compilation Fix (2026-01-20):**
 - Phase 28-01: Add c_void and HipError imports to FFI kernel files (COMPLETE)
@@ -460,6 +468,8 @@ Resume file: .planning/phases/28-rocm-compilation-fix/28-06-SUMMARY.md
 - Phase 28-03: cfg gate removal from src/attention/ (COMPLETE)
 - Phase 28-05: cfg gate removal from src/kernels/ (COMPLETE)
 - Phase 28-06: cfg gate removal from src/ggml/hip_backend/ops/ (COMPLETE)
+- Phase 28-07: cfg gate removal from src/model/ and src/loader/ (COMPLETE)
+- Phase 28-08: cfg gate removal from src/sampler/, src/mlp/, src/profiling/, src/backend/hip_backend/ (COMPLETE)
 
 **Phase 28-01 Summary:**
 - Added `use std::ffi::c_void;` to 9 FFI kernel files using HIP kernel launches
@@ -514,6 +524,12 @@ Resume file: .planning/phases/28-rocm-compilation-fix/28-06-SUMMARY.md
 - GGML HIP backend operations are core to GPU inference - should always be available
 - Removed cfg gates from mask, rope, softmax, batch_quantized, fused_ops, q4_0_dequant
 - Merged duplicate rocm/non-rocm code blocks (28-06)
+
+**Decision: Unconditional GPU Sampling, MLP, Profiling, and Backend Compilation**
+- GPU sampling (top-k, top-p, fused) are core to inference - always available (28-08)
+- GPU MLP operations (SwiGLU, RMSNorm) are core to transformers - always available (28-08)
+- Profiling tools (kernel timer, TTFT) are essential for development - always available (28-08)
+- HIP backend memory operations are the project's core abstraction - always available (28-08)
 
 **v1.5 - GPU Transpose Fix (2026-01-20):**
 - Phase 27-01: TransposeKernel module with lazy HSACO loading, build.rs integration (COMPLETE)
