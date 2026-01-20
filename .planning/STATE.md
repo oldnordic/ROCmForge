@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 ## Current Position
 
 Phase: 28 - ROCm Compilation Fix
-Plan: 01 of N (Wave 1 - Import fixes)
-Status: In Progress - Import errors fixed, remaining issues documented
-Last activity: Completed 28-01 import fixes at 2026-01-20T21:21:22Z
+Plan: 02 of N (Wave 2 - Variable naming fixes)
+Status: In Progress - Import errors fixed, underscore-prefixed parameters fixed
+Last activity: Completed 28-02 underscore prefix fixes at 2026-01-20T21:26:07Z
 
-Progress: [███████████████████░░] 99.5% (Phase 27 COMPLETE, Phase 28-01 COMPLETE)
+Progress: [███████████████████░░] 99.5% (Phase 27 COMPLETE, Phase 28-01 COMPLETE, Phase 28-02 COMPLETE)
 
 ### Blockers/Concerns
 
@@ -27,9 +27,13 @@ When attempting to enable `rocm` as default feature (required for GPU kernel run
 - Fixed: HipError imports in 3 attention kernel cache files
 - Fixed: Path import in kernels_cache/mod.rs
 
+**Progress - Phase 28-02 COMPLETE (Variable naming fixes):**
+- Fixed: Removed underscore prefixes from `mask`, `q`, `k`, `v` parameters in flash_attention.rs
+- Fixed: Renamed `_handle` to `handle` in FlashAttentionBackend struct
+- Verified: simple_transformer.rs already has correct `let mut linear` (fixed in 27-04)
+
 **Remaining Issues (for subsequent plans):**
-1. **flash_attention.rs**: Underscore-prefixed parameters (`_mask`, `_q`, `_k`, `_v`) used in code
-2. **kernels/transpose/mod.rs**: Type mismatch `Arc<Arc<HipBackend>>`
+1. **kernels/transpose/mod.rs**: Type mismatch `Arc<Arc<HipBackend>>` (next plan)
 
 **Root Cause:** Codebase was built/tested without `rocm` feature enabled. GPU-specific code paths accumulated bit-rot from lack of compilation.
 
@@ -428,8 +432,8 @@ Historical decisions affecting v1.3:
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed 28-01 Add c_void and HipError imports at 2026-01-20T21:21:22Z
-Resume file: .planning/phases/28-rocm-compilation-fix/28-01-SUMMARY.md
+Stopped at: Completed 28-02 underscore prefix fixes at 2026-01-20T21:26:07Z
+Resume file: .planning/phases/28-rocm-compilation-fix/28-02-SUMMARY.md
 
 **v1.5 - GPU Transpose Fix (2026-01-20):**
 - Phase 27-01: TransposeKernel module with lazy HSACO loading, build.rs integration (COMPLETE)
@@ -503,3 +507,12 @@ Resume file: .planning/phases/28-rocm-compilation-fix/28-01-SUMMARY.md
 **Decisions:**
 - **Import Placement**: Add `use std::ffi::c_void;` after std imports but before crate imports (following Rust conventions)
 - **Minimal Changes**: Only added missing imports, did NOT remove #[cfg(feature = "rocm")] gates (that's Wave 2+ work)
+- **No Underscore Prefix for Conditionally Compiled Parameters**: Parameters used inside #[cfg(feature = "rocm")] blocks should have real names, not underscore-prefixed to suppress warnings (28-02)
+
+**Phase 28-02 Summary:**
+- Removed underscore prefixes from `mask`, `q`, `k`, `v` parameters in flash_attention.rs forward()
+- Renamed `_handle` to `handle` in FlashAttentionBackend struct
+- Verified simple_transformer.rs already has correct `let mut linear` (fixed in 27-04)
+- Parameters were incorrectly prefixed with underscore to suppress warnings when rocm wasn't compiled
+- Duration: 3 min
+- Commit: 06ab856 (fix)
