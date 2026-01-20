@@ -2262,6 +2262,72 @@ impl DeviceTensor {
         Ok(DeviceTensor { buffer, shape })
     }
 
+    /// Create device tensor from a slice of arena buffer
+    ///
+    /// This is used by the memory arena pattern where multiple tensors share
+    /// a single large GPU buffer. The tensor references a sub-region of the
+    /// arena buffer via HipBuffer::sub_buffer_view().
+    ///
+    /// # Arguments
+    /// * `_backend` - HIP backend (unused but kept for API consistency)
+    /// * `arena_buffer` - The arena's backing buffer
+    /// * `offset` - Byte offset into arena where tensor data is located
+    /// * `size` - Size of tensor data in bytes
+    /// * `shape` - Tensor shape
+    ///
+    /// # Returns
+    /// DeviceTensor that references the arena slice
+    ///
+    /// # Errors
+    /// - If offset + size exceeds arena buffer size
+    ///
+    /// # Arena Lifetime
+    /// The returned DeviceTensor holds an Arc to the arena's internal buffer
+    /// via sub_buffer_view(). The arena must outlive all tensors using it.
+    /// When ModelWeightArena is dropped, the backing buffer is freed and all
+    /// DeviceTensors referencing it become invalid.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let arena = ModelWeightArena::new(total_bytes, &backend)?;
+    /// let offset = arena.allocate_named("weight1".to_string(), tensor_bytes)?;
+    ///
+    /// // Upload to arena offset...
+    /// async_loader.upload_to_buffer_offset(arena.buffer(), offset, &data, 0)?;
+    ///
+    /// // Create tensor referencing arena slice
+    /// let tensor = DeviceTensor::from_arena_slice(
+    ///     &backend,
+    ///     arena.buffer(),
+    ///     offset,
+    ///     tensor_bytes,
+    ///     TensorShape::from_dims(&[128, 128])
+    /// )?;
+    /// ```
+    pub fn from_arena_slice(
+        _backend: &HipBackend,
+        arena_buffer: &HipBuffer,
+        offset: usize,
+        size: usize,
+        shape: TensorShape,
+    ) -> HipResult<Self> {
+        // Create a view into the arena buffer at the specified offset
+        let buffer_view = arena_buffer.sub_buffer_view(offset, size).map_err(|e| {
+            HipError::MemoryAllocationFailed(format!(
+                "Failed to create arena slice: offset={}, size={}, arena_size={}, error={}",
+                offset,
+                size,
+                arena_buffer.size(),
+                e
+            ))
+        })?;
+
+        Ok(DeviceTensor {
+            buffer: buffer_view,
+            shape,
+        })
+    }
+
     /// Get tensor shape
     pub fn shape(&self) -> &TensorShape {
         &self.shape
