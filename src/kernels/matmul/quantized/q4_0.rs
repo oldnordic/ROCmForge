@@ -218,7 +218,7 @@ pub fn matmul_q4_0(
 /// # Safety
 /// Caller must ensure all pointers are valid and synchronized.
 #[cfg(feature = "rocm")]
-pub(crate) unsafe fn matmul_q4_0_gpu(
+pub unsafe fn matmul_q4_0_gpu(
     backend: &HipBackend,
     activations: *const f32,
     weights_q4_0: *const u8,
