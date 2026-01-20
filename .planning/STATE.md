@@ -9,11 +9,11 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 
 ## Current Position
 
-Phase: 25 - Architectural Decomposition (Plan 13 of 17 - Gap Closure In Progress)
-Status: GAP CLOSURE IN PROGRESS - 6 of 10 gap closure plans complete
-Last activity: Completed 25-13 http/server.rs decomposition at 2026-01-20T17:36:26Z
+Phase: 25 - Architectural Decomposition (Plan 15 of 17 - Gap Closure In Progress)
+Status: GAP CLOSURE IN PROGRESS - 8 of 10 gap closure plans complete
+Last activity: Completed 25-15 profiling/baseline.rs decomposition at 2026-01-20T17:45:21Z
 
-Progress: [█████████████████░░░] 93% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 6/10 complete)
+Progress: [█████████████████░░░] 94% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 8/10 complete)
 
 ## Milestone v1.3 Summary
 
@@ -30,10 +30,10 @@ Progress: [█████████████████░░░] 93% (Ph
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 155 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 6/10)
-- Plans remaining: 9 (4 gap closure + 5 future)
+- Total plans completed: 157 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 8/10)
+- Plans remaining: 7 (2 gap closure + 5 future)
 - Average duration: ~44 min
-- Total execution time: ~113 hours
+- Total execution time: ~114 hours
 
 ## Accumulated Context
 
@@ -172,8 +172,8 @@ Historical decisions affecting v1.3:
 - Phase 25-11: Gap Closure - kv_cache/kv_cache.rs further decomposition (COMPLETE)
 - Phase 25-12: Gap Closure - ggml/hip_backend/execution.rs further decomposition (COMPLETE)
 - Phase 25-13: Gap Closure - http/server.rs decomposition (COMPLETE)
-- Phase 25-14: Gap Closure - profiling/rocprof_integration.rs decomposition (PLANNED)
-- Phase 25-15: Gap Closure - profiling/baseline.rs decomposition (PLANNED)
+- Phase 25-14: Gap Closure - profiling/rocprof_integration.rs decomposition (COMPLETE)
+- Phase 25-15: Gap Closure - profiling/baseline.rs decomposition (COMPLETE)
 - Phase 25-16: Gap Closure - backend/cpu/simd_ops.rs decomposition (PLANNED)
 - Phase 25-17: Gap Closure - backend/cpu/simd.rs decomposition (PLANNED)
 
@@ -223,11 +223,11 @@ Historical decisions affecting v1.3:
 | sampler/gpu.rs | 1,858 | 5 modules (COMPLETE) |
 | http/server.rs | 1,518 | 4 modules (COMPLETE - 25-13) |
 | ggml/hip_backend/mod.rs | 1,509 | 4 modules (COMPLETE) |
-| profiling/rocprof_integration.rs | 1,396 | 3 modules (25-14) |
+| profiling/rocprof_integration.rs | 1,396 | 3 modules (COMPLETE - 25-14) |
 | attention/kernels.rs | 1,395 | 3 modules (COMPLETE) |
 | engine.rs | 1,386 | 4 modules (COMPLETE) |
 | scheduler/scheduler.rs | 1,307 | 3 modules (25-09 - COMPLETE) |
-| profiling/baseline.rs | 1,233 | 3 modules (25-15) |
+| profiling/baseline.rs | 1,233 | 3 modules (COMPLETE - 25-15) |
 | ops/attention_gpu.rs | 1,232 | 3 modules (25-10) |
 | backend/hip_backend/backend.rs | 1,209 | Main facade - acceptable |
 | ggml/hip_backend/execution.rs | 1,207 | 84 LOC + op_dispatch.rs (COMPLETE in 25-12) |
@@ -346,11 +346,30 @@ Historical decisions affecting v1.3:
 - Wave 6: 2 parallel plans (cpu/simd)
 
 **Phase 25 Final Status:**
-- Status: GAP CLOSURE IN PROGRESS (6 of 10 complete)
-- Files > 1,000 LOC reduced: 15 → 6 (-9 files so far)
-- Gap closure targets: 4 remaining files
-- Tests passing: 697 (baseline increased by +22 tests from types module)
-- Largest file: 1,396 LOC (profiling/rocprof_integration.rs)
+- Status: GAP CLOSURE IN PROGRESS (8 of 10 complete)
+- Files > 1,000 LOC reduced: 15 → 5 (-10 files so far)
+- Gap closure targets: 2 remaining files (Wave 6: simd_ops.rs, simd.rs)
+- Tests passing: 701 (baseline increased by +4 tests from profiling modules)
+- Largest file: 1,198 LOC (backend/cpu/simd_ops.rs)
+
+**Phase 25-15 Summary:**
+- Decomposed profiling/baseline.rs (1,233 LOC) into 3 focused modules
+- baseline_types.rs (461 LOC): HardwareInfo, BaselineMetrics, ComparisonResult, RegressionReport, BaselineError, RegressionThreshold
+- baseline_storage.rs (167 LOC): save/load functions for baseline persistence, file I/O
+- baseline.rs (637 LOC): PerformanceBaseline and BaselineCollection implementations, comparison logic, BenchmarkBaseline helper
+- 48% LOC reduction in baseline.rs (1,233 → 637)
+- Pure structural refactor - zero functional changes
+- Re-export chains preserve backward compatibility
+- Files > 1,000 LOC reduced: 15 → 5 (-10 files total)
+
+**Phase 25-14 Summary:**
+- Decomposed profiling/rocprof_integration.rs (1,396 LOC) into 3 focused modules
+- types.rs (142 LOC): ProfilingError, ProfilingResult, ProfilingTool, CounterCategory
+- rocprof.rs (915 LOC): RocprofSession, ProfilingConfig, ProfilingResults, helpers
+- omniperf.rs (485 LOC): OmniperfProfileBuilder, MemoryBandwidthAnalysis, MemoryAccessPattern
+- rocprof_integration.rs (163 LOC): thin re-export module for backward compatibility
+- Pure structural refactor - zero functional changes
+- Re-export chains preserve backward compatibility
 
 **Phase 25-13 Summary:**
 - Decomposed src/http/server.rs (1,518 LOC) into 4 focused modules
@@ -360,10 +379,9 @@ Historical decisions affecting v1.3:
 - server.rs (538 LOC): InferenceServer core + run_server() - 65% LOC reduction
 - Pure structural refactor - zero functional changes
 - Re-export chains preserve backward compatibility
-- Files > 1,000 LOC reduced: 15 → 6 (-9 files total)
 
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed 25-13 http/server.rs decomposition at 2026-01-20T17:36:26Z
+Stopped at: Completed 25-15 profiling/baseline.rs decomposition at 2026-01-20T17:45:21Z
 Resume file: Continue gap closure plans with `/gsd:execute-phase 25 --gaps-only`

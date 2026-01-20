@@ -1,62 +1,18 @@
-//! CPU SIMD backend for matrix operations using std::simd
+//! SIMD-accelerated matrix multiplication using std::simd
 //!
-//! Provides SIMD-accelerated matrix multiplication using the std::simd module
-//! (Rust 1.82+). Requires the portable_simd feature (enabled at crate level).
-//!
-//! Automatically selects optimal vector width based on architecture.
+//! Provides matrix multiplication implementations using portable SIMD,
+//! with architecture-specific optimizations (AVX2, NEON, AVX-512).
 
-use std::simd::{f32x4, f32x8, Simd};
-use std::simd::prelude::SimdFloat;
+use crate::backend::cpu::cpu_features::CpuFeatures;
 
-// ============================================================================
-// AVX-512 support (opt-in via feature flag)
-// ============================================================================
+use super::{SimdF32, SIMD_WIDTH, AVX512_WIDTH};
+use super::error::{SimdMatmulError, SimdMatmulResult};
 
 #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 use std::simd::f32x16;
 
-// ============================================================================
-// Default SIMD types (AVX2/NEON)
-// ============================================================================
-
-// Architecture detection for optimal SIMD width
-#[cfg(target_arch = "x86_64")]
-type SimdF32 = f32x8; // AVX2: 8 floats per vector
-
-#[cfg(target_arch = "aarch64")]
-type SimdF32 = f32x4; // NEON: 4 floats per vector
-
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-type SimdF32 = f32x4; // Safe fallback
-
-// Vector width in elements
-#[cfg(target_arch = "x86_64")]
-const SIMD_WIDTH: usize = 8;
-
-#[cfg(target_arch = "aarch64")]
-const SIMD_WIDTH: usize = 4;
-
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-const SIMD_WIDTH: usize = 4;
-
-// ============================================================================
-// AVX-512 vector width (when feature is enabled)
-// ============================================================================
-
-#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
-const AVX512_WIDTH: usize = 16;
-
-/// Matrix multiplication error types
-#[derive(Debug, thiserror::Error)]
-pub enum SimdMatmulError {
-    #[error("Dimension mismatch: {0}")]
-    DimensionMismatch(String),
-
-    #[error("Buffer size mismatch: expected {expected}, got {actual}")]
-    BufferSizeError { expected: usize, actual: usize },
-}
-
-pub type SimdMatmulResult<T> = Result<T, SimdMatmulError>;
+use std::simd::{f32x4, f32x8, Simd};
+use std::simd::prelude::SimdFloat;
 
 /// SIMD-accelerated matrix multiplication: C = A * B
 ///
@@ -628,8 +584,6 @@ pub fn matmul_optimized_f32(
     n: usize,
     k: usize,
 ) -> SimdMatmulResult<Vec<f32>> {
-    use crate::backend::cpu::cpu_features::CpuFeatures;
-
     // Get cached CPU features (detected once at startup)
     let features = CpuFeatures::get();
 
@@ -665,8 +619,6 @@ pub fn matmul_optimized_tiled_f32(
     n: usize,
     k: usize,
 ) -> SimdMatmulResult<Vec<f32>> {
-    use crate::backend::cpu::cpu_features::CpuFeatures;
-
     // Get cached CPU features (detected once at startup)
     let features = CpuFeatures::get();
 
@@ -690,6 +642,10 @@ pub fn matmul_optimized_tiled_f32(
         scalar_matmul_f32(a, b, m, n, k)
     }
 }
+
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
