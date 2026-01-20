@@ -536,11 +536,11 @@ fn self_attention_separate(
             .ok_or_else(|| HipError::GenericError("RoPE not configured".to_string()))?;
 
         // Download Q and K to host, apply RoPE separately, upload back
-        let mut q_host = q_reshaped
-            .to_host_vec()
+        let mut q_host = vec![0.0f32; q_reshaped.len()];
+        backend.copy_from_device_safe(&q_reshaped.buffer, &mut q_host)
             .map_err(|e| HipError::GenericError(format!("Failed to download Q: {}", e)))?;
-        let mut k_host = k_reshaped
-            .to_host_vec()
+        let mut k_host = vec![0.0f32; k_reshaped.len()];
+        backend.copy_from_device_safe(&k_reshaped.buffer, &mut k_host)
             .map_err(|e| HipError::GenericError(format!("Failed to download K: {}", e)))?;
 
         // Apply RoPE to Q with num_heads (in-place)

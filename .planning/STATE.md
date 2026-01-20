@@ -5,15 +5,15 @@
 See: .planning/PROJECT.md (updated 2026-01-20)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Phase 25 - Architectural Decomposition (Gap Closure plans created)
+**Current focus:** Phase 26 - Compiler Warning Cleanup
 
 ## Current Position
 
-Phase: 25 - Architectural Decomposition (Plan 16 of 17 - Gap Closure In Progress)
-Status: GAP CLOSURE IN PROGRESS - 9 of 10 gap closure plans complete
-Last activity: Completed 25-16 backend/cpu/simd_ops.rs decomposition at 2026-01-20T17:55:00Z
+Phase: 26 - Warning Cleanup (Plan 1 of N - In Progress)
+Status: PLAN 26-01 COMPLETE - Deprecated dequant warnings eliminated
+Last activity: Completed 26-01 dequant migration at 2026-01-20T18:44:00Z
 
-Progress: [█████████████████░░░] 94% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 9/10 complete)
+Progress: [████████████████████░] 98% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 COMPLETE, Phase 26 in progress)
 
 ## Milestone v1.3 Summary
 
@@ -393,5 +393,5 @@ Historical decisions affecting v1.3:
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed 25-16 backend/cpu/simd_ops.rs decomposition at 2026-01-20T17:55:00Z
-Resume file: Continue gap closure with plan 25-17 (backend/cpu/simd.rs decomposition - FINAL gap closure plan)
+Stopped at: Completed 26-01 loader module dequant migration at 2026-01-20T18:44:00Z
+Resume file: Continue warning cleanup with plan 26-02 (deprecated to_host_vec method migration)

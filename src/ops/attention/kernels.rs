@@ -268,7 +268,8 @@ impl HipAttentionKernels {
         seq_len: usize,
         cache_len: usize,
     ) -> HipResult<()> {
-        let mut attention_host = attention.to_host_vec()?;
+        let mut attention_host = vec![0.0f32; attention.len()];
+    self.backend.copy_from_device_safe(&attention.buffer, &mut attention_host)?;
 
         for i in 0..seq_len {
             for j in 0..cache_len {
@@ -354,7 +355,8 @@ impl HipAttentionKernels {
         attention: &mut DeviceTensor,
         _temp_buffer: &DeviceTensor,
     ) -> HipResult<()> {
-        let mut attention_host = attention.to_host_vec()?;
+        let mut attention_host = vec![0.0f32; attention.len()];
+    self.backend.copy_from_device_safe(&attention.buffer, &mut attention_host)?;
         let attention_shape = attention.shape();
         let rows = attention_shape.dims()[0];
         let cols = attention_shape.dims()[1];
@@ -479,8 +481,10 @@ impl HipAttentionKernels {
         v: &DeviceTensor,
         output: &mut DeviceTensor,
     ) -> HipResult<()> {
-        let attention_host = attention.to_host_vec()?;
-        let v_host = v.to_host_vec()?;
+        let mut attention_host = vec![0.0f32; attention.len()];
+    self.backend.copy_from_device_safe(&attention.buffer, &mut attention_host)?;
+    let mut v_host = vec![0.0f32; v.len()];
+    self.backend.copy_from_device_safe(&v.buffer, &mut v_host)?;
         let attention_shape = attention.shape();
         let v_shape = v.shape();
 
