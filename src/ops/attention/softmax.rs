@@ -5,6 +5,7 @@
 
 #![allow(deprecated)]
 
+use std::ffi::c_void;
 
 use crate::backend::{
     hip_blas::{self, HipBlasHandle, HIPBLAS_OP_N, HIPBLAS_OP_T},

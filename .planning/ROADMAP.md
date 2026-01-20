@@ -10,7 +10,9 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 - **v1.1 Bug Fix Release** — Phases 13-01, 13-02, 13-03 (shipped 2026-01-19)
 - **v1.2 Technical Debt Cleanup + Performance** — Phases 14-18 (shipped 2026-01-19)
 - **v1.3 Test Health & Performance Validation** — Phases 19-21 (shipped 2026-01-20)
-- **v1.5 GPU Transpose Fix** — Phase 27 (in progress 2026-01-20)
+- **v1.4 Memory Safety + Code Restructure** — Phases 22-26 (shipped 2026-01-20)
+- **v1.5 GPU Transpose Fix** — Phase 27 (shipped 2026-01-20)
+- **v1.6 ROCm Feature Fix** — Phase 28 (in progress 2026-01-20)
 
 ## Phases
 
@@ -109,10 +111,49 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 | 25 | v1.4 | 17/17 | Complete | 2026-01-20 |
 | 26 | v1.4 | 4/4 | Complete | 2026-01-20 |
 | 27 | v1.5 | 4/4 | Complete | 2026-01-20 |
+| 28 | v1.6 | 0/3 | In Progress | 2026-01-20 |
 
-**Total Progress:** 171/172 plans complete (99%)
+**Total Progress:** 171/174 plans complete (98%)
 
 **Note:** Phase 21-06 (Performance Validation) skipped by user request. All test health goals (TEST-01 through TEST-06) achieved.
+
+---
+
+**v1.6**: ROCm Feature Fix — IN PROGRESS 2026-01-20
+
+### v1.6 Summary
+
+**Focus:** Remove incorrect `rocm` feature flag - ROCm/HIP is core to ROCmForge
+
+**Issue:** 155 compilation errors when `--features rocm` is enabled. GPU code paths accumulated bit-rot from lack of compilation.
+
+**Root Cause:** Codebase was built/tested without `rocm` feature enabled. GPU-specific code wrapped in `#[cfg(feature = "rocm")]` was never compiled.
+
+**Solution:** Remove the `rocm` feature entirely. ROCm/HIP is always enabled.
+
+**Plans:**
+- Phase 28: ROCm Feature Fix (3 plans)
+
+<details>
+<summary>Phase 28: ROCm Compilation Fix (3 plans)</summary>
+
+**Goal:** Remove the incorrect `rocm` feature flag entirely - ROCm/HIP is core to ROCmForge, NOT optional.
+
+**Plans:**
+- [ ] 28-01: Fix missing imports and parameter names
+- [ ] 28-02: Remove all #[cfg(feature = "rocm")] gates
+- [ ] 28-03: Remove rocm feature from Cargo.toml and build.rs
+
+**Implementation Order (from research):**
+1. Fix missing imports (c_void, HipError, Path, Mutex)
+2. Fix underscore-prefixed parameters
+3. Fix type annotations
+4. Fix missing mut keyword
+5. Remove #[cfg(feature = "rocm")] gates
+6. Remove rocm feature from Cargo.toml
+7. Update build.rs to always compile kernels
+
+</details>
 
 ---
 

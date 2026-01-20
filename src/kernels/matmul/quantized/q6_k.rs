@@ -6,6 +6,7 @@
 //! - Dequantization: value = signed_6bit * scale
 
 use std::env;
+use std::ffi::c_void;
 use std::path::Path;
 use std::sync::Mutex;
 

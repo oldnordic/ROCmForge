@@ -6,6 +6,7 @@
 //! - Dequantization: value = scale * ((packed & 0x0F) - 8)
 
 use std::env;
+use std::ffi::c_void;
 use std::path::Path;
 use std::sync::Mutex;
 

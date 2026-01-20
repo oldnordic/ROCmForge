@@ -6,6 +6,7 @@
 //! Uses precompiled HIP kernel for on-device dequantization with CPU fallback.
 
 use std::env;
+use std::ffi::c_void;
 use std::path::Path;
 use std::sync::Mutex;
 

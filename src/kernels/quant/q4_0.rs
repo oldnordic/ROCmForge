@@ -10,6 +10,8 @@
 #[cfg(feature = "rocm")]
 use crate::backend::hip_backend::{HipBackend, HipError, HipKernel, HipModule};
 
+use std::ffi::c_void;
+
 #[cfg(feature = "rocm")]
 use crate::backend::HipBuffer;
 
@@ -139,10 +141,10 @@ pub fn dequantize_q4_0_kernel_cached(
     let mut output_arg = output.as_mut_ptr() as *mut f32;
     let mut count_arg = num_elements as i32;
 
-    let args: &[*mut c_void] = &[
-        &mut input_arg as *mut _ as *mut c_void,
-        &mut output_arg as *mut _ as *mut c_void,
-        &mut count_arg as *mut _ as *mut c_void,
+    let args: &[*mut std::ffi::c_void] = &[
+        &mut input_arg as *mut _ as *mut std::ffi::c_void,
+        &mut output_arg as *mut _ as *mut std::ffi::c_void,
+        &mut count_arg as *mut _ as *mut std::ffi::c_void,
     ];
 
     // Launch kernel

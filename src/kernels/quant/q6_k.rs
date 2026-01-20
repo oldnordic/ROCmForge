@@ -14,6 +14,8 @@
 #[cfg(feature = "rocm")]
 use crate::backend::{HipBackend, HipKernel, HipModule};
 
+use std::ffi::c_void;
+
 #[cfg(test)]
 use half::f16;
 
@@ -126,9 +128,9 @@ pub fn dequantize_q6_k_gpu_kernel(
     // 2. output: float* __restrict__ (dequantized FP32 data)
     // 3. num_blocks: int (number of blocks to process)
     let args = [
-        quantized_buffer.as_ptr() as *mut std::ffi::c_void,
-        output.as_ptr() as *mut std::ffi::c_void,
-        &(num_blocks as i32) as *const i32 as *mut std::ffi::c_void,
+        quantized_buffer.as_ptr() as *mut c_void,
+        output.as_ptr() as *mut c_void,
+        &(num_blocks as i32) as *const i32 as *mut c_void,
     ];
 
     // Launch kernel
