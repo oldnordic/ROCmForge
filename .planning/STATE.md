@@ -9,11 +9,11 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 
 ## Current Position
 
-Phase: 25 - Architectural Decomposition (Plan 11 of 17 - Gap Closure In Progress)
-Status: GAP CLOSURE IN PROGRESS - 5 of 10 gap closure plans complete
-Last activity: Completed 25-10 ops/attention_gpu.rs decomposition at 2026-01-20T17:24:19Z
+Phase: 25 - Architectural Decomposition (Plan 13 of 17 - Gap Closure In Progress)
+Status: GAP CLOSURE IN PROGRESS - 6 of 10 gap closure plans complete
+Last activity: Completed 25-13 http/server.rs decomposition at 2026-01-20T17:36:26Z
 
-Progress: [█████████████████░░░] 92% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 5/10 complete)
+Progress: [█████████████████░░░] 93% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 6/10 complete)
 
 ## Milestone v1.3 Summary
 
@@ -30,8 +30,8 @@ Progress: [█████████████████░░░] 92% (Ph
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 154 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 5/10)
-- Plans remaining: 10 (5 gap closure + 5 future)
+- Total plans completed: 155 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 6/10)
+- Plans remaining: 9 (4 gap closure + 5 future)
 - Average duration: ~44 min
 - Total execution time: ~113 hours
 
@@ -171,7 +171,7 @@ Historical decisions affecting v1.3:
 - Phase 25-10: Gap Closure - ops/attention_gpu.rs decomposition (PLANNED)
 - Phase 25-11: Gap Closure - kv_cache/kv_cache.rs further decomposition (COMPLETE)
 - Phase 25-12: Gap Closure - ggml/hip_backend/execution.rs further decomposition (COMPLETE)
-- Phase 25-13: Gap Closure - http/server.rs decomposition (PLANNED)
+- Phase 25-13: Gap Closure - http/server.rs decomposition (COMPLETE)
 - Phase 25-14: Gap Closure - profiling/rocprof_integration.rs decomposition (PLANNED)
 - Phase 25-15: Gap Closure - profiling/baseline.rs decomposition (PLANNED)
 - Phase 25-16: Gap Closure - backend/cpu/simd_ops.rs decomposition (PLANNED)
@@ -221,7 +221,7 @@ Historical decisions affecting v1.3:
 | loader/gguf.rs | 2,284 | 7 modules (COMPLETE) |
 | kv_cache/kv_cache.rs | 2,094 | 5 modules (COMPLETE - 25-11: 1,032 LOC with cache_ops, sequence_ops, block_ops) |
 | sampler/gpu.rs | 1,858 | 5 modules (COMPLETE) |
-| http/server.rs | 1,518 | 4 modules (25-13) |
+| http/server.rs | 1,518 | 4 modules (COMPLETE - 25-13) |
 | ggml/hip_backend/mod.rs | 1,509 | 4 modules (COMPLETE) |
 | profiling/rocprof_integration.rs | 1,396 | 3 modules (25-14) |
 | attention/kernels.rs | 1,395 | 3 modules (COMPLETE) |
@@ -341,19 +341,29 @@ Historical decisions affecting v1.3:
 - 10 plans created (25-08 through 25-17)
 - Wave 2A: 3 parallel plans (engine COMPLETE, scheduler COMPLETE, ops/attention_gpu COMPLETE)
 - Wave 2B: 2 parallel plans (kv_cache COMPLETE, ggml/execution COMPLETE)
-- Wave 4: 1 plan (http/server)
+- Wave 4: 1 plan (http/server COMPLETE)
 - Wave 5: 2 parallel plans (profiling)
 - Wave 6: 2 parallel plans (cpu/simd)
 
 **Phase 25 Final Status:**
-- Status: GAP CLOSURE IN PROGRESS (5 of 10 complete)
-- Files > 1,000 LOC reduced: 15 → 7 (-8 files so far)
-- Gap closure targets: 5 remaining files
-- Tests passing: 675 (baseline stable)
-- Largest file: 1,518 LOC (http/server.rs)
+- Status: GAP CLOSURE IN PROGRESS (6 of 10 complete)
+- Files > 1,000 LOC reduced: 15 → 6 (-9 files so far)
+- Gap closure targets: 4 remaining files
+- Tests passing: 697 (baseline increased by +22 tests from types module)
+- Largest file: 1,396 LOC (profiling/rocprof_integration.rs)
+
+**Phase 25-13 Summary:**
+- Decomposed src/http/server.rs (1,518 LOC) into 4 focused modules
+- types.rs (520 LOC): HttpError, ServerError, GenerateRequest, GenerateResponse, TokenStream, GenerationState, ServerState, TracesQuery
+- routes.rs (44 LOC): create_router() function with CORS and all endpoints
+- handlers.rs (580 LOC): All request handlers (generate, stream, status, cancel, models, health, ready, metrics, traces)
+- server.rs (538 LOC): InferenceServer core + run_server() - 65% LOC reduction
+- Pure structural refactor - zero functional changes
+- Re-export chains preserve backward compatibility
+- Files > 1,000 LOC reduced: 15 → 6 (-9 files total)
 
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed 25-10 ops/attention_gpu.rs decomposition at 2026-01-20T17:24:19Z
+Stopped at: Completed 25-13 http/server.rs decomposition at 2026-01-20T17:36:26Z
 Resume file: Continue gap closure plans with `/gsd:execute-phase 25 --gaps-only`
