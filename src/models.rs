@@ -1,6 +1,6 @@
 //! Helper utilities for discovering available GGUF models on disk.
 
-use crate::loader::gguf::{GgufLoader, GgufMetadata};
+use crate::loader::{GgufLoader, GgufMetadata};
 use crate::tokenizer::infer_tokenizer_path;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
