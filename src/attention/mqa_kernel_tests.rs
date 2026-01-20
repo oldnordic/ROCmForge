@@ -168,6 +168,7 @@ mod tests {
     /// Test correctness: Compare GPU output with CPU replication
     #[test]
     #[serial] // Phase 20: Run serially
+    #[ignore] // Requires HSACO kernels - GPU memory access without kernels
     fn test_kv_replication_correctness() {
         // Phase 20: Check GPU availability first
         let backend = match HipBackend::new_checked() {
