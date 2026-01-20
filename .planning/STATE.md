@@ -9,11 +9,11 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 
 ## Current Position
 
-Phase: 22 - Memory Pool Implementation (Plan 01 of 5)
-Status: In progress - Plan 22-01 complete
-Last activity: ModelWeightArena structure implementation
+Phase: 22 - Memory Pool Implementation (Plan 02 of 5)
+Status: In progress - Plan 22-02 complete
+Last activity: Memory requirements calculation implementation
 
-Progress: [████████░░░░░░░░░░░░░░] 10% (Phase 22 Plan 1 of 5 complete, v1.3 complete, v1.4 planning paused)
+Progress: [██████████░░░░░░░░░░░░] 20% (Phase 22 Plan 2 of 5 complete, v1.3 complete, v1.4 planning paused)
 
 ## Milestone v1.3 Summary
 
@@ -95,9 +95,15 @@ Historical decisions affecting v1.3:
 
 **v1.4 - Memory & Performance (2026-01-20):**
 - Phase 22-01: ModelWeightArena structure with best-fit allocation and 256-byte alignment
+- Phase 22-02: MemoryCalculator and check_memory_for_model() for pre-allocation memory verification
+
+**Decision: Safety Margin on Calculated Need**
+- Use 10% + 100MB minimum safety margin on CALCULATED memory need
+- NOT a percentage of free memory (the flawed 70% approach could still crash desktop)
+- Based on actual tensor requirements from GGUF model (22-02)
 
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed Phase 22-01 (ModelWeightArena structure)
+Stopped at: Completed Phase 22-02 (Memory Requirements Calculation)
 Resume file: None

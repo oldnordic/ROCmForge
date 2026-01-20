@@ -7,7 +7,7 @@
 //! - GPU memory allocation via DeviceTensor
 
 use crate::backend::hip_backend::{AsyncLoader, DeviceTensor, HipBackend, HipBuffer};
-use crate::memory::MemoryCalculator;
+use crate::memory::{MemoryCalculator, ModelWeightArena};
 
 // GPU dequantization kernels (require ROCm feature)
 #[cfg(feature = "rocm")]
@@ -1227,9 +1227,22 @@ impl GgufLoader {
         // Release the shapes lock before Phase B
         drop(shapes);
 
-        // Phase B: Concurrent GPU Uploads (AsyncLoader)
+        // Phase B-1: Create memory arena for all tensor weights
+        // Single large allocation instead of 200-300 individual allocations
+        // This is critical for RDNA3 stability (prevents GPU hang)
+        tracing::info!("load_to_gpu_async: Phase B-1 - Creating memory arena");
+        let mut arena = ModelWeightArena::new(total_needed_bytes, backend)
+            .map_err(|e| anyhow!("Failed to create memory arena: {}", e))?;
+
+        tracing::info!(
+            "Created arena: {} MB capacity, alignment {} bytes",
+            arena.capacity() / 1024 / 1024,
+            ModelWeightArena::DEFAULT_ALIGNMENT
+        );
+
+        // Phase B-2: Upload all tensors to arena using offset-based allocation
         // Upload all dequantized tensors to GPU in parallel using 4 streams
-        tracing::info!("load_to_gpu_async: Phase B - Concurrent GPU uploads");
+        tracing::info!("load_to_gpu_async: Phase B-2 - Arena-based concurrent uploads");
 
         let dequantized = dequantized_data
             .lock()
@@ -1246,10 +1259,13 @@ impl GgufLoader {
                 .get(name)
                 .ok_or_else(|| anyhow!("Shape not found for tensor '{}'", name))?;
 
-            // Allocate GPU buffer
+            // Calculate tensor size
             let total_elements: usize = shape.iter().product();
-            let buffer = HipBuffer::new(total_elements * std::mem::size_of::<f32>())
-                .map_err(|e| anyhow!("Failed to allocate GPU buffer for '{}': {}", name, e))?;
+            let bytes_needed = total_elements * std::mem::size_of::<f32>();
+
+            // Allocate from arena (single large buffer subdivided)
+            let offset = arena.allocate_named(name.clone(), bytes_needed)
+                .map_err(|e| anyhow!("Failed to allocate arena space for '{}': {}", name, e))?;
 
             // Convert f32 data to bytes for upload
             let data_bytes: Vec<u8> = data
@@ -1257,16 +1273,23 @@ impl GgufLoader {
                 .flat_map(|&f| f.to_le_bytes().to_vec())
                 .collect();
 
-            // Upload using round-robin stream selection
+            // Upload to arena buffer at offset using round-robin stream selection
             let selected_stream = stream_idx % 4;
             async_loader
-                .upload_to_buffer(&buffer, &data_bytes, selected_stream)
+                .upload_to_buffer_offset(
+                    arena.buffer(),
+                    offset,
+                    &data_bytes,
+                    selected_stream
+                )
                 .map_err(|e| anyhow!("Failed to upload tensor '{}': {}", name, e))?;
 
-            // Create DeviceTensor from buffer
-            let device_tensor = Arc::new(DeviceTensor::from_buffer(
+            // Create DeviceTensor from arena slice
+            let device_tensor = Arc::new(DeviceTensor::from_arena_slice(
                 backend,
-                buffer,
+                arena.buffer(),
+                offset,
+                bytes_needed,
                 TensorShape::from_dims(shape),
             )?);
 
@@ -1285,11 +1308,18 @@ impl GgufLoader {
             .map_err(|e| anyhow!("Failed to synchronize async loader: {}", e))?;
 
         tracing::info!(
-            "load_to_gpu_async: Phase B complete - {} tensors uploaded to GPU",
+            "load_to_gpu_async: Phase B complete - {} tensors uploaded to GPU via arena",
             gpu_buffers
                 .lock()
                 .map_err(|e| anyhow!("Failed to lock gpu_buffers for logging: {}", e))?
                 .len()
+        );
+
+        tracing::info!(
+            "Arena upload complete: {} MB used, {} MB free, {} fragments",
+            arena.allocated_bytes() / 1024 / 1024,
+            arena.remaining_capacity() / 1024 / 1024,
+            arena.fragment_count()
         );
 
         // Phase C: Update GPU Cache
