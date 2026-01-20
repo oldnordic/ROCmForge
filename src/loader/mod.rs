@@ -21,9 +21,10 @@ pub use metadata::GgufMetadata;
 pub use gguf_tensor::GgufTensor;
 
 // Re-export dequantization functions for benchmarks
+// Note: Q4_1, Q5_0, Q5_1 removed in 23-02 (unused quantization formats)
 pub use dequant::{
-    dequant_q2_k, dequant_q3_k, dequant_q4_0, dequant_q4_1, dequant_q4_k,
-    dequant_q5_0, dequant_q5_1, dequant_q5_k, dequant_q6_k, dequant_q8_0,
+    dequant_q2_k, dequant_q3_k, dequant_q4_0, dequant_q4_k,
+    dequant_q5_k, dequant_q6_k, dequant_q8_0,
     dequant_mxfp4, dequant_mxfp6, dequantize,
 };
 

@@ -7,7 +7,7 @@
 //!
 //! Reference: https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf
 
-use crate::loader::gguf::{MxfpBlock, E8M0};
+use crate::loader::mxfp::{MxfpBlock, E8M0};
 
 /// Test E8M0 scale conversion (exponent-only format)
 ///

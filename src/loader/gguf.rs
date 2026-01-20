@@ -1620,7 +1620,7 @@ impl GgufLoader {
     ///
     /// NOTE: This method is a template for GPU tensor upload functionality.
     /// Currently, tensor loading is handled via lazy loading in ExecutionPlan.
-    /// The method dequantizes various tensor types (F32, F16, Q8_0, Q4_0, Q4_1, Q5_0, Q5_1, Q4_K, Q6_K, MXFP4, MXFP6).
+    /// The method dequantizes various tensor types (F32, F16, Q8_0, Q4_0, Q4_K, Q6_K, MXFP4, MXFP6).
     /// TODO: Integrate HIP kernels for direct GPU quantized tensor loading.
     #[allow(dead_code)]
     fn upload_tensor_to_gpu(
@@ -1832,170 +1832,6 @@ impl GgufLoader {
             .map_err(|_e| anyhow!("Failed to get inner value: RwLock poisoned"))?;
 
         eprintln!(">>> dequantize_q4_0: Total time {:?}", start.elapsed());
-        Ok(result)
-    }
-
-    /// Dequantize Q4_1 tensor to FP32
-    /// Format: 32 values per block, scale (4 bytes) + min (4 bytes) + 16 bytes of 4-bit packed values
-    fn dequantize_q4_1(&self, tensor: &GgufTensor) -> Result<Vec<f32>> {
-        let total_elements = tensor.total_elements();
-        let mut result = vec![0.0f32; total_elements];
-        let blocks = total_elements.div_ceil(32);
-
-        for block_idx in 0..blocks {
-            let block_start = block_idx * (4 + 4 + 16); // scale (4) + min (4) + quants (16)
-
-            if block_start + 8 > tensor.data.len() {
-                break;
-            }
-
-            // Read scale
-            let scale_bytes = &tensor.data[block_start..block_start + 4];
-            let scale = f32::from_le_bytes([
-                scale_bytes[0],
-                scale_bytes[1],
-                scale_bytes[2],
-                scale_bytes[3],
-            ]);
-
-            // Read min
-            let min_bytes = &tensor.data[block_start + 4..block_start + 8];
-            let min = f32::from_le_bytes([min_bytes[0], min_bytes[1], min_bytes[2], min_bytes[3]]);
-
-            // Read quantized values (4-bit packed)
-            let quant_start = block_start + 8;
-            let quant_end = std::cmp::min(quant_start + 16, tensor.data.len());
-            let packed_quants = &tensor.data[quant_start..quant_end];
-
-            // Dequantize (unpack 4-bit values)
-            for (i, &packed) in packed_quants.iter().enumerate() {
-                for j in 0..2 {
-                    let element_idx = block_idx * 32 + i * 2 + j;
-                    if element_idx < total_elements {
-                        let quant = if j == 0 {
-                            packed & 0x0F
-                        } else {
-                            (packed >> 4) & 0x0F
-                        };
-                        result[element_idx] = min + (quant as f32) * scale;
-                    }
-                }
-            }
-        }
-
-        Ok(result)
-    }
-
-    /// Dequantize Q5_0 tensor to FP32
-    /// Format: 32 values per block, scale (4 bytes) + qh (4 bytes) + 20 bytes of 4-bit packed values
-    /// qh contains the high bit for each of the 32 values
-    fn dequantize_q5_0(&self, tensor: &GgufTensor) -> Result<Vec<f32>> {
-        let total_elements = tensor.total_elements();
-        let mut result = vec![0.0f32; total_elements];
-        let blocks = total_elements.div_ceil(32);
-
-        for block_idx in 0..blocks {
-            let block_start = block_idx * (4 + 4 + 20); // scale (4) + qh (4) + quants (20)
-
-            if block_start + 8 > tensor.data.len() {
-                break;
-            }
-
-            // Read scale
-            let scale_bytes = &tensor.data[block_start..block_start + 4];
-            let scale = f32::from_le_bytes([
-                scale_bytes[0],
-                scale_bytes[1],
-                scale_bytes[2],
-                scale_bytes[3],
-            ]);
-
-            // Read high bits (qh)
-            let qh_bytes = &tensor.data[block_start + 4..block_start + 8];
-            let qh = u32::from_le_bytes([qh_bytes[0], qh_bytes[1], qh_bytes[2], qh_bytes[3]]);
-
-            // Read quantized values (4-bit packed)
-            let quant_start = block_start + 8;
-            let quant_end = std::cmp::min(quant_start + 20, tensor.data.len());
-            let packed_quants = &tensor.data[quant_start..quant_end];
-
-            // Dequantize (5-bit values: 4 low bits from packed, 1 high bit from qh)
-            for (i, &packed) in packed_quants.iter().enumerate() {
-                for j in 0..2 {
-                    let element_idx = block_idx * 32 + i * 2 + j;
-                    if element_idx < total_elements {
-                        let bit_idx = i * 2 + j;
-                        let low_bits = if j == 0 {
-                            packed & 0x0F
-                        } else {
-                            (packed >> 4) & 0x0F
-                        };
-                        let high_bit = if bit_idx < 32 { (qh >> bit_idx) & 1 } else { 0 };
-                        let quant = (low_bits as u32 | (high_bit << 4)) as u8;
-                        result[element_idx] = (quant as f32 - 16.0) * scale;
-                    }
-                }
-            }
-        }
-
-        Ok(result)
-    }
-
-    /// Dequantize Q5_1 tensor to FP32
-    /// Format: 32 values per block, scale (4 bytes) + min (4 bytes) + qh (4 bytes) + 20 bytes of 4-bit packed values
-    fn dequantize_q5_1(&self, tensor: &GgufTensor) -> Result<Vec<f32>> {
-        let total_elements = tensor.total_elements();
-        let mut result = vec![0.0f32; total_elements];
-        let blocks = total_elements.div_ceil(32);
-
-        for block_idx in 0..blocks {
-            let block_start = block_idx * (4 + 4 + 4 + 20); // scale (4) + min (4) + qh (4) + quants (20)
-
-            if block_start + 12 > tensor.data.len() {
-                break;
-            }
-
-            // Read scale
-            let scale_bytes = &tensor.data[block_start..block_start + 4];
-            let scale = f32::from_le_bytes([
-                scale_bytes[0],
-                scale_bytes[1],
-                scale_bytes[2],
-                scale_bytes[3],
-            ]);
-
-            // Read min
-            let min_bytes = &tensor.data[block_start + 4..block_start + 8];
-            let min = f32::from_le_bytes([min_bytes[0], min_bytes[1], min_bytes[2], min_bytes[3]]);
-
-            // Read high bits (qh)
-            let qh_bytes = &tensor.data[block_start + 8..block_start + 12];
-            let qh = u32::from_le_bytes([qh_bytes[0], qh_bytes[1], qh_bytes[2], qh_bytes[3]]);
-
-            // Read quantized values (4-bit packed)
-            let quant_start = block_start + 12;
-            let quant_end = std::cmp::min(quant_start + 20, tensor.data.len());
-            let packed_quants = &tensor.data[quant_start..quant_end];
-
-            // Dequantize (5-bit values: 4 low bits from packed, 1 high bit from qh)
-            for (i, &packed) in packed_quants.iter().enumerate() {
-                for j in 0..2 {
-                    let element_idx = block_idx * 32 + i * 2 + j;
-                    if element_idx < total_elements {
-                        let bit_idx = i * 2 + j;
-                        let low_bits = if j == 0 {
-                            packed & 0x0F
-                        } else {
-                            (packed >> 4) & 0x0F
-                        };
-                        let high_bit = if bit_idx < 32 { (qh >> bit_idx) & 1 } else { 0 };
-                        let quant = (low_bits as u32 | (high_bit << 4)) as u8;
-                        result[element_idx] = min + (quant as f32) * scale;
-                    }
-                }
-            }
-        }
-
         Ok(result)
     }
 
@@ -2350,10 +2186,10 @@ mod gguf_spec_tests {
         //     GGML_TYPE_F32     = 0,
         //     GGML_TYPE_F16     = 1,
         //     GGML_TYPE_Q4_0    = 2,
-        //     GGML_TYPE_Q4_1    = 3,
+        //     GGML_TYPE_Q4_1    = 3,  // NOT SUPPORTED - no common models use this
         //     // 4, 5 removed
-        //     GGML_TYPE_Q5_0    = 6,
-        //     GGML_TYPE_Q5_1    = 7,
+        //     GGML_TYPE_Q5_0    = 6,  // NOT SUPPORTED - no common models use this
+        //     GGML_TYPE_Q5_1    = 7,  // NOT SUPPORTED - no common models use this
         //     GGML_TYPE_Q8_0    = 8,  // CRITICAL: NOT 3!
         //     GGML_TYPE_Q8_1    = 9,
         //     ...
@@ -2364,9 +2200,6 @@ mod gguf_spec_tests {
         assert_eq!(GgufTensorType::F32 as u32, 0, "GGML_TYPE_F32");
         assert_eq!(GgufTensorType::F16 as u32, 1, "GGML_TYPE_F16");
         assert_eq!(GgufTensorType::Q4_0 as u32, 2, "GGML_TYPE_Q4_0");
-        assert_eq!(GgufTensorType::Q4_1 as u32, 3, "GGML_TYPE_Q4_1");
-        assert_eq!(GgufTensorType::Q5_0 as u32, 6, "GGML_TYPE_Q5_0");
-        assert_eq!(GgufTensorType::Q5_1 as u32, 7, "GGML_TYPE_Q5_1");
         assert_eq!(GgufTensorType::Q8_0 as u32, 8, "GGML_TYPE_Q8_0"); // Was wrongly 3!
     }
 

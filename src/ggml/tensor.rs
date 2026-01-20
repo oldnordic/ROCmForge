@@ -13,9 +13,6 @@ pub enum DType {
     F16,
     Q8_0,
     Q4_0,
-    Q4_1,
-    Q5_0,
-    Q5_1,
     Mxfp4,
     Mxfp6,
 }
@@ -75,7 +72,7 @@ impl TensorDesc {
             DType::I32 => 4,
             DType::U32 => 4,
             DType::Q8_0 => 1,
-            DType::Q4_0 | DType::Q4_1 | DType::Q5_0 | DType::Q5_1 => 1,
+            DType::Q4_0 => 1,
             DType::Mxfp4 | DType::Mxfp6 => 1,
         }
     }
