@@ -76,7 +76,14 @@ pub const HIP_MEMCPY_DEVICE_TO_DEVICE: i32 = 3;
 /// HIP success code
 pub const HIP_SUCCESS: i32 = 0;
 
-/// HIP event flags
+// HIP event creation flags
+/// Default event creation flag (no special flags)
+#[allow(dead_code)] // FFI constant - part of HIP API, available for future use
 pub const HIP_EVENT_DEFAULT: u32 = 0x0;
+
+/// Event flag to disable timing data collection
 pub const HIP_EVENT_DISABLE_TIMING: u32 = 0x1;
+
+/// Event flag to enable timing data collection
+#[allow(dead_code)] // FFI constant - part of HIP API, available for future use
 pub const HIP_EVENT_RECORD_TIMING: u32 = 0x2;
