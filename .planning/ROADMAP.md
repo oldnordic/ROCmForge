@@ -102,8 +102,9 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 | 19 | v1.3 | 4/4 | Complete | 2026-01-19 |
 | 20 | v1.3 | 8/8 | Complete | 2026-01-19 |
 | 21 | v1.3 | 5/6 | Complete* | 2026-01-20 |
+| 22 | v1.4 | 5/5 | Complete | 2026-01-20 |
 
-**Total Progress:** 136/137 plans complete (99%)
+**Total Progress:** 141/142 plans complete (99%)
 
 **Note:** Phase 21-06 (Performance Validation) skipped by user request. All test health goals (TEST-01 through TEST-06) achieved.
 
@@ -111,4 +112,55 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 
 ## Future Milestones
 
-**v1.4**: Multi-GPU support, advanced optimizations
+**v1.4**: Memory Safety + Code Restructure — SHIPPED 2026-01-20
+
+### v1.4 Overview
+
+**Focus**: Fix GPU memory allocation issues, remove dead/duplicate code, restructure for maintainability
+
+**Phases:**
+- Phase 22: Memory Pool Implementation (Critical - fixes GPU hang on desktop)
+- Phase 23: Dead/Duplicate Code Removal
+- Phase 24: Kernel-Centric Restructure
+
+**Total:** 3 phases, ~15-20 plans
+
+**Rationale:** Research on 2026-01-20 identified critical issues:
+1. **GPU hang risk**: Model loading uses 200-300 individual `hipMalloc` calls instead of memory pooling (llama.cpp analysis)
+2. **Duplicate MXFP code**: `MxfpBlock` and `E8M0` defined in both `gguf.rs` and `mxfp.rs`
+3. **File size issues**: `gguf.rs` is 2850 lines, loader total ~5000 lines - needs modularization
+4. **AMD-only focus**: Confirm pure AMD HIP + CPU architecture, no CUDA dependencies
+
+<details>
+<summary>v1.4 Memory Safety + Code Restructure (Phase 22-24) — IN PROGRESS 2026-01-20</summary>
+
+- [x] Phase 22: Memory Pool Implementation (5/5 plans) — **COMPLETE** 2026-01-20
+- [ ] Phase 23: Dead/Duplicate Code Removal (0/5 plans)
+- [ ] Phase 24: Kernel-Centric Restructure (0/6 plans)
+
+**Phase 22: Memory Pool Implementation**
+- [x] 22-01: Implement `ModelWeightArena` for single-allocation model loading
+- [x] 22-02: Memory requirements calculation before GPU allocation
+- [x] 22-03: Replace 200+ `HipBuffer::new()` calls with arena pattern
+- [x] 22-04: Update `load_to_gpu_async()` to use memory pool
+- [x] 22-05: Verification: Model loads without GPU hang
+
+**Phase 23: Dead/Duplicate Code Removal**
+- 23-01: Remove duplicate MXFP code from `gguf.rs` (keep `mxfp.rs` version)
+- 23-02: Remove unused quantization formats (Q4_1, Q5_0, Q5_1 if no real models use them)
+- 23-03: Consolidate `GgufMetadata` structs (currently duplicated)
+- 23-04: Clean up `ParallelResult` and unused async loading code
+- 23-05: Verification: No duplicate structures, compiler warnings reduced
+
+**Phase 24: Kernel-Centric Restructure**
+- 24-01: Create new `src/kernels/` directory layout
+- 24-02: Split quantization into separate modules (q4_0.rs, q4_k.rs, q6_k.rs, fp16.rs)
+- 24-03: Move attention kernels to `src/kernels/attention/`
+- 24-04: Move matmul kernels to `src/kernels/matmul/`
+- 24-05: Enforce 600-1000 LOC per file limit
+- 24-06: Verification: All files under limit, clear module boundaries
+
+**Status**: Planning complete, ready to execute
+**Full details:** `.planning/milestones/v1.4-ROADMAP.md`
+
+</details>
