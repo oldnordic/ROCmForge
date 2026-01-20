@@ -1452,6 +1452,49 @@ impl HipBackend {
         }
     }
 
+    // ========== Phase 22-02: Model Memory Requirements ==========
+
+    /// Check if we have enough memory for model loading
+    ///
+    /// Queries available GPU memory and compares against required bytes.
+    /// Adds a 10% safety margin for driver overhead and alignment.
+    ///
+    /// # Arguments
+    /// * `needed_bytes` - Exact memory needed for model tensors (before margin)
+    ///
+    /// # Returns
+    /// * `(has_enough, free_mb, needed_mb)` where:
+    ///   - `has_enough`: true if GPU has sufficient memory including safety margin
+    ///   - `free_mb`: available GPU memory in MB
+    ///   - `needed_mb`: required memory including 10% safety margin, in MB
+    ///
+    /// # Safety Margin
+    /// - 10% of needed_bytes
+    /// - Minimum 100MB margin for driver overhead
+    /// - This is NOT a percentage of free memory (which was the flawed approach)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let (has_enough, free_mb, needed_mb) = backend.check_memory_for_model(total_bytes)?;
+    /// if !has_enough {
+    ///     bail!("Insufficient GPU memory: need {} MB, available {} MB", needed_mb, free_mb);
+    /// }
+    /// ```
+    pub fn check_memory_for_model(&self, needed_bytes: usize) -> HipResult<(bool, usize, usize)> {
+        let (free, _total) = self.get_memory_info()?;
+
+        // Add 10% safety margin for driver overhead
+        // Minimum 100MB margin to account for alignment and driver allocations
+        let safety_margin = (needed_bytes / 10).max(1024 * 1024 * 100);
+        let needed_with_margin = needed_bytes.saturating_add(safety_margin);
+
+        let has_enough = free >= needed_with_margin;
+        let free_mb = free / 1024 / 1024;
+        let needed_mb = needed_with_margin / 1024 / 1024;
+
+        Ok((has_enough, free_mb, needed_mb))
+    }
+
     // ========== Phase 20.2: Conservative Memory Allocation ==========
 
     /// Check if an allocation of given size is safe
