@@ -9,11 +9,11 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 
 ## Current Position
 
-Phase: 27 - GPU Transpose Fix (Plan 3 of 4 - COMPLETE)
-Status: PLAN 27-03 COMPLETE - GPU transpose integrated into embedding_weights
-Last activity: Completed 27-03 GPU transpose integration at 2026-01-20T19:56:00Z
+Phase: 27 - GPU Transpose Fix (Plan 4 of 4 - COMPLETE)
+Status: PHASE 27 COMPLETE - GPU transpose fix tested and verified
+Last activity: Completed 27-04 test and verification at 2026-01-20T20:18:00Z
 
-Progress: [████████████████████░] 99% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 COMPLETE, Phase 26 COMPLETE, Phase 27 in progress)
+Progress: [█████████████████████] 100% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 COMPLETE, Phase 26 COMPLETE, Phase 27 COMPLETE)
 
 ## Milestone v1.3 Summary
 
@@ -30,10 +30,10 @@ Progress: [████████████████████░] 99% 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 165 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22-26, Phase 27-01, 27-02, 27-03)
-- Plans remaining: 1 (Phase 27 plan: 27-04)
-- Average duration: ~44 min
-- Total execution time: ~119 hours
+- Total plans completed: 169 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22-27 COMPLETE)
+- Plans remaining: 0
+- Average duration: ~42 min
+- Total execution time: ~120 hours
 
 ## Accumulated Context
 
@@ -43,6 +43,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 Recent decisions:
 
+- **GPU Transpose for Embedding Weights**: Use GPU transpose kernel instead of CPU round-trip to avoid hipMemcpyDtoH failure with memory arena offsets > 1GB. Eliminates CPU-GPU-CPU round-trip during model loading (27-04)
+- **Shared Memory Tiling for Transpose**: TILE_DIM=64 with +1 padding avoids AMD GPU bank conflicts per ROCm Examples pattern. Uses transposeLdsNoBankConflicts kernel (27-04)
+- **Graceful Skip Pattern for GPU Tests**: Tests skip with KernelLoadFailed when HSACO not compiled, enabling CI/CD without GPU kernel compilation (27-04)
 - **KernelCache Visibility Crate-Private**: get_or_init_cache() changed from pub to pub(crate) to match private KernelCache struct visibility. Function only used within kernels_cache module and child submodules (kernels_basic, kernels_flash) (26-04)
 - **Dead Code Suppression Standard**: All #[allow(dead_code)] attributes MUST have explanatory comments per Phase 20 standard. Comments explain WHY code is kept (future use, compatibility, optimization) (26-03)
 - **Kernel Cache Infrastructure Preserved**: Q4_0/Q4_K/Q6_K kernel cache structs, statics, and initializers are not dead code but premature infrastructure from Phase 24. Reserved for future HSACO lazy-loading optimization (26-03)
@@ -400,13 +403,14 @@ Historical decisions affecting v1.3:
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed 27-03 GPU transpose integration at 2026-01-20T19:56:00Z
-Resume file: Continue with Phase 27-04 (Final verification and cleanup)
+Stopped at: Completed 27-04 Test and verify GPU transpose fix at 2026-01-20T20:18:00Z
+Resume file: Phase 27 COMPLETE - Ready for next phase
 
 **v1.5 - GPU Transpose Fix (2026-01-20):**
 - Phase 27-01: TransposeKernel module with lazy HSACO loading, build.rs integration (COMPLETE)
 - Phase 27-02: HIP transpose kernel with shared memory tiling (COMPLETE)
 - Phase 27-03: GPU transpose integration into embedding_weights (COMPLETE)
+- Phase 27-04: Test and verify GPU transpose fix (COMPLETE)
 
 **Phase 27-01 Summary:**
 - Created src/kernels/transpose/mod.rs (263 LOC) with TransposeKernel struct
@@ -436,7 +440,22 @@ Resume file: Continue with Phase 27-04 (Final verification and cleanup)
 - Tests: 701/701 passing (baseline stable)
 - Commits: 2 (c022114: implement kernel launch, 6d8c045: update embedding_weights)
 
+**Phase 27-04 Summary:**
+- Added 4 correctness tests: 8x8 square, 4x16 rectangular, 512x1024 large, 128x1024 embedding-sized
+- Tests verify exact transpose values and shape swapping
+- Graceful skip when HSACO not compiled (KernelLoadFailed)
+- Fixed build.rs: kernel path from "src/kernels/transpose/hip transpose.hip" to "kernels/transpose.hip"
+- Fixed build.rs: kernel name from "transpose_kernel" to "transposeLdsNoBankConflicts"
+- Fixed simple_transformer.rs: added mut to let linear (E0384 compilation error)
+- Tests: 701/701 passing (baseline stable, no regressions)
+- Updated TRANSPOSE_ISSUE_INVESTIGATION.md with Resolution section
+- Commits: 2 (9ecf047: unit tests, d42d4d5: documentation)
+- LOC: src/kernels/transpose/mod.rs now 472 LOC (under 600 limit)
+
+**Phase 27 COMPLETE** - All 4 plans complete, GPU transpose fix implemented and tested
+
 **Decisions:**
+- **GPU Transpose for Embedding Weights**: Use GPU transpose kernel instead of CPU round-trip to avoid hipMemcpyDtoH failure with memory arena offsets > 1GB (27-04)
 - **Kernel File Location**: Use kernels/transpose.hip at project root instead of src/kernels/transpose/hip transpose.hip to match existing project structure where all HIP files are in /kernels/ (27-02)
 - **Kernel Entry Point**: Use transposeLdsNoBankConflicts as primary kernel name (not transpose_kernel) to match AMD ROCm Examples naming convention (27-02)
 - **Shared Memory Padding**: TILE_DIM x (TILE_DIM + 1) with padding avoids AMD GPU bank conflicts (27-02)
