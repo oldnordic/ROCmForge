@@ -8,7 +8,8 @@
 
 use crate::backend::hip_backend::{AsyncLoader, DeviceTensor, HipBackend};
 use crate::loader::gguf::tensor_data::{dequantize_q4_0, dequantize_q4_k, dequantize_q6_k, dequantize_q8_0};
-use crate::loader::{GgufLoader, GgufTensor, GgufTensorType, TensorShape};
+use crate::loader::gguf::types::{GgufLoader, GgufTensor};
+use crate::loader::{GgufTensorType, TensorShape};
 use crate::memory::{MemoryCalculator, ModelWeightArena};
 use anyhow::{anyhow, bail, Result};
 use rayon::prelude::*;

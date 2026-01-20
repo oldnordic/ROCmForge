@@ -26,7 +26,7 @@ pub struct GgufHeader {
 /// Validate GGUF magic number from file
 ///
 /// Reads the first 4 bytes and verifies they match "GGUF"
-pub fn validate_gguf_magic(file: &mut File) -> Result<()> {
+pub fn validate_gguf_magic<R: Read>(file: &mut R) -> Result<()> {
     let mut magic = [0u8; 4];
     file.read_exact(&mut magic)?;
     if magic != GGUF_MAGIC {
@@ -38,7 +38,7 @@ pub fn validate_gguf_magic(file: &mut File) -> Result<()> {
 /// Read and validate GGUF version
 ///
 /// Reads the version number and ensures it's supported
-pub fn read_gguf_version(file: &mut File) -> Result<u32> {
+pub fn read_gguf_version<R: Read>(file: &mut R) -> Result<u32> {
     let mut version_bytes = [0u8; 4];
     file.read_exact(&mut version_bytes)?;
     let version = u32::from_le_bytes(version_bytes);
@@ -49,14 +49,14 @@ pub fn read_gguf_version(file: &mut File) -> Result<u32> {
 }
 
 /// Read tensor count from GGUF header
-pub fn read_tensor_count(file: &mut File) -> Result<u64> {
+pub fn read_tensor_count<R: Read>(file: &mut R) -> Result<u64> {
     let mut tensor_count_bytes = [0u8; 8];
     file.read_exact(&mut tensor_count_bytes)?;
     Ok(u64::from_le_bytes(tensor_count_bytes))
 }
 
 /// Read KV count from GGUF header
-pub fn read_kv_count(file: &mut File) -> Result<u64> {
+pub fn read_kv_count<R: Read>(file: &mut R) -> Result<u64> {
     let mut kv_count_bytes = [0u8; 8];
     file.read_exact(&mut kv_count_bytes)?;
     Ok(u64::from_le_bytes(kv_count_bytes))
@@ -65,7 +65,7 @@ pub fn read_kv_count(file: &mut File) -> Result<u64> {
 /// Parse complete GGUF header
 ///
 /// Reads magic, version, tensor count, and KV count in sequence
-pub fn parse_gguf_header(file: &mut File) -> Result<GgufHeader> {
+pub fn parse_gguf_header<R: Read>(file: &mut R) -> Result<GgufHeader> {
     validate_gguf_magic(file)?;
     let version = read_gguf_version(file)?;
     let tensor_count = read_tensor_count(file)?;

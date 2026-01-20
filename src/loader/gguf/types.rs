@@ -130,9 +130,37 @@ impl Clone for GgufLoader {
 }
 
 impl GgufLoader {
+    /// Create new GGUF loader from file path
+    ///
+    /// # Phase 1 Lazy Loading
+    ///
+    /// This method now initializes the loader with lazy loading support:
+    /// - Opens the GGUF file and memory-maps it for zero-copy access
+    /// - Parses metadata (KV pairs, tensor info)
+    /// - Creates `LazyTensor` handles for all tensors (metadata only)
+    /// - Does NOT load tensor data into RAM
+    ///
+    /// # Performance
+    ///
+    /// - Before Phase 1: ~60s (loaded all tensor data)
+    /// - After Phase 1: ~5s (metadata only)
+    pub fn new(path: &str) -> Result<Self> {
+        crate::loader::gguf::loader_impl::new_loader(path)
+    }
+
+    /// Inspect only metadata without loading tensors into memory.
+    pub fn metadata_from_file(path: &str) -> Result<GgufMetadata> {
+        crate::loader::gguf::gpu_upload::metadata_from_file(path)
+    }
+
     /// Get metadata
     pub fn metadata(&self) -> &GgufMetadata {
         &self.metadata
+    }
+
+    /// Convert metadata to ModelConfig
+    pub fn to_model_config(&self) -> Result<crate::model::config::ModelConfig> {
+        crate::loader::gguf::loader_impl::to_model_config(self)
     }
 
     /// Load a single tensor to GPU on-demand (Phase 1 lazy loading).

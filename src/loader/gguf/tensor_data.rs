@@ -6,7 +6,8 @@
 //! - MXFP format support (MXFP4, MXFP6)
 
 use crate::loader::mxfp::MxfpBlock;
-use crate::loader::{GgufTensor, GgufTensorType};
+use crate::loader::GgufTensorType;
+use crate::loader::gguf::types::GgufTensor;
 use anyhow::{anyhow, Result};
 use rayon::prelude::*;
 use std::sync::{Arc, RwLock};
@@ -509,9 +510,9 @@ mod tests {
         let mut data = vec![0u8; 20]; // 4 bytes scale + 16 bytes quants
         data[0..4].copy_from_slice(&1.0f32.to_le_bytes()); // scale = 1.0
         // Packed 4-bit values: [0, 1, 2, 3, ..., 15]
-        for i in 0..16 {
+        for i in 0u8..16 {
             let packed = (i % 16) | ((i + 1) % 16 << 4);
-            data[4 + i] = packed;
+            data[4 + i as usize] = packed;
         }
 
         let tensor = GgufTensor {

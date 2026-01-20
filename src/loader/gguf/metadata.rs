@@ -53,7 +53,7 @@ pub fn parse_kv_pairs(file: &mut File, kv_count: u64, metadata: &mut GgufMetadat
 /// GGUF value types (official ggml/gguf.h spec):
 /// 0=UINT8, 1=INT8, 2=UINT16, 3=INT16, 4=UINT32, 5=INT32,
 /// 6=FLOAT32, 7=BOOL, 8=STRING, 9=ARRAY, 10=UINT64, 11=INT64, 12=FLOAT64
-fn read_value(file: &mut File, value_type: u32, key: &str) -> Result<String> {
+fn read_value<R: Read + std::io::Seek>(file: &mut R, value_type: u32, key: &str) -> Result<String> {
     match value_type {
         4 => {
             // UINT32 - direct value, no value_len
@@ -148,7 +148,7 @@ fn read_value(file: &mut File, value_type: u32, key: &str) -> Result<String> {
 }
 
 /// Skip array value data (we don't need most arrays for metadata)
-fn skip_array_value(file: &mut File, value_type: u32, key: &str) -> Result<()> {
+fn skip_array_value<R: Read + std::io::Seek>(file: &mut R, value_type: u32, key: &str) -> Result<()> {
     // Format per official GGUF spec:
     // 1. The type of the array (gguf_type) - int32_t (4 bytes)
     // 2. The number of elements in the array (uint64_t) - 8 bytes
@@ -213,7 +213,7 @@ fn skip_array_value(file: &mut File, value_type: u32, key: &str) -> Result<()> {
 }
 
 /// Skip string array data (variable-length strings)
-fn skip_string_array(file: &mut File, n_elements: u64, key: &str) -> Result<()> {
+fn skip_string_array<R: Read + std::io::Seek>(file: &mut R, n_elements: u64, key: &str) -> Result<()> {
     // For large arrays, just stop parsing after this KV pair
     // We'll seek past the data by reading string lengths
     if n_elements > 10000 {

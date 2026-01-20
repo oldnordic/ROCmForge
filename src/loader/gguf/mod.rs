@@ -70,9 +70,9 @@ pub use loader_impl::{load_from_disk_impl, new_loader as loader_new_internal, to
 // Re-export LazyTensor for external access
 pub use crate::loader::lazy_tensor::LazyTensor;
 
-// Include MXFP tests
+// Include MXFP tests (located in parent loader directory)
 #[cfg(test)]
-#[path = "mxfp_tests.rs"]
+#[path = "../mxfp_tests.rs"]
 mod mxfp_tests;
 
 /// GGUF Specification Regression Tests
