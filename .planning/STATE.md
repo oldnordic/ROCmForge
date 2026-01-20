@@ -5,15 +5,15 @@
 See: .planning/PROJECT.md (updated 2026-01-20)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Phase 23 - Dead/Duplicate Code Removal
+**Current focus:** Phase 24 - Kernel-Centric Restructure
 
 ## Current Position
 
-Phase: 23 - Dead/Duplicate Code Removal (Plan 05 of 5) - COMPLETE
-Status: Phase 23 COMPLETE - All dead/duplicate code removed, 598 tests passing
-Last activity: Verified all Phase 23 changes, fixed compilation errors, removed obsolete tests
+Phase: 24 - Kernel-Centric Restructure (Plan 05 of 6)
+Status: In Progress - Element-wise kernels migrated to src/kernels/element/
+Last activity: Migrated RMSNorm, SwiGLU, and add/scale operations to kernels/element/
 
-Progress: [████████████░░░░░░░░] 60% (Phase 22 COMPLETE, Phase 23 5/5 plans COMPLETE)
+Progress: [█████████████░░░░░░░] 65% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 2/6 plans COMPLETE)
 
 ## Milestone v1.3 Summary
 
@@ -30,10 +30,10 @@ Progress: [████████████░░░░░░░░] 60% (Ph
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 148 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22, Phase 23 COMPLETE)
+- Total plans completed: 150 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22, Phase 23 COMPLETE, Phase 24-01, 24-05)
 - Plans remaining: 1 (21-06, skipped) + 4 (Phase 24)
 - Average duration: ~44 min
-- Total execution time: ~108 hours
+- Total execution time: ~109 hours
 
 ## Accumulated Context
 
@@ -135,8 +135,14 @@ Historical decisions affecting v1.3:
 - Files modified: 15
 - Tests passing: 598/598 (100%)
 
+**v1.6 - Kernel-Centric Restructure (2026-01-20):**
+- Phase 24-01: Created src/kernels/ directory structure with quant/, attention/, matmul/, element/ subdirectories
+- Phase 24-05: Migrated element-wise kernels (RMSNorm, SwiGLU, add/scale) to kernels/element/
+
+**Phase 24 in Progress** - 2 of 6 plans complete
+
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed Phase 23-05 (Verification complete, all tests passing)
+Stopped at: Completed Phase 24-05 (Element-wise kernels migrated)
 Resume file: None
