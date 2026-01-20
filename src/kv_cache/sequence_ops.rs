@@ -131,7 +131,8 @@ pub fn sort_free_lists(free_pages: &RwLock<Vec<u32>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::HipBackend;
+    use crate::backend::hip_backend::HipBackend;
+    use super::super::config::CacheConfig;
 
     #[test]
     fn test_mark_and_check_completed() {

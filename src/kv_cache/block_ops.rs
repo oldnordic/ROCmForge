@@ -209,6 +209,7 @@ pub fn reset_allocation_stats(block_pool: &RwLock<PhysicalBlockPool>) {
 mod tests {
     use super::*;
     use std::sync::Arc;
+    use crate::backend::hip_backend::HipBackend;
 
     #[test]
     fn test_block_allocation() {
