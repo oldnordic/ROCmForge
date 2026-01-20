@@ -5,15 +5,15 @@
 See: .planning/PROJECT.md (updated 2026-01-20)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Phase 24 - Kernel-Centric Restructure
+**Current focus:** Phase 25 - Architectural Decomposition (Planning complete)
 
 ## Current Position
 
-Phase: 24 - Kernel-Centric Restructure (Plan 06 of 6)
-Status: COMPLETE - Verified and documented kernel-centric restructure
-Last activity: Verified all 27 kernel files under 1,000 LOC, 630/630 tests passing
+Phase: 25 - Architectural Decomposition (Plan 04 of 7 - In Progress)
+Status: IN PROGRESS - Wave 1 (Loader) complete, 3 waves remaining
+Last activity: Completed 25-04 (Loader decomposition) at 2026-01-20T13:31:17Z
 
-Progress: [████████████████░░░░] 78% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE)
+Progress: [████████████████░░░░] 79% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 1/7 complete)
 
 ## Milestone v1.3 Summary
 
@@ -156,8 +156,60 @@ Historical decisions affecting v1.3:
 - Allows gradual migration without breaking existing code
 - Can remove legacy re-exports in future cleanup phase (24-07)
 
+**v1.6 - Phase 25: Architectural Decomposition (2026-01-20):**
+- Phase 25-01: Magellan code mapping - symbol clusters, dependencies (PLANNED)
+- Phase 25-02: Responsibility analysis - domain concern grouping (PLANNED)
+- Phase 25-03: Module boundary proposal - decomposition map (PLANNED)
+- Phase 25-04: Refactor Wave 1 - Loader (gguf.rs → 7 modules) (COMPLETE)
+- Phase 25-05: Refactor Wave 2 - Execution/Mid-tier (8 files → ~35 modules) (PENDING)
+- Phase 25-06: Refactor Wave 3 - Backend/Core (backend.rs → 10 modules) (PENDING)
+- Phase 25-07: QA + Verification - all files < 1,000 LOC (PENDING)
+
+**Phase 25 IN PROGRESS** - 1/7 complete (Wave 1 done)
+
+**Phase 25-04 Summary:**
+- Decomposed loader/gguf.rs (2,284 LOC) into 7 focused modules
+- All modules under 1,000 LOC with single responsibility
+- Re-export chains preserve backward compatibility
+- Tests: 667/667 passing (up from baseline)
+
+**Module Decomposition Pattern Established:**
+- Pure structural refactor (ZERO functional changes)
+- Re-export chains for backward compatibility
+- Generic I/O functions (Read trait) for testability
+- Each module < 1,000 LOC with clear responsibility
+
+**Phase 25 Goal:** Decompose 15 monolithic files (>1,000 LOC) into focused modules
+
+**Files to Decompose:**
+| File | LOC | Target |
+|------|-----|--------|
+| backend/hip_backend/backend.rs | 4,243 | 10 modules |
+| model/execution_plan/execution_plan_src.rs | 4,224 | 8 modules |
+| loader/gguf.rs | 2,284 | 7 modules |
+| kv_cache/kv_cache.rs | 2,094 | 5 modules |
+| sampler/gpu.rs | 1,858 | 5 modules |
+| http/server.rs | 1,518 | 4 modules |
+| ggml/hip_backend/mod.rs | 1,509 | 4 modules |
+| profiling/rocprof_integration.rs | 1,396 | 3 modules |
+| attention/kernels.rs | 1,395 | 3 modules |
+| engine.rs | 1,386 | 4 modules |
+| scheduler/scheduler.rs | 1,307 | 3 modules |
+| profiling/baseline.rs | 1,233 | 3 modules |
+| ops/attention_gpu.rs | 1,232 | 3 modules |
+| backend/cpu/simd_ops.rs | 1,198 | 4 modules |
+| backend/cpu/simd.rs | 1,093 | 3 modules |
+
+**Total:** 15 files, 28,552 LOC → ~70 modules
+
+**Decision: Pure Structural Refactor (ZERO Functional Changes)**
+- Only move code between modules, extract sub-modules, reorganize imports
+- NO logic changes, NO bug fixes, NO optimization, NO behavior changes
+- Re-export chains preserve backward compatibility
+- All 630+ tests must pass before and after
+
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed Phase 24-06 (Verification and cleanup)
+Stopped at: Completed Phase 25-04 (Loader decomposition) at 2026-01-20T13:31:17Z
 Resume file: None
