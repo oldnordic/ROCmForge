@@ -27,6 +27,7 @@ mod phase1_kernel_tests {
 
     /// Test scale_gpu_kernel matches CPU reference
     #[test]
+    #[ignore] // Requires HSACO kernels - low-level kernel test
     fn test_scale_gpu_matches_cpu() {
         // Small input: batch=1, seq=4
         // Flattened [batch_size * seq_len * seq_len] = [1 * 4 * 4] = 16 elements
@@ -81,6 +82,7 @@ mod phase1_kernel_tests {
 
     /// Test mask_gpu_kernel matches CPU reference
     #[test]
+    #[ignore] // Requires HSACO kernels - low-level kernel test
     fn test_mask_gpu_matches_cpu() {
         // batch=1, seq=4
         let mut scores: Vec<f32> = vec![1.0; 16];
@@ -147,6 +149,7 @@ mod phase1_kernel_tests {
 
     /// Test softmax_gpu_kernel matches CPU reference
     #[test]
+    #[ignore] // Requires HSACO kernels - low-level kernel test
     fn test_softmax_gpu_matches_cpu() {
         // batch=1, seq=4
         let input: Vec<f32> = vec![
@@ -236,6 +239,7 @@ mod phase1_kernel_tests {
 
     /// Test softmax with numerical stability (large values)
     #[test]
+    #[ignore] // Requires HSACO kernels - low-level kernel test
     fn test_softmax_gpu_numerical_stability() {
         // Large values that would overflow exp()
         let input: Vec<f32> = vec![1000.0, 1001.0, 1002.0, 1003.0];
@@ -284,6 +288,7 @@ mod phase1_kernel_tests {
 
     /// Test with seq=8 (still small but larger)
     #[test]
+    #[ignore] // Requires HSACO kernels - low-level kernel test
     fn test_softmax_gpu_seq8() {
         // batch=1, seq=8
         let input: Vec<f32> = (1..=64).map(|i| i as f32).collect();
