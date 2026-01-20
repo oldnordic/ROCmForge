@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 ## Current Position
 
 Phase: 28 - ROCm Compilation Fix
-Plan: 04 of N (Wave 4 - cfg gate removal from ops/attention/)
-Status: In Progress - Import errors fixed, underscore-prefixed parameters fixed, ops/attention cfg gates removed
-Last activity: Completed 28-04 cfg gate removal from ops/attention/ at 2026-01-20T21:33:42Z
+Plan: 05 of N (Wave 5 - cfg gate removal from src/kernels/)
+Status: Complete - All cfg gates removed from src/kernels/
+Last activity: Completed 28-05 cfg gate removal from src/kernels/ at 2026-01-20T21:37:15Z
 
-Progress: [███████████████████░░] 99.5% (Phase 27 COMPLETE, Phase 28-01 COMPLETE, Phase 28-02 COMPLETE, Phase 28-04 COMPLETE)
+Progress: [███████████████████░░] 99.5% (Phase 27 COMPLETE, Phase 28-01 COMPLETE, Phase 28-02 COMPLETE, Phase 28-03 COMPLETE, Phase 28-05 COMPLETE)
 
 ### Blockers/Concerns
 
@@ -32,22 +32,26 @@ When attempting to enable `rocm` as default feature (required for GPU kernel run
 - Fixed: Renamed `_handle` to `handle` in FlashAttentionBackend struct
 - Verified: simple_transformer.rs already has correct `let mut linear` (fixed in 27-04)
 
-**Progress - Phase 28-04 COMPLETE (cfg gate removal from ops/attention/):**
-- Fixed: Removed 63 #[cfg(feature = "rocm")] gates from 5 files in src/ops/attention/
-- Files: attention_gpu.rs (19), ops/attention/mod.rs (1), ops/attention/kernels.rs (18), ops/attention/softmax.rs (17), ops/causal_mask_tests.rs (8)
-- GPU attention operations are now always compiled unconditionally
+**Progress - Phase 28-03 COMPLETE (cfg gate removal from src/attention/):**
+- Fixed: Removed 111 #[cfg(feature = "rocm")] gates from 23 files in src/attention/
+- Files: mod.rs, backend.rs, backend_registry.rs, gpu.rs, flash_attention.rs, multi_query.rs, rope.rs, paged_kernel.rs, kernels_cache/*, kernels/mod.rs, and 10 test files
+- GPU attention code is now always compiled unconditionally
+
+**Progress - Phase 28-05 COMPLETE (cfg gate removal from src/kernels/):**
+- Fixed: Removed all #[cfg(feature = "rocm")] gates from 16 files in src/kernels/
+- Files: All kernel modules in attention/, element/, matmul/, quant/, transpose/
+- GPU kernel code is now always compiled unconditionally
+- Bonus: Fixed backend_registry.rs mut issue, CompiledKernel.module visibility, added missing imports
 
 **Remaining Issues (for subsequent plans):**
-1. **kernels/transpose/mod.rs**: Type mismatch `Arc<Arc<HipBackend>>` (next plan)
+None identified - all major cfg gate removal complete
 
 **Root Cause:** Codebase was built/tested without `rocm` feature enabled. GPU-specific code paths accumulated bit-rot from lack of compilation.
 
 **Impact:**
-- Phase 27 GPU transpose kernel cannot be tested at runtime
-- Release builds cannot use GPU kernels (HSACO not compiled)
-- `cargo test --lib` passes because rocm code is `#[cfg(feature = "rocm")]` gated
-
-**Required Action:** Continue Phase 28 - Fix ROCm Feature Compilation
+- GPU kernels are now always compiled and available for runtime loading
+- Release builds can now use GPU kernels (HSACO compiled when available)
+- Tests can now run GPU paths without feature flags
 
 ## Milestone v1.3 Summary
 
@@ -437,8 +441,53 @@ Historical decisions affecting v1.3:
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed 28-04 cfg gate removal from ops/attention/ at 2026-01-20T21:33:42Z
-Resume file: .planning/phases/28-rocm-compilation-fix/28-04-SUMMARY.md
+Stopped at: Completed 28-05 cfg gate removal from src/kernels/ at 2026-01-20T21:37:15Z
+Resume file: .planning/phases/28-rocm-compilation-fix/28-05-SUMMARY.md
+
+**v1.8 - ROCm Compilation Fix (2026-01-20):**
+- Phase 28-01: Add c_void and HipError imports to FFI kernel files (COMPLETE)
+
+**Phase 28-01 Summary:**
+- Added `use std::ffi::c_void;` to 9 FFI kernel files using HIP kernel launches
+- Added `use crate::backend::hip_backend::error::HipError;` to 3 attention kernel cache files
+- Added `use std::path::Path;` to kernels_cache/mod.rs (was also missing)
+- All c_void and HipError import errors resolved
+- Preserved #[cfg(feature = "rocm")] gates for later wave removal
+- Duration: 2 min
+- Commits: 2 (a777b0f: c_void imports, 1d72098: HipError imports)
+
+**Phase 28-02 Summary:**
+- Removed underscore prefixes from `mask`, `q`, `k`, `v` parameters in flash_attention.rs forward()
+- Renamed `_handle` to `handle` in FlashAttentionBackend struct
+- Verified simple_transformer.rs already has correct `let mut linear` (fixed in 27-04)
+- Parameters were incorrectly prefixed with underscore to suppress warnings when rocm wasn't compiled
+- Duration: 3 min
+- Commit: 06ab856 (fix)
+
+**Phase 28-03 Summary:**
+- Removed 111 #[cfg(feature = "rocm")] gates from 23 files in src/attention/
+- GPU attention code is now always compiled unconditionally
+- Duration: 7 min
+- Commit: b4c10ae (refactor)
+
+**Phase 28-05 Summary:**
+- Removed all #[cfg(feature = "rocm")] gates from 16 files in src/kernels/
+- GPU kernel modules now always compiled unconditionally
+- Fixed backend_registry.rs mut issue, CompiledKernel.module visibility
+- Added missing imports: Mutex, Path, c_void
+- Simplified cfg!() macro calls to unconditional checks
+- Duration: 8 min
+- All kernel modules accessible for runtime loading
+
+**Decision: Unconditional GPU Attention Compilation**
+- ROCm/HIP is core to ROCmForge's purpose - AMD GPU inference
+- GPU attention code should always be available, not conditionally compiled
+- Matches project's core value: Reliable, fast inference on AMD GPUs
+
+**Decision: Unconditional Kernel Module Compilation**
+- GPU kernels are core to ROCmForge - kernel loading should always be available
+- Eliminates conditional compilation complexity from kernel code
+- Kernels load at runtime via HSACO environment variables (28-05)
 
 **v1.5 - GPU Transpose Fix (2026-01-20):**
 - Phase 27-01: TransposeKernel module with lazy HSACO loading, build.rs integration (COMPLETE)
@@ -496,28 +545,5 @@ Resume file: .planning/phases/28-rocm-compilation-fix/28-04-SUMMARY.md
 - **Kernel Module Pattern for Transpose**: Follow existing kernel cache pattern from sampler/gpu.rs (Phases 15-18) (27-01)
 - **Convenience Function for One-Shot Operations**: Create transpose_tensor() function that wraps TransposeKernel creation and execution for simpler API (27-03)
 - **Deprecated Function with #[allow(dead_code)]**: Keep old transpose_2d_tensor with deprecation notice for potential fallback use, suppress dead_code warning (27-03)
-
-**v1.8 - ROCm Compilation Fix (2026-01-20):**
-- Phase 28-01: Add c_void and HipError imports to FFI kernel files (COMPLETE)
-
-**Phase 28-01 Summary:**
-- Added `use std::ffi::c_void;` to 9 FFI kernel files using HIP kernel launches
-- Added `use crate::backend::hip_backend::error::HipError;` to 3 attention kernel cache files
-- Added `use std::path::Path;` to kernels_cache/mod.rs (was also missing)
-- All c_void and HipError import errors resolved
-- Preserved #[cfg(feature = "rocm")] gates for later wave removal
-- Duration: 2 min
-- Commits: 2 (a777b0f: c_void imports, 1d72098: HipError imports)
-
-**Decisions:**
-- **Import Placement**: Add `use std::ffi::c_void;` after std imports but before crate imports (following Rust conventions)
-- **Minimal Changes**: Only added missing imports, did NOT remove #[cfg(feature = "rocm")] gates (that's Wave 2+ work)
-- **No Underscore Prefix for Conditionally Compiled Parameters**: Parameters used inside #[cfg(feature = "rocm")] blocks should have real names, not underscore-prefixed to suppress warnings (28-02)
-
-**Phase 28-02 Summary:**
-- Removed underscore prefixes from `mask`, `q`, `k`, `v` parameters in flash_attention.rs forward()
-- Renamed `_handle` to `handle` in FlashAttentionBackend struct
-- Verified simple_transformer.rs already has correct `let mut linear` (fixed in 27-04)
-- Parameters were incorrectly prefixed with underscore to suppress warnings when rocm wasn't compiled
-- Duration: 3 min
-- Commit: 06ab856 (fix)
+- **Unconditional GPU Attention Compilation**: ROCm/HIP is core to ROCmForge - GPU attention should always be available, not conditionally compiled (28-03)
+- **Unconditional Kernel Module Compilation**: GPU kernels are core to ROCmForge - kernel loading and execution should always be available, not conditionally compiled (28-05)
