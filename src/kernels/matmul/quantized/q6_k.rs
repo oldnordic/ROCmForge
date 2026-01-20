@@ -6,7 +6,6 @@
 //! - Dequantization: value = signed_6bit * scale
 
 use std::env;
-use std::ffi::c_void;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -16,18 +15,25 @@ use crate::backend::HipBuffer;
 use super::common::{f16_to_f32_cpu, Q6_K_BLOCK_SIZE, Q6_K_ELEMENTS_PER_BLOCK, QuantizedResult};
 
 /// Cached kernel modules and functions for Q6_K matmul
+///
+/// This cache infrastructure was part of Phase 24 kernel migration.
+/// It is reserved for future HSACO lazy-loading optimization but currently
+/// unused because kernels are loaded directly via HipModule::from_file().
 #[derive(Debug)]
 #[allow(non_camel_case_types)] // Matches GGUF quantization format naming
+#[allow(dead_code)] // Reserved for future HSACO lazy-loading optimization
 struct Q6_KKernelCache {
     #[allow(dead_code)] // Module kept alive to keep HSACO loaded in memory
     module: Option<HipModule>,
     kernel: Option<HipKernel>,
 }
 
-// Global kernel cache
+/// Global kernel cache for lazy-loaded HSACO modules
+#[allow(dead_code)] // Reserved for future HSACO lazy-loading optimization
 static Q6_K_CACHE: Mutex<Option<Q6_KKernelCache>> = Mutex::new(None);
 
 /// Get or initialize the global Q6_K kernel cache
+#[allow(dead_code)] // Reserved for future HSACO lazy-loading optimization
 fn get_or_init_q6_k_cache() -> Result<&'static Mutex<Option<Q6_KKernelCache>>, HipError> {
     // First check if already initialized
     {

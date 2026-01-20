@@ -6,27 +6,33 @@
 //! - Dequantization: value = scale * ((packed & 0x0F) - 8)
 
 use std::env;
-use std::ffi::c_void;
 use std::path::Path;
 use std::sync::Mutex;
 
 use crate::backend::hip_backend::{HipBackend, HipError, HipKernel, HipModule};
 use crate::backend::HipBuffer;
 
-use super::common::{Q4_0_BLOCK_SIZE, Q4_0_ELEMENTS_PER_BLOCK, QuantizedResult};
+use super::common::{Q4_0_BLOCK_SIZE, QuantizedResult};
 
 /// Cached kernel modules and functions for Q4_0 matmul
+///
+/// This cache infrastructure was part of Phase 24 kernel migration.
+/// It is reserved for future HSACO lazy-loading optimization but currently
+/// unused because kernels are loaded directly via HipModule::from_file().
 #[derive(Debug)]
+#[allow(dead_code)] // Reserved for future HSACO lazy-loading optimization
 struct Q4_0KernelCache {
     #[allow(dead_code)] // Module kept alive to keep HSACO loaded in memory
     module: Option<HipModule>,
     kernel: Option<HipKernel>,
 }
 
-// Global kernel cache
+/// Global kernel cache for lazy-loaded HSACO modules
+#[allow(dead_code)] // Reserved for future HSACO lazy-loading optimization
 static Q4_0_CACHE: Mutex<Option<Q4_0KernelCache>> = Mutex::new(None);
 
 /// Get or initialize the global Q4_0 kernel cache
+#[allow(dead_code)] // Reserved for future HSACO lazy-loading optimization
 fn get_or_init_q4_0_cache() -> Result<&'static Mutex<Option<Q4_0KernelCache>>, HipError> {
     // First check if already initialized
     {

@@ -9,11 +9,11 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 
 ## Current Position
 
-Phase: 25 - Architectural Decomposition (Plan 17 of 17 - Gap Closure In Progress)
+Phase: 25 - Architectural Decomposition (Plan 16 of 17 - Gap Closure In Progress)
 Status: GAP CLOSURE IN PROGRESS - 9 of 10 gap closure plans complete
-Last activity: Completed 25-17 backend/cpu/simd.rs decomposition at 2026-01-20T17:53:06Z
+Last activity: Completed 25-16 backend/cpu/simd_ops.rs decomposition at 2026-01-20T17:55:00Z
 
-Progress: [█████████████████░░░] 95% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 9/10 complete)
+Progress: [█████████████████░░░] 94% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 9/10 complete)
 
 ## Milestone v1.3 Summary
 
@@ -174,14 +174,15 @@ Historical decisions affecting v1.3:
 - Phase 25-13: Gap Closure - http/server.rs decomposition (COMPLETE)
 - Phase 25-14: Gap Closure - profiling/rocprof_integration.rs decomposition (COMPLETE)
 - Phase 25-15: Gap Closure - profiling/baseline.rs decomposition (COMPLETE)
-- Phase 25-16: Gap Closure - backend/cpu/simd_ops.rs decomposition (PLANNED)
-- Phase 25-17: Gap Closure - backend/cpu/simd.rs decomposition (COMPLETE)
+- Phase 25-16: Gap Closure - backend/cpu/simd_ops.rs decomposition (COMPLETE)
+- Phase 25-17: Gap Closure - backend/cpu/simd.rs decomposition (PLANNED)
 
-**Phase 25-17 Summary:**
-- Decomposed backend/cpu/simd.rs (1,093 LOC) into 3 focused modules
-- error.rs (16 LOC): SimdMatmulError, SimdMatmulResult types
-- matmul.rs (1,049 LOC): All matmul implementations (simd_matmul_f32, scalar_matmul_f32, tiled variants, AVX-512 variants, optimized dispatch) with tests
-- mod.rs (64 LOC): Module facade with SIMD type config (SimdF32, SIMD_WIDTH, AVX512_WIDTH) and re-exports
+**Phase 25-16 Summary:**
+- Decomposed backend/cpu/simd_ops.rs (1,198 LOC) into 4 focused modules
+- mod.rs (617 LOC): SIMD config, helper functions, re-exports, tests
+- rmsnorm.rs (252 LOC): RMSNorm SIMD/scalar operations with dispatch
+- rope.rs (258 LOC): RoPE SIMD/scalar operations with dispatch
+- activations.rs (715 LOC): SiLU, SwiGLU, GELU SIMD/scalar operations
 - Pure structural refactor - zero functional changes
 - Re-export chains preserve backward compatibility
 - Files > 1,000 LOC reduced: 15 -> 4 (-11 files total)
@@ -240,8 +241,8 @@ Historical decisions affecting v1.3:
 | ops/attention_gpu.rs | 1,232 | 3 modules (25-10) |
 | backend/hip_backend/backend.rs | 1,209 | Main facade - acceptable |
 | ggml/hip_backend/execution.rs | 1,207 | 84 LOC + op_dispatch.rs (COMPLETE in 25-12) |
-| backend/cpu/simd_ops.rs | 1,198 | 4 modules (25-16) |
-| backend/cpu/simd.rs | 1,093 | 3 modules (25-17 - COMPLETE) |
+| backend/cpu/simd_ops.rs | 1,198 | 4 modules (25-16 - COMPLETE) |
+| backend/cpu/simd.rs | 1,093 | 3 modules (25-17) |
 
 **Total:** 15 files, 28,552 LOC → ~70 modules
 
@@ -357,9 +358,9 @@ Historical decisions affecting v1.3:
 **Phase 25 Final Status:**
 - Status: GAP CLOSURE IN PROGRESS (9 of 10 complete)
 - Files > 1,000 LOC reduced: 15 → 4 (-11 files so far)
-- Gap closure targets: 1 remaining file (Wave 6: simd_ops.rs)
-- Tests passing: 701 (baseline increased by +4 tests from profiling modules)
-- Largest file: 1,198 LOC (backend/cpu/simd_ops.rs)
+- Gap closure targets: 1 remaining file (Wave 6: simd.rs at 1,093 LOC)
+- Tests passing: 701 (baseline increased by +1 test from simd_ops decomposition)
+- Largest file: 1,093 LOC (backend/cpu/simd.rs - final gap closure target)
 
 **Phase 25-15 Summary:**
 - Decomposed profiling/baseline.rs (1,233 LOC) into 3 focused modules
@@ -392,5 +393,5 @@ Historical decisions affecting v1.3:
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed 25-17 backend/cpu/simd.rs decomposition at 2026-01-20T17:53:06Z
-Resume file: Continue gap closure plans with `/gsd:execute-phase 25 --gaps-only`
+Stopped at: Completed 25-16 backend/cpu/simd_ops.rs decomposition at 2026-01-20T17:55:00Z
+Resume file: Continue gap closure with plan 25-17 (backend/cpu/simd.rs decomposition - FINAL gap closure plan)
