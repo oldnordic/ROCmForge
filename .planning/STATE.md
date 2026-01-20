@@ -10,10 +10,10 @@ See: .planning/PROJECT.md (updated 2026-01-20)
 ## Current Position
 
 Phase: 25 - Architectural Decomposition (Plan 11 of 17 - Gap Closure In Progress)
-Status: GAP CLOSURE IN PROGRESS - 4 of 10 gap closure plans complete
-Last activity: Completed 25-11 kv_cache.rs further decomposition at 2026-01-20T17:19:03Z
+Status: GAP CLOSURE IN PROGRESS - 5 of 10 gap closure plans complete
+Last activity: Completed 25-10 ops/attention_gpu.rs decomposition at 2026-01-20T17:24:19Z
 
-Progress: [█████████████████░░░] 92% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 4/10 complete)
+Progress: [█████████████████░░░] 92% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 5/10 complete)
 
 ## Milestone v1.3 Summary
 
@@ -30,10 +30,10 @@ Progress: [█████████████████░░░] 92% (Ph
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 153 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 4/10)
-- Plans remaining: 11 (6 gap closure + 5 future)
+- Total plans completed: 154 (v1.0 + v1.1 + v1.2 + v1.3 + v1.4 Phase 22, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 gap closure 5/10)
+- Plans remaining: 10 (5 gap closure + 5 future)
 - Average duration: ~44 min
-- Total execution time: ~112 hours
+- Total execution time: ~113 hours
 
 ## Accumulated Context
 
@@ -327,23 +327,33 @@ Historical decisions affecting v1.3:
 - Pure structural refactor - zero functional changes
 - Files > 1,000 LOC reduced: 15 → 7 (-8 files total)
 
+**Phase 25-10 Summary (COMPLETE):**
+- Decomposed src/ops/attention_gpu.rs (1,232 LOC) into ops/attention/ directory
+- Created 3 focused modules under 1,000 LOC each:
+  - kernels.rs (597 LOC): HipAttentionKernels struct with full attention pipeline
+  - softmax.rs (595 LOC): QkMatmul, CausalMaskOp, AttentionSoftmax, WeightedMatmul
+  - hiprtc.rs (106 LOC): HIP runtime compilation utilities
+- Verified ops/attention/ is distinct from kernels/attention/ (no duplicate code)
+- Backward compatibility via module alias: `pub use attention as attention_gpu`
+- Files > 1,000 LOC reduced: 15 → 7 (-8 files total)
+
 **Phase 25 Gap Closure Plans (2026-01-20):**
 - 10 plans created (25-08 through 25-17)
-- Wave 2A: 3 parallel plans (engine COMPLETE, scheduler COMPLETE, ops/attention_gpu)
-- Wave 2B: 2 parallel plans (kv_cache, ggml/execution COMPLETE)
+- Wave 2A: 3 parallel plans (engine COMPLETE, scheduler COMPLETE, ops/attention_gpu COMPLETE)
+- Wave 2B: 2 parallel plans (kv_cache COMPLETE, ggml/execution COMPLETE)
 - Wave 4: 1 plan (http/server)
 - Wave 5: 2 parallel plans (profiling)
 - Wave 6: 2 parallel plans (cpu/simd)
 
 **Phase 25 Final Status:**
-- Status: GAP CLOSURE IN PROGRESS (4 of 10 complete)
+- Status: GAP CLOSURE IN PROGRESS (5 of 10 complete)
 - Files > 1,000 LOC reduced: 15 → 7 (-8 files so far)
-- Gap closure targets: 6 remaining files
+- Gap closure targets: 5 remaining files
 - Tests passing: 675 (baseline stable)
 - Largest file: 1,518 LOC (http/server.rs)
 
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed 25-11 kv_cache.rs decomposition at 2026-01-20T17:19:03Z
+Stopped at: Completed 25-10 ops/attention_gpu.rs decomposition at 2026-01-20T17:24:19Z
 Resume file: Continue gap closure plans with `/gsd:execute-phase 25 --gaps-only`
