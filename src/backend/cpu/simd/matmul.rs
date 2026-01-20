@@ -5,8 +5,12 @@
 
 use crate::backend::cpu::cpu_features::CpuFeatures;
 
-use super::{SimdF32, SIMD_WIDTH, AVX512_WIDTH};
+use super::{SimdF32, SIMD_WIDTH};
 use super::error::{SimdMatmulError, SimdMatmulResult};
+
+// AVX512_WIDTH is only available when avx512 feature is enabled
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+use super::AVX512_WIDTH;
 
 #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 use std::simd::f32x16;

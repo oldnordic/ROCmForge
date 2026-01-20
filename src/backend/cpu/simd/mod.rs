@@ -56,9 +56,13 @@ pub mod matmul;
 // Re-exports for backward compatibility
 pub use error::{SimdMatmulError, SimdMatmulResult};
 pub use matmul::{
-    avx512_simd_matmul_f32, avx512_simd_matmul_tiled_f32, matmul_optimized_f32,
-    matmul_optimized_tiled_f32, scalar_matmul_f32, simd_matmul_f32, simd_matmul_tiled_f32,
+    matmul_optimized_f32, matmul_optimized_tiled_f32, scalar_matmul_f32, simd_matmul_f32,
+    simd_matmul_tiled_f32,
 };
+
+// Re-export AVX-512 functions only when avx512 feature is enabled
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+pub use matmul::{avx512_simd_matmul_f32, avx512_simd_matmul_tiled_f32};
 
 // SIMD config and types are private to the module (used by matmul submodule)
 // They are not part of the public API

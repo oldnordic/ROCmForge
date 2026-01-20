@@ -18,23 +18,23 @@ use std::simd::prelude::SimdFloat;
 // ============================================================================
 
 #[cfg(target_arch = "x86_64")]
-type SimdF32 = f32x8; // AVX2: 8 floats per vector
+pub(crate) type SimdF32 = f32x8; // AVX2: 8 floats per vector
 
 #[cfg(target_arch = "aarch64")]
-type SimdF32 = f32x4; // NEON: 4 floats per vector
+pub(crate) type SimdF32 = f32x4; // NEON: 4 floats per vector
 
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-type SimdF32 = f32x4; // Safe fallback
+pub(crate) type SimdF32 = f32x4; // Safe fallback
 
 // Vector width in elements
 #[cfg(target_arch = "x86_64")]
-const SIMD_WIDTH: usize = 8;
+pub(crate) const SIMD_WIDTH: usize = 8;
 
 #[cfg(target_arch = "aarch64")]
-const SIMD_WIDTH: usize = 4;
+pub(crate) const SIMD_WIDTH: usize = 4;
 
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-const SIMD_WIDTH: usize = 4;
+pub(crate) const SIMD_WIDTH: usize = 4;
 
 // Tolerance for floating-point comparisons
 const FLOAT_TOL: f32 = 1e-4;
@@ -126,10 +126,8 @@ fn simd_tanh(x: f32x4) -> f32x4 {
     ])
 }
 
-// Public exports for SIMD config (used by submodules)
-pub(crate) use {SimdF32, SIMD_WIDTH, FLOAT_TOL};
-
 // ============================================================================
+
 // Module exports
 // ============================================================================
 

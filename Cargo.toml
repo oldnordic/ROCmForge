@@ -119,7 +119,8 @@ path = "test_inference.rs"
 
 [features]
 # ROCm/HIP is always-on for ROCmForge - AMD GPU inference engine
-default = ["simd"]
+# SIMD is opt-in (requires nightly Rust for portable_simd)
+default = []
 # Enable SIMD CPU backend (requires nightly Rust)
 simd = []
 # Enable AVX-512 code paths (opt-in due to CPU throttling concerns)
