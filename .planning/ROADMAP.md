@@ -10,6 +10,7 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 - **v1.1 Bug Fix Release** — Phases 13-01, 13-02, 13-03 (shipped 2026-01-19)
 - **v1.2 Technical Debt Cleanup + Performance** — Phases 14-18 (shipped 2026-01-19)
 - **v1.3 Test Health & Performance Validation** — Phases 19-21 (shipped 2026-01-20)
+- **v1.5 GPU Transpose Fix** — Phase 27 (in progress 2026-01-20)
 
 ## Phases
 
@@ -107,16 +108,45 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 | 24 | v1.4 | 6/6 | Complete | 2026-01-20 |
 | 25 | v1.4 | 17/17 | Complete | 2026-01-20 |
 | 26 | v1.4 | 4/4 | Complete | 2026-01-20 |
+| 27 | v1.5 | 4/4 | Complete | 2026-01-20 |
 
-**Total Progress:** 167/168 plans complete (99%)
+**Total Progress:** 171/172 plans complete (99%)
 
 **Note:** Phase 21-06 (Performance Validation) skipped by user request. All test health goals (TEST-01 through TEST-06) achieved.
 
 ---
 
-## Future Milestones
+**v1.5**: GPU Transpose Fix — COMPLETE ✓ 2026-01-20
 
-**v1.5**: Next Milestone — PLANNING
+### v1.5 Summary
+
+**Focus:** Fix GPU transpose crash that prevents inference
+
+**Issue:** After Phase 22 memory pool implementation, GPU→CPU copy fails during embedding transpose with `hipMemcpyDtoH failed with code 1`
+
+**Root Cause:** `transpose_2d_tensor()` uses CPU transpose (GPU→CPU→GPU round-trip) which fails with arena sub-buffers at large offsets
+
+**Solution:** Implemented pure GPU transpose kernel based on AMD ROCm Examples
+
+**Files Changed:**
+- `src/kernels/transpose/mod.rs` (472 LOC) - TransposeKernel with lazy HSACO loading
+- `kernels/transpose.hip` (131 LOC) - HIP kernel with TILE_DIM=64, shared memory padding
+- `build.rs` - TRANSPOSE_HSACO compilation entry
+- `src/model/execution_plan/types.rs:273` - Uses GPU transpose
+
+**Before:**
+```
+ERROR: hipMemcpyDtoH failed with code 1 (offset=1.97GB into arena)
+```
+
+**After:**
+```
+INFO: Transposing embedding tensor from [896, 151936] to [151936, 896] on GPU
+INFO: Embedding weights loaded successfully
+```
+
+**Phases:**
+- Phase 27: GPU Transpose Kernel Implementation (COMPLETE - 4/4 plans)
 
 ---
 
