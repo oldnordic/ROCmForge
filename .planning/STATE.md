@@ -5,15 +5,40 @@
 See: .planning/PROJECT.md (updated 2026-01-20)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Phase 27 COMPLETE - Ready for next phase or milestone completion
+**Current focus:** CRITICAL ISSUE - ROCm feature compilation broken
 
 ## Current Position
 
-Phase: 27 - GPU Transpose Fix (COMPLETE)
-Status: PHASE 27 COMPLETE - GPU transpose fix implemented and verified (8/8 must-haves)
-Last activity: Phase verification passed at 2026-01-20T20:25:00Z
+Phase: 28 - ROCm Compilation Fix
+Plan: 01 of N (Wave 1 - Import fixes)
+Status: In Progress - Import errors fixed, remaining issues documented
+Last activity: Completed 28-01 import fixes at 2026-01-20T21:21:22Z
 
-Progress: [█████████████████████] 100% (Phase 22 COMPLETE, Phase 23 COMPLETE, Phase 24 COMPLETE, Phase 25 COMPLETE, Phase 26 COMPLETE, Phase 27 COMPLETE)
+Progress: [███████████████████░░] 99.5% (Phase 27 COMPLETE, Phase 28-01 COMPLETE)
+
+### Blockers/Concerns
+
+**CRITICAL: ROCm Feature Compilation Broken (2026-01-20)**
+
+When attempting to enable `rocm` as default feature (required for GPU kernel runtime loading), 151 compilation errors were exposed.
+
+**Progress - Phase 28-01 COMPLETE (Import fixes):**
+- Fixed: c_void imports in 9 FFI kernel files
+- Fixed: HipError imports in 3 attention kernel cache files
+- Fixed: Path import in kernels_cache/mod.rs
+
+**Remaining Issues (for subsequent plans):**
+1. **flash_attention.rs**: Underscore-prefixed parameters (`_mask`, `_q`, `_k`, `_v`) used in code
+2. **kernels/transpose/mod.rs**: Type mismatch `Arc<Arc<HipBackend>>`
+
+**Root Cause:** Codebase was built/tested without `rocm` feature enabled. GPU-specific code paths accumulated bit-rot from lack of compilation.
+
+**Impact:**
+- Phase 27 GPU transpose kernel cannot be tested at runtime
+- Release builds cannot use GPU kernels (HSACO not compiled)
+- `cargo test --lib` passes because rocm code is `#[cfg(feature = "rocm")]` gated
+
+**Required Action:** Continue Phase 28 - Fix ROCm Feature Compilation
 
 ## Milestone v1.3 Summary
 
@@ -403,8 +428,8 @@ Historical decisions affecting v1.3:
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed 27-04 Test and verify GPU transpose fix at 2026-01-20T20:18:00Z
-Resume file: Phase 27 COMPLETE - Ready for next phase
+Stopped at: Completed 28-01 Add c_void and HipError imports at 2026-01-20T21:21:22Z
+Resume file: .planning/phases/28-rocm-compilation-fix/28-01-SUMMARY.md
 
 **v1.5 - GPU Transpose Fix (2026-01-20):**
 - Phase 27-01: TransposeKernel module with lazy HSACO loading, build.rs integration (COMPLETE)
@@ -462,3 +487,19 @@ Resume file: Phase 27 COMPLETE - Ready for next phase
 - **Kernel Module Pattern for Transpose**: Follow existing kernel cache pattern from sampler/gpu.rs (Phases 15-18) (27-01)
 - **Convenience Function for One-Shot Operations**: Create transpose_tensor() function that wraps TransposeKernel creation and execution for simpler API (27-03)
 - **Deprecated Function with #[allow(dead_code)]**: Keep old transpose_2d_tensor with deprecation notice for potential fallback use, suppress dead_code warning (27-03)
+
+**v1.8 - ROCm Compilation Fix (2026-01-20):**
+- Phase 28-01: Add c_void and HipError imports to FFI kernel files (COMPLETE)
+
+**Phase 28-01 Summary:**
+- Added `use std::ffi::c_void;` to 9 FFI kernel files using HIP kernel launches
+- Added `use crate::backend::hip_backend::error::HipError;` to 3 attention kernel cache files
+- Added `use std::path::Path;` to kernels_cache/mod.rs (was also missing)
+- All c_void and HipError import errors resolved
+- Preserved #[cfg(feature = "rocm")] gates for later wave removal
+- Duration: 2 min
+- Commits: 2 (a777b0f: c_void imports, 1d72098: HipError imports)
+
+**Decisions:**
+- **Import Placement**: Add `use std::ffi::c_void;` after std imports but before crate imports (following Rust conventions)
+- **Minimal Changes**: Only added missing imports, did NOT remove #[cfg(feature = "rocm")] gates (that's Wave 2+ work)
