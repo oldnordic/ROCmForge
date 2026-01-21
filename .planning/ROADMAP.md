@@ -81,7 +81,7 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 3. Missing kernel file produces clear error message with full path to compiled-in HSACO location
 4. `cargo build --release` recompiles build.rs when ROCM_PATH, HIPCC, or ROCm_ARCH environment variables change
 
-**Plans**: 7 plans (1 wave, all parallel)
+**Plans**: 12 plans (1 wave, all parallel)
 - [ ] 25-01-PLAN.md — Fix attention kernels (12 kernels) to use `option_env!()`
 - [ ] 25-02-PLAN.md — Fix sampler kernels (7 kernels) to use `option_env!()`
 - [ ] 25-03-PLAN.md — Fix MLP kernels (2 kernels) to use `option_env!()`
@@ -89,6 +89,11 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 - [ ] 25-05-PLAN.md — Fix fused kernels (2 kernels) to use `option_env!()`
 - [ ] 25-06-PLAN.md — Fix transpose kernel (1 kernel) to use `option_env!()`
 - [ ] 25-07-PLAN.md — Add cargo rerun directives for ROCm env vars
+- [ ] 25-08-PLAN.md — Fix Q4_0_DEQUANT_HSACO (duplicate ggml/hip_backend impl)
+- [ ] 25-09-PLAN.md — Fix Q4_K_DEQUANT_HSACO (duplicate ggml/hip_backend impl)
+- [ ] 25-10-PLAN.md — Fix Q4_0_MATMUL_HSACO (quantized matmul)
+- [ ] 25-11-PLAN.md — Fix Q4_K_MATMUL_HSACO (quantized matmul)
+- [ ] 25-12-PLAN.md — Fix Q6_K_MATMUL_HSACO (quantized matmul)
 
 ### Phase 26: Transpose Kernel Fix
 
@@ -175,13 +180,13 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 | 22 | v1.4 | 5/5 | Complete | 2026-01-20 |
 | 23 | v1.4 | 5/5 | Complete | 2026-01-20 |
 | 24 | v1.4 | 6/6 | Complete | 2026-01-20 |
-| 25 | v1.5 | 0/7 | Planning | - |
+| 25 | v1.5 | 0/12 | Planning | - |
 | 26 | v1.5 | 0/0 | Not started | - |
 | 27 | v1.5 | 0/0 | Not started | - |
 | 28 | v1.5 | 0/0 | Not started | - |
 | 29 | v1.5 | 0/0 | Not started | - |
 
-**Total Progress:** 168/168 plans complete (v1.0-v1.4), v1.5 planning in progress (7 plans)
+**Total Progress:** 168/168 plans complete (v1.0-v1.4), v1.5 planning in progress (12 plans)
 
 **Note:** Phase 21-06 (Performance Validation) skipped by user request. All test health goals (TEST-01 through TEST-06) achieved.
 
@@ -190,11 +195,11 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 ## Session Continuity
 
 Last session: 2026-01-21
-Stopped at: Phase 25 planning complete
-Resume file: 7 plans created for Env Var Fix
+Stopped at: Phase 25 gap closure planning
+Resume file: 5 gap closure plans created
 
 **v1.5 - Env Var & Transpose Fix (2026-01-21):**
-- Phase 25: Env Var Fix (7 plans, ready for execution)
+- Phase 25: Env Var Fix (12 plans, ready for execution - 7 original + 5 gap closure)
 - Phase 26: Transpose Kernel Fix (Not started)
 - Phase 27: Device Property Infrastructure (Not started)
 - Phase 28: Debug Hygiene (Not started)

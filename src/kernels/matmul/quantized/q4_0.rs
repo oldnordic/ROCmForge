@@ -5,7 +5,6 @@
 //! - Per block: scale (f32, 4 bytes) + 16 bytes 4-bit packed values = 20 bytes
 //! - Dequantization: value = scale * ((packed & 0x0F) - 8)
 
-use std::env;
 use std::ffi::c_void;
 use std::path::Path;
 use std::sync::Mutex;
@@ -60,12 +59,13 @@ fn get_or_init_q4_0_cache() -> Result<&'static Mutex<Option<Q4_0KernelCache>>, H
         HipError::InitializationFailed(format!("Failed to create HipBackend for loading: {}", e))
     })?;
 
-    let kernel_path = env::var("Q4_0_MATMUL_HSACO")
-        .map_err(|_| HipError::KernelLoadFailed("Q4_0_MATMUL_HSACO env var not set".to_string()))?;
+    // Use option_env!() to read compile-time environment variable set by build.rs
+    let kernel_path = option_env!("Q4_0_MATMUL_HSACO")
+        .ok_or_else(|| HipError::KernelLoadFailed("Q4_0_MATMUL_HSACO not set at compile time. Rebuild the project.".to_string()))?;
 
     if !Path::new(&kernel_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
-            "Q4_0 matmul HSACO not found: {}",
+            "Q4_0 matmul HSACO file not found at {} (compiled path from build.rs)",
             kernel_path
         )));
     }
