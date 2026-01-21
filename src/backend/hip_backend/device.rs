@@ -31,7 +31,7 @@ impl HipDeviceProp {
     // This is after all the texture/surface fields - verified with C code
     const MULTI_PROCESSOR_COUNT_OFFSET: usize = 508;
 
-    // Offsets for launch limit fields (verified against hip_runtime_api.h struct layout)
+    // Launch limit field offsets - verified against hip_runtime_api.h
     // Based on: name[256]: 0-255 (256 bytes)
     //           uuid: 256-271 (16 bytes)
     //           luid[8]: 272-279 (8 bytes)
@@ -44,7 +44,6 @@ impl HipDeviceProp {
     //           maxThreadsPerBlock: 316-319 (4 bytes)
     //           maxThreadsDim[3]: 320-331 (12 bytes)
     //           maxGridSize[3]: 332-343 (12 bytes)
-
     const SHARED_MEM_PER_BLOCK_OFFSET: usize = 292;
     const WARP_SIZE_OFFSET: usize = 304;
     const MAX_THREADS_PER_BLOCK_OFFSET: usize = 316;
@@ -92,6 +91,83 @@ impl HipDeviceProp {
                 );
                 0
             })
+    }
+
+    /// Get maximum threads per block (typically 1024 for AMD GPUs)
+    ///
+    /// Reads the maxThreadsPerBlock field from hipDeviceProp_t.
+    /// This is the total number of threads allowed in a block (product of x*y*z).
+    pub fn max_threads_per_block(&self) -> i32 {
+        let bytes = &self._buffer
+            [Self::MAX_THREADS_PER_BLOCK_OFFSET..Self::MAX_THREADS_PER_BLOCK_OFFSET + 4];
+        bytes
+            .try_into()
+            .ok()
+            .map(i32::from_ne_bytes)
+            .unwrap_or(1024)
+    }
+
+    /// Get maximum threads per dimension [x, y, z]
+    ///
+    /// Reads the maxThreadsDim field from hipDeviceProp_t.
+    /// Each dimension has its own limit (typically 1024 per axis for AMD GPUs).
+    pub fn max_threads_dim(&self) -> [i32; 3] {
+        let mut result = [0i32; 3];
+        for i in 0..3 {
+            let offset = Self::MAX_THREADS_DIM_OFFSET + i * 4;
+            let bytes = &self._buffer[offset..offset + 4];
+            result[i] = bytes
+                .try_into()
+                .ok()
+                .map(i32::from_ne_bytes)
+                .unwrap_or(1024);
+        }
+        result
+    }
+
+    /// Get maximum grid dimensions [x, y, z]
+    ///
+    /// Reads the maxGridSize field from hipDeviceProp_t.
+    /// For AMD GPUs: typically [2^32-1, 65535, 65535].
+    pub fn max_grid_size(&self) -> [i32; 3] {
+        let mut result = [0i32; 3];
+        for i in 0..3 {
+            let offset = Self::MAX_GRID_SIZE_OFFSET + i * 4;
+            let bytes = &self._buffer[offset..offset + 4];
+            result[i] = bytes
+                .try_into()
+                .ok()
+                .map(i32::from_ne_bytes)
+                .unwrap_or(65535);
+        }
+        result
+    }
+
+    /// Get shared memory per block in bytes
+    ///
+    /// Reads the sharedMemPerBlock field from hipDeviceProp_t.
+    /// For AMD GPUs: typically 65536 bytes.
+    pub fn shared_mem_per_block(&self) -> usize {
+        let bytes = &self._buffer
+            [Self::SHARED_MEM_PER_BLOCK_OFFSET..Self::SHARED_MEM_PER_BLOCK_OFFSET + 8];
+        bytes
+            .try_into()
+            .ok()
+            .map(u64::from_ne_bytes)
+            .unwrap_or(65536) as usize
+    }
+
+    /// Get warp size (wavefront size)
+    ///
+    /// Reads the warpSize field from hipDeviceProp_t.
+    /// For AMD GPUs: 32 for RDNA3, 64 for CDNA3.
+    pub fn warp_size(&self) -> i32 {
+        let bytes = &self._buffer[Self::WARP_SIZE_OFFSET..Self::WARP_SIZE_OFFSET + 4];
+        bytes
+            .try_into()
+            .ok()
+            .map(i32::from_ne_bytes)
+            .unwrap_or(32)
     }
 }
 
