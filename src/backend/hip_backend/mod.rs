@@ -13,6 +13,9 @@ mod module;
 mod runtime;
 mod stream;
 
+#[cfg(test)]
+mod matmul_sync_tests;
+
 // Re-export memory module types for backward compatibility
 pub use memory::HipBuffer;
 pub use memory::HipBufferInner;
