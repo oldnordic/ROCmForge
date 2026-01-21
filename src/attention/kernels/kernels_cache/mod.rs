@@ -107,14 +107,13 @@ pub(crate) fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>,
         HipError::InitializationFailed(format!("Failed to create HipBackend: {}", e))
     })?;
 
-    // Load HSACO paths from build.rs environment variables
-    let scale_path = std::env::var("SCALE_HSACO")
-        .ok()
-        .ok_or_else(|| HipError::KernelLoadFailed("SCALE_HSACO env var not set".to_string()))?;
+    // Load HSACO paths from build.rs compile-time environment variables
+    let scale_path = option_env!("SCALE_HSACO")
+        .ok_or_else(|| HipError::KernelLoadFailed("SCALE_HSACO not set at compile time. Rebuild the project.".to_string()))?;
 
-    if !Path::new(&scale_path).exists() {
+    if !Path::new(scale_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
-            "HSACO not found: {}",
+            "SCALE_HSACO file not found at {} (compiled path from build.rs)",
             scale_path
         )));
     }
@@ -122,13 +121,12 @@ pub(crate) fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>,
     let scale_module = backend.load_module(&scale_path)?;
     let scale_kernel = backend.get_kernel_function(&scale_module, "scale_kernel")?;
 
-    let mask_path = std::env::var("MASK_HSACO")
-        .ok()
-        .ok_or_else(|| HipError::KernelLoadFailed("MASK_HSACO env var not set".to_string()))?;
+    let mask_path = option_env!("MASK_HSACO")
+        .ok_or_else(|| HipError::KernelLoadFailed("MASK_HSACO not set at compile time. Rebuild the project.".to_string()))?;
 
-    if !Path::new(&mask_path).exists() {
+    if !Path::new(mask_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
-            "HSACO not found: {}",
+            "MASK_HSACO file not found at {} (compiled path from build.rs)",
             mask_path
         )));
     }
@@ -136,28 +134,26 @@ pub(crate) fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>,
     let mask_module = backend.load_module(&mask_path)?;
     let mask_kernel = backend.get_kernel_function(&mask_module, "mask_kernel")?;
 
-    let softmax_path = std::env::var("SOFTMAX_HSACO")
-        .ok()
-        .ok_or_else(|| HipError::KernelLoadFailed("SOFTMAX_HSACO env var not set".to_string()))?;
+    let softmax_path = option_env!("SOFTMAX_HSACO")
+        .ok_or_else(|| HipError::KernelLoadFailed("SOFTMAX_HSACO not set at compile time. Rebuild the project.".to_string()))?;
 
-    if !Path::new(&softmax_path).exists() {
+    if !Path::new(softmax_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
-            "HSACO not found: {}",
+            "SOFTMAX_HSACO file not found at {} (compiled path from build.rs)",
             softmax_path
         )));
     }
 
-    let softmax_module = backend.load_module(&softmax_path)?;
+    let softmax_module = backend.load_module(softmax_path)?;
     let softmax_kernel = backend.get_kernel_function(&softmax_module, "softmax_kernel")?;
 
     // Load RoPE kernel
-    let rope_path = std::env::var("ROPE_HSACO")
-        .ok()
-        .ok_or_else(|| HipError::KernelLoadFailed("ROPE_HSACO env var not set".to_string()))?;
+    let rope_path = option_env!("ROPE_HSACO")
+        .ok_or_else(|| HipError::KernelLoadFailed("ROPE_HSACO not set at compile time. Rebuild the project.".to_string()))?;
 
-    if !Path::new(&rope_path).exists() {
+    if !Path::new(rope_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
-            "HSACO not found: {}",
+            "ROPE_HSACO file not found at {} (compiled path from build.rs)",
             rope_path
         )));
     }
@@ -166,16 +162,14 @@ pub(crate) fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>,
     let rope_kernel = backend.get_kernel_function(&rope_module, "rope_kernel")?;
 
     // Load position embeddings kernel
-    let position_embeddings_path =
-        std::env::var("POSITION_EMBEDDINGS_HSACO")
-            .ok()
-            .ok_or_else(|| {
-                HipError::KernelLoadFailed("POSITION_EMBEDDINGS_HSACO env var not set".to_string())
-            })?;
+    let position_embeddings_path = option_env!("POSITION_EMBEDDINGS_HSACO")
+        .ok_or_else(|| {
+            HipError::KernelLoadFailed("POSITION_EMBEDDINGS_HSACO not set at compile time. Rebuild the project.".to_string())
+        })?;
 
-    if !Path::new(&position_embeddings_path).exists() {
+    if !Path::new(position_embeddings_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
-            "HSACO not found: {}",
+            "POSITION_EMBEDDINGS_HSACO file not found at {} (compiled path from build.rs)",
             position_embeddings_path
         )));
     }
@@ -185,13 +179,12 @@ pub(crate) fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>,
         backend.get_kernel_function(&position_embeddings_module, "position_embeddings_kernel")?;
 
     // Load QK^T matmul kernel
-    let qkt_matmul_path = std::env::var("QKT_MATMUL_HSACO").ok().ok_or_else(|| {
-        HipError::KernelLoadFailed("QKT_MATMUL_HSACO env var not set".to_string())
-    })?;
+    let qkt_matmul_path = option_env!("QKT_MATMUL_HSACO")
+        .ok_or_else(|| HipError::KernelLoadFailed("QKT_MATMUL_HSACO not set at compile time. Rebuild the project.".to_string()))?;
 
-    if !Path::new(&qkt_matmul_path).exists() {
+    if !Path::new(qkt_matmul_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
-            "HSACO not found: {}",
+            "QKT_MATMUL_HSACO file not found at {} (compiled path from build.rs)",
             qkt_matmul_path
         )));
     }
@@ -200,13 +193,12 @@ pub(crate) fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>,
     let qkt_matmul_kernel = backend.get_kernel_function(&qkt_matmul_module, "qkt_matmul_kernel")?;
 
     // Load weighted matmul kernel
-    let weighted_matmul_path = std::env::var("WEIGHTED_MATMUL_HSACO").ok().ok_or_else(|| {
-        HipError::KernelLoadFailed("WEIGHTED_MATMUL_HSACO env var not set".to_string())
-    })?;
+    let weighted_matmul_path = option_env!("WEIGHTED_MATMUL_HSACO")
+        .ok_or_else(|| HipError::KernelLoadFailed("WEIGHTED_MATMUL_HSACO not set at compile time. Rebuild the project.".to_string()))?;
 
-    if !Path::new(&weighted_matmul_path).exists() {
+    if !Path::new(weighted_matmul_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
-            "HSACO not found: {}",
+            "WEIGHTED_MATMUL_HSACO file not found at {} (compiled path from build.rs)",
             weighted_matmul_path
         )));
     }
@@ -216,15 +208,14 @@ pub(crate) fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>,
         backend.get_kernel_function(&weighted_matmul_module, "weighted_matmul_kernel")?;
 
     // Load FlashAttention non-causal kernel
-    let flash_attention_nocausal_path = std::env::var("FLASH_ATTENTION_NCAUSAL_HSACO")
-        .ok()
+    let flash_attention_nocausal_path = option_env!("FLASH_ATTENTION_NCAUSAL_HSACO")
         .ok_or_else(|| {
-            HipError::KernelLoadFailed("FLASH_ATTENTION_NCAUSAL_HSACO env var not set".to_string())
+            HipError::KernelLoadFailed("FLASH_ATTENTION_NCAUSAL_HSACO not set at compile time. Rebuild the project.".to_string())
         })?;
 
-    if !Path::new(&flash_attention_nocausal_path).exists() {
+    if !Path::new(flash_attention_nocausal_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
-            "HSACO not found: {}",
+            "FLASH_ATTENTION_NCAUSAL_HSACO file not found at {} (compiled path from build.rs)",
             flash_attention_nocausal_path
         )));
     }
@@ -236,13 +227,12 @@ pub(crate) fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>,
     )?;
 
     // Load causal mask kernel
-    let causal_mask_path = std::env::var("CAUSAL_MASK_HSACO").ok().ok_or_else(|| {
-        HipError::KernelLoadFailed("CAUSAL_MASK_HSACO env var not set".to_string())
-    })?;
+    let causal_mask_path = option_env!("CAUSAL_MASK_HSACO")
+        .ok_or_else(|| HipError::KernelLoadFailed("CAUSAL_MASK_HSACO not set at compile time. Rebuild the project.".to_string()))?;
 
-    if !Path::new(&causal_mask_path).exists() {
+    if !Path::new(causal_mask_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
-            "HSACO not found: {}",
+            "CAUSAL_MASK_HSACO file not found at {} (compiled path from build.rs)",
             causal_mask_path
         )));
     }
@@ -252,15 +242,14 @@ pub(crate) fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>,
         backend.get_kernel_function(&causal_mask_module, "causal_mask_kernel")?;
 
     // Load FlashAttention causal kernel
-    let flash_attention_causal_path = std::env::var("FLASH_ATTENTION_CAUSAL_HSACO")
-        .ok()
+    let flash_attention_causal_path = option_env!("FLASH_ATTENTION_CAUSAL_HSACO")
         .ok_or_else(|| {
-            HipError::KernelLoadFailed("FLASH_ATTENTION_CAUSAL_HSACO env var not set".to_string())
+            HipError::KernelLoadFailed("FLASH_ATTENTION_CAUSAL_HSACO not set at compile time. Rebuild the project.".to_string())
         })?;
 
-    if !Path::new(&flash_attention_causal_path).exists() {
+    if !Path::new(flash_attention_causal_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
-            "HSACO not found: {}",
+            "FLASH_ATTENTION_CAUSAL_HSACO file not found at {} (compiled path from build.rs)",
             flash_attention_causal_path
         )));
     }
@@ -272,13 +261,12 @@ pub(crate) fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>,
     )?;
 
     // Load FlashAttention kernel
-    let flash_attention_path = std::env::var("FLASH_ATTENTION_HSACO").ok().ok_or_else(|| {
-        HipError::KernelLoadFailed("FLASH_ATTENTION_HSACO env var not set".to_string())
-    })?;
+    let flash_attention_path = option_env!("FLASH_ATTENTION_HSACO")
+        .ok_or_else(|| HipError::KernelLoadFailed("FLASH_ATTENTION_HSACO not set at compile time. Rebuild the project.".to_string()))?;
 
-    if !Path::new(&flash_attention_path).exists() {
+    if !Path::new(flash_attention_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
-            "HSACO not found: {}",
+            "FLASH_ATTENTION_HSACO file not found at {} (compiled path from build.rs)",
             flash_attention_path
         )));
     }
@@ -288,15 +276,14 @@ pub(crate) fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>,
         backend.get_kernel_function(&flash_attention_module, "flash_attention_kernel")?;
 
     // Load MQA KV replication kernel
-    let mqa_kv_replicate_path = std::env::var("MQA_KV_REPLICATE_HSACO")
-        .ok()
+    let mqa_kv_replicate_path = option_env!("MQA_KV_REPLICATE_HSACO")
         .ok_or_else(|| {
-            HipError::KernelLoadFailed("MQA_KV_REPLICATE_HSACO env var not set".to_string())
+            HipError::KernelLoadFailed("MQA_KV_REPLICATE_HSACO not set at compile time. Rebuild the project.".to_string())
         })?;
 
-    if !Path::new(&mqa_kv_replicate_path).exists() {
+    if !Path::new(mqa_kv_replicate_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
-            "HSACO not found: {}",
+            "MQA_KV_REPLICATE_HSACO file not found at {} (compiled path from build.rs)",
             mqa_kv_replicate_path
         )));
     }
@@ -367,18 +354,17 @@ pub fn get_mqa_kernel_and_backend() -> Result<(Arc<HipBackend>, *mut c_void), Hi
     })?;
 
     // Load MQA KV replication kernel
-    let mqa_kv_replicate_path = std::env::var("MQA_KV_REPLICATE_HSACO")
-        .ok()
-        .ok_or_else(|| HipError::KernelLoadFailed("MQA_KV_REPLICATE_HSACO env var not set".to_string()))?;
+    let mqa_kv_replicate_path = option_env!("MQA_KV_REPLICATE_HSACO")
+        .ok_or_else(|| HipError::KernelLoadFailed("MQA_KV_REPLICATE_HSACO not set at compile time. Rebuild the project.".to_string()))?;
 
-    if !Path::new(&mqa_kv_replicate_path).exists() {
+    if !Path::new(mqa_kv_replicate_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
-            "HSACO not found: {}",
+            "MQA_KV_REPLICATE_HSACO file not found at {} (compiled path from build.rs)",
             mqa_kv_replicate_path
         )));
     }
 
-    let mqa_kv_replicate_module = backend.load_module(&mqa_kv_replicate_path)?;
+    let mqa_kv_replicate_module = backend.load_module(mqa_kv_replicate_path)?;
     let mqa_kv_replicate_kernel =
         backend.get_kernel_function(&mqa_kv_replicate_module, "mqa_kv_replicate_fused_kernel")?;
 
@@ -440,51 +426,48 @@ pub fn get_attention_kernels() -> Result<(Arc<HipBackend>, (*mut c_void, *mut c_
     })?;
 
     // Load QK^T matmul kernel
-    let qkt_matmul_path = std::env::var("QKT_MATMUL_HSACO")
-        .ok()
-        .ok_or_else(|| HipError::KernelLoadFailed("QKT_MATMUL_HSACO env var not set".to_string()))?;
+    let qkt_matmul_path = option_env!("QKT_MATMUL_HSACO")
+        .ok_or_else(|| HipError::KernelLoadFailed("QKT_MATMUL_HSACO not set at compile time. Rebuild the project.".to_string()))?;
 
-    if !Path::new(&qkt_matmul_path).exists() {
+    if !Path::new(qkt_matmul_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
-            "HSACO not found: {}",
+            "QKT_MATMUL_HSACO file not found at {} (compiled path from build.rs)",
             qkt_matmul_path
         )));
     }
 
-    let qkt_matmul_module = backend.load_module(&qkt_matmul_path)?;
+    let qkt_matmul_module = backend.load_module(qkt_matmul_path)?;
     let qkt_matmul_kernel =
         backend.get_kernel_function(&qkt_matmul_module, "qkt_matmul_kernel")?;
 
     // Load softmax kernel
-    let softmax_path = std::env::var("SOFTMAX_HSACO")
-        .ok()
-        .ok_or_else(|| HipError::KernelLoadFailed("SOFTMAX_HSACO env var not set".to_string()))?;
+    let softmax_path = option_env!("SOFTMAX_HSACO")
+        .ok_or_else(|| HipError::KernelLoadFailed("SOFTMAX_HSACO not set at compile time. Rebuild the project.".to_string()))?;
 
-    if !Path::new(&softmax_path).exists() {
+    if !Path::new(softmax_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
-            "HSACO not found: {}",
+            "SOFTMAX_HSACO file not found at {} (compiled path from build.rs)",
             softmax_path
         )));
     }
 
-    let softmax_module = backend.load_module(&softmax_path)?;
+    let softmax_module = backend.load_module(softmax_path)?;
     let softmax_kernel = backend.get_kernel_function(&softmax_module, "softmax_kernel")?;
 
     // Load weighted matmul kernel
-    let weighted_matmul_path = std::env::var("WEIGHTED_MATMUL_HSACO")
-        .ok()
+    let weighted_matmul_path = option_env!("WEIGHTED_MATMUL_HSACO")
         .ok_or_else(|| {
-            HipError::KernelLoadFailed("WEIGHTED_MATMUL_HSACO env var not set".to_string())
+            HipError::KernelLoadFailed("WEIGHTED_MATMUL_HSACO not set at compile time. Rebuild the project.".to_string())
         })?;
 
-    if !Path::new(&weighted_matmul_path).exists() {
+    if !Path::new(weighted_matmul_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
-            "HSACO not found: {}",
+            "WEIGHTED_MATMUL_HSACO file not found at {} (compiled path from build.rs)",
             weighted_matmul_path
         )));
     }
 
-    let weighted_matmul_module = backend.load_module(&weighted_matmul_path)?;
+    let weighted_matmul_module = backend.load_module(weighted_matmul_path)?;
     let weighted_matmul_kernel =
         backend.get_kernel_function(&weighted_matmul_module, "weighted_matmul_kernel")?;
 
