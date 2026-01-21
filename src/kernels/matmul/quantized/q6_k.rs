@@ -5,7 +5,6 @@
 //! - Per block (256 bytes): 32 bytes scales + 192 bytes 6-bit quants + 32 bytes padding
 //! - Dequantization: value = signed_6bit * scale
 
-use std::env;
 use std::ffi::c_void;
 use std::path::Path;
 use std::sync::Mutex;
@@ -61,12 +60,12 @@ fn get_or_init_q6_k_cache() -> Result<&'static Mutex<Option<Q6_KKernelCache>>, H
         HipError::InitializationFailed(format!("Failed to create HipBackend for loading: {}", e))
     })?;
 
-    let kernel_path = env::var("Q6_K_MATMUL_HSACO")
-        .map_err(|_| HipError::KernelLoadFailed("Q6_K_MATMUL_HSACO env var not set".to_string()))?;
+    let kernel_path = option_env!("Q6_K_MATMUL_HSACO")
+        .ok_or_else(|| HipError::KernelLoadFailed("Q6_K_MATMUL_HSACO not set at compile time. Rebuild the project.".to_string()))?;
 
     if !Path::new(&kernel_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
-            "Q6_K matmul HSACO not found: {}",
+            "HSACO file not found at {} (compiled path from build.rs)",
             kernel_path
         )));
     }
