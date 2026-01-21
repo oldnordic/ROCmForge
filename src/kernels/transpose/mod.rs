@@ -486,4 +486,95 @@ mod tests {
             Err(e) => panic!("Unexpected error: {:?}", e),
         }
     }
+
+    /// Test 5: Qwen2.5 embedding weights - [896, 151936] transpose
+    ///
+    /// This is the actual failing case from qwen2.5-0.5b.gguf model loading.
+    /// The original bug: block=(64,64,1) = 4096 threads exceeded maxThreadsPerBlock=1024.
+    /// After fix: block=(32,32,1) = 1024 threads, within limit.
+    #[test]
+    fn test_transpose_qwen_embedding_weights() {
+        let backend = HipBackend::new().unwrap();
+
+        // Qwen2.5-0.5b embedding weight dimensions
+        // hidden_size = 896, vocab_size = 151936
+        let hidden_size = 896usize;
+        let vocab_size = 151936usize;
+        let elem_count = hidden_size * vocab_size;
+
+        // Create test data: sequential values for verification
+        let input_data: Vec<f32> = (0..elem_count).map(|i| i as f32).collect();
+
+        let input_shape = TensorShape::from_dims(&[hidden_size, vocab_size]);
+        let input_buffer = backend.allocate_buffer(elem_count * 4).unwrap();
+        backend.copy_to_device(&input_buffer, &input_data).unwrap();
+        let input_tensor = DeviceTensor {
+            buffer: input_buffer,
+            shape: input_shape,
+        };
+
+        // Perform transpose
+        let result = transpose_tensor(&backend, &input_tensor);
+
+        match result {
+            Ok(transposed) => {
+                // Verify shape is correctly transposed
+                assert_eq!(
+                    transposed.shape().dims(),
+                    &[vocab_size, hidden_size],
+                    "Transposed shape should be [vocab_size, hidden_size]"
+                );
+
+                // Copy result back for verification
+                let mut output_data = vec![0.0f32; elem_count];
+                backend
+                    .copy_from_device_safe(&transposed.buffer, &mut output_data)
+                    .unwrap();
+
+                // Verify transpose correctness: output[row, col] = input[col, row]
+                // Check corners
+                assert_eq!(
+                    output_data[0], input_data[0],
+                    "Top-left corner should match"
+                );
+                assert_eq!(
+                    output_data[elem_count - 1],
+                    input_data[elem_count - 1],
+                    "Bottom-right corner should match"
+                );
+
+                // Check a few random positions for correctness
+                // Position [hidden_size/2, vocab_size/2] in input -> [vocab_size/2, hidden_size/2] in output
+                let input_row = hidden_size / 2;
+                let input_col = vocab_size / 2;
+                let input_idx = input_row * vocab_size + input_col;
+                let output_idx = input_col * hidden_size + input_row;
+                assert_eq!(
+                    output_data[output_idx], input_data[input_idx],
+                    "Middle element should be correctly transposed"
+                );
+
+                // Check first embedding vector (all zeros in input, spread across output)
+                for i in 0..hidden_size {
+                    let output_idx = i;
+                    let input_idx = i * vocab_size;
+                    assert_eq!(
+                        output_data[output_idx], input_data[input_idx],
+                        "First element of row {} should match first element of column {} in input",
+                        i, i
+                    );
+                }
+
+                println!(
+                    "Transpose [896, 151936] -> [151936, 896] successful"
+                );
+            }
+            Err(HipError::KernelLoadFailed(msg)) if msg.contains("HSACO") => {
+                println!("SKIPPED: HSACO not compiled - {}", msg);
+            }
+            Err(e) => {
+                panic!("Transpose failed for [896, 151936]: {:?}", e);
+            }
+        }
+    }
 }
