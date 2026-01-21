@@ -273,7 +273,8 @@ pub unsafe fn temperature_scale_kernel(
                 &mut vocab_size_arg as *mut _ as *mut c_void,
             ];
 
-            backend.launch_kernel_with_module_shared(
+            // Validate launch config against cached device limits before launching
+            backend.launch_kernel_with_module_shared_validated(
                 kernel,
                 grid_dim,
                 block_dim,
@@ -340,7 +341,8 @@ pub unsafe fn topk_sampling_kernel(
                 &mut vocab_size_arg as *mut _ as *mut c_void,
             ];
 
-            backend.launch_kernel_with_module_shared(
+            // Validate launch config against cached device limits before launching
+            backend.launch_kernel_with_module_shared_validated(
                 kernel,
                 grid_dim,
                 block_dim,
@@ -400,7 +402,8 @@ pub unsafe fn topp_prefix_sum_kernel(
                 &mut vocab_size_arg as *mut _ as *mut c_void,
             ];
 
-            backend.launch_kernel_with_module_shared(
+            // Validate launch config against cached device limits before launching
+            backend.launch_kernel_with_module_shared_validated(
                 kernel,
                 grid_dim,
                 block_dim,
@@ -464,7 +467,8 @@ pub unsafe fn topp_threshold_kernel(
                 &mut vocab_size_arg as *mut _ as *mut c_void,
             ];
 
-            backend.launch_kernel_with_module_shared(
+            // Validate launch config against cached device limits before launching
+            backend.launch_kernel_with_module_shared_validated(
                 kernel,
                 grid_dim,
                 block_dim,
@@ -532,7 +536,8 @@ pub unsafe fn topp_sample_kernel(
                 &mut vocab_size_arg as *mut _ as *mut c_void,
             ];
 
-            backend.launch_kernel_with_module_shared(
+            // Validate launch config against cached device limits before launching
+            backend.launch_kernel_with_module_shared_validated(
                 kernel,
                 grid_dim,
                 block_dim,
@@ -633,7 +638,8 @@ pub unsafe fn fused_sampling_kernel(
                 &mut vocab_size_arg as *mut _ as *mut c_void,
             ];
 
-            backend.launch_kernel_with_module_shared(
+            // Validate launch config against cached device limits before launching
+            backend.launch_kernel_with_module_shared_validated(
                 kernel,
                 grid_dim,
                 block_dim,
