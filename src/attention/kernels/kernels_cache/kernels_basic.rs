@@ -60,7 +60,8 @@ pub unsafe fn scale_gpu_kernel(
                 &mut seq_len_arg as *mut _ as *mut c_void,
             ];
 
-            match backend.launch_kernel_with_module_shared(kernel, grid_dim, block_dim, args, 0) {
+            // Validate launch config against cached device limits before launching
+            match backend.launch_kernel_with_module_shared_validated(kernel, grid_dim, block_dim, args, 0) {
                 Ok(()) => 0,
                 Err(_) => -1,
             }
@@ -114,7 +115,8 @@ pub unsafe fn mask_gpu_kernel(
                 &mut seq_len_arg as *mut _ as *mut c_void,
             ];
 
-            match backend.launch_kernel_with_module_shared(kernel, grid_dim, block_dim, args, 0) {
+            // Validate launch config against cached device limits before launching
+            match backend.launch_kernel_with_module_shared_validated(kernel, grid_dim, block_dim, args, 0) {
                 Ok(()) => 0,
                 Err(_) => -1,
             }
@@ -155,7 +157,8 @@ pub unsafe fn softmax_gpu_kernel(mut scores: *mut f32, batch_size: u32, seq_len:
                 &mut seq_len_arg as *mut _ as *mut c_void,
             ];
 
-            match backend.launch_kernel_with_module_shared(
+            // Validate launch config against cached device limits before launching
+            match backend.launch_kernel_with_module_shared_validated(
                 &kernel,
                 grid_dim,
                 block_dim,
@@ -221,7 +224,8 @@ pub unsafe fn rope_gpu_kernel(
                 &mut head_dim_arg as *mut _ as *mut c_void,
             ];
 
-            match backend.launch_kernel_with_module_shared(kernel, grid_dim, block_dim, args, 0) {
+            // Validate launch config against cached device limits before launching
+            match backend.launch_kernel_with_module_shared_validated(kernel, grid_dim, block_dim, args, 0) {
                 Ok(()) => 0,
                 Err(_) => -1,
             }
@@ -292,7 +296,8 @@ pub unsafe fn position_embeddings_gpu_kernel(
                 &mut head_dim_arg as *mut _ as *mut c_void,
             ];
 
-            match backend.launch_kernel_with_module_shared(kernel, grid_dim, block_dim, args, 0) {
+            // Validate launch config against cached device limits before launching
+            match backend.launch_kernel_with_module_shared_validated(kernel, grid_dim, block_dim, args, 0) {
                 Ok(()) => 0,
                 Err(_) => -1,
             }
