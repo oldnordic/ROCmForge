@@ -169,6 +169,11 @@ impl Linear {
             .map_err(|e| ModelError::GpuError(crate::tensor::matmul::MatmulError::HipError(e)))?;
         let handle = hip_blas::HipBlasHandle::new().map_err(|e| ModelError::GpuError(e.into()))?;
 
+        // CRITICAL: Associate handle with backend's stream
+        // See docs/STREAM_SYNCHRONIZATION.md
+        handle.set_stream(backend.stream().as_ptr())
+            .map_err(|e| ModelError::GpuError(e.into()))?;
+
         // Convert dimensions to i32 for BLAS API
         // Model dimensions should fit in i32 (>4B dimensions not supported)
         let n: i32 = self.out_features.try_into().map_err(|_| {

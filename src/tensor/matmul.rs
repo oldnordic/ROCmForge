@@ -286,6 +286,10 @@ mod tests {
     fn test_matmul_dimension_validation() {
         let backend = crate::backend::HipBackend::new().unwrap();
         let handle = HipBlasHandle::new().unwrap();
+
+        // CRITICAL: Set stream before using handle (see docs/STREAM_SYNCHRONIZATION.md)
+        handle.set_stream(backend.stream().as_ptr()).unwrap();
+
         let a = HipBuffer::new(4).unwrap();
         let b = HipBuffer::new(4).unwrap();
 
