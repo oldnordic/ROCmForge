@@ -9,7 +9,6 @@
 
 use crate::backend::hip_backend::{HipBackend, HipError, HipKernel, HipModule};
 
-use std::ffi::c_void;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -69,12 +68,12 @@ pub fn get_or_init_q4_0_dequant_cache(
         HipError::InitializationFailed(format!("Failed to create HipBackend for loading: {}", e))
     })?;
 
-    let kernel_path = std::env::var("Q4_0_DEQUANT_HSACO")
-        .map_err(|_| HipError::KernelLoadFailed("Q4_0_DEQUANT_HSACO env var not set".to_string()))?;
+    let kernel_path = option_env!("Q4_0_DEQUANT_HSACO")
+        .ok_or_else(|| HipError::KernelLoadFailed("Q4_0_DEQUANT_HSACO not set at compile time. Rebuild the project.".to_string()))?;
 
     if !Path::new(&kernel_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
-            "Q4_0 dequant HSACO not found: {}",
+            "Q4_0_DEQUANT_HSACO file not found at {} (compiled path from build.rs)",
             kernel_path
         )));
     }

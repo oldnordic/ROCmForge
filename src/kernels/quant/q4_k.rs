@@ -12,7 +12,6 @@
 use crate::backend::{HipBackend, HipKernel, HipModule};
 
 use std::ffi::c_void;
-use std::path::Path;
 use std::sync::Mutex;
 
 #[cfg(test)]
@@ -51,8 +50,9 @@ pub fn get_or_init_q4_k_dequant_cache(
     }
 
     // Slow path: initialize cache
-    let hsaco_path = std::env::var("Q4_K_DEQUANT_HSACO")
-        .map_err(|_| "Q4_K_DEQUANT_HSACO environment variable not set".to_string())?;
+    // Use option_env!() to read compile-time environment variable set by build.rs
+    let hsaco_path = option_env!("Q4_K_DEQUANT_HSACO")
+        .ok_or_else(|| "Q4_K_DEQUANT_HSACO not set at compile time. Rebuild the project.".to_string())?;
 
     // Load the module from HSACO file
     let module = backend
