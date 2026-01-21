@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-21)
 ## Current Position
 
 Phase: 30 of 32 (Immediate Bugfix)
-Plan: —
-Status: Roadmap created, ready to plan
-Last activity: 2026-01-21 — Milestone v1.6 roadmap defined
+Plan: 01 of 1
+Status: Plan complete
+Last activity: 2026-01-21 — Completed 30-01: Comprehensive Sanity Check + Delete Duplicate DeviceLimits
 
-Progress: [░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 0% (v1.6)
+Progress: [█░░░░░░░░░░░░░░░░░░░░░░░░░░░] 33% (v1.6)
 
 ## Performance Metrics
 
@@ -57,10 +57,12 @@ Recent decisions from research (2026-01-21):
 - **HIP Debugging Documentation**: Created comprehensive developer guide in docs/HIP_DEBUGGING.md covering debug builds, HIP_LAUNCH_BLOCKING usage, error message interpretation, common issues, and debugging tools (DOC-01)
 - **Adaptive Transpose Block Sizing**: Transpose kernel now adapts to device maxThreadsPerBlock limit, supporting GPUs with varied limits (320, 512, 1024, etc.) - discovered during validation testing (TRN-03)
 - **Validation Test Organization**: E2E validation tests organized in tests/validation/ with descriptive names and graceful skip patterns (VAL-06)
+- **All-Axes Sanity Check**: Validate max_threads_dim[0], [1], [2] all > 0, not just [0] (FFI-01) - COMPLETED 2026-01-21
+- **Single DeviceLimits Construction**: Delete duplicate assignment that overwrites vetted values (FFI-02) - COMPLETED 2026-01-21
+- **Iterator-Based Validation Pattern**: Use `.iter().all(|&d| d > 0 && d <= 4096)` for clarity and correctness when validating array elements (FFI-01)
+- **Detailed Warning Messages**: Include actual incorrect values in warning log to aid debugging of FFI driver issues (FFI-01)
 
 v1.6 decisions (upcoming):
-- **All-Axes Sanity Check**: Validate max_threads_dim[0], [1], [2] all > 0, not just [0] (FFI-01)
-- **Single DeviceLimits Construction**: Delete duplicate assignment that overwrites vetted values (FFI-02)
 - **Bindgen Allowlist**: Use bindgen for hipDeviceProp_t only, not full HIP API (FFI-03)
 - **Compile-Time Offset Verification**: Test asserts manual offsets match bindgen at compile time (FFI-04)
 
@@ -70,7 +72,7 @@ None yet.
 
 ### Blockers/Concerns
 
-**CRITICAL: FFI Device Properties Bug (2026-01-21)**
+**RESOLVED: FFI Device Properties Bug (2026-01-21)**
 
 **Issue:** Sanity check only validates `max_threads_dim[0] > 0`, allowing garbage like `[1024, 0, 0]` to pass. Later kernel launch fails with "block.y 1 exceeds limit 0".
 
@@ -78,14 +80,12 @@ None yet.
 1. Incomplete sanity check (only dim[0] validated)
 2. Duplicate DeviceLimits assignment overwrites vetted values
 
-**Fix target:** Phase 30 - Immediate Bugfix
-
-**Resolution:** Strengthen sanity check to validate ALL 3 dimensions plus grid, warp, shared, threads/block. Delete duplicate DeviceLimits block.
+**Resolution (2026-01-21):** Strengthened sanity check to validate ALL 3 dimensions plus grid, warp, shared, threads/block. Deleted duplicate DeviceLimits block. (Plan 30-01)
 
 ## Session Continuity
 
 Last session: 2026-01-21
-Stopped at: Completed v1.5, created v1.6 roadmap
+Stopped at: Completed 30-01 (Comprehensive Sanity Check + Delete Duplicate DeviceLimits)
 Resume file: None
 
 **Milestone v1.5 COMPLETE!** All phases (25-29) finished with validation tests passing.
@@ -97,7 +97,7 @@ Resume file: None
 - Phase 28: Debug Hygiene (4/4 complete)
 - Phase 29: Validation & E2E (5/5 complete)
 
-**v1.6 - FFI Device Props Fix (Planned):**
-- Phase 30: Immediate Bugfix (FFI-01, FFI-02) - Sanity check all axes, delete duplicate
-- Phase 31: Bindgen Infrastructure (FFI-03) - build.rs + allowlist
-- Phase 32: Offset Verification Test (FFI-04) - compile-time offset assertions
+**v1.6 - FFI Device Props Fix (In Progress):**
+- Phase 30: Immediate Bugfix (FFI-01, FFI-02) - COMPLETE (1/1 plans)
+- Phase 31: Bindgen Infrastructure (FFI-03) - build.rs + allowlist (0/1 plans)
+- Phase 32: Offset Verification Test (FFI-04) - compile-time offset assertions (0/1 plans)

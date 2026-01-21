@@ -82,6 +82,7 @@ serial_test = "3.0"
 
 [build-dependencies]
 cc = "1.0"
+bindgen = "0.70"
 
 # Benchmarks
 [[bench]]
@@ -116,6 +117,14 @@ path = "src/bin/inspect_gguf.rs"
 [[bin]]
 name = "test_inference"
 path = "test_inference.rs"
+
+[[bin]]
+name = "run_simple_model"
+path = "src/bin/run_simple_model.rs"
+
+[[bin]]
+name = "test_qwen"
+path = "src/bin/test_qwen.rs"
 
 [features]
 # ROCm/HIP is always-on for ROCmForge - AMD GPU inference engine
