@@ -77,15 +77,17 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<FusedKernelCache>>, HipEr
     })?;
 
     // Load fused dequant+RMSNorm kernel
-    let dequant_rmsnorm_path = std::env::var("FUSED_DEQUANT_RMSNORM_HSACO")
-        .or_else(|_| std::env::var("FUSED_DEQUANT_RMSNORM_HSACO_PATH"))
-        .map_err(|_| {
-            HipError::KernelLoadFailed("FUSED_DEQUANT_RMSNORM_HSACO env var not set".to_string())
+    // Use option_env!() to read compile-time environment variable set by build.rs
+    let dequant_rmsnorm_path = option_env!("FUSED_DEQUANT_RMSNORM_HSACO")
+        .ok_or_else(|| {
+            HipError::KernelLoadFailed(
+                "FUSED_DEQUANT_RMSNORM_HSACO not set at compile time. Rebuild the project.".to_string()
+            )
         })?;
 
     if !Path::new(&dequant_rmsnorm_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
-            "HSACO not found: {}",
+            "FUSED_DEQUANT_RMSNORM_HSACO file not found at {} (compiled path from build.rs)",
             dequant_rmsnorm_path
         )));
     }
@@ -95,15 +97,17 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<FusedKernelCache>>, HipEr
         .get_kernel_function(&dequant_rmsnorm_module, "fused_q4_0_rmsnorm_kernel")?;
 
     // Load fused RoPE+KV append kernel
-    let rope_kvappend_path = std::env::var("FUSED_ROPE_KVAPPEND_HSACO")
-        .or_else(|_| std::env::var("FUSED_ROPE_KVAPPEND_HSACO_PATH"))
-        .map_err(|_| {
-            HipError::KernelLoadFailed("FUSED_ROPE_KVAPPEND_HSACO env var not set".to_string())
+    // Use option_env!() to read compile-time environment variable set by build.rs
+    let rope_kvappend_path = option_env!("FUSED_ROPE_KVAPPEND_HSACO")
+        .ok_or_else(|| {
+            HipError::KernelLoadFailed(
+                "FUSED_ROPE_KVAPPEND_HSACO not set at compile time. Rebuild the project.".to_string()
+            )
         })?;
 
     if !Path::new(&rope_kvappend_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
-            "HSACO not found: {}",
+            "FUSED_ROPE_KVAPPEND_HSACO file not found at {} (compiled path from build.rs)",
             rope_kvappend_path
         )));
     }

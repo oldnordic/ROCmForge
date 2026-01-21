@@ -86,15 +86,14 @@ impl TransposeKernel {
             return Ok(());
         }
 
-        // Load HSACO path from build.rs environment variable
-        let hsaco_path = std::env::var("TRANSPOSE_HSACO")
-            .ok()
-            .ok_or_else(|| HipError::KernelLoadFailed("TRANSPOSE_HSACO env var not set".to_string()))?;
+        // Load HSACO path from build.rs compile-time environment variable
+        let hsaco_path = option_env!("TRANSPOSE_HSACO")
+            .ok_or_else(|| HipError::KernelLoadFailed("TRANSPOSE_HSACO not set at compile time. Rebuild the project.".to_string()))?;
 
         // Check if HSACO file exists
-        if !Path::new(&hsaco_path).exists() {
+        if !Path::new(hsaco_path).exists() {
             return Err(HipError::KernelLoadFailed(format!(
-                "HSACO not found: {}",
+                "TRANSPOSE_HSACO file not found at {} (compiled path from build.rs)",
                 hsaco_path
             )));
         }
@@ -248,7 +247,7 @@ mod tests {
 
     #[test]
     fn test_transpose_kernel_creation() {
-        let backend = Arc::new(HipBackend::new().unwrap());
+        let backend = HipBackend::new().unwrap();
         let kernel = TransposeKernel::new(backend);
         assert!(!kernel.initialized);
     }
@@ -256,7 +255,7 @@ mod tests {
     #[test]
     fn test_transpose_kernel_initialize_failure_no_env() {
         // Temporarily unset env var to test error handling
-        let backend = Arc::new(HipBackend::new().unwrap());
+        let backend = HipBackend::new().unwrap();
         let mut kernel = TransposeKernel::new(backend);
 
         // This should fail if TRANSPOSE_HSACO is not set
@@ -277,7 +276,7 @@ mod tests {
 
     #[test]
     fn test_transpose_2d_tensor_shape_check() {
-        let backend = Arc::new(HipBackend::new().unwrap());
+        let backend = HipBackend::new().unwrap();
         let mut kernel = TransposeKernel::new(backend);
 
         // Create a 2D tensor
@@ -304,7 +303,7 @@ mod tests {
 
     #[test]
     fn test_transpose_rejects_non_2d_tensor() {
-        let backend = Arc::new(HipBackend::new().unwrap());
+        let backend = HipBackend::new().unwrap();
         let mut kernel = TransposeKernel::new(backend);
 
         // Create a 3D tensor
@@ -328,7 +327,7 @@ mod tests {
     /// Test 1: Small square matrix (8x8) - verify exact values match
     #[test]
     fn test_transpose_small_square_matrix() {
-        let backend = Arc::new(HipBackend::new().unwrap());
+        let backend = HipBackend::new().unwrap();
         let rows = 8usize;
         let cols = 8usize;
         let input_data: Vec<f32> = (0..(rows * cols)).map(|i| i as f32).collect();
@@ -364,7 +363,7 @@ mod tests {
     /// Test 2: Small rectangular matrix (4x16) - verify dimensions swap
     #[test]
     fn test_transpose_small_rectangular_matrix() {
-        let backend = Arc::new(HipBackend::new().unwrap());
+        let backend = HipBackend::new().unwrap();
         let rows = 4usize;
         let cols = 16usize;
         let input_data: Vec<f32> = (0..(rows * cols)).map(|i| i as f32).collect();
@@ -397,7 +396,7 @@ mod tests {
     /// Test 3: Large matrix (512x1024) - verify no errors for large transpose
     #[test]
     fn test_transpose_large_matrix() {
-        let backend = Arc::new(HipBackend::new().unwrap());
+        let backend = HipBackend::new().unwrap();
         let rows = 512usize;
         let cols = 1024usize;
         let elem_count = rows * cols;
@@ -428,7 +427,7 @@ mod tests {
     /// Test 4: Embedding-sized matrix - qwen2.5-0.5b use case [128, 1024] -> [1024, 128]
     #[test]
     fn test_transpose_embedding_sized_matrix() {
-        let backend = Arc::new(HipBackend::new().unwrap());
+        let backend = HipBackend::new().unwrap();
         let hidden_size = 128usize;
         let vocab_size = 1024usize;
         let elem_count = hidden_size * vocab_size;
