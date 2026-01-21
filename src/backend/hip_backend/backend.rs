@@ -352,6 +352,89 @@ impl HipBackend {
         &self.limits
     }
 
+    /// Validate kernel launch configuration against device limits
+    ///
+    /// Checks that the launch configuration is within the cached device limits.
+    /// Returns a detailed error if any limit is exceeded.
+    ///
+    /// # Arguments
+    ///
+    /// * `grid_dim` - Grid dimensions (x, y, z)
+    /// * `block_dim` - Block dimensions (x, y, z)
+    /// * `shared_mem_bytes` - Dynamic shared memory allocation in bytes
+    ///
+    /// # Returns
+    ///
+    /// - Ok(()) if configuration is valid
+    /// - Err(HipError::KernelLaunchFailed) with detailed message if invalid
+    pub fn validate_launch_config(
+        &self,
+        grid_dim: (u32, u32, u32),
+        block_dim: (u32, u32, u32),
+        shared_mem_bytes: u32,
+    ) -> HipResult<()> {
+        let limits = &self.limits;
+
+        // Thread count validation: product of block dimensions
+        let threads_per_block = block_dim.0 * block_dim.1 * block_dim.2;
+        if threads_per_block > limits.max_threads_per_block {
+            return Err(HipError::KernelLaunchFailed(format!(
+                "Threads per block {} exceeds limit {} (block={:?})",
+                threads_per_block, limits.max_threads_per_block, block_dim
+            )));
+        }
+
+        // Block dimension validation (per-axis limit)
+        if block_dim.0 > limits.max_threads_dim[0] {
+            return Err(HipError::KernelLaunchFailed(format!(
+                "block.x {} exceeds limit {}",
+                block_dim.0, limits.max_threads_dim[0]
+            )));
+        }
+        if block_dim.1 > limits.max_threads_dim[1] {
+            return Err(HipError::KernelLaunchFailed(format!(
+                "block.y {} exceeds limit {}",
+                block_dim.1, limits.max_threads_dim[1]
+            )));
+        }
+        if block_dim.2 > limits.max_threads_dim[2] {
+            return Err(HipError::KernelLaunchFailed(format!(
+                "block.z {} exceeds limit {}",
+                block_dim.2, limits.max_threads_dim[2]
+            )));
+        }
+
+        // Grid dimension validation (must be > 0 and within max)
+        if grid_dim.0 == 0 || grid_dim.0 > limits.max_grid_size[0] {
+            return Err(HipError::KernelLaunchFailed(format!(
+                "grid.x {} invalid (limit: 1..{})",
+                grid_dim.0, limits.max_grid_size[0]
+            )));
+        }
+        if grid_dim.1 == 0 || grid_dim.1 > limits.max_grid_size[1] {
+            return Err(HipError::KernelLaunchFailed(format!(
+                "grid.y {} invalid (limit: 1..{})",
+                grid_dim.1, limits.max_grid_size[1]
+            )));
+        }
+        if grid_dim.2 == 0 || grid_dim.2 > limits.max_grid_size[2] {
+            return Err(HipError::KernelLaunchFailed(format!(
+                "grid.z {} invalid (limit: 1..{})",
+                grid_dim.2, limits.max_grid_size[2]
+            )));
+        }
+
+        // Shared memory validation
+        if shared_mem_bytes > limits.shared_mem_per_block {
+            return Err(HipError::KernelLaunchFailed(format!(
+                "Shared memory {} bytes exceeds limit {}",
+                shared_mem_bytes, limits.shared_mem_per_block
+            )));
+        }
+
+        Ok(())
+    }
+
     /// Get available GPU memory information
     pub fn get_memory_info(&self) -> HipResult<(usize, usize)> {
         let mut free: usize = 0;
@@ -847,6 +930,38 @@ impl HipBackend {
 
         tracing::trace!("launch_kernel_with_module_shared: Kernel launched successfully");
         Ok(())
+    }
+
+    /// Launch kernel with automatic validation
+    ///
+    /// Wrapper around launch_kernel_with_module_shared that validates
+    /// the launch configuration against device limits before launching.
+    ///
+    /// # Arguments
+    ///
+    /// * `kernel` - Kernel function to launch
+    /// * `grid_dim` - Grid dimensions (x, y, z)
+    /// * `block_dim` - Block dimensions (x, y, z)
+    /// * `args` - Kernel arguments
+    /// * `shared_mem_bytes` - Dynamic shared memory in bytes
+    ///
+    /// # Returns
+    ///
+    /// - Ok(()) if launch succeeds
+    /// - Err if validation fails or launch fails
+    pub fn launch_kernel_with_module_shared_validated(
+        &self,
+        kernel: &HipKernel,
+        grid_dim: (u32, u32, u32),
+        block_dim: (u32, u32, u32),
+        args: &[*mut std::ffi::c_void],
+        shared_mem_bytes: u32,
+    ) -> HipResult<()> {
+        // Validate before launch
+        self.validate_launch_config(grid_dim, block_dim, shared_mem_bytes)?;
+
+        // Launch if validation passes
+        self.launch_kernel_with_module_shared(kernel, grid_dim, block_dim, args, shared_mem_bytes)
     }
 
     /// Create scratch buffers
