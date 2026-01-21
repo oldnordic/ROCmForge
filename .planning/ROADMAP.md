@@ -11,12 +11,13 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 - **v1.2 Technical Debt Cleanup + Performance** — Phases 14-18 (shipped 2026-01-19)
 - **v1.3 Test Health & Performance Validation** — Phases 19-21 (shipped 2026-01-20)
 - **v1.4 Memory Safety + Code Restructure** — Phases 22-24 (shipped 2026-01-20)
-- **v1.5 Env Var & Transpose Fix** — Phases 25-29 (planned)
+- **v1.5 Env Var & Transpose Fix** — Phases 25-29 (shipped 2026-01-21)
+- **v1.6 FFI Device Props Fix** — Phases 30-32 (planned)
 
 ## Phases
 
 <details>
-<summary>v1.0-v1.4 (Phases 1-24) — SHIPPED 2026-01-20</summary>
+<summary>v1.0-v1.5 (Phases 1-29) — SHIPPED 2026-01-21</summary>
 
 **Full details archived in:** [.planning/milestones/](.planning/milestones/)
 
@@ -48,128 +49,86 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 - [x] Phase 22: Memory Pool Implementation (5/5 plans)
 - [x] Phase 23: Dead/Duplicate Code Removal (5/5 plans)
 - [x] Phase 24: Kernel-Centric Restructure (6/6 plans)
+- [x] Phase 25: Env Var Fix (12/12 plans)
+- [x] Phase 26: Transpose Kernel Fix (3/3 plans)
+- [x] Phase 27: Device Property Infrastructure (4/4 plans)
+- [x] Phase 28: Debug Hygiene (4/4 plans)
+- [x] Phase 29: Validation & E2E (5/5 plans)
 
-**Total:** 168 plans across 24 phases
+**Total:** 195 plans across 29 phases
 
 </details>
 
 ---
 
-## v1.5 Env Var & Transpose Fix (Planned)
+## v1.6 FFI Device Props Fix (Planned)
 
-**Milestone Goal:** Fix runtime kernel loading and large tensor transpose to enable actual GGUF model inference.
+**Milestone Goal:** Fix FFI device properties bug causing "block.y exceeds limit 0" errors during kernel launch.
 
-**Issue:** After Phase 24 kernel-centric restructuring, two critical bugs block actual model inference:
-1. **Env var embedding mismatch**: `build.rs` sets compile-time env vars but runtime code uses `std::env::var()` - paths not embedded in binary
-2. **Transpose kernel failure**: `block=(64,64,1)` = 4096 threads exceeds `maxThreadsPerBlock=1024` limit for large tensors
+**Issue:** The FFI device property sanity check only validates `max_threads_dim[0] > 0`, allowing garbage values like `[1024, 0, 0]` to pass. Later kernel launch validation fails because `block.y=1 exceeds limit 0`.
 
-**Root Causes (from research/SUMMARY_v1.5.md):**
-- Env var bug: `cargo:rustc-env=VAR=path` at compile time vs `std::env::var("VAR")` runtime lookup returns None
-- Transpose bug: TILE_DIM=64 creates 64x64x1=4096 threads per block, exceeding AMD GPU limit of 1024
+**Root Causes (from research/SUMMARY.md):**
+- Incomplete sanity check: Only validates `dim[0]`, allowing `dim[1]` or `dim[2]` to be zero
+- Duplicate DeviceLimits assignment: Lines 279-289 overwrite vetted values with undefined `max_grid`
+- Hardcoded struct offsets: Manual offsets break across ROCm versions as struct grows
 
-### Phase 25: Env Var Fix
+### Phase 30: Immediate Bugfix
 
-**Goal**: HSACO kernel paths are embedded in binary at compile time, not read from runtime environment.
+**Goal**: Device properties sanity check validates ALL dimensions before use.
 
-**Depends on**: Phase 24 complete
+**Depends on**: Phase 29 complete
 
-**Requirements**: ENV-01, ENV-02, ENV-03
-
-**Success Criteria** (what must be TRUE):
-1. User can run `./target/release/rocmforge --help` without manually setting environment variables
-2. All 31 HSACO kernel paths use `option_env!()` compile-time macro instead of `std::env::var()` runtime lookup
-3. Missing kernel file produces clear error message with full path to compiled-in HSACO location
-4. `cargo build --release` recompiles build.rs when ROCM_PATH, HIPCC, or ROCm_ARCH environment variables change
-
-**Plans**: 12 plans (1 wave, all parallel)
-- [x] 25-01-PLAN.md — Fix attention kernels (12 kernels) to use `option_env!()`
-- [x] 25-02-PLAN.md — Fix sampler kernels (7 kernels) to use `option_env!()`
-- [x] 25-03-PLAN.md — Fix MLP kernels (2 kernels) to use `option_env!()`
-- [x] 25-04-PLAN.md — Fix quantization kernels (2 kernels) to use `option_env!()`
-- [x] 25-05-PLAN.md — Fix fused kernels (2 kernels) to use `option_env!()`
-- [x] 25-06-PLAN.md — Fix transpose kernel (1 kernel) to use `option_env!()`
-- [x] 25-07-PLAN.md — Add cargo rerun directives for ROCm env vars
-- [x] 25-08-PLAN.md — Fix Q4_0_DEQUANT_HSACO (duplicate ggml/hip_backend impl)
-- [x] 25-09-PLAN.md — Fix Q4_K_DEQUANT_HSACO (duplicate ggml/hip_backend impl)
-- [x] 25-10-PLAN.md — Fix Q4_0_MATMUL_HSACO (quantized matmul)
-- [x] 25-11-PLAN.md — Fix Q4_K_MATMUL_HSACO (quantized matmul)
-- [x] 25-12-PLAN.md — Fix Q6_K_MATMUL_HSACO (quantized matmul)
-
-### Phase 26: Transpose Kernel Fix
-
-**Goal**: Transpose kernel launches with valid block dimensions that respect AMD GPU limits.
-
-**Depends on**: Phase 25 complete (kernel loading must work first)
-
-**Requirements**: TRN-01, TRN-02, TRN-03
+**Requirements**: FFI-01, FFI-02
 
 **Success Criteria** (what must be TRUE):
-1. Transpose of tensor shape [896, 151936] completes without `hipErrorInvalidValue`
-2. Block dimensions changed from (64,64,1) to (32,32,1) with 1024 threads per block (within limit)
-3. Grid dimensions validated as non-zero and within maxGridSize limits before kernel launch
-4. Shared memory size (16400 bytes) verified to be under sharedMemPerBlock limit (65536 bytes)
-
-**Plans**: 3 plans (2 waves)
-- [x] 26-01-PLAN.md — Fix block dimension to (32, 32, 1) for 1024 threads (Wave 1)
-- [x] 26-02-PLAN.md — Add validation assertions for grid/block/shared memory (Wave 2)
-- [x] 26-03-PLAN.md — Add unit test for [896, 151936] tensor transpose (Wave 2)
-
-### Phase 27: Device Property Infrastructure
-
-**Goal**: GPU device properties queried once at backend init and used for launch validation.
-
-**Depends on**: Phase 26 complete (validation needs working transpose)
-
-**Requirements**: DEV-01, DEV-02, DEV-03
-
-**Success Criteria** (what must be TRUE):
-1. `hipGetDeviceProperties` called once during `HipBackend::new()` and cached in backend struct
-2. Cached properties include maxThreadsPerBlock, maxGridSize[3], warpSize, sharedMemPerBlock
-3. All kernel launches assert block dimensions within cached limits before calling `hipLaunchKernel`
-4. Grid calculations use u64 arithmetic to prevent overflow for very large tensors
-
-**Plans**: 4 plans (3 waves)
-- [x] 27-01-PLAN.md — Extend HipDeviceProp with launch limit accessors (Wave 1)
-- [x] 27-02-PLAN.md — Add DeviceLimits struct and cache in HipBackend (Wave 1)
-- [x] 27-03-PLAN.md — Add validation methods and safe grid helpers (Wave 2)
-- [x] 27-04-PLAN.md — Update kernel launch sites to use cached limits (Wave 3)
-
-### Phase 28: Debug Hygiene
-
-**Goal**: HIP error logging and debug instrumentation for faster kernel troubleshooting.
-
-**Depends on**: Phase 27 complete (device props enable better error messages)
-
-**Requirements**: DBG-01, DBG-02, DBG-03
-
-**Success Criteria** (what must be TRUE):
-1. Kernel launch failures log HIP error string from `hipGetLastError` with grid/block dimensions
-2. Debug builds log computed grid/block dimensions and shared memory size before each kernel launch
-3. Setting `HIP_LAUNCH_BLOCKING=1` enables synchronous kernel execution for debugging
-4. Developer documentation updated with HIP debugging procedures
-
-**Plans**: 4 plans (2 waves)
-- [x] 28-01-PLAN.md — Store kernel name in HipKernel for error messages (Wave 1)
-- [x] 28-02-PLAN.md — Add hipGetLastError async error checking after launch (Wave 1)
-- [x] 28-03-PLAN.md — Add debug logging and HIP_LAUNCH_BLOCKING support (Wave 1)
-- [x] 28-04-PLAN.md — Create HIP debugging documentation (Wave 2)
-
-### Phase 29: Validation & E2E
-
-**Goal**: End-to-end verification that qwen2.5-0.5b.gguf model loads and generates tokens successfully.
-
-**Depends on**: Phase 25, 26, 27, 28 complete
-
-**Requirements**: VAL-01, VAL-02, VAL-03
-
-**Success Criteria** (what must be TRUE):
-1. Unit test for transpose with shape [896, 151936] passes and matches CPU reference result
-2. `rocmforge load --model qwen2.5-0.5b.gguf` loads model without KernelLoadFailed errors
-3. `rocmforge generate --model qwen2.5-0.5b.gguf --prompt "The"` generates a single token without errors
-4. Embedding weights transpose [896, 151936] completes during model loading
+1. Sanity check validates all three dimensions (X, Y, Z) of maxThreadsDim are greater than 0
+2. Sanity check validates all three grid dimensions are greater than 0
+3. Sanity check validates warp size is 32 or 64 (valid AMD GPU values)
+4. Sanity check validates shared memory is in range (0 < shared <= 1MB)
+5. Sanity check validates max threads per block is in range (0 < max_tb <= 4096)
+6. When checks fail, warning is logged with actual values before using safe defaults
+7. Only ONE DeviceLimits construction exists (duplicate deleted)
 
 **Plans**: 1 plan (1 wave)
-- [ ] 29-01-PLAN.md — Create validation test suite (transpose + model loading + token generation)
+- [ ] 30-01-PLAN.md — Comprehensive sanity check + delete duplicate DeviceLimits
+
+### Phase 31: Bindgen Infrastructure
+
+**Goal**: Compile-time HIP bindings generation for offset verification.
+
+**Depends on**: Phase 30 complete
+
+**Requirements**: FFI-03
+
+**Success Criteria** (what must be TRUE):
+1. bindgen 0.70 added to build-dependencies in Cargo.toml
+2. build.rs generates hip_device_bindings.rs with hipDeviceProp_t struct only
+3. Generated bindings are accessible via include!() in test code
+4. Existing FFI declarations in ffi.rs remain unchanged (no 10,000+ line replacement)
+5. cargo build successfully generates bindings without errors
+
+**Plans**: 1 plan (1 wave)
+- [ ] 31-01-PLAN.md — Add bindgen infrastructure with HIP allowlist
+
+### Phase 32: Offset Verification Test
+
+**Goal**: Compile-time test asserts manual offsets match bindgen-generated offsets.
+
+**Depends on**: Phase 31 complete
+
+**Requirements**: FFI-04
+
+**Success Criteria** (what must be TRUE):
+1. Test module created in device.rs (test-only code with #[cfg(test)])
+2. Test uses include!() to load bindgen-generated bindings
+3. Test asserts TOTAL_GLOBAL_MEM_OFFSET matches bindgen offsetof
+4. Test asserts MAX_THREADS_PER_BLOCK_OFFSET matches bindgen offsetof
+5. Test asserts MAX_THREADS_DIM_OFFSET matches bindgen offsetof
+6. Test runs with `cargo test --lib device::offset_verification`
+7. Test fails with clear message if ROCm version changes struct layout
+
+**Plans**: 1 plan (1 wave)
+- [ ] 32-01-PLAN.md — Create offset verification test module
 
 ---
 
@@ -196,9 +155,12 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 | 26 | v1.5 | 3/3 | Complete | 2026-01-21 |
 | 27 | v1.5 | 4/4 | Complete | 2026-01-21 |
 | 28 | v1.5 | 4/4 | Complete | 2026-01-21 |
-| 29 | v1.5 | 0/1 | Planning | - |
+| 29 | v1.5 | 5/5 | Complete | 2026-01-21 |
+| 30 | v1.6 | 0/1 | Not started | - |
+| 31 | v1.6 | 0/1 | Not started | - |
+| 32 | v1.6 | 0/1 | Not started | - |
 
-**Total Progress:** 191/195 plans planned (v1.0-v1.4 + Phases 25-29 complete, Phase 29 pending execution)
+**Total Progress:** 195/198 plans complete (v1.0-v1.5)
 
 **Note:** Phase 21-06 (Performance Validation) skipped by user request. All test health goals (TEST-01 through TEST-06) achieved.
 
@@ -207,14 +169,13 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 ## Session Continuity
 
 Last session: 2026-01-21
-Stopped at: Phase 28 execution complete
+Stopped at: Roadmap created for v1.6 FFI Device Props Fix
 
-**v1.5 - Env Var & Transpose Fix (2026-01-21):**
-- Phase 25: Env Var Fix (12/12 complete) ✓
-- Phase 26: Transpose Kernel Fix (3/3 complete) ✓
-- Phase 27: Device Property Infrastructure (4/4 complete) ✓
-- Phase 28: Debug Hygiene (4/4 complete) ✓
-- Phase 29: Validation & E2E (0/1 planned)
+**Milestone v1.5 COMPLETE!** Ready to begin v1.6 planning.
 
-**Decisions:**
-- (See STATE.md for historical decisions from v1.0-v1.4)
+**v1.6 - FFI Device Props Fix (2026-01-21):**
+- Phase 30: Immediate Bugfix (1 plan)
+- Phase 31: Bindgen Infrastructure (1 plan)
+- Phase 32: Offset Verification Test (1 plan)
+
+**Coverage:** 4/4 requirements mapped to phases (100%)

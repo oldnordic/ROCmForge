@@ -5,30 +5,31 @@
 See: .planning/PROJECT.md (updated 2026-01-21)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** Milestone v1.5 - Env Var & Transpose Fix
+**Current focus:** Milestone v1.6 - FFI Device Props Fix
 
 ## Current Position
 
-Phase: 28 of 29 (Debug Hygiene)
-Plan: 04 of 4
-Status: Phase complete
-Last activity: 2026-01-21 — Completed 28-04 (HIP Debugging Documentation)
+Phase: 30 of 32 (Immediate Bugfix)
+Plan: —
+Status: Roadmap created, ready to plan
+Last activity: 2026-01-21 — Milestone v1.6 roadmap defined
 
-Progress: [████████████░░░░░░░] 95% (190/190 plans complete, Phases 25-28 done, Phase 29 pending)
+Progress: [░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 0% (v1.6)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 168 (v1.0-v1.4)
+- Total plans completed: 195 (v1.0-v1.5)
 - Average duration: ~42 min
-- Total execution time: ~120 hours
+- Total execution time: ~138 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1-24 | 168 | 168 | ~42 min |
-| 25-29 | 12 | TBD | ~5 min |
+| 25-29 | 27 | 27 | ~7 min |
+| 30-32 | 0 | 3 | TBD |
 
 ## Accumulated Context
 
@@ -40,7 +41,7 @@ Recent decisions from research (2026-01-21):
 
 - **Env Var Compile-Time Embedding**: HSACO paths must be embedded at compile time using `option_env!()` macro, not read via `std::env::var()` at runtime. build.rs sets `cargo:rustc-env=VAR=path` which is only accessible via `option_env!()` (ENV-01)
 - **Transpose Block Dimension Fix**: Change block dimensions from (64,64,1) to (32,32,1) to reduce thread count from 4096 to 1024, staying within maxThreadsPerBlock limit (TRN-01)
-- **Transpose Pre-Launch Validation**: Add assertions before kernel launch to validate thread count, grid dimensions, block dimensions, and shared memory against AMD GPU limits from DEVICE_LIMITS.md (TRN-02)
+- **Transpose Pre-Launch Validation**: Add assertions before kernel launch to validate thread count, grid dimensions, block dimensions, and shared memory against AMD GPU limits (TRN-02)
 - **Device Property Caching**: Query `hipGetDeviceProperties` once at backend init, not per-launch, to avoid overhead and enable consistent validation (DEV-01)
 - **Cargo Rerun Directives**: Added explicit `cargo:rerun-if-env-changed` directives for ROCM_PATH, HIPCC, ROCm_ARCH to ensure automatic rebuild when ROCm configuration changes (BLD-01)
 - **Launch Validation Returns Result**: Validation returns `HipError::KernelLaunchFailed` with detailed message, not panic - allows graceful error handling (VAL-01)
@@ -54,9 +55,14 @@ Recent decisions from research (2026-01-21):
 - **Debug-Only Logging**: Use `#[cfg(debug_assertions)]` for debug logging to ensure zero runtime overhead in release builds. The `debug_assertions` cfg is active for `cargo build` and `cargo test` but NOT for `cargo build --release` (DBG-04)
 - **HIP_LAUNCH_BLOCKING Synchronous Execution**: `HIP_LAUNCH_BLOCKING` environment variable enables synchronous kernel execution for easier debugging. When set to "1" or "true", the backend calls `hipDeviceSynchronize()` after each kernel launch (DBG-05)
 - **HIP Debugging Documentation**: Created comprehensive developer guide in docs/HIP_DEBUGGING.md covering debug builds, HIP_LAUNCH_BLOCKING usage, error message interpretation, common issues, and debugging tools (DOC-01)
+- **Adaptive Transpose Block Sizing**: Transpose kernel now adapts to device maxThreadsPerBlock limit, supporting GPUs with varied limits (320, 512, 1024, etc.) - discovered during validation testing (TRN-03)
+- **Validation Test Organization**: E2E validation tests organized in tests/validation/ with descriptive names and graceful skip patterns (VAL-06)
 
-Historical decisions (see STATE.md archive for v1.0-v1.4 details):
-- GPU Transpose for Embedding Weights, Memory Arena for GPU Weights, Zero Warnings Baseline, Unconditional GPU Compilation
+v1.6 decisions (upcoming):
+- **All-Axes Sanity Check**: Validate max_threads_dim[0], [1], [2] all > 0, not just [0] (FFI-01)
+- **Single DeviceLimits Construction**: Delete duplicate assignment that overwrites vetted values (FFI-02)
+- **Bindgen Allowlist**: Use bindgen for hipDeviceProp_t only, not full HIP API (FFI-03)
+- **Compile-Time Offset Verification**: Test asserts manual offsets match bindgen at compile time (FFI-04)
 
 ### Pending Todos
 
@@ -64,45 +70,34 @@ None yet.
 
 ### Blockers/Concerns
 
-**CRITICAL: Transpose Kernel Fails for Large Tensors (2026-01-21)**
+**CRITICAL: FFI Device Properties Bug (2026-01-21)**
 
-**Issue 1: Env var embedding mismatch — RESOLVED ✓**
-- build.rs sets `cargo:rustc-env=Q4_0_DEQUANT_HSACO=/path/to/kernel.hsaco` (compile-time)
-- Code was using `std::env::var("Q4_0_DEQUANT_HSACO")` (runtime lookup)
-- **Fixed in Phase 25:** All 29 HSACO env vars now use `option_env!()` macro
-- Kernels load without manual environment variables
+**Issue:** Sanity check only validates `max_threads_dim[0] > 0`, allowing garbage like `[1024, 0, 0]` to pass. Later kernel launch fails with "block.y 1 exceeds limit 0".
 
-**Issue 2: Transpose kernel fails for large tensors — RESOLVED ✓**
-- Tensor shape [896, 151936] (Qwen2.5 embedding weights)
-- Kernel launch returns `hipErrorInvalidValue` (invalid argument)
-- Root cause: block=(64,64,1) = 4096 threads exceeds maxThreadsPerBlock=1024
-- **Fixed in Phase 26:** Block dimension changed to (32,32,1) = 1024 threads
-- **Validated in Phase 26:** Pre-launch assertions added, unit test for [896, 151936] transpose
+**Root cause:** Two bugs compound:
+1. Incomplete sanity check (only dim[0] validated)
+2. Duplicate DeviceLimits assignment overwrites vetted values
+
+**Fix target:** Phase 30 - Immediate Bugfix
+
+**Resolution:** Strengthen sanity check to validate ALL 3 dimensions plus grid, warp, shared, threads/block. Delete duplicate DeviceLimits block.
 
 ## Session Continuity
 
 Last session: 2026-01-21
-Stopped at: Completed 28-04 (HIP Debugging Documentation)
+Stopped at: Completed v1.5, created v1.6 roadmap
 Resume file: None
 
-**v1.5 - Env Var & Transpose Fix (2026-01-21):**
-- Phase 25: Env Var Fix (12/12 complete ✓)
-  - Original: 25-01 (attention), 25-02 (sampler), 25-03 (MLP), 25-04 (quant), 25-05 (fused), 25-06 (transpose), 25-07 (cargo rerun)
-  - Gap closure: 25-08 (Q4_0_DEQUANT duplicate), 25-09 (Q4_K_DEQUANT duplicate), 25-10 (Q4_0_MATMUL), 25-11 (Q4_K_MATMUL), 25-12 (Q6_K_MATMUL)
-- Phase 26: Transpose Kernel Fix (3/3 complete ✓)
-  - 26-01: Block dimension changed to (32,32,1)
-  - 26-02: Pre-launch validation assertions added
-  - 26-03: Unit test for [896, 151936] tensor transpose
-- Phase 27: Device Property Infrastructure (4/4 complete ✓)
-  - 27-01: HipDeviceProp launch limit accessors (5 methods added) ✓
-  - 27-02: DeviceLimits caching in HipBackend ✓
-  - 27-03: Launch validation methods (validate_launch_config, ceil_div_u64, safe_grid_dim) ✓
-  - 27-04: Kernel launch sites use cached limits validation ✓
-- Phase 28: Debug Hygiene (4/4 complete ✓)
-  - 28-01: Kernel Name Storage in HipKernel ✓
-  - 28-02: Async Error Detection ✓
-  - 28-03: Debug Dimension Logging and Sync Launch ✓
-  - 28-04: HIP Debugging Documentation ✓
-- Phase 29: Validation & E2E (Not started)
+**Milestone v1.5 COMPLETE!** All phases (25-29) finished with validation tests passing.
 
-**Coverage:** 15/15 requirements mapped to phases (100%)
+**v1.5 - Env Var & Transpose Fix (2026-01-21):**
+- Phase 25: Env Var Fix (12/12 complete)
+- Phase 26: Transpose Kernel Fix (3/3 complete)
+- Phase 27: Device Property Infrastructure (4/4 complete)
+- Phase 28: Debug Hygiene (4/4 complete)
+- Phase 29: Validation & E2E (5/5 complete)
+
+**v1.6 - FFI Device Props Fix (Planned):**
+- Phase 30: Immediate Bugfix (FFI-01, FFI-02) - Sanity check all axes, delete duplicate
+- Phase 31: Bindgen Infrastructure (FFI-03) - build.rs + allowlist
+- Phase 32: Offset Verification Test (FFI-04) - compile-time offset assertions

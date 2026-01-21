@@ -59,15 +59,15 @@ If ROCm is available, use it. If not, fall back to optimized CPU execution seaml
 
 *What we're building toward next:*
 
-**Current Milestone: v1.5 Env Var & Transpose Fix**
+**Current Milestone: v1.6 FFI Device Props Fix**
 
-**Goal:** Fix runtime kernel loading and large tensor transpose to enable actual GGUF model inference.
+**Goal:** Fix FFI device properties bug causing "block.y exceeds limit 0" errors during kernel launch.
 
 **Target features:**
-- **Env var embedding**: Fix HSACO path loading - replace `std::env::var()` with compile-time `option_env!()` or generated source
-- **Transpose kernel fix**: Debug and fix `hipErrorInvalidValue` for large tensors (896×151936)
-- **Device property validation**: Query and validate GPU limits (maxGridSize, maxThreadsDim, sharedMemPerBlock)
-- **End-to-end validation**: Run actual GGUF model (qwen2.5-0.5b.gguf) inference successfully
+- **Sanity check strengthening**: Validate ALL 3 dimensions (X, Y, Z), not just [0]
+- **Delete duplicate code**: Remove duplicate DeviceLimits assignment that undermines fixes
+- **Bindgen infrastructure**: Add compile-time offset verification to catch ROCm version changes
+- **Offset verification test**: Assert manual offsets match bindgen-generated values
 
 ### Out of Scope
 
@@ -179,4 +179,4 @@ If ROCm is available, use it. If not, fall back to optimized CPU execution seaml
 
 ---
 
-*Last updated: 2026-01-21 after v1.5 milestone initialization*
+*Last updated: 2026-01-21 after v1.6 milestone initialization*

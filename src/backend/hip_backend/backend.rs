@@ -233,19 +233,59 @@ impl HipBackend {
             )));
         }
 
-        // Cache device limits for launch validation
-        let max_grid = props.max_grid_size();
-        let max_threads_dim = props.max_threads_dim();
+        // WORKAROUND: The FFI struct has layout issues. Use known correct values for RX 7900 XT.
+        // These values were verified via C++ test. TODO: Fix the FFI properly with bindgen.
+        let device_name = props.name();
+        tracing::info!("Device name: '{}'", device_name);
+
+        // Check if this is the known RX 7900 XT and use hardcoded values if the FFI returns garbage
+        let (max_threads_per_block, max_threads_dim, max_grid_size, shared_mem_per_block, warp_size) =
+            if device_name.contains("Radeon RX 7900 XT") {
+                // Known correct values from C++ test
+                tracing::warn!("Using hardcoded device limits for RX 7900 XT due to FFI issue");
+                (1024, [1024, 1024, 1024], [2147483647, 65536, 65536], 65536usize, 32)
+            } else {
+                // Try to use the FFI values (may be incorrect for other GPUs)
+                let max_grid = props.max_grid_size();
+                let max_threads_dim = props.max_threads_dim();
+                let max_tb = props.max_threads_per_block();
+                let shared = props.shared_mem_per_block();
+                let ws = props.warp_size();
+
+                // Comprehensive sanity check - ALL dimensions must be valid
+                // This prevents "block.y exceeds limit 0" errors from buggy HIP drivers
+                // that report garbage like [1024, 0, 0] for maxThreadsDim
+                let dim_ok = max_threads_dim.iter().all(|&d| d > 0 && d <= 4096);
+                let grid_ok = max_grid.iter().all(|&g| g > 0);
+                let warp_ok = ws == 32 || ws == 64;
+                let shared_ok = shared > 0 && shared <= (1024 * 1024);
+                let tb_ok = max_tb > 0 && max_tb <= 4096;
+
+                if !(dim_ok && grid_ok && warp_ok && shared_ok && tb_ok) {
+                    tracing::warn!(
+                        "FFI device properties look incorrect: max_threads_dim={:?}, max_grid={:?}, warp_size={}, shared_mem={}, max_threads_per_block={}. Using safe defaults.",
+                        max_threads_dim, max_grid, ws, shared, max_tb
+                    );
+                    (1024, [1024, 1024, 1024], [2147483647, 65536, 65536], 65536usize, 32)
+                } else {
+                    (max_tb, max_threads_dim, [max_grid[0] as i32, max_grid[1] as i32, max_grid[2] as i32], shared, ws)
+                }
+            };
+
         let limits = DeviceLimits {
-            max_threads_per_block: props.max_threads_per_block() as u32,
-            max_grid_size: [max_grid[0] as u32, max_grid[1] as u32, max_grid[2] as u32],
+            max_threads_per_block: max_threads_per_block as u32,
+            max_grid_size: [
+                max_grid_size[0] as u32,
+                max_grid_size[1] as u32,
+                max_grid_size[2] as u32,
+            ],
             max_threads_dim: [
                 max_threads_dim[0] as u32,
                 max_threads_dim[1] as u32,
                 max_threads_dim[2] as u32,
             ],
-            shared_mem_per_block: props.shared_mem_per_block() as u32,
-            warp_size: props.warp_size() as u32,
+            shared_mem_per_block: shared_mem_per_block as u32,
+            warp_size: warp_size as u32,
         };
 
         tracing::info!(
