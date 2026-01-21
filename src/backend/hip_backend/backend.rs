@@ -30,6 +30,51 @@ pub struct DeviceLimits {
     pub warp_size: u32,
 }
 
+/// Safe ceiling division using u64 arithmetic
+///
+/// Computes ceil(numerator / denominator) without overflow.
+/// Uses u64 arithmetic to handle large tensor dimensions (>4B elements).
+///
+/// # Panics
+///
+/// If denominator is 0
+#[inline]
+fn ceil_div_u64(numerator: u64, denominator: u64) -> u64 {
+    assert!(denominator > 0, "Division by zero in ceil_div_u64");
+    (numerator + denominator - 1) / denominator
+}
+
+/// Safe grid dimension calculation for kernel launches
+///
+/// Calculates the number of tiles needed for a given dimension and tile size.
+/// Returns u32 only if the result fits in u32::MAX.
+///
+/// # Arguments
+///
+/// * `dim` - Dimension size in elements (as u64 to prevent overflow)
+/// * `tile_dim` - Tile/block size (typically 32, 64, 128, etc.)
+///
+/// # Returns
+///
+/// Number of tiles as u32
+///
+/// # Panics
+///
+/// If the result exceeds u32::MAX or tile_dim is 0
+#[inline]
+fn safe_grid_dim(dim: u64, tile_dim: u32) -> u32 {
+    assert!(tile_dim > 0, "Tile dimension must be > 0");
+    let tiles = ceil_div_u64(dim, tile_dim as u64);
+    assert!(
+        tiles <= u32::MAX as u64,
+        "Grid dimension {} exceeds u32::MAX for dim={}, tile_dim={}",
+        tiles,
+        dim,
+        tile_dim
+    );
+    tiles as u32
+}
+
 // NOTE: #[repr(C)] is NOT used here because HipBackend contains Arc<T>
 // which is NOT C-compatible. Using repr(C) would cause ABI violations.
 // See docs/deep_crash_analysis.md for details.

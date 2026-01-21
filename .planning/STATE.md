@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-21)
 ## Current Position
 
 Phase: 27 of 29 (Device Property Infrastructure)
-Plan: —
-Status: Not started
-Last activity: 2026-01-21 — Phase 26 complete (Transpose Kernel Fix)
+Plan: 02
+Status: In progress
+Last activity: 2026-01-21 — Completed 27-02 (Device Limits Caching in HipBackend)
 
-Progress: [█████████░░░░░░░░░░░] 90% (183/186 plans complete, Phases 25-26 done)
+Progress: [█████████░░░░░░░░░░░] 91% (185/186 plans complete, Phases 25-26 done, Phase 27: 2/4)
 
 ## Performance Metrics
 
@@ -71,7 +71,7 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-01-21
-Stopped at: Phase 26 complete, transpose kernel fix and validation done
+Stopped at: Completed 27-02 (Device Limits Caching in HipBackend)
 Resume file: None
 
 **v1.5 - Env Var & Transpose Fix (2026-01-21):**
@@ -82,7 +82,11 @@ Resume file: None
   - 26-01: Block dimension changed to (32,32,1)
   - 26-02: Pre-launch validation assertions added
   - 26-03: Unit test for [896, 151936] tensor transpose
-- Phase 27: Device Property Infrastructure (Not started)
+- Phase 27: Device Property Infrastructure (2/4 complete)
+  - 27-01: HipDeviceProp launch limit accessors (5 methods added) ✓
+  - 27-02: DeviceLimits caching in HipBackend ✓
+  - 27-03: Launch validation methods (Not started)
+  - 27-04: Safe grid calculation (Not started)
 - Phase 28: Debug Hygiene (Not started)
 - Phase 29: Validation & E2E (Not started)
 
