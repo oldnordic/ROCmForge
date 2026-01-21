@@ -1,13 +1,9 @@
 //! CPU vs GPU attention numerical accuracy tests
 
-#[cfg(feature = "rocm")]
 use proptest::prelude::*;
-#[cfg(feature = "rocm")]
 use proptest::test_runner::TestRunner;
-#[cfg(feature = "rocm")]
 use serial_test::serial;
 
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn test_cpu_gpu_attention_close_enough() {
@@ -48,7 +44,6 @@ fn test_cpu_gpu_attention_close_enough() {
         .unwrap();
 }
 
-#[cfg(feature = "rocm")]
 fn generate_attention_test_case() -> impl Strategy<Value = (usize, usize, usize)> {
     (1usize..=4usize).prop_flat_map(|batch_size| {
         (64usize..=257usize).prop_flat_map(move |seq_len| {

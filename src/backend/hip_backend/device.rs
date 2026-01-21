@@ -24,31 +24,34 @@ impl HipDeviceProp {
     const NAME_OFFSET: usize = 0;
 
     // Offset of `totalGlobalMem` field: size_t totalGlobalMem
-    // After: name[256] (256) + uuid (16) + luid[8] (8) + luidDeviceNodeMask (4) = 284
-    const TOTAL_GLOBAL_MEM_OFFSET: usize = 284;
+    // After: name[256] (256) + uuid (16) + luid[8] (8) + luidDeviceNodeMask (4) + padding (4) = 288
+    const TOTAL_GLOBAL_MEM_OFFSET: usize = 288;
 
     // Offset of `multiProcessorCount` field: int multiProcessorCount
     // This is after all the texture/surface fields - verified with C code
     const MULTI_PROCESSOR_COUNT_OFFSET: usize = 508;
 
     // Launch limit field offsets - verified against hip_runtime_api.h
+    // IMPORTANT: C compiler inserts 4-byte padding after luidDeviceNodeMask to align
+    // totalGlobalMem (size_t=8 bytes) to 8-byte boundary (offset 288).
     // Based on: name[256]: 0-255 (256 bytes)
     //           uuid: 256-271 (16 bytes)
     //           luid[8]: 272-279 (8 bytes)
     //           luidDeviceNodeMask: 280-283 (4 bytes)
-    //           totalGlobalMem: 284-291 (8 bytes)
-    //           sharedMemPerBlock: 292-299 (8 bytes)
-    //           regsPerBlock: 300-303 (4 bytes)
-    //           warpSize: 304-307 (4 bytes)
-    //           memPitch: 308-315 (8 bytes)
-    //           maxThreadsPerBlock: 316-319 (4 bytes)
-    //           maxThreadsDim[3]: 320-331 (12 bytes)
-    //           maxGridSize[3]: 332-343 (12 bytes)
-    const SHARED_MEM_PER_BLOCK_OFFSET: usize = 292;
-    const WARP_SIZE_OFFSET: usize = 304;
-    const MAX_THREADS_PER_BLOCK_OFFSET: usize = 316;
-    const MAX_THREADS_DIM_OFFSET: usize = 320;
-    const MAX_GRID_SIZE_OFFSET: usize = 332;
+    //           [PADDING]: 284-287 (4 bytes) - for alignment!
+    //           totalGlobalMem: 288-295 (8 bytes)
+    //           sharedMemPerBlock: 296-303 (8 bytes)
+    //           regsPerBlock: 304-307 (4 bytes)
+    //           warpSize: 308-311 (4 bytes)
+    //           memPitch: 312-319 (8 bytes)
+    //           maxThreadsPerBlock: 320-323 (4 bytes)
+    //           maxThreadsDim[3]: 324-335 (12 bytes)
+    //           maxGridSize[3]: 336-347 (12 bytes)
+    const SHARED_MEM_PER_BLOCK_OFFSET: usize = 296;
+    const WARP_SIZE_OFFSET: usize = 308;
+    const MAX_THREADS_PER_BLOCK_OFFSET: usize = 320;
+    const MAX_THREADS_DIM_OFFSET: usize = 324;
+    const MAX_GRID_SIZE_OFFSET: usize = 336;
 
     /// Get device name (null-terminated C string)
     pub fn name(&self) -> String {
@@ -168,6 +171,12 @@ impl HipDeviceProp {
             .ok()
             .map(i32::from_ne_bytes)
             .unwrap_or(32)
+    }
+
+    /// Debug: Get raw bytes (for FFI debugging)
+    #[allow(dead_code)]
+    pub fn debug_bytes(&self, offset: usize, len: usize) -> &[u8] {
+        &self._buffer[offset..offset + len]
     }
 }
 

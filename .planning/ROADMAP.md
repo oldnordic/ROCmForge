@@ -90,7 +90,7 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 7. Only ONE DeviceLimits construction exists (duplicate deleted)
 
 **Plans**: 1 plan (1 wave)
-- [ ] 30-01-PLAN.md — Comprehensive sanity check + delete duplicate DeviceLimits
+- [x] 30-01-PLAN.md — Comprehensive sanity check + delete duplicate DeviceLimits
 
 ### Phase 31: Bindgen Infrastructure
 
@@ -156,11 +156,11 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 | 27 | v1.5 | 4/4 | Complete | 2026-01-21 |
 | 28 | v1.5 | 4/4 | Complete | 2026-01-21 |
 | 29 | v1.5 | 5/5 | Complete | 2026-01-21 |
-| 30 | v1.6 | 0/1 | Not started | - |
+| 30 | v1.6 | 1/1 | Complete | 2026-01-21 |
 | 31 | v1.6 | 0/1 | Not started | - |
 | 32 | v1.6 | 0/1 | Not started | - |
 
-**Total Progress:** 195/198 plans complete (v1.0-v1.5)
+**Total Progress:** 196/198 plans complete (v1.0-v1.5 + v1.6 phase 30)
 
 **Note:** Phase 21-06 (Performance Validation) skipped by user request. All test health goals (TEST-01 through TEST-06) achieved.
 

@@ -85,7 +85,6 @@ mod model_loading_tests {
     /// 3. Bind weights to GPU memory
     #[serial]
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_load_execution_plan_from_gguf() {
         use rocmforge::backend::HipBackend;
         use serial_test::serial;

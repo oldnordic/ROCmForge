@@ -19,7 +19,6 @@ mod tests {
 
     /// Test basic HIP backend creation for attention kernels
     #[test]
-    #[cfg(feature = "rocm")]
     #[serial]
     fn test_hip_backend_creation() {
         let fixture = GPU_FIXTURE.as_ref()
@@ -40,7 +39,6 @@ mod tests {
 
     /// Test HipAttentionKernels struct creation - this should fail initially
     #[test]
-    #[cfg(feature = "rocm")]
     #[serial]
     fn test_hip_attention_kernels_creation() {
         let fixture = GPU_FIXTURE.as_ref()
@@ -70,7 +68,6 @@ mod tests {
 
     /// Test GPU QK^T kernel computation
     #[test]
-    #[cfg(feature = "rocm")]
     #[serial]
     fn test_gpu_qk_kernel() {
         let fixture = GPU_FIXTURE.as_ref()
@@ -146,7 +143,6 @@ mod tests {
 
     /// Test GPU softmax kernel with causal masking
     #[test]
-    #[cfg(feature = "rocm")]
     #[serial]
     fn test_gpu_softmax_kernel() {
         let fixture = GPU_FIXTURE.as_ref()
@@ -221,7 +217,6 @@ mod tests {
 
     /// Test GPU attention-weighted V kernel
     #[test]
-    #[cfg(feature = "rocm")]
     #[serial]
     fn test_gpu_attention_v_kernel() {
         let fixture = GPU_FIXTURE.as_ref()
@@ -296,7 +291,6 @@ mod tests {
 
     /// Test complete GPU attention pipeline with KV cache integration
     #[test]
-    #[cfg(feature = "rocm")]
     #[serial]
     fn test_gpu_attention_pipeline() {
         let fixture = GPU_FIXTURE.as_ref()
@@ -373,7 +367,6 @@ mod tests {
 
     /// Test attention kernel error handling
     #[test]
-    #[cfg(feature = "rocm")]
     #[serial]
     fn test_attention_kernel_error_handling() {
         let fixture = GPU_FIXTURE.as_ref()
@@ -416,7 +409,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(feature = "rocm"))]
     fn test_gpu_backend_disabled_without_rocm() {
         // Test that GPU functionality is properly disabled without ROCm feature
         // This test should compile and pass when ROCm is not available
@@ -442,7 +434,6 @@ mod tests {
     /// Tests the FlashAttention backend with realistic model configuration.
     /// Verifies output shape, finite values, and non-zero output.
     #[test]
-    #[cfg(feature = "rocm")]
     #[serial]
     fn test_attention_e2e_flash_attention() {
         use rocmforge::attention::backend_registry::{BackendImplementation, AttentionConfig};
@@ -515,7 +506,6 @@ mod tests {
     ///
     /// Tests Multi-Query Attention with 32 query heads, 1 KV head.
     #[test]
-    #[cfg(feature = "rocm")]
     #[serial]
     fn test_attention_e2e_mqa_kv_replication() {
         use rocmforge::attention::multi_query::{MultiQueryAttention, MultiQueryConfig};
@@ -588,7 +578,6 @@ mod tests {
     ///
     /// Tests Grouped-Query Attention with 32 query heads, 8 KV heads.
     #[test]
-    #[cfg(feature = "rocm")]
     #[serial]
     fn test_attention_e2e_gqa_grouped_query() {
         use rocmforge::attention::multi_query::{MultiQueryAttention, MultiQueryConfig};
@@ -657,7 +646,6 @@ mod tests {
     ///
     /// Tests FlashAttention with 40 heads, head_dim=128 (LLaMA-like).
     #[test]
-    #[cfg(feature = "rocm")]
     #[serial]
     fn test_attention_e2e_flash_attention_llama_config() {
         use rocmforge::attention::backend_registry::{BackendImplementation, AttentionConfig};
@@ -714,7 +702,6 @@ mod tests {
     ///
     /// Tests attention computation with batch_size > 1.
     #[test]
-    #[cfg(feature = "rocm")]
     #[serial]
     fn test_attention_e2e_multi_batch() {
         use rocmforge::attention::backend_registry::{BackendImplementation, AttentionConfig};
@@ -768,7 +755,6 @@ mod tests {
     ///
     /// Tests FlashAttention with maximum supported sequence length.
     #[test]
-    #[cfg(feature = "rocm")]
     #[serial]
     fn test_attention_e2e_long_context_flash_attention() {
         use rocmforge::attention::backend_registry::{BackendImplementation, AttentionConfig};
@@ -820,7 +806,6 @@ mod tests {
     ///
     /// Verifies that GPU output matches CPU reference within tolerance.
     #[test]
-    #[cfg(feature = "rocm")]
     #[serial]
     fn test_attention_e2e_mqa_gpu_cpu_consistency() {
         use rocmforge::attention::multi_query::{MultiQueryAttention, MultiQueryConfig};
@@ -912,7 +897,6 @@ mod tests {
     ///
     /// Tests that attention handles extreme input values without NaN/Inf.
     #[test]
-    #[cfg(feature = "rocm")]
     #[serial]
     fn test_attention_e2e_numerical_stability() {
         use rocmforge::attention::backend_registry::{BackendImplementation, AttentionConfig};

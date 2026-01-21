@@ -3,7 +3,6 @@
 use rocmforge::model::{
     Linear, ModelBackend, SimpleAttention, SimpleModel, SimpleTransformerBlock,
 };
-#[cfg(feature = "rocm")]
 use serial_test::serial;
 
 #[test]
@@ -148,7 +147,6 @@ fn test_model_deterministic_with_same_seed() {
     }
 }
 
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn test_simple_model_forward_gpu_close_to_cpu() {

@@ -632,7 +632,6 @@ fn benchmark_quantization_comparison() {
 // CPU vs GPU Comparison (placeholder)
 // ============================================================================
 
-#[cfg(feature = "rocm")]
 fn benchmark_cpu_vs_gpu() {
     println!("\n[CPU vs GPU MatMul Comparison]");
     println!("================================");
@@ -660,7 +659,6 @@ fn benchmark_cpu_vs_gpu() {
     }
 }
 
-#[cfg(not(feature = "rocm"))]
 fn benchmark_cpu_vs_gpu() {
     println!("\n[CPU vs GPU MatMul Comparison]");
     println!("================================");
@@ -691,12 +689,10 @@ fn main() {
     benchmark_quantization_comparison();
 
     // Run GPU benchmarks if ROCm feature is enabled
-    #[cfg(feature = "rocm")]
     {
         benchmark_cpu_vs_gpu();
     }
 
-    #[cfg(not(feature = "rocm"))]
     {
         benchmark_cpu_vs_gpu();
     }

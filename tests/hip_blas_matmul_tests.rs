@@ -4,9 +4,7 @@
 use anyhow::Context;
 
 // GPU test imports - only available when rocm feature is enabled
-#[cfg(feature = "rocm")]
 use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
-#[cfg(feature = "rocm")]
 use serial_test::serial;
 
 use rocmforge::backend::hip_backend::{HipBackend, HipBuffer};
@@ -75,7 +73,6 @@ mod tests {
     }
 
     // GPU tests - use shared fixture and run serially
-    #[cfg(feature = "rocm")]
     #[test]
     #[serial]
     fn test_hipblas_sgemm_simple() -> anyhow::Result<()> {
@@ -125,13 +122,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "rocm"))]
-    #[test]
-    fn test_hipblas_sgemm_simple() {
-        eprintln!("SKIP: test_hipblas_sgemm_simple requires 'rocm' feature");
-    }
-
-    #[cfg(feature = "rocm")]
     #[test]
     #[serial]
     fn test_gpu_matmul_matches_cpu_small() -> anyhow::Result<()> {
@@ -210,13 +200,8 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "rocm"))]
-    #[test]
-    fn test_gpu_matmul_matches_cpu_small() {
-        eprintln!("SKIP: test_gpu_matmul_matches_cpu_small requires 'rocm' feature");
     }
 
-    #[cfg(feature = "rocm")]
     #[test]
     #[serial]
     fn test_gpu_matmul_larger_matrix() -> anyhow::Result<()> {
@@ -289,13 +274,8 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "rocm"))]
-    #[test]
-    fn test_gpu_matmul_larger_matrix() {
-        eprintln!("SKIP: test_gpu_matmul_larger_matrix requires 'rocm' feature");
     }
 
-    #[cfg(feature = "rocm")]
     #[test]
     #[serial]
     fn test_matmul_invalid_dims_error() -> anyhow::Result<()> {
@@ -347,10 +327,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "rocm"))]
-    #[test]
-    fn test_matmul_invalid_dims_error() {
-        eprintln!("SKIP: test_matmul_invalid_dims_error requires 'rocm' feature");
     }
 
     /// TDD TEST: GGML matmul wrapper with synchronization
@@ -360,7 +336,6 @@ mod tests {
     ///
     /// BUG: Without synchronization, copy_from_buffer may read incomplete data.
     /// FIX: Add backend.synchronize() after matmul_f32 before copy_from_buffer.
-    #[cfg(feature = "rocm")]
     #[test]
     #[serial]
     fn test_ggml_matmul_wrapper_synchronization() {
@@ -420,9 +395,5 @@ mod tests {
         }
     }
 
-    #[cfg(not(feature = "rocm"))]
-    #[test]
-    fn test_ggml_matmul_wrapper_synchronization() {
-        eprintln!("SKIP: test_ggml_matmul_wrapper_synchronization requires 'rocm' feature");
     }
 }

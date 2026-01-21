@@ -706,7 +706,6 @@ fn benchmark_allocation_strategy_comparison() {
 // GPU Memory Benchmarks (with rocm feature)
 // ============================================================================
 
-#[cfg(feature = "rocm")]
 fn benchmark_gpu_memory_allocation() {
     println!("\n[GPU Memory Allocation Benchmarks]");
     println!("====================================");
@@ -729,7 +728,6 @@ fn benchmark_gpu_memory_allocation() {
     }
 }
 
-#[cfg(not(feature = "rocm"))]
 fn benchmark_gpu_memory_allocation() {
     println!("\n[GPU Memory Allocation Benchmarks]");
     println!("====================================");

@@ -1,12 +1,9 @@
 //! GPU parity tests for simple model functionality
 //! Only compiled when ROCm feature is enabled
 
-#[cfg(feature = "rocm")]
 use rocmforge::model::{ModelBackend, SimpleModel};
-#[cfg(feature = "rocm")]
 use serial_test::serial;
 
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn test_simple_model_cpu_gpu_parity() {
@@ -42,7 +39,6 @@ fn test_simple_model_cpu_gpu_parity() {
     );
 }
 
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn test_simple_model_gpu_backend_does_not_fallback() {

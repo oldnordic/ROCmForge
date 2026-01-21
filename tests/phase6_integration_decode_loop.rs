@@ -5,7 +5,6 @@
 //! Test first, prove it fails, then implement.
 
 #[cfg(test)]
-#[cfg(feature = "rocm")]
 mod decode_loop_tests {
     use rocmforge::backend::HipBackend;
     use rocmforge::loader::gguf::GgufLoader;

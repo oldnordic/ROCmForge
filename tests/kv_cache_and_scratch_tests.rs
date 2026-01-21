@@ -1,22 +1,14 @@
 //! TDD tests for KV Cache and Scratch Buffer Manager
 //! Tests must fail initially, then pass after implementation
 
-#[cfg(feature = "rocm")]
 use rocmforge::backend::scratch::ScratchBufferManager;
-#[cfg(feature = "rocm")]
 use rocmforge::backend::ScratchBufferManager;
-#[cfg(feature = "rocm")]
 use rocmforge::backend::{DeviceTensor, HipBackend, HipBuffer, ModelRuntime};
-#[cfg(feature = "rocm")]
 use rocmforge::loader::mmap_loader::TensorShape;
-#[cfg(feature = "rocm")]
 use rocmforge::model::kv_cache::KVCache;
-#[cfg(feature = "rocm")]
 use rocmforge::model::ModelConfig;
-#[cfg(feature = "rocm")]
 use serial_test::serial;
 
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn scratch_buffer_reuse_invariant() {
@@ -126,7 +118,6 @@ fn scratch_buffer_reuse_invariant() {
     fixture.assert_no_leak(5);
 }
 
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn kv_cache_append_and_retrieve_consistency() {
@@ -191,7 +182,6 @@ fn kv_cache_append_and_retrieve_consistency() {
     fixture.assert_no_leak(5);
 }
 
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn kv_cache_capacity_boundary() {
@@ -246,7 +236,6 @@ fn kv_cache_capacity_boundary() {
     fixture.assert_no_leak(5);
 }
 
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn model_runtime_initialization_consistency() {

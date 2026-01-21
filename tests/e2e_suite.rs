@@ -282,7 +282,6 @@ fn same_tensor_keys(
 // -----------------------------------------------------------------------------
 
 #[test]
-#[cfg(feature = "rocm")]
 #[serial]
 fn test_async_loading_basic() {
     // Skip test if no GPU available
@@ -373,7 +372,6 @@ fn test_async_loading_basic() {
 // -----------------------------------------------------------------------------
 
 #[test]
-#[cfg(feature = "rocm")]
 #[serial]
 #[ignore = "Performance test - slow, run with: cargo test --test e2e_suite --ignored -- --test-threads=1"]
 fn test_async_loading_performance() {
@@ -489,7 +487,6 @@ fn test_async_loading_performance() {
 // -----------------------------------------------------------------------------
 
 #[test]
-#[cfg(feature = "rocm")]
 #[serial]
 fn test_async_loading_correctness() {
     let fixture = match GPU_FIXTURE.as_ref() {
@@ -612,7 +609,6 @@ fn test_async_loading_correctness() {
 // -----------------------------------------------------------------------------
 
 #[test]
-#[cfg(feature = "rocm")]
 #[serial]
 #[ignore = "Stress test - requires ~5GB GPU memory"]
 fn test_async_loading_concurrent() {
@@ -732,7 +728,6 @@ fn test_async_loading_concurrent() {
 // -----------------------------------------------------------------------------
 
 #[test]
-#[cfg(feature = "rocm")]
 #[serial]
 fn test_async_loading_cache_behavior() {
     let fixture = match GPU_FIXTURE.as_ref() {
@@ -826,7 +821,6 @@ fn test_async_loading_cache_behavior() {
 // -----------------------------------------------------------------------------
 
 #[test]
-#[cfg(feature = "rocm")]
 #[serial]
 fn test_async_loading_memory_safety() {
     let fixture = match GPU_FIXTURE.as_ref() {
@@ -941,11 +935,9 @@ fn get_inference_model_path() -> Option<PathBuf> {
 
 /// Check if GPU is available
 fn gpu_available() -> bool {
-    #[cfg(feature = "rocm")]
     {
         rocmforge::backend::HipBackend::gpu_available()
     }
-    #[cfg(not(feature = "rocm"))]
     {
         false
     }
@@ -1000,7 +992,6 @@ fn get_tokenizer(model_path: &PathBuf) -> TokenizerAdapter {
 // -----------------------------------------------------------------------------
 
 #[tokio::test]
-#[cfg(feature = "rocm")]
 #[serial]
 async fn test_model_loading_e2e() {
     // Skip test if no GPU available
@@ -1076,7 +1067,6 @@ async fn test_model_loading_e2e() {
 // -----------------------------------------------------------------------------
 
 #[tokio::test]
-#[cfg(feature = "rocm")]
 #[serial]
 async fn test_inference_execution_e2e() {
     let fixture = match GPU_FIXTURE.as_ref() {
@@ -1207,7 +1197,6 @@ async fn test_inference_execution_e2e() {
 // -----------------------------------------------------------------------------
 
 #[tokio::test]
-#[cfg(feature = "rocm")]
 #[serial]
 async fn test_kv_cache_e2e() {
     let fixture = match GPU_FIXTURE.as_ref() {
@@ -1337,7 +1326,6 @@ async fn test_kv_cache_e2e() {
 // -----------------------------------------------------------------------------
 
 #[tokio::test]
-#[cfg(feature = "rocm")]
 #[serial]
 async fn test_scheduler_e2e() {
     let fixture = match GPU_FIXTURE.as_ref() {
@@ -1464,7 +1452,6 @@ async fn test_scheduler_e2e() {
 // -----------------------------------------------------------------------------
 
 #[tokio::test]
-#[cfg(feature = "rocm")]
 #[serial]
 async fn test_error_recovery_e2e() {
     let fixture = match GPU_FIXTURE.as_ref() {
@@ -1586,7 +1573,6 @@ async fn test_error_recovery_e2e() {
 // -----------------------------------------------------------------------------
 
 #[tokio::test]
-#[cfg(feature = "rocm")]
 #[serial]
 #[ignore = "Full pipeline test - slow, run with: cargo test --test e2e_suite --ignored -- --test-threads=1"]
 async fn test_full_pipeline_e2e() {

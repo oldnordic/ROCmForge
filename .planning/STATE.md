@@ -9,19 +9,19 @@ See: .planning/PROJECT.md (updated 2026-01-21)
 
 ## Current Position
 
-Phase: 30 of 32 (Immediate Bugfix)
+Phase: 31 of 32 (Bindgen Infrastructure)
 Plan: 01 of 1
 Status: Plan complete
-Last activity: 2026-01-21 — Completed 30-01: Comprehensive Sanity Check + Delete Duplicate DeviceLimits
+Last activity: 2026-01-21 — Completed 31-01: Add bindgen Infrastructure with HIP Allowlist
 
-Progress: [█░░░░░░░░░░░░░░░░░░░░░░░░░░░] 33% (v1.6)
+Progress: [██░░░░░░░░░░░░░░░░░░░░░░░░░░] 67% (v1.6)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 195 (v1.0-v1.5)
+- Total plans completed: 197 (v1.0-v1.5 + v1.6 phases 30-31)
 - Average duration: ~42 min
-- Total execution time: ~138 hours
+- Total execution time: ~139 hours
 
 **By Phase:**
 
@@ -29,7 +29,8 @@ Progress: [█░░░░░░░░░░░░░░░░░░░░░░
 |-------|-------|-------|----------|
 | 1-24 | 168 | 168 | ~42 min |
 | 25-29 | 27 | 27 | ~7 min |
-| 30-32 | 0 | 3 | TBD |
+| 30-31 | 2 | 3 | ~9 min |
+| 32 | 0 | 1 | TBD |
 
 ## Accumulated Context
 
@@ -63,7 +64,7 @@ Recent decisions from research (2026-01-21):
 - **Detailed Warning Messages**: Include actual incorrect values in warning log to aid debugging of FFI driver issues (FFI-01)
 
 v1.6 decisions (upcoming):
-- **Bindgen Allowlist**: Use bindgen for hipDeviceProp_t only, not full HIP API (FFI-03)
+- **Bindgen Allowlist**: Use bindgen for hipDeviceProp_t only, not full HIP API (FFI-03) - COMPLETED 2026-01-21
 - **Compile-Time Offset Verification**: Test asserts manual offsets match bindgen at compile time (FFI-04)
 
 ### Pending Todos
@@ -85,7 +86,7 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-01-21
-Stopped at: Completed 30-01 (Comprehensive Sanity Check + Delete Duplicate DeviceLimits)
+Stopped at: Completed 31-01 (Add bindgen Infrastructure with HIP Allowlist)
 Resume file: None
 
 **Milestone v1.5 COMPLETE!** All phases (25-29) finished with validation tests passing.
@@ -99,5 +100,5 @@ Resume file: None
 
 **v1.6 - FFI Device Props Fix (In Progress):**
 - Phase 30: Immediate Bugfix (FFI-01, FFI-02) - COMPLETE (1/1 plans)
-- Phase 31: Bindgen Infrastructure (FFI-03) - build.rs + allowlist (0/1 plans)
+- Phase 31: Bindgen Infrastructure (FFI-03) - COMPLETE (1/1 plans)
 - Phase 32: Offset Verification Test (FFI-04) - compile-time offset assertions (0/1 plans)

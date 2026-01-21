@@ -18,12 +18,9 @@
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "rocm")]
     use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
-    #[cfg(feature = "rocm")]
     use rocmforge::backend::HipBackend;
     use serial_test::serial;
-    #[cfg(feature = "rocm")]
     use rocmforge::sampler::gpu::{GpuTopKSampler, GpuTopPSampler, GpuFusedSampler};
     use rocmforge::sampler::{Sampler, SamplerError, SamplingConfig};
     use std::sync::Arc;
@@ -190,7 +187,6 @@ mod tests {
     /// Compares GPU output distribution to CPU reference using statistical tests.
     #[serial]
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_gpu_sampling_topk_correctness() {
         let fixture = match GPU_FIXTURE.as_ref() {
             Some(f) => f,
@@ -252,7 +248,6 @@ mod tests {
     /// Compares GPU output distribution to CPU reference.
     #[serial]
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_gpu_sampling_topp_correctness() {
         let fixture = match GPU_FIXTURE.as_ref() {
             Some(f) => f,
@@ -294,7 +289,6 @@ mod tests {
     /// we expect at least 1x speedup (not slower than CPU).
     #[serial]
     #[test]
-    #[cfg(feature = "rocm")]
     #[ignore] // Performance test - run manually
     fn test_gpu_sampling_performance() {
         let fixture = match GPU_FIXTURE.as_ref() {
@@ -350,7 +344,6 @@ mod tests {
     /// Lower temperature should produce sharper distribution.
     #[serial]
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_gpu_sampling_with_temperature() {
         let fixture = match GPU_FIXTURE.as_ref() {
             Some(f) => f,
@@ -416,7 +409,6 @@ mod tests {
     /// path through GPU kernels (SAMPLING-03 requirement).
     #[serial]
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_temperature_scale_kernel_usage() {
         // This test documents that temperature scaling happens on GPU
         // via the temperature_scale_kernel (SAMPLING-03).
@@ -440,7 +432,6 @@ mod tests {
     /// Should return an error, not panic.
     #[serial]
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_gpu_sampling_edge_empty_probs() {
         let fixture = match GPU_FIXTURE.as_ref() {
             Some(f) => f,
@@ -467,7 +458,6 @@ mod tests {
     /// With only one token, should always return index 0.
     #[serial]
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_gpu_sampling_edge_single_token() {
         let fixture = match GPU_FIXTURE.as_ref() {
             Some(f) => f,
@@ -496,7 +486,6 @@ mod tests {
     /// With uniform distribution, should still sample correctly.
     #[serial]
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_gpu_sampling_edge_uniform_probs() {
         let fixture = match GPU_FIXTURE.as_ref() {
             Some(f) => f,
@@ -532,7 +521,6 @@ mod tests {
     /// With very small top_p, only top tokens should be selected.
     #[serial]
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_gpu_sampling_edge_small_topp() {
         let fixture = match GPU_FIXTURE.as_ref() {
             Some(f) => f,
@@ -576,7 +564,6 @@ mod tests {
     /// Verifies that batching works correctly.
     #[serial]
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_gpu_sampling_large_batch() {
         let fixture = match GPU_FIXTURE.as_ref() {
             Some(f) => f,
@@ -626,7 +613,6 @@ mod tests {
     /// Verifies tests compile and run without ROCm feature.
     #[serial]
     #[test]
-    #[cfg(not(feature = "rocm"))]
     fn test_cpu_sampler_without_rocm() {
         let config = SamplingConfig::new(1.0, 50, 0.9).unwrap();
         let mut sampler = Sampler::new(config);
@@ -645,7 +631,6 @@ mod tests {
     /// Test GPU fused top-k + top-p sampling
     #[serial]
     #[test]
-    #[cfg(feature = "rocm")]
     fn test_gpu_fused_sampling_correctness() {
         let fixture = match GPU_FIXTURE.as_ref() {
             Some(f) => f,

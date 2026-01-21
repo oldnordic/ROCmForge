@@ -1,15 +1,11 @@
 //! Tests for ModelRuntime device buffer management
 
-#[cfg(feature = "rocm")]
 use rocmforge::backend::ModelRuntime;
-#[cfg(feature = "rocm")]
 use rocmforge::loader::mmap_loader::{open_mmap_weights, MmapWeights, TensorShape};
-#[cfg(feature = "rocm")]
 use rocmforge::model::{ModelConfig, ModelType};
-#[cfg(feature = "rocm")]
 use serial_test::serial;
+use std::io::Write;
 
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn test_model_runtime_creation() {
@@ -49,7 +45,6 @@ fn test_model_runtime_creation() {
     assert!(runtime.backend().get_device_count().is_ok());
 }
 
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn test_model_runtime_scratch_buffers() {
@@ -85,7 +80,6 @@ fn test_model_runtime_scratch_buffers() {
     assert!(runtime.backend().get_device_count().is_ok());
 }
 
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn test_model_runtime_empty_weights() {
@@ -114,7 +108,6 @@ fn test_model_runtime_empty_weights() {
     assert!(result.is_ok()); // Should succeed
 }
 
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn test_model_runtime_memory_limits() {

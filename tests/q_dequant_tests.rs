@@ -20,7 +20,6 @@ use common::create_test_tensor;
 /// GPU Quantization Dequantization Unit Tests
 ///
 /// QUANT-05: Quantization kernels have unit tests verifying bit-exact outputs
-#[cfg(all(test, feature = "rocm"))]
 mod gpu_q4_0_tests {
     use super::*;
     use rocmforge::ggml::hip_backend::ops::q4_0_dequant::{
@@ -51,8 +50,8 @@ mod gpu_q4_0_tests {
         // Create test data: 1 block with scale=1.0, values 0-15
         let mut data = vec![0u8; 20];
         data[0..4].copy_from_slice(&1.0f32.to_le_bytes());
-        for i in 0..16 {
-            data[4 + i] = ((i + 1) << 4) | i;
+        for i in 0..16u8 {
+            data[4 + i as usize] = ((i + 1) << 4) | i;
         }
 
         // CPU reference
@@ -227,7 +226,6 @@ mod gpu_q4_0_tests {
 /// GPU Q4_K Dequantization Unit Tests
 ///
 /// QUANT-05: Q4_K quantization kernels have unit tests verifying bit-exact outputs
-#[cfg(all(test, feature = "rocm"))]
 mod gpu_q4_k_tests {
     use super::*;
     use rocmforge::ggml::hip_backend::ops::q4_k_dequant::{
@@ -307,7 +305,6 @@ mod gpu_q4_k_tests {
 /// GPU Q6_K Dequantization Unit Tests
 ///
 /// QUANT-05: Q6_K quantization kernels have unit tests verifying bit-exact outputs
-#[cfg(all(test, feature = "rocm"))]
 mod gpu_q6_k_tests {
     use super::*;
     use rocmforge::ggml::hip_backend::ops::q6_k_dequant::{
@@ -382,7 +379,6 @@ mod gpu_q6_k_tests {
 /// GPU Quantized MatMul Integration Tests
 ///
 /// QUANT-07: Quantized matmul kernels have integration tests verifying GPU results match CPU reference
-#[cfg(all(test, feature = "rocm"))]
 mod gpu_quantized_matmul_tests {
     use super::*;
     // Use shared GPU fixture to avoid creating multiple backends

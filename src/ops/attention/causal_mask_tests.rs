@@ -1,11 +1,11 @@
-//! Causal mask tests - Phase 3b.1
-//!
-//! Tests verify standalone causal mask kernel:
-//! - Creates mask where mask[i, j] = -inf if j > i (key > query)
-//! - Layout: [batch, heads, seq_q, seq_k] explicit
-//!
-//! This is a standalone atomic operation - no fusion yet.
-//! Test first, implement kernel after tests fail (TDD).
+// Causal mask tests - Phase 3b.1
+//
+// Tests verify standalone causal mask kernel:
+// - Creates mask where mask[i, j] = -inf if j > i (key > query)
+// - Layout: [batch, heads, seq_q, seq_k] explicit
+//
+// This is a standalone atomic operation - no fusion yet.
+// Test first, implement kernel after tests fail (TDD).
 
 #[cfg(test)]
 mod causal_mask_tests {

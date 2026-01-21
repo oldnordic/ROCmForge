@@ -95,7 +95,6 @@ mod tests {
     }
 
     /// Test decode_step() GPU matches CPU within tolerance
-    #[cfg(feature = "rocm")]
     #[test]
     #[serial]
     fn test_decode_step_gpu_matches_cpu_within_tolerance() -> anyhow::Result<()> {

@@ -41,7 +41,6 @@ use std::hint::black_box;
 use std::time::Duration;
 
 // Use profiling module for timing
-#[cfg(feature = "rocm")]
 use rocmforge::profiling::KernelTimer;
 use rocmforge::profiling::ttft::{TtftProfiler, TtftBreakdown, create_ttft_breakdown};
 
@@ -345,7 +344,6 @@ fn benchmark_end_to_end_cpu() {
 // GPU benchmarks (ROCm feature required)
 // ============================================================================
 
-#[cfg(feature = "rocm")]
 mod gpu_benches {
     use super::*;
 
@@ -899,7 +897,6 @@ fn main() {
     benchmark_ttft_target_compliance();
 
     // Run GPU benchmarks if ROCm feature is enabled
-    #[cfg(feature = "rocm")]
     {
         if bench.has_model() {
             gpu_benches::benchmark_prompt_processing_gpu();

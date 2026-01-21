@@ -1,13 +1,9 @@
 //! Tests for HipBuffer size invariants and CPU fallback path buffer corruption
 
-#[cfg(feature = "rocm")]
 use rocmforge::backend::{DeviceTensor, HipBackend};
-#[cfg(feature = "rocm")]
 use rocmforge::loader::mmap_loader::TensorShape;
-#[cfg(feature = "rocm")]
 use serial_test::serial;
 
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn hip_buffer_alloc_size_invariant() {
@@ -54,7 +50,6 @@ fn hip_buffer_alloc_size_invariant() {
     fixture.assert_no_leak(5);
 }
 
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn test_attention_cpu_fallback_buffer_size_consistency() {
@@ -118,7 +113,6 @@ fn test_attention_cpu_fallback_buffer_size_consistency() {
     fixture.assert_no_leak(5);
 }
 
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn device_tensor_size_bytes_consistency() {

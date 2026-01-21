@@ -1,19 +1,12 @@
 //! Tests for attention mechanism with DeviceTensor integration
 
-#[cfg(feature = "rocm")]
 use rocmforge::attention::{Attention, AttentionBackend};
-#[cfg(feature = "rocm")]
 use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
-#[cfg(feature = "rocm")]
 use rocmforge::backend::{DeviceTensor, HipBackend};
-#[cfg(feature = "rocm")]
 use rocmforge::loader::mmap_loader::{open_mmap_weights, TensorShape};
-#[cfg(feature = "rocm")]
 use serial_test::serial;
-#[cfg(feature = "rocm")]
 use std::io::Write;
 
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn test_attention_device_tensor_basic() {
@@ -143,7 +136,6 @@ fn test_attention_device_tensor_basic() {
     fixture.assert_no_leak(5);
 }
 
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn test_attention_device_tensor_with_mask() {
@@ -194,7 +186,6 @@ fn test_attention_device_tensor_with_mask() {
     fixture.assert_no_leak(5);
 }
 
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn test_attention_device_tensor_from_mmap() {
@@ -266,7 +257,6 @@ fn test_attention_device_tensor_from_mmap() {
     fixture.assert_no_leak(5);
 }
 
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn test_debug_device_tensor_sizes() {

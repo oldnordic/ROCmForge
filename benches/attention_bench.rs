@@ -168,7 +168,6 @@ fn benchmark_cpu_attention() {
 // GPU Benchmarks (ROCm Feature Required)
 // ============================================================================
 
-#[cfg(feature = "rocm")]
 fn generate_test_data_flash(seq_len: usize, num_heads: usize, head_dim: usize) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     // FlashAttention expects: [batch_size, seq_len, num_heads * head_dim]
     // But BackendImplementation provides: [batch_size, seq_len, dim] where dim = num_heads * head_dim
@@ -188,7 +187,6 @@ fn generate_test_data_flash(seq_len: usize, num_heads: usize, head_dim: usize) -
     (q, k, v)
 }
 
-#[cfg(feature = "rocm")]
 fn benchmark_flash_attention() {
     println!("\n[Flash Attention Benchmarks]");
     println!("============================");
@@ -247,7 +245,6 @@ fn benchmark_flash_attention() {
     }
 }
 
-#[cfg(feature = "rocm")]
 fn benchmark_cpu_vs_flash() {
     println!("\n[CPU vs Flash Attention Comparison]");
     println!("====================================");
@@ -307,13 +304,11 @@ fn main() {
     benchmark_cpu_attention();
 
     // Run GPU benchmarks if ROCm feature is enabled
-    #[cfg(feature = "rocm")]
     {
         benchmark_flash_attention();
         benchmark_cpu_vs_flash();
     }
 
-    #[cfg(not(feature = "rocm"))]
     {
         println!("\n[GPU Benchmarks Skipped]");
         println!("ROCm feature not enabled. Run with: cargo bench --bench attention_bench --features rocm");

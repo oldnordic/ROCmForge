@@ -172,18 +172,10 @@ impl TransposeKernel {
         // Get device limits for adaptive block sizing
         let limits = self.backend.limits();
         let max_threads = limits.max_threads_per_block;
-        let max_y = limits.max_threads_dim[1];
-        let max_z = limits.max_threads_dim[2];
 
-        // Check for driver bug: max_threads_dim[1] == 0
-        // Some HIP drivers incorrectly report 0 for Y/Z dimension limits
-        let has_2d_block_support = max_y > 0 && max_z > 0;
-
-        // Choose block dimension based on device limit and 2D support
-        let block_dim = if !has_2d_block_support {
-            // Driver bug - use 1D block layout
-            (max_threads.min(256), 1, 1)
-        } else if max_threads >= 1024 {
+        // Choose block dimension based on device limit
+        // All AMD GPUs support 2D blocks (this was an FFI bug, now fixed)
+        let block_dim = if max_threads >= 1024 {
             (32, 32, 1)  // 32*32 = 1024 threads
         } else if max_threads >= 512 {
             (22, 22, 1)  // 22*22 = 484 threads (fits under 512)

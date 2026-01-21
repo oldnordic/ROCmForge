@@ -21,9 +21,7 @@ use rocmforge::tensor::matmul::{cpu_matmul_f32, matmul_f32};
 use std::collections::HashMap;
 
 // GPU test imports - only available when rocm feature is enabled
-#[cfg(feature = "rocm")]
 use rocmforge::backend::gpu_test_common::GPU_FIXTURE;
-#[cfg(feature = "rocm")]
 use serial_test::serial;
 
 // Use common fixtures
@@ -152,7 +150,6 @@ fn test_token_embedding_shape_validation() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn test_token_embedding_gpu_upload() -> anyhow::Result<()> {
@@ -187,8 +184,6 @@ fn test_token_embedding_gpu_upload() -> anyhow::Result<()> {
 }
 
 // CPU-only fallback for when rocm feature is not enabled
-#[cfg(not(feature = "rocm"))]
-#[test]
 fn test_token_embedding_gpu_upload() {
     // Skip gracefully when GPU not available
     eprintln!("SKIP: test_token_embedding_gpu_upload requires 'rocm' feature");
@@ -278,7 +273,6 @@ fn test_lm_head_matmul_correctness() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn test_lm_head_gpu_cpu_parity() -> anyhow::Result<()> {
@@ -328,8 +322,6 @@ fn test_lm_head_gpu_cpu_parity() -> anyhow::Result<()> {
 }
 
 // CPU-only fallback for when rocm feature is not enabled
-#[cfg(not(feature = "rocm"))]
-#[test]
 fn test_lm_head_gpu_cpu_parity() {
     // Skip gracefully when GPU not available
     eprintln!("SKIP: test_lm_head_gpu_cpu_parity requires 'rocm' feature");
@@ -339,7 +331,6 @@ fn test_lm_head_gpu_cpu_parity() {
 // Task 5: End-to-End Pipeline Tests
 // ============================================================================
 
-#[cfg(feature = "rocm")]
 #[test]
 #[serial]
 fn test_embedding_to_lmhead_pipeline() -> anyhow::Result<()> {
@@ -433,8 +424,6 @@ fn test_embedding_to_lmhead_pipeline() -> anyhow::Result<()> {
 }
 
 // CPU-only fallback for when rocm feature is not enabled
-#[cfg(not(feature = "rocm"))]
-#[test]
 fn test_embedding_to_lmhead_pipeline() {
     // Skip gracefully when GPU not available
     eprintln!("SKIP: test_embedding_to_lmhead_pipeline requires 'rocm' feature");

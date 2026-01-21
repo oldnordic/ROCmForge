@@ -5,7 +5,6 @@
 //! Test first, prove it fails, then implement.
 
 #[cfg(test)]
-#[cfg(feature = "rocm")]
 mod single_token_tests {
     use rocmforge::backend::HipBackend;
     use serial_test::serial;
