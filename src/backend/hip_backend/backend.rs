@@ -573,7 +573,42 @@ impl HipBackend {
         Ok((free * 7) / 10)
     }
 
-    /// Copy from GPU to host using stream-aware synchronization (SAFE)
+    /// Copy from GPU to host using stream-aware asynchronous copy.
+    ///
+    /// # IMPORTANT: Asynchronous Behavior
+    ///
+    /// This method does **NOT** wait for the copy to complete. The data in `host_data`
+    /// is **NOT valid** until you call `backend.synchronize()`.
+    ///
+    /// The "safe" in the name refers to using the correct stream (stream-aware copy),
+    /// not automatic synchronization. This avoids mixing streams which causes hangs.
+    ///
+    /// # Synchronization Required
+    ///
+    /// ```rust
+    /// backend.copy_from_device_safe(&gpu_buffer, &mut host_data)?;
+    /// // host_data is NOT valid yet!
+    /// backend.synchronize()?;
+    /// // Now host_data is valid
+    /// process(&host_data);
+    /// ```
+    ///
+    /// # When to Use
+    ///
+    /// Use this when batching multiple operations before a single sync:
+    /// ```rust
+    /// backend.copy_from_device_safe(&buf1, &mut data1)?;
+    /// backend.copy_from_device_safe(&buf2, &mut data2)?;
+    /// backend.copy_from_device_safe(&buf3, &mut data3)?;
+    /// backend.synchronize()?;  // Single sync for all three copies
+    /// ```
+    ///
+    /// # Alternative
+    ///
+    /// For synchronous copy that waits automatically, use `copy_from_device()` instead.
+    ///
+    /// See docs/STREAM_SYNCHRONIZATION.md for details on stream synchronization.
+    #[must_use = "Caller must synchronize() before using host_data"]
     pub fn copy_from_device_safe<T>(
         &self,
         gpu_buffer: &HipBuffer,
@@ -722,7 +757,28 @@ impl HipBackend {
         buffer.copy_from_host_with_stream(data, self.stream.as_ptr())
     }
 
-    /// Copy data from device to host
+    /// Copy data from device to host with automatic synchronization.
+    ///
+    /// This is a **synchronous** copy that waits for the transfer to complete before
+    /// returning. The data in `data` is valid immediately after this call returns.
+    ///
+    /// # Synchronization
+    ///
+    /// Unlike `copy_from_device_safe()`, this method automatically synchronizes after
+    /// the copy. Use this when you need the data immediately:
+    ///
+    /// ```rust
+    /// backend.copy_from_device(&buffer, &mut data)?;
+    /// // data is valid here - sync already happened
+    /// process(&data);
+    /// ```
+    ///
+    /// # Performance Note
+    ///
+    /// If copying multiple buffers, consider using `copy_from_device_safe()` for each
+    /// followed by a single `synchronize()` call to reduce sync overhead.
+    ///
+    /// See docs/STREAM_SYNCHRONIZATION.md for details.
     pub fn copy_from_device<T>(&self, buffer: &HipBuffer, data: &mut [T]) -> HipResult<()> {
         buffer.copy_to_host_with_stream(data, self.stream.as_ptr())?;
         self.stream.synchronize()
