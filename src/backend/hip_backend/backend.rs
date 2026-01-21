@@ -972,6 +972,26 @@ impl HipBackend {
             // The async error may be from a previous operation or a non-fatal condition
         }
 
+        // Synchronize device if HIP_LAUNCH_BLOCKING is enabled for debugging
+        // This makes kernel execution synchronous for easier error diagnosis
+        if self.debug_sync_launch {
+            let sync_result = unsafe { ffi::hipDeviceSynchronize() };
+            if sync_result != ffi::HIP_SUCCESS {
+                let error_msg = get_error_string(sync_result);
+                tracing::error!(
+                    "Device synchronization failed after kernel '{}': code={}, msg={}",
+                    kernel.name(),
+                    sync_result,
+                    error_msg
+                );
+                return Err(HipError::KernelLaunchFailed(format!(
+                    "Device synchronization failed after kernel '{}': {}",
+                    kernel.name(),
+                    error_msg
+                )));
+            }
+        }
+
         tracing::trace!("launch_kernel_with_module_shared: Kernel launched successfully");
         Ok(())
     }
