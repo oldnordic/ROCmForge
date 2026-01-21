@@ -185,12 +185,6 @@ fn test_token_embedding_gpu_upload() -> anyhow::Result<()> {
     Ok(())
 }
 
-// CPU-only fallback for when rocm feature is not enabled
-fn test_token_embedding_gpu_upload() {
-    // Skip gracefully when GPU not available
-    eprintln!("SKIP: test_token_embedding_gpu_upload requires 'rocm' feature");
-}
-
 // ============================================================================
 // Task 4: LM Head Tests
 // ============================================================================
@@ -325,12 +319,6 @@ fn test_lm_head_gpu_cpu_parity() -> anyhow::Result<()> {
     Ok(())
 }
 
-// CPU-only fallback for when rocm feature is not enabled
-fn test_lm_head_gpu_cpu_parity() {
-    // Skip gracefully when GPU not available
-    eprintln!("SKIP: test_lm_head_gpu_cpu_parity requires 'rocm' feature");
-}
-
 // ============================================================================
 // Task 5: End-to-End Pipeline Tests
 // ============================================================================
@@ -425,12 +413,6 @@ fn test_embedding_to_lmhead_pipeline() -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-// CPU-only fallback for when rocm feature is not enabled
-fn test_embedding_to_lmhead_pipeline() {
-    // Skip gracefully when GPU not available
-    eprintln!("SKIP: test_embedding_to_lmhead_pipeline requires 'rocm' feature");
 }
 
 #[test]
