@@ -30,6 +30,16 @@ fn test_transpose_896_151936_exhaustive() {
         }
     };
 
+    // Skip if driver has known bug: max_threads_dim[1] == 0
+    let limits = backend.limits();
+    if limits.max_threads_dim[1] == 0 || limits.max_threads_dim[2] == 0 {
+        eprintln!("\n=== SKIP: test_transpose_896_151936_exhaustive ===");
+        eprintln!("Reason: HIP driver reports invalid maxThreadsDim (axis limit 0): {:?}", limits.max_threads_dim);
+        eprintln!("This is a known driver bug - transpose requires 2D blocks");
+        eprintln!("=== END SKIP ===\n");
+        return;
+    }
+
     // Qwen2.5-0.5b embedding weight dimensions
     // hidden_size = 896, vocab_size = 151936
     let hidden_size = 896usize;
@@ -158,6 +168,16 @@ fn test_transpose_896_151936_standalone() {
             return;
         }
     };
+
+    // Skip if driver has known bug: max_threads_dim[1] == 0
+    let limits = backend.limits();
+    if limits.max_threads_dim[1] == 0 || limits.max_threads_dim[2] == 0 {
+        eprintln!("\n=== SKIP: test_transpose_896_151936_standalone ===");
+        eprintln!("Reason: HIP driver reports invalid maxThreadsDim (axis limit 0): {:?}", limits.max_threads_dim);
+        eprintln!("This is a known driver bug - transpose requires 2D blocks");
+        eprintln!("=== END SKIP ===\n");
+        return;
+    }
 
     let hidden_size = 896usize;
     let vocab_size = 151936usize;
