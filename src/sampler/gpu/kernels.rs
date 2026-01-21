@@ -88,94 +88,122 @@ pub fn get_or_init_sampling_cache() -> Result<&'static Mutex<Option<SamplingKern
     // ========================================================================
 
     // Load softmax_kernel from SAMPLING_UTILS_HSACO
-    let softmax_path = std::env::var("SAMPLING_UTILS_HSACO")
-        .unwrap_or_else(|_| "kernels/sampling_utils.hsaco".to_string());
-
-    let (softmax_module, softmax_kernel) = if Path::new(&softmax_path).exists() {
-        let module = load_backend.load_module(&softmax_path)?;
-        let kernel = load_backend.get_kernel_function(&module, "softmax_kernel")?;
-        (Some(module), Some(kernel))
-    } else {
-        tracing::warn!("Softmax kernel not found at {} (SAMPLING_UTILS_HSACO), using CPU fallback", softmax_path);
-        (None, None)
+    let (softmax_module, softmax_kernel) = match option_env!("SAMPLING_UTILS_HSACO") {
+        Some(path) if Path::new(path).exists() => {
+            let module = load_backend.load_module(path)?;
+            let kernel = load_backend.get_kernel_function(&module, "softmax_kernel")?;
+            (Some(module), Some(kernel))
+        }
+        Some(path) => {
+            tracing::warn!("Softmax kernel HSACO file not found at {} (compiled-in path), using CPU fallback", path);
+            (None, None)
+        }
+        None => {
+            tracing::warn!("SAMPLING_UTILS_HSACO not set at compile time. Rebuild with GPU kernels. Using CPU fallback.");
+            (None, None)
+        }
     };
 
     // Load temperature_scale_kernel from TEMPERATURE_SCALE_HSACO
-    let temperature_scale_path = std::env::var("TEMPERATURE_SCALE_HSACO")
-        .unwrap_or_else(|_| "kernels/temperature_scale.hsaco".to_string());
-
-    let (temperature_scale_module, temperature_scale_kernel) = if Path::new(&temperature_scale_path).exists() {
-        let module = load_backend.load_module(&temperature_scale_path)?;
-        let kernel = load_backend.get_kernel_function(&module, "temperature_scale_kernel")?;
-        (Some(module), Some(kernel))
-    } else {
-        tracing::warn!("Temperature scale kernel not found at {} (TEMPERATURE_SCALE_HSACO), using CPU fallback", temperature_scale_path);
-        (None, None)
+    let (temperature_scale_module, temperature_scale_kernel) = match option_env!("TEMPERATURE_SCALE_HSACO") {
+        Some(path) if Path::new(path).exists() => {
+            let module = load_backend.load_module(path)?;
+            let kernel = load_backend.get_kernel_function(&module, "temperature_scale_kernel")?;
+            (Some(module), Some(kernel))
+        }
+        Some(path) => {
+            tracing::warn!("Temperature scale kernel HSACO file not found at {} (compiled-in path), using CPU fallback", path);
+            (None, None)
+        }
+        None => {
+            tracing::warn!("TEMPERATURE_SCALE_HSACO not set at compile time. Rebuild with GPU kernels. Using CPU fallback.");
+            (None, None)
+        }
     };
 
     // Load topk_sampling_kernel from TOPK_SAMPLING_HSACO
-    let topk_path = std::env::var("TOPK_SAMPLING_HSACO")
-        .unwrap_or_else(|_| "kernels/topk_sampling.hsaco".to_string());
-
-    let (topk_module, topk_kernel) = if Path::new(&topk_path).exists() {
-        let module = load_backend.load_module(&topk_path)?;
-        let kernel = load_backend.get_kernel_function(&module, "topk_sampling_kernel")?;
-        (Some(module), Some(kernel))
-    } else {
-        tracing::warn!("Top-k sampling kernel not found at {} (TOPK_SAMPLING_HSACO), using CPU fallback", topk_path);
-        (None, None)
+    let (topk_module, topk_kernel) = match option_env!("TOPK_SAMPLING_HSACO") {
+        Some(path) if Path::new(path).exists() => {
+            let module = load_backend.load_module(path)?;
+            let kernel = load_backend.get_kernel_function(&module, "topk_sampling_kernel")?;
+            (Some(module), Some(kernel))
+        }
+        Some(path) => {
+            tracing::warn!("Top-k sampling kernel HSACO file not found at {} (compiled-in path), using CPU fallback", path);
+            (None, None)
+        }
+        None => {
+            tracing::warn!("TOPK_SAMPLING_HSACO not set at compile time. Rebuild with GPU kernels. Using CPU fallback.");
+            (None, None)
+        }
     };
 
     // Load topp_prefix_sum_kernel from TOPP_PREFIX_SUM_HSACO
-    let topp_prefix_sum_path = std::env::var("TOPP_PREFIX_SUM_HSACO")
-        .unwrap_or_else(|_| "kernels/topp_prefix_sum.hsaco".to_string());
-
-    let (topp_prefix_sum_module, topp_prefix_sum_kernel) = if Path::new(&topp_prefix_sum_path).exists() {
-        let module = load_backend.load_module(&topp_prefix_sum_path)?;
-        let kernel = load_backend.get_kernel_function(&module, "topp_prefix_sum_kernel")?;
-        (Some(module), Some(kernel))
-    } else {
-        tracing::warn!("Top-p prefix sum kernel not found at {} (TOPP_PREFIX_SUM_HSACO), using CPU fallback", topp_prefix_sum_path);
-        (None, None)
+    let (topp_prefix_sum_module, topp_prefix_sum_kernel) = match option_env!("TOPP_PREFIX_SUM_HSACO") {
+        Some(path) if Path::new(path).exists() => {
+            let module = load_backend.load_module(path)?;
+            let kernel = load_backend.get_kernel_function(&module, "topp_prefix_sum_kernel")?;
+            (Some(module), Some(kernel))
+        }
+        Some(path) => {
+            tracing::warn!("Top-p prefix sum kernel HSACO file not found at {} (compiled-in path), using CPU fallback", path);
+            (None, None)
+        }
+        None => {
+            tracing::warn!("TOPP_PREFIX_SUM_HSACO not set at compile time. Rebuild with GPU kernels. Using CPU fallback.");
+            (None, None)
+        }
     };
 
     // Load topp_threshold_kernel from TOPP_THRESHOLD_HSACO
-    let topp_threshold_path = std::env::var("TOPP_THRESHOLD_HSACO")
-        .unwrap_or_else(|_| "kernels/topp_threshold.hsaco".to_string());
-
-    let (topp_threshold_module, topp_threshold_kernel) = if Path::new(&topp_threshold_path).exists() {
-        let module = load_backend.load_module(&topp_threshold_path)?;
-        let kernel = load_backend.get_kernel_function(&module, "topp_threshold_kernel")?;
-        (Some(module), Some(kernel))
-    } else {
-        tracing::warn!("Top-p threshold kernel not found at {} (TOPP_THRESHOLD_HSACO), using CPU fallback", topp_threshold_path);
-        (None, None)
+    let (topp_threshold_module, topp_threshold_kernel) = match option_env!("TOPP_THRESHOLD_HSACO") {
+        Some(path) if Path::new(path).exists() => {
+            let module = load_backend.load_module(path)?;
+            let kernel = load_backend.get_kernel_function(&module, "topp_threshold_kernel")?;
+            (Some(module), Some(kernel))
+        }
+        Some(path) => {
+            tracing::warn!("Top-p threshold kernel HSACO file not found at {} (compiled-in path), using CPU fallback", path);
+            (None, None)
+        }
+        None => {
+            tracing::warn!("TOPP_THRESHOLD_HSACO not set at compile time. Rebuild with GPU kernels. Using CPU fallback.");
+            (None, None)
+        }
     };
 
     // Load topp_sample_kernel from TOPP_SAMPLE_HSACO
-    let topp_sample_path = std::env::var("TOPP_SAMPLE_HSACO")
-        .unwrap_or_else(|_| "kernels/topp_sample.hsaco".to_string());
-
-    let (topp_sample_module, topp_sample_kernel) = if Path::new(&topp_sample_path).exists() {
-        let module = load_backend.load_module(&topp_sample_path)?;
-        let kernel = load_backend.get_kernel_function(&module, "topp_sample_kernel")?;
-        (Some(module), Some(kernel))
-    } else {
-        tracing::warn!("Top-p sample kernel not found at {} (TOPP_SAMPLE_HSACO), using CPU fallback", topp_sample_path);
-        (None, None)
+    let (topp_sample_module, topp_sample_kernel) = match option_env!("TOPP_SAMPLE_HSACO") {
+        Some(path) if Path::new(path).exists() => {
+            let module = load_backend.load_module(path)?;
+            let kernel = load_backend.get_kernel_function(&module, "topp_sample_kernel")?;
+            (Some(module), Some(kernel))
+        }
+        Some(path) => {
+            tracing::warn!("Top-p sample kernel HSACO file not found at {} (compiled-in path), using CPU fallback", path);
+            (None, None)
+        }
+        None => {
+            tracing::warn!("TOPP_SAMPLE_HSACO not set at compile time. Rebuild with GPU kernels. Using CPU fallback.");
+            (None, None)
+        }
     };
 
     // Load topk_topp_sampling_kernel (fused) from FUSED_SAMPLING_HSACO
-    let fused_path = std::env::var("FUSED_SAMPLING_HSACO")
-        .unwrap_or_else(|_| "kernels/fused_sampling.hsaco".to_string());
-
-    let (fused_module, fused_kernel) = if Path::new(&fused_path).exists() {
-        let module = load_backend.load_module(&fused_path)?;
-        let kernel = load_backend.get_kernel_function(&module, "topk_topp_sampling_kernel")?;
-        (Some(module), Some(kernel))
-    } else {
-        tracing::warn!("Fused sampling kernel not found at {} (FUSED_SAMPLING_HSACO), using CPU fallback", fused_path);
-        (None, None)
+    let (fused_module, fused_kernel) = match option_env!("FUSED_SAMPLING_HSACO") {
+        Some(path) if Path::new(path).exists() => {
+            let module = load_backend.load_module(path)?;
+            let kernel = load_backend.get_kernel_function(&module, "topk_topp_sampling_kernel")?;
+            (Some(module), Some(kernel))
+        }
+        Some(path) => {
+            tracing::warn!("Fused sampling kernel HSACO file not found at {} (compiled-in path), using CPU fallback", path);
+            (None, None)
+        }
+        None => {
+            tracing::warn!("FUSED_SAMPLING_HSACO not set at compile time. Rebuild with GPU kernels. Using CPU fallback.");
+            (None, None)
+        }
     };
 
     // Initialize cache with all loaded kernels
