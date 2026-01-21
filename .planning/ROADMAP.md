@@ -149,10 +149,10 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 4. Developer documentation updated with HIP debugging procedures
 
 **Plans**: 4 plans (2 waves)
-- [ ] 28-01-PLAN.md — Store kernel name in HipKernel for error messages (Wave 1)
-- [ ] 28-02-PLAN.md — Add hipGetLastError async error checking after launch (Wave 1)
-- [ ] 28-03-PLAN.md — Add debug logging and HIP_LAUNCH_BLOCKING support (Wave 1)
-- [ ] 28-04-PLAN.md — Create HIP debugging documentation (Wave 2)
+- [x] 28-01-PLAN.md — Store kernel name in HipKernel for error messages (Wave 1)
+- [x] 28-02-PLAN.md — Add hipGetLastError async error checking after launch (Wave 1)
+- [x] 28-03-PLAN.md — Add debug logging and HIP_LAUNCH_BLOCKING support (Wave 1)
+- [x] 28-04-PLAN.md — Create HIP debugging documentation (Wave 2)
 
 ### Phase 29: Validation & E2E
 
@@ -168,7 +168,8 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 3. `rocmforge generate --model qwen2.5-0.5b.gguf --prompt "The"` generates a single token without errors
 4. Embedding weights transpose [896, 151936] completes during model loading
 
-**Plans**: TBD
+**Plans**: 1 plan (1 wave)
+- [ ] 29-01-PLAN.md — Create validation test suite (transpose + model loading + token generation)
 
 ---
 
@@ -194,10 +195,10 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 | 25 | v1.5 | 12/12 | Complete | 2026-01-21 |
 | 26 | v1.5 | 3/3 | Complete | 2026-01-21 |
 | 27 | v1.5 | 4/4 | Complete | 2026-01-21 |
-| 28 | v1.5 | 0/4 | Not started | - |
-| 29 | v1.5 | 0/0 | Not started | - |
+| 28 | v1.5 | 4/4 | Complete | 2026-01-21 |
+| 29 | v1.5 | 0/1 | Planning | - |
 
-**Total Progress:** 187/194 plans complete (v1.0-v1.4 + Phases 25-27), v1.5 Phases 28-29 remaining
+**Total Progress:** 191/195 plans planned (v1.0-v1.4 + Phases 25-29 complete, Phase 29 pending execution)
 
 **Note:** Phase 21-06 (Performance Validation) skipped by user request. All test health goals (TEST-01 through TEST-06) achieved.
 
@@ -206,14 +207,14 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 ## Session Continuity
 
 Last session: 2026-01-21
-Stopped at: Phase 27 execution complete
+Stopped at: Phase 28 execution complete
 
 **v1.5 - Env Var & Transpose Fix (2026-01-21):**
 - Phase 25: Env Var Fix (12/12 complete) ✓
 - Phase 26: Transpose Kernel Fix (3/3 complete) ✓
 - Phase 27: Device Property Infrastructure (4/4 complete) ✓
-- Phase 28: Debug Hygiene (Not started)
-- Phase 29: Validation & E2E (Not started)
+- Phase 28: Debug Hygiene (4/4 complete) ✓
+- Phase 29: Validation & E2E (0/1 planned)
 
 **Decisions:**
 - (See STATE.md for historical decisions from v1.0-v1.4)
