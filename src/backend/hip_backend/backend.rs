@@ -12,6 +12,24 @@ use crate::backend::hip_backend::module::{HipKernel, HipModule};
 use crate::backend::hip_backend::stream::HipStream;
 use crate::loader::mmap_loader::TensorShape;
 
+/// Cached device launch limits
+///
+/// These values are queried once during backend initialization
+/// and used to validate kernel launch configurations.
+#[derive(Debug, Clone)]
+pub struct DeviceLimits {
+    /// Maximum threads per block (e.g., 1024 for AMD GPUs)
+    pub max_threads_per_block: u32,
+    /// Maximum grid dimensions [x, y, z]
+    pub max_grid_size: [u32; 3],
+    /// Maximum threads per dimension [x, y, z]
+    pub max_threads_dim: [u32; 3],
+    /// Shared memory per block in bytes
+    pub shared_mem_per_block: u32,
+    /// Warp size (wavefront size: 32 for RDNA3, 64 for CDNA3)
+    pub warp_size: u32,
+}
+
 // NOTE: #[repr(C)] is NOT used here because HipBackend contains Arc<T>
 // which is NOT C-compatible. Using repr(C) would cause ABI violations.
 // See docs/deep_crash_analysis.md for details.
@@ -19,6 +37,7 @@ use crate::loader::mmap_loader::TensorShape;
 pub struct HipBackend {
     device: HipDevice,
     stream: Arc<HipStream>,
+    limits: DeviceLimits,
 }
 
 // Manual Clone implementation that clones the Arc (shared ownership)
@@ -28,6 +47,7 @@ impl Clone for HipBackend {
         HipBackend {
             device: self.device.clone(),
             stream: Arc::clone(&self.stream),
+            limits: self.limits.clone(),
         }
     }
 }
@@ -156,10 +176,44 @@ impl HipBackend {
             device.device_id
         );
 
+        // Query device properties for launch limits
+        let mut props = HipDeviceProp::default();
+        let result = unsafe { ffi::hipGetDeviceProperties(&mut props, device.device_id) };
+        if result != ffi::HIP_SUCCESS {
+            return Err(HipError::DeviceError(format!(
+                "Failed to get device properties: {}",
+                result
+            )));
+        }
+
+        // Cache device limits for launch validation
+        let max_grid = props.max_grid_size();
+        let max_threads_dim = props.max_threads_dim();
+        let limits = DeviceLimits {
+            max_threads_per_block: props.max_threads_per_block() as u32,
+            max_grid_size: [max_grid[0] as u32, max_grid[1] as u32, max_grid[2] as u32],
+            max_threads_dim: [
+                max_threads_dim[0] as u32,
+                max_threads_dim[1] as u32,
+                max_threads_dim[2] as u32,
+            ],
+            shared_mem_per_block: props.shared_mem_per_block() as u32,
+            warp_size: props.warp_size() as u32,
+        };
+
+        tracing::info!(
+            "Device limits: maxThreadsPerBlock={}, maxGridSize={:?}, maxThreadsDim={:?}, sharedMemPerBlock={} bytes, warpSize={}",
+            limits.max_threads_per_block,
+            limits.max_grid_size,
+            limits.max_threads_dim,
+            limits.shared_mem_per_block,
+            limits.warp_size
+        );
+
         // Create stream wrapped in Arc for shared ownership
         let stream = Arc::new(HipStream::new()?);
 
-        let backend = Arc::new(HipBackend { device, stream });
+        let backend = Arc::new(HipBackend { device, stream, limits });
         *guard = Some(backend.clone());
         // CRITICAL: Set flag BEFORE releasing lock to prevent race condition
         // Other threads check GLOBAL_INIT_CALLED before acquiring lock
@@ -243,6 +297,14 @@ impl HipBackend {
 
     pub fn stream(&self) -> &HipStream {
         &self.stream
+    }
+
+    /// Get cached device launch limits
+    ///
+    /// Returns the device limits queried during backend initialization.
+    /// These can be used to validate kernel launch configurations.
+    pub fn limits(&self) -> &DeviceLimits {
+        &self.limits
     }
 
     /// Get available GPU memory information
