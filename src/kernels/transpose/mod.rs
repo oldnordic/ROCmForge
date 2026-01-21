@@ -168,7 +168,32 @@ impl TransposeKernel {
         let grid_x = (cols as u32 + TILE_DIM - 1) / TILE_DIM;
         let grid_y = (rows as u32 + TILE_DIM - 1) / TILE_DIM;
         let grid_dim = (grid_x, grid_y, 1);
-        let block_dim = (32, 32, 1);
+
+        // Get device limits for adaptive block sizing
+        let limits = self.backend.limits();
+        let max_threads = limits.max_threads_per_block;
+        let max_y = limits.max_threads_dim[1];
+        let max_z = limits.max_threads_dim[2];
+
+        // Check for driver bug: max_threads_dim[1] == 0
+        // Some HIP drivers incorrectly report 0 for Y/Z dimension limits
+        let has_2d_block_support = max_y > 0 && max_z > 0;
+
+        // Choose block dimension based on device limit and 2D support
+        let block_dim = if !has_2d_block_support {
+            // Driver bug - use 1D block layout
+            (max_threads.min(256), 1, 1)
+        } else if max_threads >= 1024 {
+            (32, 32, 1)  // 32*32 = 1024 threads
+        } else if max_threads >= 512 {
+            (22, 22, 1)  // 22*22 = 484 threads (fits under 512)
+        } else if max_threads >= 256 {
+            (16, 16, 1)  // 16*16 = 256 threads
+        } else {
+            // Fallback for very limited devices
+            let side = (max_threads as f32).sqrt() as u32;
+            (side, side, 1)
+        };
 
         // Shared memory: TILE_DIM * (TILE_DIM + 1) floats for bank conflict avoidance
         let shared_mem_bytes = TILE_DIM * (TILE_DIM + 1) * std::mem::size_of::<f32>() as u32;
