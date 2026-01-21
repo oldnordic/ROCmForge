@@ -710,7 +710,7 @@ impl HipBackend {
         module: &HipModule,
         kernel_name: &str,
     ) -> HipResult<HipKernel> {
-        HipKernel::from_module(module, kernel_name)
+        HipKernel::from_module(module, kernel_name.to_string())
     }
 
     /// Get device count
@@ -912,6 +912,15 @@ impl HipBackend {
             tracing::warn!("launch_kernel_with_module_shared: Very large kernel launch: {} total threads", total_threads);
         }
 
+        #[cfg(debug_assertions)]
+        tracing::debug!(
+            "Launch: kernel={}, grid=({},{},{}), block=({},{},{}), shared={} bytes",
+            kernel.name(),
+            grid_dim.0, grid_dim.1, grid_dim.2,
+            block_dim.0, block_dim.1, block_dim.2,
+            shared_mem_bytes
+        );
+
         tracing::trace!("launch_kernel_with_module_shared: Calling hipModuleLaunchKernel");
         let result = unsafe {
             ffi::hipModuleLaunchKernel(
@@ -937,6 +946,20 @@ impl HipBackend {
                 "Kernel launch failed: {}",
                 error_msg
             )));
+        }
+
+        // Check for any pending async errors from kernel launch
+        // hipGetLastError clears the error state and returns the last error code
+        let async_error = unsafe { ffi::hipGetLastError() };
+        if async_error != ffi::HIP_SUCCESS {
+            let error_msg = get_error_string(async_error);
+            tracing::warn!(
+                "Async HIP error detected after kernel launch: code={}, msg={}",
+                async_error,
+                error_msg
+            );
+            // Note: We log but don't return error here since the launch itself succeeded
+            // The async error may be from a previous operation or a non-fatal condition
         }
 
         tracing::trace!("launch_kernel_with_module_shared: Kernel launched successfully");
