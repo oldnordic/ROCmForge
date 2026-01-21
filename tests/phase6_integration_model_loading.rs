@@ -4,6 +4,8 @@
 //!
 //! Test first, prove it fails, then implement.
 
+use serial_test::serial;
+
 #[cfg(test)]
 mod model_loading_tests {
     use rocmforge::loader::gguf::GgufLoader;
@@ -35,6 +37,7 @@ mod model_loading_tests {
     /// 1. Open a GGUF file
     /// 2. Read metadata (tensor count, KV metadata)
     /// 3. Extract model configuration
+    #[serial]
     #[test]
     fn test_load_gguf_metadata() {
         let model_path = match find_test_model() {
@@ -128,6 +131,7 @@ mod model_loading_tests {
     ///
     /// This test verifies the GGUF contains expected tensor names for
     /// a transformer model (token_embedding, output, layers, etc.).
+    #[serial]
     #[test]
     fn test_gguf_tensor_structure() {
         let model_path = match find_test_model() {
@@ -167,6 +171,7 @@ mod model_loading_tests {
     ///
     /// Verify GGUF is parsed once, not multiple times.
     /// This is a regression test for Phase 1 (single-pass loading).
+    #[serial]
     #[test]
     fn test_single_pass_loading() {
         let model_path = match find_test_model() {
