@@ -2,23 +2,45 @@
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-01-20)
+See: .planning/PROJECT.md (updated 2026-01-21)
 
 **Core value:** Reliable, fast inference on AMD GPUs with transparent CPU fallback.
-**Current focus:** CRITICAL ISSUE - ROCm feature compilation broken
+**Current focus:** CRITICAL FIX - Runtime kernel loading and large tensor transpose
 
-Phase: 28 - ROCm Compilation Fix
-Plan: 08 of N (Wave 8 - cfg gate removal from sampler/, mlp/, profiling/, backend/)
-Status: Complete - All cfg gates removed from sampler, mlp, profiling, and backend modules
-Last activity: Completed 28-08 cfg gate removal from sampler, mlp, profiling, backend at 2026-01-20T21:46:22Z
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-01-21 — Milestone v1.5 initialized
 
-Progress: [████████████████████] 100% (Phase 27 COMPLETE, Phase 28-01 COMPLETE, Phase 28-02 COMPLETE, Phase 28-03 COMPLETE, Phase 28-05 COMPLETE, Phase 28-06 COMPLETE, Phase 28-07 COMPLETE, Phase 28-08 COMPLETE)
+Progress: [████████░░░░░░░░░░░░░] 40% (Phase 28 COMPLETE, Milestone v1.5 STARTED)
 
 ### Blockers/Concerns
 
-**CRITICAL: ROCm Feature Compilation Broken (2026-01-20)**
+**CRITICAL: Runtime Kernel Loading Broken (2026-01-21)**
 
-When attempting to enable `rocm` as default feature (required for GPU kernel runtime loading), 151 compilation errors were exposed.
+Phase 28 completed unconditional HIP kernel compilation, but testing actual GGUF model inference exposed two critical issues:
+
+**Issue 1: Env var embedding mismatch**
+- build.rs sets `cargo:rustc-env=Q4_0_DEQUANT_HSACO=/path/to/kernel.hsaco` (compile-time)
+- Code uses `std::env::var("Q4_0_DEQUANT_HSACO")` (runtime lookup)
+- Result: HSACO paths not embedded in binary, runtime lookup fails
+- Manual `env VAR=value ./binary` works - proves runtime vs compile-time mismatch
+
+**Issue 2: Transpose kernel fails for large tensors**
+- Tensor shape [896, 151936] (Qwen2.5 embedding weights)
+- Kernel launch returns `hipErrorInvalidValue` (invalid argument)
+- Computed grid: grid_x=2374, grid_y=14, block=(64,64,1), shared_mem=16384 bytes
+- Suspected: grid_x=2374 exceeds device maxGridSize.x limit
+
+**Progress - Phase 28 COMPLETE (2026-01-20):**
+- Removed all #[cfg(feature = "rocm")] gates from source code
+- Removed `rocm` feature from Cargo.toml
+- HIP kernels now compile unconditionally
+- Project builds with `cargo build --release`
+
+## Historical Blockers (Resolved)
+
+**Phase 28 ROCm Compilation Fix (RESOLVED 2026-01-20):**
 
 **Progress - Phase 28-01 COMPLETE (Import fixes):**
 - Fixed: c_void imports in 9 FFI kernel files
@@ -48,15 +70,25 @@ When attempting to enable `rocm` as default feature (required for GPU kernel run
 - Merged duplicate rocm/non-rocm code blocks
 
 **Remaining Issues (for subsequent plans):**
-All cfg gate removal complete - Phase 28 done
+Phase 28 COMPLETE - All cfg gate removal and rocm feature removal done
 
 **Progress - Phase 28-08 COMPLETE (cfg gate removal from src/sampler/, src/mlp/, src/profiling/, src/backend/hip_backend/):**
 - Fixed: Removed all #[cfg(feature = "rocm")] gates from 15 files in src/sampler/, src/mlp/, src/profiling/, src/backend/hip_backend/
-- Files: Sampler (gpu.rs, fused.rs, kernels.rs, top_k.rs, top_p.rs)**
-- Files: MLP (mod.rs, kernels.rs, rms_norm_tests.rs, swiglu_tests.rs, gpu_path_regression_tests.rs)**
-- Files: Profiling (mod.rs, ttft.rs, kernel_timer.rs)**
-- Files: Backend (backend.rs, memory.rs)**
-- GPU sampling, MLP operations, profiling tools, and HIP backend are now always compiled unconditionally**
+- Files: Sampler (gpu.rs, fused.rs, kernels.rs, top_k.rs, top_p.rs)
+- Files: MLP (mod.rs, kernels.rs, rms_norm_tests.rs, swiglu_tests.rs, gpu_path_regression_tests.rs)
+- Files: Profiling (mod.rs, ttft.rs, kernel_timer.rs)
+- Files: Backend (backend.rs, memory.rs)
+- GPU sampling, MLP operations, profiling tools, and HIP backend are now always compiled unconditionally
+
+**Progress - Phase 28-09 COMPLETE (Remove rocm feature, unconditional HIP compilation):**
+- Removed `rocm = []` feature from Cargo.toml (ROCm/HIP is core, not optional)
+- Removed #[cfg(feature = "rocm")] gates from build.rs
+- Fixed SIMD compilation issues (AVX512 imports, module visibility)
+- Deleted obsolete simd_ops.rs file (Phase 25-16 leftover)
+- Kept default = [] since portable_simd requires nightly Rust
+- Project builds with `cargo build --release` (no --features flag needed)
+- Duration: 9 min
+- Commits: 3 (2aa2507: remove rocm feature, ca13f67: update build.rs, ff6f8e9: fix compilation issues)
 
 **Progress - Phase 28-07 COMPLETE (cfg gate removal from src/model/ and src/loader/):**
 - Fixed: Removed all #[cfg(feature = "rocm")] gates from 12 files in src/model/ and src/loader/**
@@ -459,10 +491,10 @@ Historical decisions affecting v1.3:
 ## Session Continuity
 
 Last session: 2026-01-20
-Stopped at: Completed 28-08 cfg gate removal from sampler, mlp, profiling, backend at 2026-01-20T21:46:22Z
-Resume file: .planning/phases/28-rocm-compilation-fix/28-08-SUMMARY.md
+Stopped at: Completed 28-09 rocm feature removal and unconditional HIP compilation at 2026-01-20T21:59:50Z
+Resume file: .planning/phases/28-rocm-compilation-fix/28-09-SUMMARY.md
 
-**v1.8 - ROCm Compilation Fix (2026-01-20):**
+**v1.8 - ROCm Compilation Fix (2026-01-20) - PHASE COMPLETE:**
 - Phase 28-01: Add c_void and HipError imports to FFI kernel files (COMPLETE)
 - Phase 28-02: Variable naming fixes (COMPLETE)
 - Phase 28-03: cfg gate removal from src/attention/ (COMPLETE)
@@ -470,6 +502,7 @@ Resume file: .planning/phases/28-rocm-compilation-fix/28-08-SUMMARY.md
 - Phase 28-06: cfg gate removal from src/ggml/hip_backend/ops/ (COMPLETE)
 - Phase 28-07: cfg gate removal from src/model/ and src/loader/ (COMPLETE)
 - Phase 28-08: cfg gate removal from src/sampler/, src/mlp/, src/profiling/, src/backend/hip_backend/ (COMPLETE)
+- Phase 28-09: Remove rocm feature, unconditional HIP compilation (COMPLETE)
 
 **Phase 28-01 Summary:**
 - Added `use std::ffi::c_void;` to 9 FFI kernel files using HIP kernel launches

@@ -59,14 +59,15 @@ If ROCm is available, use it. If not, fall back to optimized CPU execution seaml
 
 *What we're building toward next:*
 
-**Current Milestone: v1.2 Technical Debt Cleanup + Performance**
+**Current Milestone: v1.5 Env Var & Transpose Fix**
 
-**Goal:** Eliminate technical debt, fix all broken tests, and implement missing GPU kernels for full GPU acceleration.
+**Goal:** Fix runtime kernel loading and large tensor transpose to enable actual GGUF model inference.
 
 **Target features:**
-- **Quick wins**: Zero compiler warnings (178 → 0), fix scheduler clone bug, unreachable patterns
-- **Fix broken tests**: All tests passing, fix memory allocation crash, unignore E2E tests
-- **Performance kernels**: Implement ALL GPU kernels (GPU sampling, RoPE, quantized matmul, FlashAttention, Q4_0)
+- **Env var embedding**: Fix HSACO path loading - replace `std::env::var()` with compile-time `option_env!()` or generated source
+- **Transpose kernel fix**: Debug and fix `hipErrorInvalidValue` for large tensors (896×151936)
+- **Device property validation**: Query and validate GPU limits (maxGridSize, maxThreadsDim, sharedMemPerBlock)
+- **End-to-end validation**: Run actual GGUF model (qwen2.5-0.5b.gguf) inference successfully
 
 ### Out of Scope
 
@@ -178,4 +179,4 @@ If ROCm is available, use it. If not, fall back to optimized CPU execution seaml
 
 ---
 
-*Last updated: 2026-01-19 after v1.2 milestone initialization*
+*Last updated: 2026-01-21 after v1.5 milestone initialization*

@@ -116,12 +116,12 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
         HipError::InitializationFailed(format!("Failed to create HipBackend for loading: {}", e))
     })?;
 
-    let swiglu_path = std::env::var("SWIGLU_HSACO")
-        .map_err(|_| HipError::KernelLoadFailed("SWIGLU_HSACO env var not set".to_string()))?;
+    let swiglu_path = option_env!("SWIGLU_HSACO")
+        .ok_or_else(|| HipError::KernelLoadFailed("SWIGLU_HSACO not set at compile time. Rebuild the project.".to_string()))?;
 
-    if !Path::new(&swiglu_path).exists() {
+    if !Path::new(swiglu_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
-            "HSACO not found: {}",
+            "SWIGLU_HSACO file not found at {} (compiled path from build.rs)",
             swiglu_path
         )));
     }
@@ -130,12 +130,12 @@ fn get_or_init_cache() -> Result<&'static Mutex<Option<KernelCache>>, HipError> 
     let swiglu_kernel = load_backend.get_kernel_function(&swiglu_module, "swiglu_kernel")?;
 
     // Load RMSNorm kernel module and function
-    let rms_norm_path = std::env::var("RMS_NORM_HSACO")
-        .map_err(|_| HipError::KernelLoadFailed("RMS_NORM_HSACO env var not set".to_string()))?;
+    let rms_norm_path = option_env!("RMS_NORM_HSACO")
+        .ok_or_else(|| HipError::KernelLoadFailed("RMS_NORM_HSACO not set at compile time. Rebuild the project.".to_string()))?;
 
-    if !Path::new(&rms_norm_path).exists() {
+    if !Path::new(rms_norm_path).exists() {
         return Err(HipError::KernelLoadFailed(format!(
-            "HSACO not found: {}",
+            "RMS_NORM_HSACO file not found at {} (compiled path from build.rs)",
             rms_norm_path
         )));
     }
