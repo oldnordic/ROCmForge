@@ -88,6 +88,7 @@ fn verify_embedding_lookup(
 // ============================================================================
 
 #[test]
+#[serial]
 fn test_token_embedding_lookup_f32() -> anyhow::Result<()> {
     // Create test GGUF with FP32 embeddings
     let temp_file = create_temp_file()?;
@@ -126,6 +127,7 @@ fn test_token_embedding_lookup_f32() -> anyhow::Result<()> {
 }
 
 #[test]
+#[serial]
 fn test_token_embedding_shape_validation() -> anyhow::Result<()> {
     // Test with various vocab sizes
     let test_cases = vec![(1000, 128), (32000, 4096), (128000, 5120)];
@@ -194,6 +196,7 @@ fn test_token_embedding_gpu_upload() {
 // ============================================================================
 
 #[test]
+#[serial]
 fn test_lm_head_weights_match_embeddings() -> anyhow::Result<()> {
     // Create GGUF with tied embeddings
     let temp_file = create_temp_file()?;
@@ -219,6 +222,7 @@ fn test_lm_head_weights_match_embeddings() -> anyhow::Result<()> {
 }
 
 #[test]
+#[serial]
 fn test_lm_head_matmul_correctness() -> anyhow::Result<()> {
     // Create test hidden state and LM head weights
     let batch = 2;
@@ -430,6 +434,7 @@ fn test_embedding_to_lmhead_pipeline() {
 }
 
 #[test]
+#[serial]
 fn test_batch_embedding_lookup() -> anyhow::Result<()> {
     // Test embedding lookup with batch dimension
     // Input: [[1, 2, 3], [4, 5, 6]]
@@ -476,6 +481,7 @@ fn test_batch_embedding_lookup() -> anyhow::Result<()> {
 // ============================================================================
 
 #[test]
+#[serial]
 fn test_empty_token_sequence() {
     // Empty token list should not panic
     let tokens: Vec<usize> = vec![];
@@ -488,6 +494,7 @@ fn test_empty_token_sequence() {
 }
 
 #[test]
+#[serial]
 fn test_invalid_token_id() {
     // Token ID >= vocab_size should be handled gracefully
     let vocab_size = 100;
@@ -504,6 +511,7 @@ fn test_invalid_token_id() {
 }
 
 #[test]
+#[serial]
 fn test_large_vocabulary() -> anyhow::Result<()> {
     // Test with 128k vocab size (common in modern LLMs)
     let _vocab_size = 128_000;
