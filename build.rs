@@ -15,6 +15,9 @@ fn main() {
 
     // ROCmForge is AMD GPU only - always compile HIP kernels
     compile_hip_kernels();
+
+    // Generate FFI bindings for device properties
+    generate_hip_bindings();
 }
 
 fn compile_hip_kernels() {
@@ -237,4 +240,49 @@ fn compile_hip_kernels() {
             }
         }
     }
+}
+
+fn generate_hip_bindings() {
+    use std::path::PathBuf;
+    use std::env;
+
+    let rocm_root = env::var("ROCM_PATH").unwrap_or_else(|_| "/opt/rocm".to_string());
+    let hip_header = format!("{}/include/hip/hip_runtime_api.h", rocm_root);
+
+    // Only generate if header exists
+    if !PathBuf::from(&hip_header).exists() {
+        println!("cargo:warning=HIP header not found at {}, skipping FFI generation", hip_header);
+        return;
+    }
+
+    let bindings = bindgen::Builder::default()
+        // The input header we want bindings for
+        .header(&hip_header)
+        // Define HIP platform (AMD)
+        .clang_arg("-D__HIP_PLATFORM_AMD__")
+        // Add HIP include path for clang
+        .clang_arg(format!("-I{}/include", rocm_root))
+        .clang_arg(format!("-I{}/include/hip", rocm_root))
+        // Only generate hipDeviceProp_t and related structs
+        .allowlist_type("hipDeviceProp.*")
+        .allowlist_type("hipUUID.*")
+        .allowlist_function("hipGetDevice.*")
+        // Block noisy types (don't need full HIP API)
+        .blocklist_type("hipStream_t")
+        .blocklist_type("hipEvent_t")
+        .blocklist_type("hipFunction_t")
+        .blocklist_type("hipModule_t")
+        // Use core::ffi types where possible
+        .use_core()
+        // Derive Debug for easier testing
+        .derive_debug(true)
+        // Parse callbacks to regenerate on header changes
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+        .generate()
+        .expect("Unable to generate HIP bindings");
+
+    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    bindings
+        .write_to_file(out_path.join("hip_device_bindings.rs"))
+        .expect("Couldn't write HIP bindings!");
 }
