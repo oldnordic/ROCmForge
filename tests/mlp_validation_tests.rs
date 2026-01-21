@@ -141,6 +141,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_swiglu_computation_logic() {
         // Test the SwiGLU computation logic on CPU (without GPU)
         // This verifies our mathematical understanding is correct

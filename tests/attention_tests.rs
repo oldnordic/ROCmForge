@@ -1,6 +1,8 @@
 //! Attention mechanism tests for ROCmForge
 //! Tests Scaled Dot-Product Attention implementation
 
+use serial_test::serial;
+
 use rocmforge::backend::hip_backend::HipBuffer;
 
 // Simple deterministic random number generator for testing
@@ -147,6 +149,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[serial]
     fn test_qk_transpose_computation_shapes() {
         // Test QK^T computation with correct shapes
         // Q: [batch=2, seq=3, dim=4] -> should produce [batch=2, seq=3, seq=3]
@@ -169,6 +172,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_attention_scaling() {
         // Test scaling by 1/sqrt(dim)
         let dim = 64;
@@ -186,6 +190,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_cpu_softmax_row_sum_to_one() {
         // Test that softmax rows sum to 1.0
         let mut data = vec![
@@ -211,6 +216,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_cpu_softmax_stability_large_values() {
         // Test softmax stability with large values
         let mut data = vec![
@@ -249,6 +255,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_cpu_softmax_random_matrix() {
         // Test softmax on random matrix
         let mut data = vec![0.0f32; 4 * 6]; // 4 rows, 6 columns
@@ -275,6 +282,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_causal_mask_creation() {
         // Test causal mask creation
         let seq_len = 4;
@@ -305,6 +313,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_causal_mask_softmax_zeroing() {
         // Test that causal mask + softmax zeros out masked positions
         let seq_len = 3;
@@ -359,6 +368,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_full_attention_forward_pass_small() {
         // Test complete attention forward pass with small tensors
         let batch_size = 2;
@@ -416,6 +426,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_attention_with_causal_mask() {
         // Test attention with causal masking
         let batch_size = 1;
@@ -478,6 +489,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_dropout_deterministic() {
         // Test deterministic dropout with fixed seed
         let mut data = vec![1.0f32; 100];
@@ -522,6 +534,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_attention_numerical_stability() {
         // Test attention numerical stability with extreme values
         let batch_size = 1;
