@@ -1392,3 +1392,223 @@ impl DeviceTensor {
             .copy_from_buffer_region(dst_offset, src.buffer(), src_offset, byte_len)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test validation with configuration within device limits
+    ///
+    /// This test verifies that valid launch configurations pass validation.
+    /// Uses a conservative configuration that should work on all AMD GPUs.
+    /// Skips if HipBackend::new() fails (no GPU available).
+    #[test]
+    fn test_validate_launch_config_within_limits() {
+        let backend = match HipBackend::new() {
+            Ok(b) => b,
+            Err(_) => {
+                println!("SKIPPED: No GPU available for test");
+                return;
+            }
+        };
+        let limits = backend.limits();
+
+        // Some HIP drivers incorrectly report maxThreadsDim[1]=[2]=0
+        // Skip test if driver reports invalid limits
+        if limits.max_threads_dim[1] == 0 || limits.max_threads_dim[2] == 0 {
+            println!("SKIPPED: HIP driver reports invalid maxThreadsDim (axis limit 0): {:?}", limits.max_threads_dim);
+            return;
+        }
+
+        // Use a simple 1D block config that should work on all devices
+        let block_x = limits.max_threads_per_block.min(256).min(limits.max_threads_dim[0]);
+
+        // Configuration within limits should pass
+        let result = backend.validate_launch_config(
+            (1, 1, 1),
+            (block_x, 1, 1),
+            0,
+        );
+        assert!(result.is_ok(), "Valid config should pass validation: {:?}", result.unwrap_err());
+        println!(
+            "test_validate_launch_config_within_limits: PASSED (max_threads_per_block={}, max_threads_dim={:?})",
+            limits.max_threads_per_block, limits.max_threads_dim
+        );
+    }
+
+    /// Test validation detects threads per block exceeding limit
+    ///
+    /// Verifies that validation rejects configurations that would exceed
+    /// the device's maxThreadsPerBlock limit.
+    #[test]
+    fn test_validate_launch_config_exceeds_thread_limit() {
+        let backend = match HipBackend::new() {
+            Ok(b) => b,
+            Err(_) => {
+                println!("SKIPPED: No GPU available for test");
+                return;
+            }
+        };
+        let limits = backend.limits();
+
+        // Configuration exceeding thread limit should fail
+        let result = backend.validate_launch_config(
+            (1, 1, 1),
+            (limits.max_threads_per_block + 1, 1, 1),
+            0,
+        );
+        assert!(result.is_err(), "Config exceeding thread limit should fail");
+
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Threads per block") || err_msg.contains("exceeds"),
+            "Error message should mention thread limit: {}",
+            err_msg
+        );
+        println!("test_validate_launch_config_exceeds_thread_limit: PASSED");
+    }
+
+    /// Test validation detects zero grid dimension
+    ///
+    /// Verifies that validation rejects configurations with zero
+    /// grid dimensions (invalid launch configuration).
+    #[test]
+    fn test_validate_launch_config_zero_grid_dim() {
+        let backend = match HipBackend::new() {
+            Ok(b) => b,
+            Err(_) => {
+                println!("SKIPPED: No GPU available for test");
+                return;
+            }
+        };
+        let limits = backend.limits();
+
+        // Some HIP drivers incorrectly report maxThreadsDim[1]=[2]=0
+        // Skip test if driver reports invalid limits
+        if limits.max_threads_dim[1] == 0 || limits.max_threads_dim[2] == 0 {
+            println!("SKIPPED: HIP driver reports invalid maxThreadsDim (axis limit 0): {:?}", limits.max_threads_dim);
+            return;
+        }
+
+        // Use a simple 1D block config
+        let block_x = limits.max_threads_per_block.min(256).min(limits.max_threads_dim[0]);
+
+        // Zero grid dimension should fail
+        let result = backend.validate_launch_config(
+            (0, 1, 1),  // grid.x = 0
+            (block_x, 1, 1),
+            0,
+        );
+        assert!(result.is_err(), "Zero grid dimension should fail validation: {:?}", result);
+
+        let err_msg = result.unwrap_err().to_string();
+        // The error should mention grid.x or be about invalid configuration
+        assert!(
+            err_msg.contains("grid.x") || err_msg.contains("invalid"),
+            "Error message should mention invalid grid: {}",
+            err_msg
+        );
+        println!("test_validate_launch_config_zero_grid_dim: PASSED");
+    }
+
+    /// Test validation detects shared memory exceeding limit
+    ///
+    /// Verifies that validation rejects configurations that would exceed
+    /// the device's sharedMemPerBlock limit.
+    #[test]
+    fn test_validate_launch_config_exceeds_shared_memory() {
+        let backend = match HipBackend::new() {
+            Ok(b) => b,
+            Err(_) => {
+                println!("SKIPPED: No GPU available for test");
+                return;
+            }
+        };
+        let limits = backend.limits();
+
+        // Some HIP drivers incorrectly report maxThreadsDim[1]=[2]=0
+        // Skip test if driver reports invalid limits
+        if limits.max_threads_dim[1] == 0 || limits.max_threads_dim[2] == 0 {
+            println!("SKIPPED: HIP driver reports invalid maxThreadsDim (axis limit 0): {:?}", limits.max_threads_dim);
+            return;
+        }
+
+        // Use a simple 1D block config
+        let block_x = limits.max_threads_per_block.min(256).min(limits.max_threads_dim[0]);
+
+        // Configuration exceeding shared memory limit should fail
+        let result = backend.validate_launch_config(
+            (1, 1, 1),
+            (block_x, 1, 1),
+            limits.shared_mem_per_block + 1,
+        );
+        assert!(result.is_err(), "Config exceeding shared memory limit should fail: {:?}", result);
+
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Shared memory") || err_msg.contains("exceeds"),
+            "Error message should mention shared memory limit: {}",
+            err_msg
+        );
+        println!("test_validate_launch_config_exceeds_shared_memory: PASSED");
+    }
+
+    /// Test ceil_div_u64 helper function
+    ///
+    /// Verifies correct ceiling division behavior for various inputs.
+    #[test]
+    fn test_ceil_div_u64() {
+        // Exact division
+        assert_eq!(ceil_div_u64(100, 10), 10);
+
+        // Rounding up
+        assert_eq!(ceil_div_u64(101, 10), 11);
+        assert_eq!(ceil_div_u64(109, 10), 11);
+
+        // Edge cases
+        assert_eq!(ceil_div_u64(1, 1), 1);
+        assert_eq!(ceil_div_u64(0, 10), 0);
+        assert_eq!(ceil_div_u64(10, 1), 10);
+
+        // Large values (avoiding overflow)
+        assert_eq!(ceil_div_u64(1_000_000_000_000, 100), 10_000_000_000);
+
+        println!("test_ceil_div_u64: PASSED");
+    }
+
+    /// Test ceil_div_u64 panics on division by zero
+    ///
+    /// Verifies that ceil_div_u64 correctly detects and panics
+    /// on division by zero (programmer error).
+    #[test]
+    #[should_panic(expected = "Division by zero")]
+    fn test_ceil_div_u64_panic_on_zero_denominator() {
+        let _ = ceil_div_u64(100, 0);
+    }
+
+    /// Test safe_grid_dim helper function
+    ///
+    /// Verifies correct grid dimension calculation for various inputs.
+    #[test]
+    fn test_safe_grid_dim() {
+        // Basic cases
+        assert_eq!(safe_grid_dim(100, 32), 4);  // ceil(100/32) = 4
+        assert_eq!(safe_grid_dim(32, 32), 1);   // Exact fit
+        assert_eq!(safe_grid_dim(33, 32), 2);   // Round up
+
+        // Large values that fit in u32
+        assert_eq!(safe_grid_dim(1_000_000, 256), 3907);
+
+        println!("test_safe_grid_dim: PASSED");
+    }
+
+    /// Test safe_grid_dim panics on tile_dim = 0
+    ///
+    /// Verifies that safe_grid_dim correctly detects and panics
+    /// on zero tile dimension (programmer error).
+    #[test]
+    #[should_panic(expected = "Tile dimension must be > 0")]
+    fn test_safe_grid_dim_panic_on_zero_tile() {
+        let _ = safe_grid_dim(100, 0);
+    }
+}
