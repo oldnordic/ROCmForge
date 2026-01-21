@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-21)
 ## Current Position
 
 Phase: 27 of 29 (Device Property Infrastructure)
-Plan: 03
-Status: In progress
-Last activity: 2026-01-21 — Completed 27-03 (Launch Validation and Safe Grid Calculation)
+Plan: 04
+Status: Phase complete
+Last activity: 2026-01-21 — Completed 27-04 (Cached Device Limit Validation)
 
-Progress: [█████████░░░░░░░░░░░] 92% (186/186 plans complete, Phases 25-26 done, Phase 27: 3/4)
+Progress: [█████████░░░░░░░░░░░] 94% (187/186 plans complete, Phases 25-26 done, Phase 27: 4/4)
 
 ## Performance Metrics
 
@@ -46,6 +46,8 @@ Recent decisions from research (2026-01-21):
 - **Launch Validation Returns Result**: Validation returns `HipError::KernelLaunchFailed` with detailed message, not panic - allows graceful error handling (VAL-01)
 - **Private Helper Functions**: `ceil_div_u64` and `safe_grid_dim` are private module-level functions, not public API (VAL-02)
 - **Grid Overflow Assert Pattern**: `safe_grid_dim` uses `assert!` for overflow detection - overflow is programmer error (VAL-03)
+- **Validated Launch Wrapper**: All kernel launches use `launch_kernel_with_module_shared_validated()` which automatically validates against cached device limits before execution (VAL-04)
+- **Test Skip on Bad Driver Data**: Unit tests detect and skip when HIP driver reports invalid maxThreadsDim (e.g., 0 for axes Y/Z), which is a known driver bug (VAL-05)
 
 Historical decisions (see STATE.md archive for v1.0-v1.4 details):
 - GPU Transpose for Embedding Weights, Memory Arena for GPU Weights, Zero Warnings Baseline, Unconditional GPU Compilation
@@ -74,7 +76,7 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-01-21
-Stopped at: Completed 27-03 (Launch Validation and Safe Grid Calculation)
+Stopped at: Completed 27-04 (Cached Device Limit Validation)
 Resume file: None
 
 **v1.5 - Env Var & Transpose Fix (2026-01-21):**
@@ -85,11 +87,11 @@ Resume file: None
   - 26-01: Block dimension changed to (32,32,1)
   - 26-02: Pre-launch validation assertions added
   - 26-03: Unit test for [896, 151936] tensor transpose
-- Phase 27: Device Property Infrastructure (3/4 complete)
+- Phase 27: Device Property Infrastructure (4/4 complete ✓)
   - 27-01: HipDeviceProp launch limit accessors (5 methods added) ✓
   - 27-02: DeviceLimits caching in HipBackend ✓
   - 27-03: Launch validation methods (validate_launch_config, ceil_div_u64, safe_grid_dim) ✓
-  - 27-04: Safe grid calculation (Not started)
+  - 27-04: Kernel launch sites use cached limits validation ✓
 - Phase 28: Debug Hygiene (Not started)
 - Phase 29: Validation & E2E (Not started)
 

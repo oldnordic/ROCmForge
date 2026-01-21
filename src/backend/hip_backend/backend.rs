@@ -83,6 +83,7 @@ pub struct HipBackend {
     device: HipDevice,
     stream: Arc<HipStream>,
     limits: DeviceLimits,
+    debug_sync_launch: bool,  // Enables synchronous kernel execution for debugging
 }
 
 // Manual Clone implementation that clones the Arc (shared ownership)
@@ -93,6 +94,7 @@ impl Clone for HipBackend {
             device: self.device.clone(),
             stream: Arc::clone(&self.stream),
             limits: self.limits.clone(),
+            debug_sync_launch: self.debug_sync_launch,
         }
     }
 }
@@ -258,7 +260,16 @@ impl HipBackend {
         // Create stream wrapped in Arc for shared ownership
         let stream = Arc::new(HipStream::new()?);
 
-        let backend = Arc::new(HipBackend { device, stream, limits });
+        // Read HIP_LAUNCH_BLOCKING environment variable for synchronous debugging
+        let debug_sync_launch = std::env::var("HIP_LAUNCH_BLOCKING")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
+        if debug_sync_launch {
+            tracing::info!("HIP_LAUNCH_BLOCKING=1: synchronous kernel execution enabled for debugging");
+        }
+
+        let backend = Arc::new(HipBackend { device, stream, limits, debug_sync_launch });
         *guard = Some(backend.clone());
         // CRITICAL: Set flag BEFORE releasing lock to prevent race condition
         // Other threads check GLOBAL_INIT_CALLED before acquiring lock

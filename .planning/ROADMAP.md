@@ -129,10 +129,10 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 4. Grid calculations use u64 arithmetic to prevent overflow for very large tensors
 
 **Plans**: 4 plans (3 waves)
-- [ ] 27-01-PLAN.md — Extend HipDeviceProp with launch limit accessors (Wave 1)
-- [ ] 27-02-PLAN.md — Add DeviceLimits struct and cache in HipBackend (Wave 1)
-- [ ] 27-03-PLAN.md — Add validation methods and safe grid helpers (Wave 2)
-- [ ] 27-04-PLAN.md — Update kernel launch sites to use cached limits (Wave 3)
+- [x] 27-01-PLAN.md — Extend HipDeviceProp with launch limit accessors (Wave 1)
+- [x] 27-02-PLAN.md — Add DeviceLimits struct and cache in HipBackend (Wave 1)
+- [x] 27-03-PLAN.md — Add validation methods and safe grid helpers (Wave 2)
+- [x] 27-04-PLAN.md — Update kernel launch sites to use cached limits (Wave 3)
 
 ### Phase 28: Debug Hygiene
 
@@ -148,7 +148,11 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 3. Setting `HIP_LAUNCH_BLOCKING=1` enables synchronous kernel execution for debugging
 4. Developer documentation updated with HIP debugging procedures
 
-**Plans**: TBD
+**Plans**: 4 plans (2 waves)
+- [ ] 28-01-PLAN.md — Store kernel name in HipKernel for error messages (Wave 1)
+- [ ] 28-02-PLAN.md — Add hipGetLastError async error checking after launch (Wave 1)
+- [ ] 28-03-PLAN.md — Add debug logging and HIP_LAUNCH_BLOCKING support (Wave 1)
+- [ ] 28-04-PLAN.md — Create HIP debugging documentation (Wave 2)
 
 ### Phase 29: Validation & E2E
 
@@ -189,11 +193,11 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 | 24 | v1.4 | 6/6 | Complete | 2026-01-20 |
 | 25 | v1.5 | 12/12 | Complete | 2026-01-21 |
 | 26 | v1.5 | 3/3 | Complete | 2026-01-21 |
-| 27 | v1.5 | 0/4 | Not started | - |
-| 28 | v1.5 | 0/0 | Not started | - |
+| 27 | v1.5 | 4/4 | Complete | 2026-01-21 |
+| 28 | v1.5 | 0/4 | Not started | - |
 | 29 | v1.5 | 0/0 | Not started | - |
 
-**Total Progress:** 183/186 plans complete (v1.0-v1.4 + Phases 25-26), v1.5 Phase 27 planned (4 plans)
+**Total Progress:** 187/194 plans complete (v1.0-v1.4 + Phases 25-27), v1.5 Phases 28-29 remaining
 
 **Note:** Phase 21-06 (Performance Validation) skipped by user request. All test health goals (TEST-01 through TEST-06) achieved.
 
@@ -202,12 +206,12 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 ## Session Continuity
 
 Last session: 2026-01-21
-Stopped at: Phase 26 execution complete
+Stopped at: Phase 27 execution complete
 
 **v1.5 - Env Var & Transpose Fix (2026-01-21):**
 - Phase 25: Env Var Fix (12/12 complete) ✓
 - Phase 26: Transpose Kernel Fix (3/3 complete) ✓
-- Phase 27: Device Property Infrastructure (0/4 planned, ready to execute)
+- Phase 27: Device Property Infrastructure (4/4 complete) ✓
 - Phase 28: Debug Hygiene (Not started)
 - Phase 29: Validation & E2E (Not started)
 
