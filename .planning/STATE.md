@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-21)
 ## Current Position
 
 Phase: 28 of 29 (Debug Hygiene)
-Plan: 03 of 4
-Status: In progress
-Last activity: 2026-01-21 — Completed 28-03 (Debug Dimension Logging and Sync Launch)
+Plan: 04 of 4
+Status: Phase complete
+Last activity: 2026-01-21 — Completed 28-04 (HIP Debugging Documentation)
 
-Progress: [█████████░░░░░░░░░░░] 94% (189/190 plans complete, Phases 25-27 done, 28-01 to 28-03 done)
+Progress: [████████████░░░░░░░] 95% (190/190 plans complete, Phases 25-28 done, Phase 29 pending)
 
 ## Performance Metrics
 
@@ -53,6 +53,7 @@ Recent decisions from research (2026-01-21):
 - **Async Error Detection**: Call `hipGetLastError()` after successful kernel launch to catch asynchronous HIP errors. Uses `tracing::warn` (not error) since async errors may be from previous operations (DBG-03)
 - **Debug-Only Logging**: Use `#[cfg(debug_assertions)]` for debug logging to ensure zero runtime overhead in release builds. The `debug_assertions` cfg is active for `cargo build` and `cargo test` but NOT for `cargo build --release` (DBG-04)
 - **HIP_LAUNCH_BLOCKING Synchronous Execution**: `HIP_LAUNCH_BLOCKING` environment variable enables synchronous kernel execution for easier debugging. When set to "1" or "true", the backend calls `hipDeviceSynchronize()` after each kernel launch (DBG-05)
+- **HIP Debugging Documentation**: Created comprehensive developer guide in docs/HIP_DEBUGGING.md covering debug builds, HIP_LAUNCH_BLOCKING usage, error message interpretation, common issues, and debugging tools (DOC-01)
 
 Historical decisions (see STATE.md archive for v1.0-v1.4 details):
 - GPU Transpose for Embedding Weights, Memory Arena for GPU Weights, Zero Warnings Baseline, Unconditional GPU Compilation
@@ -81,7 +82,7 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-01-21
-Stopped at: Completed 28-03 (Debug Dimension Logging and Sync Launch)
+Stopped at: Completed 28-04 (HIP Debugging Documentation)
 Resume file: None
 
 **v1.5 - Env Var & Transpose Fix (2026-01-21):**
@@ -97,11 +98,11 @@ Resume file: None
   - 27-02: DeviceLimits caching in HipBackend ✓
   - 27-03: Launch validation methods (validate_launch_config, ceil_div_u64, safe_grid_dim) ✓
   - 27-04: Kernel launch sites use cached limits validation ✓
-- Phase 28: Debug Hygiene (3/4 complete)
+- Phase 28: Debug Hygiene (4/4 complete ✓)
   - 28-01: Kernel Name Storage in HipKernel ✓
   - 28-02: Async Error Detection ✓
   - 28-03: Debug Dimension Logging and Sync Launch ✓
-  - 28-04: Debug Assertions (pending)
+  - 28-04: HIP Debugging Documentation ✓
 - Phase 29: Validation & E2E (Not started)
 
 **Coverage:** 15/15 requirements mapped to phases (100%)
