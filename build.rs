@@ -2,6 +2,9 @@ use std::env;
 
 fn main() {
     println!("cargo:rerun-if-changed=kernels");
+    println!("cargo:rerun-if-env-changed=ROCM_PATH");
+    println!("cargo:rerun-if-env-changed=HIPCC");
+    println!("cargo:rerun-if-env-changed=ROCm_ARCH");
 
     // ROCmForge is AMD GPU only - always link HIP libraries
     let rocm_root = env::var("ROCM_PATH").unwrap_or_else(|_| "/opt/rocm".to_string());
