@@ -28,8 +28,8 @@ impl HipDeviceProp {
     const TOTAL_GLOBAL_MEM_OFFSET: usize = 288;
 
     // Offset of `multiProcessorCount` field: int multiProcessorCount
-    // This is after all the texture/surface fields - verified with C code
-    const MULTI_PROCESSOR_COUNT_OFFSET: usize = 508;
+    // Verified with bindgen (offset 388 for ROCm 7.x)
+    const MULTI_PROCESSOR_COUNT_OFFSET: usize = 388;
 
     // Launch limit field offsets - verified against hip_runtime_api.h
     // IMPORTANT: C compiler inserts 4-byte padding after luidDeviceNodeMask to align
@@ -185,6 +185,90 @@ impl Default for HipDeviceProp {
         HipDeviceProp {
             _buffer: [0u8; 1472],
         }
+    }
+}
+
+#[cfg(test)]
+mod offset_verification {
+    use super::*;
+    use memoffset::offset_of;
+
+    // Include bindgen-generated bindings
+    // This brings in hipDeviceProp_tR0600 struct definition
+    include!(concat!(env!("OUT_DIR"), "/hip_device_bindings.rs"));
+
+    #[test]
+    fn verify_device_prop_offsets() {
+        // Verify all manual offsets match bindgen's generated offsets
+        // If ROCm version changes struct layout, this test will fail at compile time
+
+        // Basic offset (name is always at 0)
+        assert_eq!(
+            HipDeviceProp::NAME_OFFSET,
+            0,
+            "NAME_OFFSET should always be 0"
+        );
+
+        // Verify totalGlobalMem offset (288 for ROCm 7.x)
+        assert_eq!(
+            HipDeviceProp::TOTAL_GLOBAL_MEM_OFFSET,
+            offset_of!(hipDeviceProp_tR0600, totalGlobalMem),
+            "TOTAL_GLOBAL_MEM_OFFSET mismatch - ROCm version may have changed struct layout"
+        );
+
+        // Verify sharedMemPerBlock offset (296 for ROCm 7.x)
+        assert_eq!(
+            HipDeviceProp::SHARED_MEM_PER_BLOCK_OFFSET,
+            offset_of!(hipDeviceProp_tR0600, sharedMemPerBlock),
+            "SHARED_MEM_PER_BLOCK_OFFSET mismatch - ROCm version may have changed struct layout"
+        );
+
+        // Verify warpSize offset (308 for ROCm 7.x)
+        assert_eq!(
+            HipDeviceProp::WARP_SIZE_OFFSET,
+            offset_of!(hipDeviceProp_tR0600, warpSize),
+            "WARP_SIZE_OFFSET mismatch - ROCm version may have changed struct layout"
+        );
+
+        // Verify maxThreadsPerBlock offset (320 for ROCm 7.x)
+        assert_eq!(
+            HipDeviceProp::MAX_THREADS_PER_BLOCK_OFFSET,
+            offset_of!(hipDeviceProp_tR0600, maxThreadsPerBlock),
+            "MAX_THREADS_PER_BLOCK_OFFSET mismatch - ROCm version may have changed struct layout"
+        );
+
+        // Verify maxThreadsDim offset (324 for ROCm 7.x)
+        assert_eq!(
+            HipDeviceProp::MAX_THREADS_DIM_OFFSET,
+            offset_of!(hipDeviceProp_tR0600, maxThreadsDim),
+            "MAX_THREADS_DIM_OFFSET mismatch - ROCm version may have changed struct layout"
+        );
+
+        // Verify maxGridSize offset (336 for ROCm 7.x)
+        assert_eq!(
+            HipDeviceProp::MAX_GRID_SIZE_OFFSET,
+            offset_of!(hipDeviceProp_tR0600, maxGridSize),
+            "MAX_GRID_SIZE_OFFSET mismatch - ROCm version may have changed struct layout"
+        );
+
+        // Verify multiProcessorCount offset
+        // Note: bindgen reports this as 388, not 508 as previously coded
+        assert_eq!(
+            HipDeviceProp::MULTI_PROCESSOR_COUNT_OFFSET,
+            offset_of!(hipDeviceProp_tR0600, multiProcessorCount),
+            "MULTI_PROCESSOR_COUNT_OFFSET mismatch - ROCm version may have changed struct layout"
+        );
+    }
+
+    #[test]
+    fn verify_struct_size() {
+        // Verify our buffer size matches C's sizeof(hipDeviceProp_t)
+        // For ROCm 7.x, this should be 1472 bytes
+        assert_eq!(
+            std::mem::size_of::<HipDeviceProp>(),
+            std::mem::size_of::<hipDeviceProp_tR0600>(),
+            "HipDeviceProp buffer size mismatch with C struct - ROCm version may have changed"
+        );
     }
 }
 
