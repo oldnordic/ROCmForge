@@ -173,30 +173,12 @@ impl TransposeKernel {
         // Shared memory: TILE_DIM * (TILE_DIM + 1) floats for bank conflict avoidance
         let shared_mem_bytes = TILE_DIM * (TILE_DIM + 1) * std::mem::size_of::<f32>() as u32;
 
-        // === VALIDATION: Pre-launch checks for AMD GPU limits ===
-        // From DEVICE_LIMITS.md: maxThreadsPerBlock = 1024, maxGridSize = [2^32-1, 2^16-1, 2^16-1], sharedMemPerBlock = 65536
-
-        // Thread count validation
-        let threads_per_block = block_dim.0 * block_dim.1 * block_dim.2;
-        assert!(threads_per_block <= 1024,
-            "Transpose kernel: threads per block {} exceeds maxThreadsPerBlock limit 1024 (block={:?})",
-            threads_per_block, block_dim);
-
-        // Grid dimension validation (maxGridSize: x=2^32-1, y=2^16-1, z=2^16-1)
-        assert!(grid_dim.0 > 0 && grid_dim.0 < (1u32 << 31),
-            "Transpose kernel: grid.x {} is invalid (must be 1..2^31-1)", grid_dim.0);
-        assert!(grid_dim.1 > 0 && grid_dim.1 < (1u32 << 16),
-            "Transpose kernel: grid.y {} is invalid (must be 1..2^16-1)", grid_dim.1);
-        assert!(grid_dim.2 > 0 && grid_dim.2 < (1u32 << 16),
-            "Transpose kernel: grid.z {} is invalid (must be 1..2^16-1)", grid_dim.2);
-
-        // Block dimension validation (each axis <= 1024)
-        assert!(block_dim.0 <= 1024 && block_dim.1 <= 1024 && block_dim.2 <= 1024,
-            "Transpose kernel: block dimension {:?} exceeds axis limit 1024", block_dim);
-
-        // Shared memory validation (sharedMemPerBlock = 65536 bytes for RDNA3)
-        assert!(shared_mem_bytes <= 65536,
-            "Transpose kernel: shared memory {} bytes exceeds sharedMemPerBlock limit 65536", shared_mem_bytes);
+        // === VALIDATION: Pre-launch checks using cached device limits ===
+        // Validate launch configuration against actual device limits
+        self.backend.validate_launch_config(grid_dim, block_dim, shared_mem_bytes)
+            .map_err(|e| HipError::KernelLaunchFailed(format!(
+                "Transpose kernel launch failed: {}", e
+            )))?;
         // === END VALIDATION ===
 
         // Prepare kernel arguments

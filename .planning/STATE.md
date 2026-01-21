@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-21)
 ## Current Position
 
 Phase: 27 of 29 (Device Property Infrastructure)
-Plan: 02
+Plan: 03
 Status: In progress
-Last activity: 2026-01-21 — Completed 27-02 (Device Limits Caching in HipBackend)
+Last activity: 2026-01-21 — Completed 27-03 (Launch Validation and Safe Grid Calculation)
 
-Progress: [█████████░░░░░░░░░░░] 91% (185/186 plans complete, Phases 25-26 done, Phase 27: 2/4)
+Progress: [█████████░░░░░░░░░░░] 92% (186/186 plans complete, Phases 25-26 done, Phase 27: 3/4)
 
 ## Performance Metrics
 
@@ -43,6 +43,9 @@ Recent decisions from research (2026-01-21):
 - **Transpose Pre-Launch Validation**: Add assertions before kernel launch to validate thread count, grid dimensions, block dimensions, and shared memory against AMD GPU limits from DEVICE_LIMITS.md (TRN-02)
 - **Device Property Caching**: Query `hipGetDeviceProperties` once at backend init, not per-launch, to avoid overhead and enable consistent validation (DEV-01)
 - **Cargo Rerun Directives**: Added explicit `cargo:rerun-if-env-changed` directives for ROCM_PATH, HIPCC, ROCm_ARCH to ensure automatic rebuild when ROCm configuration changes (BLD-01)
+- **Launch Validation Returns Result**: Validation returns `HipError::KernelLaunchFailed` with detailed message, not panic - allows graceful error handling (VAL-01)
+- **Private Helper Functions**: `ceil_div_u64` and `safe_grid_dim` are private module-level functions, not public API (VAL-02)
+- **Grid Overflow Assert Pattern**: `safe_grid_dim` uses `assert!` for overflow detection - overflow is programmer error (VAL-03)
 
 Historical decisions (see STATE.md archive for v1.0-v1.4 details):
 - GPU Transpose for Embedding Weights, Memory Arena for GPU Weights, Zero Warnings Baseline, Unconditional GPU Compilation
@@ -71,7 +74,7 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-01-21
-Stopped at: Completed 27-02 (Device Limits Caching in HipBackend)
+Stopped at: Completed 27-03 (Launch Validation and Safe Grid Calculation)
 Resume file: None
 
 **v1.5 - Env Var & Transpose Fix (2026-01-21):**
@@ -82,10 +85,10 @@ Resume file: None
   - 26-01: Block dimension changed to (32,32,1)
   - 26-02: Pre-launch validation assertions added
   - 26-03: Unit test for [896, 151936] tensor transpose
-- Phase 27: Device Property Infrastructure (2/4 complete)
+- Phase 27: Device Property Infrastructure (3/4 complete)
   - 27-01: HipDeviceProp launch limit accessors (5 methods added) ✓
   - 27-02: DeviceLimits caching in HipBackend ✓
-  - 27-03: Launch validation methods (Not started)
+  - 27-03: Launch validation methods (validate_launch_config, ceil_div_u64, safe_grid_dim) ✓
   - 27-04: Safe grid calculation (Not started)
 - Phase 28: Debug Hygiene (Not started)
 - Phase 29: Validation & E2E (Not started)
