@@ -108,7 +108,7 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 5. cargo build successfully generates bindings without errors
 
 **Plans**: 1 plan (1 wave)
-- [ ] 31-01-PLAN.md — Add bindgen infrastructure with HIP allowlist
+- [x] 31-01-PLAN.md — Add bindgen infrastructure with HIP allowlist
 
 ### Phase 32: Offset Verification Test
 
@@ -128,7 +128,7 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 7. Test fails with clear message if ROCm version changes struct layout
 
 **Plans**: 1 plan (1 wave)
-- [ ] 32-01-PLAN.md — Create offset verification test module
+- [ ] 32-01-PLAN.md — Create offset verification test module with memoffset dependency
 
 ---
 
@@ -157,10 +157,10 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 | 28 | v1.5 | 4/4 | Complete | 2026-01-21 |
 | 29 | v1.5 | 5/5 | Complete | 2026-01-21 |
 | 30 | v1.6 | 1/1 | Complete | 2026-01-21 |
-| 31 | v1.6 | 0/1 | Not started | - |
-| 32 | v1.6 | 0/1 | Not started | - |
+| 31 | v1.6 | 1/1 | Complete | 2026-01-21 |
+| 32 | v1.6 | 0/1 | Planned | - |
 
-**Total Progress:** 196/198 plans complete (v1.0-v1.5 + v1.6 phase 30)
+**Total Progress:** 197/198 plans complete (v1.0-v1.5 + v1.6 phases 30-31)
 
 **Note:** Phase 21-06 (Performance Validation) skipped by user request. All test health goals (TEST-01 through TEST-06) achieved.
 
@@ -169,13 +169,13 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 ## Session Continuity
 
 Last session: 2026-01-21
-Stopped at: Roadmap created for v1.6 FFI Device Props Fix
+Stopped at: Phase 32 planned (Offset Verification Test)
 
 **Milestone v1.5 COMPLETE!** Ready to begin v1.6 planning.
 
 **v1.6 - FFI Device Props Fix (2026-01-21):**
-- Phase 30: Immediate Bugfix (1 plan)
-- Phase 31: Bindgen Infrastructure (1 plan)
-- Phase 32: Offset Verification Test (1 plan)
+- Phase 30: Immediate Bugfix (1 plan) - COMPLETE
+- Phase 31: Bindgen Infrastructure (1 plan) - COMPLETE
+- Phase 32: Offset Verification Test (1 plan) - PLANNED
 
 **Coverage:** 4/4 requirements mapped to phases (100%)

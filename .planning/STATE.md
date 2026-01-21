@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-01-21)
 
 ## Current Position
 
-Phase: 31 of 32 (Bindgen Infrastructure)
+Phase: 32 of 32 (Offset Verification Test)
 Plan: 01 of 1
-Status: Plan complete
-Last activity: 2026-01-21 — Completed 31-01: Add bindgen Infrastructure with HIP Allowlist
+Status: Not started
+Last activity: 2026-01-21 — Completed Phase 31: Bindgen Infrastructure
 
-Progress: [██░░░░░░░░░░░░░░░░░░░░░░░░░░] 67% (v1.6)
+Progress: [█████░░░░░░░░░░░░░░░░░░░░░░] 67% (v1.6)
 
 ## Performance Metrics
 
@@ -29,7 +29,7 @@ Progress: [██░░░░░░░░░░░░░░░░░░░░░
 |-------|-------|-------|----------|
 | 1-24 | 168 | 168 | ~42 min |
 | 25-29 | 27 | 27 | ~7 min |
-| 30-31 | 2 | 3 | ~9 min |
+| 30-31 | 2 | 2 | ~9 min |
 | 32 | 0 | 1 | TBD |
 
 ## Accumulated Context
@@ -63,8 +63,12 @@ Recent decisions from research (2026-01-21):
 - **Iterator-Based Validation Pattern**: Use `.iter().all(|&d| d > 0 && d <= 4096)` for clarity and correctness when validating array elements (FFI-01)
 - **Detailed Warning Messages**: Include actual incorrect values in warning log to aid debugging of FFI driver issues (FFI-01)
 
-v1.6 decisions (upcoming):
+v1.6 decisions (completed):
 - **Bindgen Allowlist**: Use bindgen for hipDeviceProp_t only, not full HIP API (FFI-03) - COMPLETED 2026-01-21
+- **Bindgen HIP Platform Define**: Added `-D__HIP_PLATFORM_AMD__` and include paths for bindgen clang args (FFI-03) - COMPLETED 2026-01-21
+- **Regex Allowlist Patterns**: Used `hipDeviceProp.*` patterns to catch versioned typedefs like hipDeviceProp_tR0600 (FFI-03) - COMPLETED 2026-01-21
+
+v1.6 decisions (upcoming):
 - **Compile-Time Offset Verification**: Test asserts manual offsets match bindgen at compile time (FFI-04)
 
 ### Pending Todos
@@ -86,7 +90,7 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-01-21
-Stopped at: Completed 31-01 (Add bindgen Infrastructure with HIP Allowlist)
+Stopped at: Completed Phase 31 (Bindgen Infrastructure)
 Resume file: None
 
 **Milestone v1.5 COMPLETE!** All phases (25-29) finished with validation tests passing.
