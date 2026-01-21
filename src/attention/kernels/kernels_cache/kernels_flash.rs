@@ -205,15 +205,9 @@ pub unsafe fn flash_attention_nocausal_gpu_kernel(
     num_heads: u32,
     head_dim: u32,
 ) -> Result<(), String> {
-    // Enforce shared memory limitation to prevent GPU page fault
-    // See Phase 33.1: https://github.com/ROCm/ROCm/issues/xxxx
-    if seq_len > 32 {
-        return Err(format!(
-            "flash_attention_nocausal requires seq_len <= 32 due to shared memory limitation (got {}). \
-             See Phase 33.1 for proper fix with dynamic shared memory.",
-            seq_len
-        ));
-    }
+    // Phase 33.1: Dynamic shared memory now supports seq_k up to device limits
+    // Previous hardcoded limit of 32 has been removed
+    // The kernel will use (seq_k + 32) * 4 bytes of shared memory
 
     match get_or_init_cache() {
         Ok(cache_ref) => {
@@ -235,8 +229,11 @@ pub unsafe fn flash_attention_nocausal_gpu_kernel(
             let grid_dim = (seq_len, num_heads, batch_size);
             let block_dim = (WARP_SIZE, 1, 1);
 
-            // Shared memory: 2 x WARP_SIZE floats for reduction + scores buffer
-            let shared_mem_bytes = 2 * WARP_SIZE * std::mem::size_of::<f32>() as u32;
+            // Dynamic shared memory: seq_k floats for s_scores + WARP_SIZE floats for s_partial
+            // Phase 33.1 fix: Changed from hardcoded 64 floats to dynamic size based on seq_len
+            let s_scores_size = seq_len * std::mem::size_of::<f32>() as u32;
+            let s_partial_size = WARP_SIZE * std::mem::size_of::<f32>() as u32;
+            let shared_mem_bytes = s_scores_size + s_partial_size;
 
             // Prepare kernel arguments
             let mut q_arg = q as *mut f32;
@@ -354,7 +351,7 @@ pub unsafe fn causal_mask_gpu_kernel(
 /// The caller must ensure that:
 /// - Q, K, V, output point to valid GPU memory
 /// - The dimensions are correct and consistent
-/// - seq_k <= 32 (shared memory limitation)
+/// - seq_k limited by device shared memory (Phase 33.1: now dynamic)
 /// - No other threads are accessing the same memory concurrently
 pub unsafe fn flash_attention_causal_gpu_kernel(
     q: *const f32,
@@ -367,15 +364,9 @@ pub unsafe fn flash_attention_causal_gpu_kernel(
     num_heads: u32,
     head_dim: u32,
 ) -> Result<(), String> {
-    // Enforce shared memory limitation to prevent GPU page fault
-    // See Phase 33.1: https://github.com/ROCm/ROCm/issues/xxxx
-    if seq_len > 32 {
-        return Err(format!(
-            "flash_attention_causal requires seq_len <= 32 due to shared memory limitation (got {}). \
-             See Phase 33.1 for proper fix with dynamic shared memory.",
-            seq_len
-        ));
-    }
+    // Phase 33.1: Dynamic shared memory now supports seq_k up to device limits
+    // Previous hardcoded limit of 32 has been removed
+    // The kernel will use (seq_k + 32) * 4 bytes of shared memory
 
     match get_or_init_cache() {
         Ok(cache_ref) => {
@@ -397,8 +388,11 @@ pub unsafe fn flash_attention_causal_gpu_kernel(
             let grid_dim = (seq_len, num_heads, batch_size);
             let block_dim = (WARP_SIZE, 1, 1);
 
-            // Shared memory: 2 x WARP_SIZE floats for scores + reduction buffer
-            let shared_mem_bytes = 2 * WARP_SIZE * std::mem::size_of::<f32>() as u32;
+            // Dynamic shared memory: seq_k floats for s_scores + WARP_SIZE floats for s_partial
+            // Phase 33.1 fix: Changed from hardcoded 64 floats to dynamic size based on seq_len
+            let s_scores_size = seq_len * std::mem::size_of::<f32>() as u32;
+            let s_partial_size = WARP_SIZE * std::mem::size_of::<f32>() as u32;
+            let shared_mem_bytes = s_scores_size + s_partial_size;
 
             // Prepare kernel arguments
             let mut q_arg = q as *mut f32;

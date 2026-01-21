@@ -67,11 +67,12 @@ extern "C" __global__ void flash_attention_nocausal_kernel(
         return;
     }
 
-    // Shared memory: s_scores for softmax weights, s_partial for reduction
-    // For seq_k up to 32, we can fit in one wave32 buffer
-    // For larger seq_k, we'd need multiple passes, but for now assume seq_k <= 32
-    __shared__ float s_scores[32];    // Softmax weights (seq_k elements)
-    __shared__ float s_partial[32];   // Partial sums for reduction (WARP_SIZE elements)
+// Dynamic shared memory layout:
+// - s_all_shared[0..seq_k] = softmax weights (s_scores)
+// - s_all_shared[seq_k..seq_k+WARP_SIZE] = reduction buffer (s_partial)
+extern __shared__ float s_all_shared[];
+#define s_scores (s_all_shared)
+#define s_partial (s_all_shared + seq_k)
 
     // === Layout: [batch, heads, seq, dim] ===
     const int q_head_offset = batch_idx * num_heads * seq_q * head_dim
