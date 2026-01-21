@@ -15,7 +15,6 @@
 //! - Each sub-block (32 elements): scale (f16) + min (int8) + 28 bytes packed 4-bit values
 //! - Dequantization: value = min + (quant * scale)
 
-use std::env;
 use std::sync::Mutex;
 
 use crate::backend::{HipBackend, HipKernel, HipModule};
@@ -54,8 +53,9 @@ pub fn get_or_init_q4_k_dequant_cache(backend: &HipBackend) -> Q4KdequantResult<
     }
 
     // Slow path: initialize cache
-    let hsaco_path = env::var("Q4_K_DEQUANT_HSACO")
-        .map_err(|_| "Q4_K_DEQUANT_HSACO environment variable not set".to_string())?;
+    // Use option_env!() to read compile-time environment variable set by build.rs
+    let hsaco_path = option_env!("Q4_K_DEQUANT_HSACO")
+        .ok_or_else(|| "Q4_K_DEQUANT_HSACO not set at compile time. Rebuild with cargo feature 'rocm' enabled.".to_string())?;
 
     // Load the module from HSACO file
     let module = backend
