@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-01-21)
 
 ## Current Position
 
-Phase: 25 of 29 (Env Var Fix)
-Plan: 08 of 12
-Status: Gap closure in progress
-Last activity: 2026-01-21 — Completed plan 25-08 (Q4_0_DEQUANT env var fix)
+Phase: 26 of 29 (Transpose Kernel Fix)
+Plan: 01 of 1
+Status: In progress
+Last activity: 2026-01-21 — Plan 26-01 complete (Transpose Block Dimension Fix)
 
-Progress: [████████░░░░░░░░░░░░] 87% (172/180 plans complete, 8/12 in phase 25)
+Progress: [█████████░░░░░░░░░░░] 88% (181/204 plans complete, Phase 26 plan 1 done)
 
 ## Performance Metrics
 
@@ -52,36 +52,34 @@ None yet.
 
 ### Blockers/Concerns
 
-**CRITICAL: Runtime Kernel Loading Broken (2026-01-21)**
+**CRITICAL: Transpose Kernel Fails for Large Tensors (2026-01-21)**
 
-Two critical issues block actual GGUF model inference:
-
-**Issue 1: Env var embedding mismatch**
+**Issue 1: Env var embedding mismatch — RESOLVED ✓**
 - build.rs sets `cargo:rustc-env=Q4_0_DEQUANT_HSACO=/path/to/kernel.hsaco` (compile-time)
-- Code uses `std::env::var("Q4_0_DEQUANT_HSACO")` (runtime lookup)
-- Result: HSACO paths not embedded in binary, runtime lookup fails
-- Manual `env VAR=value ./binary` works - proves runtime vs compile-time mismatch
+- Code was using `std::env::var("Q4_0_DEQUANT_HSACO")` (runtime lookup)
+- **Fixed in Phase 25:** All 29 HSACO env vars now use `option_env!()` macro
+- Kernels load without manual environment variables
 
-**Issue 2: Transpose kernel fails for large tensors**
+**Issue 2: Transpose kernel fails for large tensors — RESOLVED ✓**
 - Tensor shape [896, 151936] (Qwen2.5 embedding weights)
 - Kernel launch returns `hipErrorInvalidValue` (invalid argument)
 - Root cause: block=(64,64,1) = 4096 threads exceeds maxThreadsPerBlock=1024
+- **Fixed in Phase 26:** Block dimension changed to (32,32,1) = 1024 threads
 
 ## Session Continuity
 
 Last session: 2026-01-21
-Stopped at: Completed plan 25-08 (Q4_0_DEQUANT env var fix)
+Stopped at: Plan 26-01 complete, transpose block dimension fix applied
 Resume file: None
 
 **v1.5 - Env Var & Transpose Fix (2026-01-21):**
-- Phase 25: Env Var Fix (8/12 plans complete)
+- Phase 25: Env Var Fix (12/12 complete ✓)
   - Original: 25-01 (attention), 25-02 (sampler), 25-03 (MLP), 25-04 (quant), 25-05 (fused), 25-06 (transpose), 25-07 (cargo rerun)
   - Gap closure: 25-08 (Q4_0_DEQUANT duplicate), 25-09 (Q4_K_DEQUANT duplicate), 25-10 (Q4_0_MATMUL), 25-11 (Q4_K_MATMUL), 25-12 (Q6_K_MATMUL)
-- Phase 26: Transpose Kernel Fix (Not started)
+- Phase 26: Transpose Kernel Fix (1/1 complete ✓)
+  - 26-01: Block dimension changed to (32,32,1)
 - Phase 27: Device Property Infrastructure (Not started)
 - Phase 28: Debug Hygiene (Not started)
 - Phase 29: Validation & E2E (Not started)
-
-**Gap Closure Status:** 1/5 gap closure plans complete (25-08 done, 25-09 through 25-12 remaining).
 
 **Coverage:** 15/15 requirements mapped to phases (100%)
