@@ -106,6 +106,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
+    #[serial]
     fn test_gguf_file_parsing() -> anyhow::Result<()> {
         let temp_dir = tempdir()?;
         let gguf_path = temp_dir.path().join("test_model.gguf");
@@ -128,6 +129,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_tensor_loading() -> anyhow::Result<()> {
         let temp_dir = tempdir()?;
         let gguf_path = temp_dir.path().join("test_model.gguf");
@@ -198,6 +200,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_model_config_integration() -> anyhow::Result<()> {
         let temp_dir = tempdir()?;
         let gguf_path = temp_dir.path().join("test_model.gguf");
@@ -220,6 +223,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_quantization_handling() -> anyhow::Result<()> {
         let temp_dir = tempdir()?;
         let gguf_path = temp_dir.path().join("test_model.gguf");
@@ -246,6 +250,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_shape_validation() -> anyhow::Result<()> {
         let temp_dir = tempdir()?;
         let gguf_path = temp_dir.path().join("test_model.gguf");
