@@ -6,6 +6,7 @@ use rocmforge::model::{
 use serial_test::serial;
 
 #[test]
+#[serial]
 fn test_simple_model_forward_runs() {
     let model = SimpleModel::new(100, 8, 1, 4, ModelBackend::Cpu, 42);
     let input_tokens = vec![1, 2, 3, 4];
@@ -36,6 +37,7 @@ fn test_simple_model_forward_runs() {
 }
 
 #[test]
+#[serial]
 fn test_linear_layer_forward() {
     let linear = Linear::new(4, 2, 42);
     let input = vec![1.0f32, 2.0f32, 3.0f32, 4.0f32];
@@ -53,6 +55,7 @@ fn test_linear_layer_forward() {
 }
 
 #[test]
+#[serial]
 fn test_simple_attention_forward() {
     let attention = SimpleAttention::new(4, ModelBackend::Cpu, 42);
     let input = vec![1.0f32; 8]; // seq_len=2, dim=4
@@ -70,6 +73,7 @@ fn test_simple_attention_forward() {
 }
 
 #[test]
+#[serial]
 fn test_transformer_block_forward() {
     let block = SimpleTransformerBlock::new(4, ModelBackend::Cpu, 42);
     let input = vec![1.0f32; 8]; // seq_len=2, dim=4
@@ -87,6 +91,7 @@ fn test_transformer_block_forward() {
 }
 
 #[test]
+#[serial]
 fn test_model_with_different_sequence_lengths() {
     let model = SimpleModel::new(50, 6, 1, 8, ModelBackend::Cpu, 123);
 
@@ -111,6 +116,7 @@ fn test_model_with_different_sequence_lengths() {
 }
 
 #[test]
+#[serial]
 fn test_model_error_handling() {
     let model = SimpleModel::new(10, 4, 1, 4, ModelBackend::Cpu, 42);
 
@@ -126,6 +132,7 @@ fn test_model_error_handling() {
 }
 
 #[test]
+#[serial]
 fn test_model_deterministic_with_same_seed() {
     let model1 = SimpleModel::new(20, 4, 1, 3, ModelBackend::Cpu, 999);
     let model2 = SimpleModel::new(20, 4, 1, 3, ModelBackend::Cpu, 999);
@@ -181,6 +188,7 @@ fn test_simple_model_forward_gpu_close_to_cpu() {
 }
 
 #[test]
+#[serial]
 fn test_model_with_multiple_layers() {
     let model = SimpleModel::new(30, 6, 3, 4, ModelBackend::Cpu, 777);
     let input_tokens = vec![1, 2, 3, 4];
