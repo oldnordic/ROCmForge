@@ -941,10 +941,20 @@ impl HipBackend {
 
         if result != ffi::HIP_SUCCESS {
             let error_msg = get_error_string(result);
-            tracing::error!("launch_kernel_with_module_shared: Kernel launch failed with code {}: {}", result, error_msg);
+            tracing::error!(
+                "launch_kernel_with_module_shared: Kernel '{}' launch failed: code={}, msg={}, grid={:?}, block={:?}",
+                kernel.name(),
+                result,
+                error_msg,
+                grid_dim,
+                block_dim
+            );
             return Err(HipError::KernelLaunchFailed(format!(
-                "Kernel launch failed: {}",
-                error_msg
+                "Kernel '{}' launch failed: {} (grid={:?}, block={:?})",
+                kernel.name(),
+                error_msg,
+                grid_dim,
+                block_dim
             )));
         }
 

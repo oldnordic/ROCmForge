@@ -85,16 +85,28 @@ unsafe impl Send for HipKernel {}
 unsafe impl Sync for HipKernel {}
 
 /// HIP kernel wrapper
+///
+/// Stores the kernel function pointer and name for debugging.
+/// The name field is included in error messages when kernel launch fails.
 #[repr(C)]
 #[derive(Debug)]
 pub struct HipKernel {
     func: *mut std::ffi::c_void,
+    name: String,
 }
 
 impl HipKernel {
     /// Create HipKernel from raw pointer
     pub fn from_ptr(func: *mut std::ffi::c_void) -> Self {
-        HipKernel { func }
+        HipKernel {
+            func,
+            name: String::new(),
+        }
+    }
+
+    /// Create HipKernel from raw pointer with name
+    pub fn from_ptr_with_name(func: *mut std::ffi::c_void, name: String) -> Self {
+        HipKernel { func, name }
     }
 
     /// Get raw kernel function pointer
@@ -102,9 +114,14 @@ impl HipKernel {
         self.func
     }
 
+    /// Get kernel name
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     /// Get kernel function from module
-    pub fn from_module(module: &HipModule, kernel_name: &str) -> HipResult<Self> {
-        let kernel_name_cstr = CString::new(kernel_name)
+    pub fn from_module(module: &HipModule, kernel_name: String) -> HipResult<Self> {
+        let kernel_name_cstr = CString::new(kernel_name.as_str())
             .map_err(|e| HipError::KernelLoadFailed(format!("Invalid kernel name: {}", e)))?;
 
         let mut func: *mut std::ffi::c_void = ptr::null_mut();
@@ -119,6 +136,6 @@ impl HipKernel {
             )));
         }
 
-        Ok(HipKernel::from_ptr(func))
+        Ok(HipKernel::from_ptr_with_name(func, kernel_name))
     }
 }
