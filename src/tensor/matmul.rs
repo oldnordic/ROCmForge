@@ -27,16 +27,35 @@ pub type MatmulResult<T> = Result<T, MatmulError>;
 /// Performs matrix multiplication using hipBLAS SGEMM (single precision).
 /// All matrices are stored in row-major order.
 ///
+/// # Stream Synchronization
+///
+/// CRITICAL: This function requires that `handle` be associated with the backend's stream
+/// via `set_stream()` before calling. The handle is passed in from outside, so this
+/// function CANNOT automatically set the stream. Callers MUST ensure:
+///
+/// ```rust
+/// handle.set_stream(backend.stream().as_ptr())?;
+/// matmul_f32(&backend, &handle, &a, &b, m, n, k)?;
+/// ```
+///
+/// See docs/STREAM_SYNCHRONIZATION.md for details on why this is critical.
+///
 /// Arguments:
-/// - handle: hipBLAS handle for operations
+/// - backend: HIP backend (provides stream access)
+/// - handle: hipBLAS handle for operations (MUST have set_stream called)
 /// - a: GPU buffer containing matrix A (m×k)
-/// - b: GPU buffer containing matrix B (k×n)  
+/// - b: GPU buffer containing matrix B (k×n)
 /// - m: number of rows in A and C
 /// - n: number of columns in B and C
 /// - k: number of columns in A and rows in B
 ///
 /// Returns:
 /// - GPU buffer containing matrix C (m×n)
+///
+/// # Panics
+///
+/// This function will panic if the handle is not properly configured with the backend's stream,
+/// as hipBLAS operations may occur on the wrong stream, causing synchronization issues.
 pub fn matmul_f32(
     backend: &crate::backend::HipBackend,
     handle: &HipBlasHandle,
