@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, Once};
 use std::ptr;
 
 use crate::backend::hip_backend::device::{get_error_string, HipDevice, HipDeviceProp};
+use crate::backend::hip_backend::device_context;
 use crate::backend::hip_backend::error::{HipError, HipResult};
 use crate::backend::hip_backend::ffi;
 use crate::backend::hip_backend::memory::HipBuffer;
@@ -205,21 +206,22 @@ impl HipBackend {
         // Detect AMD GPU
         let device = Self::detect_amd_gpu()?;
 
-        // CRITICAL: Set the detected device as current HIP context
-        // Without this, HIP may use a different device context, causing allocation failures
+        // CRITICAL: Set the detected device as current HIP context for THIS THREAD
+        // Phase 33.2: HIP device context is PER-THREAD, not global.
+        // Each thread that calls HipBackend::new() must ensure the correct device is set.
+        // Without this, pointers allocated in one thread's context are invalid in another.
         eprintln!(
-            ">>> HipBackend::new: Setting device to {} ({})",
+            ">>> HipBackend::new: Setting device to {} ({}) for current thread",
             device.device_id, device.name
         );
-        let set_result = unsafe { ffi::hipSetDevice(device.device_id) };
-        if set_result != ffi::HIP_SUCCESS {
-            return Err(HipError::DeviceError(format!(
-                "Failed to set device {}: hipSetDevice returned {}",
-                device.device_id, set_result
-            )));
-        }
+        device_context::ensure_device(device.device_id).map_err(|e| {
+            HipError::DeviceError(format!(
+                "Failed to set device {} for current thread: {}",
+                device.device_id, e
+            ))
+        })?;
         tracing::debug!(
-            "HipBackend::new: Device {} set successfully",
+            "HipBackend::new: Device {} set successfully for current thread",
             device.device_id
         );
 

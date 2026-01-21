@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4-dev] - 2026-01-21
+
+### Fixed
+- **GPU Device Context Thread Safety** (Phase 33.2): Fixed critical bug causing GPU resets and desktop crashes
+  - Root cause: HIP device context is per-thread, not global
+  - Added `hipGetDevice` FFI binding (was missing - prevented device context verification)
+  - Created `device_context.rs` module with thread-local device tracking
+  - `HipBackend::new()` now ensures correct device is set for each thread via `ensure_device()`
+  - Fixes NULL pointer dereferences when GPU pointers from one thread are used in another
+  - **Impact**: Eliminates GPU page faults at address 0x0000000000000000
+
+### Added
+- `src/backend/hip_backend/device_context.rs` - Thread-safe GPU device context management
+  - `get_thread_device()` - Queries HIP for current device (cached per thread)
+  - `ensure_device(device_id)` - Ensures current thread has correct device set
+  - `verify_device(device_id)` - Checks if device matches (for validation)
+
+### Technical Details
+- **Bug Chain**: Thread A allocates GPU pointer → Thread B uses pointer without hipSetDevice → NULL dereference → GPU reset → desktop crash
+- **Solution**: Each `HipBackend::new()` call now calls `device_context::ensure_device()` to set device for the calling thread
+- **Thread-local storage**: `thread_local!` macro caches device ID per thread to avoid repeated hipGetDevice() calls
+- Test coverage: 3 new tests in device_context module (all passing)
+
 ## [0.1.3-dev] - 2026-01-21
 
 ### Fixed

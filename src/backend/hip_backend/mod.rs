@@ -5,6 +5,7 @@
 mod async_ops;
 mod backend;
 mod device;
+mod device_context;
 mod error;
 mod event;
 mod ffi;

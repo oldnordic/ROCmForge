@@ -12,6 +12,7 @@ use std::ffi::c_void;
 extern "C" {
     pub fn hipInit(flags: u32) -> i32;
     pub fn hipGetDeviceCount(count: *mut i32) -> i32;
+    pub fn hipGetDevice(deviceId: *mut i32) -> i32;
     pub fn hipGetDeviceProperties(props: *mut super::device::HipDeviceProp, deviceId: i32) -> i32;
     pub fn hipSetDevice(deviceId: i32) -> i32;
     pub fn hipMalloc(ptr: *mut *mut c_void, size: usize) -> i32;
