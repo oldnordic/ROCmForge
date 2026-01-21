@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3-dev] - 2026-01-21
+
+### Fixed
+- **GPU Test Safety**: Added `#[serial]` attribute to 27 GPU-related tests across 6 files
+  - Prevents GPU crashes when running tests with multiple threads
+  - All tests using GPU_FIXTURE, HipBackend, HipBuffer, or load_to_gpu now protected
+  - Files updated: embedding_to_lmhead_tests.rs, gguf_loader_tests.rs, simple_model_tests.rs, phase6_integration_model_loading.rs, attention_tests.rs, mlp_validation_tests.rs
+- **Duplicate function definitions**: Removed fallback CPU-only functions that conflicted with GPU test functions
+
+### Technical Details
+- 37 test files now use `serial_test` crate
+- 233 `#[serial]` attributes across all GPU test files
+- Pattern established: All GPU tests must have `#[serial]` to prevent parallel execution crashes
+
 ## [0.1.2-dev] - 2026-01-21
 
 ### Fixed
