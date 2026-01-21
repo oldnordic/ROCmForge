@@ -205,6 +205,16 @@ pub unsafe fn flash_attention_nocausal_gpu_kernel(
     num_heads: u32,
     head_dim: u32,
 ) -> Result<(), String> {
+    // Enforce shared memory limitation to prevent GPU page fault
+    // See Phase 33.1: https://github.com/ROCm/ROCm/issues/xxxx
+    if seq_len > 32 {
+        return Err(format!(
+            "flash_attention_nocausal requires seq_len <= 32 due to shared memory limitation (got {}). \
+             See Phase 33.1 for proper fix with dynamic shared memory.",
+            seq_len
+        ));
+    }
+
     match get_or_init_cache() {
         Ok(cache_ref) => {
             let cache = cache_ref
@@ -357,6 +367,16 @@ pub unsafe fn flash_attention_causal_gpu_kernel(
     num_heads: u32,
     head_dim: u32,
 ) -> Result<(), String> {
+    // Enforce shared memory limitation to prevent GPU page fault
+    // See Phase 33.1: https://github.com/ROCm/ROCm/issues/xxxx
+    if seq_len > 32 {
+        return Err(format!(
+            "flash_attention_causal requires seq_len <= 32 due to shared memory limitation (got {}). \
+             See Phase 33.1 for proper fix with dynamic shared memory.",
+            seq_len
+        ));
+    }
+
     match get_or_init_cache() {
         Ok(cache_ref) => {
             let cache = cache_ref
