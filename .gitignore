@@ -176,6 +176,9 @@ agents.md
 # Local test files in root (NOT pushed to repo)
 # =============================================================================
 test_inference.rs
+test_output_*.txt
+src.tar.gz
+*.tar.gz
 
 # =============================================================================
 # AI assistant configuration files (local development only)
