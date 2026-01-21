@@ -82,18 +82,18 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 4. `cargo build --release` recompiles build.rs when ROCM_PATH, HIPCC, or ROCm_ARCH environment variables change
 
 **Plans**: 12 plans (1 wave, all parallel)
-- [ ] 25-01-PLAN.md — Fix attention kernels (12 kernels) to use `option_env!()`
-- [ ] 25-02-PLAN.md — Fix sampler kernels (7 kernels) to use `option_env!()`
-- [ ] 25-03-PLAN.md — Fix MLP kernels (2 kernels) to use `option_env!()`
-- [ ] 25-04-PLAN.md — Fix quantization kernels (2 kernels) to use `option_env!()`
-- [ ] 25-05-PLAN.md — Fix fused kernels (2 kernels) to use `option_env!()`
-- [ ] 25-06-PLAN.md — Fix transpose kernel (1 kernel) to use `option_env!()`
-- [ ] 25-07-PLAN.md — Add cargo rerun directives for ROCm env vars
-- [ ] 25-08-PLAN.md — Fix Q4_0_DEQUANT_HSACO (duplicate ggml/hip_backend impl)
-- [ ] 25-09-PLAN.md — Fix Q4_K_DEQUANT_HSACO (duplicate ggml/hip_backend impl)
-- [ ] 25-10-PLAN.md — Fix Q4_0_MATMUL_HSACO (quantized matmul)
-- [ ] 25-11-PLAN.md — Fix Q4_K_MATMUL_HSACO (quantized matmul)
-- [ ] 25-12-PLAN.md — Fix Q6_K_MATMUL_HSACO (quantized matmul)
+- [x] 25-01-PLAN.md — Fix attention kernels (12 kernels) to use `option_env!()`
+- [x] 25-02-PLAN.md — Fix sampler kernels (7 kernels) to use `option_env!()`
+- [x] 25-03-PLAN.md — Fix MLP kernels (2 kernels) to use `option_env!()`
+- [x] 25-04-PLAN.md — Fix quantization kernels (2 kernels) to use `option_env!()`
+- [x] 25-05-PLAN.md — Fix fused kernels (2 kernels) to use `option_env!()`
+- [x] 25-06-PLAN.md — Fix transpose kernel (1 kernel) to use `option_env!()`
+- [x] 25-07-PLAN.md — Add cargo rerun directives for ROCm env vars
+- [x] 25-08-PLAN.md — Fix Q4_0_DEQUANT_HSACO (duplicate ggml/hip_backend impl)
+- [x] 25-09-PLAN.md — Fix Q4_K_DEQUANT_HSACO (duplicate ggml/hip_backend impl)
+- [x] 25-10-PLAN.md — Fix Q4_0_MATMUL_HSACO (quantized matmul)
+- [x] 25-11-PLAN.md — Fix Q4_K_MATMUL_HSACO (quantized matmul)
+- [x] 25-12-PLAN.md — Fix Q6_K_MATMUL_HSACO (quantized matmul)
 
 ### Phase 26: Transpose Kernel Fix
 
@@ -109,7 +109,10 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 3. Grid dimensions validated as non-zero and within maxGridSize limits before kernel launch
 4. Shared memory size (16400 bytes) verified to be under sharedMemPerBlock limit (65536 bytes)
 
-**Plans**: TBD
+**Plans**: 3 plans (2 waves)
+- [ ] 26-01-PLAN.md — Fix block dimension to (32, 32, 1) for 1024 threads (Wave 1)
+- [ ] 26-02-PLAN.md — Add validation assertions for grid/block/shared memory (Wave 2)
+- [ ] 26-03-PLAN.md — Add unit test for [896, 151936] tensor transpose (Wave 2)
 
 ### Phase 27: Device Property Infrastructure
 
@@ -180,13 +183,13 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 | 22 | v1.4 | 5/5 | Complete | 2026-01-20 |
 | 23 | v1.4 | 5/5 | Complete | 2026-01-20 |
 | 24 | v1.4 | 6/6 | Complete | 2026-01-20 |
-| 25 | v1.5 | 0/12 | Planning | - |
-| 26 | v1.5 | 0/0 | Not started | - |
+| 25 | v1.5 | 12/12 | Complete | 2026-01-21 |
+| 26 | v1.5 | 0/3 | Not started | - |
 | 27 | v1.5 | 0/0 | Not started | - |
 | 28 | v1.5 | 0/0 | Not started | - |
 | 29 | v1.5 | 0/0 | Not started | - |
 
-**Total Progress:** 168/168 plans complete (v1.0-v1.4), v1.5 planning in progress (12 plans)
+**Total Progress:** 180/183 plans complete (v1.0-v1.4 + Phase 25), v1.5 Phase 26-29 remaining
 
 **Note:** Phase 21-06 (Performance Validation) skipped by user request. All test health goals (TEST-01 through TEST-06) achieved.
 
@@ -195,12 +198,11 @@ Build a production-ready LLM inference engine for AMD GPUs that is reliable, fas
 ## Session Continuity
 
 Last session: 2026-01-21
-Stopped at: Phase 25 gap closure planning
-Resume file: 5 gap closure plans created
+Stopped at: Phase 25 execution complete
 
 **v1.5 - Env Var & Transpose Fix (2026-01-21):**
-- Phase 25: Env Var Fix (12 plans, ready for execution - 7 original + 5 gap closure)
-- Phase 26: Transpose Kernel Fix (Not started)
+- Phase 25: Env Var Fix (12/12 complete) ✓
+- Phase 26: Transpose Kernel Fix (3 plans, planning complete)
 - Phase 27: Device Property Infrastructure (Not started)
 - Phase 28: Debug Hygiene (Not started)
 - Phase 29: Validation & E2E (Not started)

@@ -168,7 +168,7 @@ impl TransposeKernel {
         let grid_x = (cols as u32 + TILE_DIM - 1) / TILE_DIM;
         let grid_y = (rows as u32 + TILE_DIM - 1) / TILE_DIM;
         let grid_dim = (grid_x, grid_y, 1);
-        let block_dim = (TILE_DIM, TILE_DIM, 1);
+        let block_dim = (32, 32, 1);
 
         // Shared memory: TILE_DIM * (TILE_DIM + 1) floats for bank conflict avoidance
         let shared_mem_bytes = TILE_DIM * (TILE_DIM + 1) * std::mem::size_of::<f32>() as u32;
