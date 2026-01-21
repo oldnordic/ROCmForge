@@ -5,13 +5,6 @@
 //! - Phase 26: Transpose kernel fix (block dims 32x32x1)
 //! - Phase 27: Device property caching (launch validation)
 //! - Phase 28: Debug hygiene (error messages)
-//!
-//! # Test Organization
-//!
-//! - `transpose`: Transpose kernel validation for actual failing tensor size
-//! - `model_loading`: E2E model loading tests
-//! - `token_generation`: Single token generation tests
-//! - `cache`: Model download/caching utilities
 
 mod cache;
 mod transpose;
