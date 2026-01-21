@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-21)
 ## Current Position
 
 Phase: 25 of 29 (Env Var Fix)
-Plan: 05 of 07
-Status: In progress
-Last activity: 2026-01-21 — Completed 25-05 (fused kernel compile-time env var fix)
+Plan: 08 of 12
+Status: Gap closure in progress
+Last activity: 2026-01-21 — Completed plan 25-08 (Q4_0_DEQUANT env var fix)
 
-Progress: [████████░░░░░░░░░░░░░] 87% (171/196 plans complete, 4/7 in phase 25)
+Progress: [████████░░░░░░░░░░░░] 87% (172/180 plans complete, 8/12 in phase 25)
 
 ## Performance Metrics
 
@@ -28,7 +28,7 @@ Progress: [████████░░░░░░░░░░░░░] 87% 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1-24 | 168 | 168 | ~42 min |
-| 25-29 | 4 | TBD | ~3 min |
+| 25-29 | 12 | TBD | ~5 min |
 
 ## Accumulated Context
 
@@ -70,14 +70,18 @@ Two critical issues block actual GGUF model inference:
 ## Session Continuity
 
 Last session: 2026-01-21
-Stopped at: Completed 25-05 (fused kernel compile-time env var fix)
-Resume file: 25-05-SUMMARY.md
+Stopped at: Completed plan 25-08 (Q4_0_DEQUANT env var fix)
+Resume file: None
 
 **v1.5 - Env Var & Transpose Fix (2026-01-21):**
-- Phase 25: Env Var Fix (5/7 complete - 25-03, 25-04, 25-05, 25-06, 25-07 done; 25-01, 25-02 remain)
+- Phase 25: Env Var Fix (8/12 plans complete)
+  - Original: 25-01 (attention), 25-02 (sampler), 25-03 (MLP), 25-04 (quant), 25-05 (fused), 25-06 (transpose), 25-07 (cargo rerun)
+  - Gap closure: 25-08 (Q4_0_DEQUANT duplicate), 25-09 (Q4_K_DEQUANT duplicate), 25-10 (Q4_0_MATMUL), 25-11 (Q4_K_MATMUL), 25-12 (Q6_K_MATMUL)
 - Phase 26: Transpose Kernel Fix (Not started)
 - Phase 27: Device Property Infrastructure (Not started)
 - Phase 28: Debug Hygiene (Not started)
 - Phase 29: Validation & E2E (Not started)
+
+**Gap Closure Status:** 1/5 gap closure plans complete (25-08 done, 25-09 through 25-12 remaining).
 
 **Coverage:** 15/15 requirements mapped to phases (100%)
