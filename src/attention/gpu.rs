@@ -50,6 +50,15 @@ impl GpuBackend {
             AttentionError::HandleCreation(format!("Failed to create HIP BLAS handle: {}", e))
         })?;
 
+        // CRITICAL: Associate hipBLAS handle with backend's stream
+        //
+        // Without this, hipBLAS uses the default stream while custom kernels use
+        // the backend's custom stream. This causes synchronization issues and hangs.
+        // See docs/STREAM_SYNCHRONIZATION.md for details.
+        handle.set_stream(backend.stream().as_ptr()).map_err(|e| {
+            AttentionError::HandleCreation(format!("Failed to set hipBLAS stream: {}", e))
+        })?;
+
         // Allocate GPU buffers
         let q_gpu = HipBuffer::new(std::mem::size_of_val(q)).map_err(|e| {
             AttentionError::MemoryAllocation(format!("Failed to allocate Q buffer: {}", e))
