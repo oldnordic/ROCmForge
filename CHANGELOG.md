@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2-dev] - 2026-01-21
+
+### Fixed
+- **multiProcessorCount Offset**: Fixed from 508 to 388 (caught by offset verification test)
+- **Reduced compiler warnings**: From 483 down to 11 (unused imports, deprecated methods, dead code)
+
+### Added
+- **Offset Verification Tests**: Compile-time tests assert manual FFI offsets match bindgen-generated values
+- **memoffset 0.9**: Added to dev-dependencies for `offset_of!` macro
+
+### Technical Details
+- All 7 device property offsets verified at compile time
+- Internal `.planning/` documentation removed from repository (kept locally for development)
+
+## [0.1.1-dev] - 2026-01-21
+
+### Fixed
+- **FFI Device Properties Bug**: Sanity check now validates ALL three dimensions (X, Y, Z) of maxThreadsDim
+  - Previously only validated dim[0], allowing garbage values like [1024, 0, 0]
+  - Fixes "block.y exceeds limit 0" errors during kernel launch
+- **Duplicate DeviceLimits Assignment**: Removed duplicate assignment that overwrote vetted device limits
+- **Incorrect multiProcessorCount Offset**: Fixed offset from 508 to 388 (caught by offset verification test)
+
+### Added
+- **Bindgen Infrastructure**: Generate HIP device bindings at compile time for offset verification
+- **Offset Verification Tests**: Compile-time tests assert manual FFI offsets match bindgen-generated values
+  - Catches struct layout changes across ROCm versions
+
+### Technical Details
+- bindgen 0.70 added to build-dependencies
+- memoffset 0.9 added to dev-dependencies for `offset_of!` macro
+- build.rs generates `hip_device_bindings.rs` with `hipDeviceProp_t` struct only
+- All 7 device property offsets verified at compile time
+
+### Test Status
+- **Lib tests**: 820 passing (up from 578)
+- **Offset verification**: All offsets verified
+- **Known warnings**: 483 compiler warnings (mostly unused, no critical issues)
+
 ## [0.1.0-dev] - 2026-01-20
 
 ### Added

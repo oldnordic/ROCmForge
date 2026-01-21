@@ -8,12 +8,12 @@ An LLM inference engine for AMD GPUs using ROCm and HIP. Loads GGUF-format model
 
 ## Current Status
 
-**Version:** 0.1.0-development
+**Version:** 0.1.2-dev
 
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Build | ✅ Working | Release builds in ~55 seconds |
-| Lib Tests | ✅ 578 passing | Unit tests for core components |
+| Lib Tests | ✅ 820 passing | Unit tests for core components |
 | GGUF Loading | ⚠️ Partial | Loads metadata, some tensor types have issues |
 | GPU Backend | ⚠️ Development | HIP kernels implemented, not all tested |
 | HTTP Server | ⚠️ Untested | Server exists, not validated in production |
@@ -23,11 +23,12 @@ An LLM inference engine for AMD GPUs using ROCm and HIP. Loads GGUF-format model
 ### Test Results (Actual)
 
 ```
-Lib tests:         578 passed
+Lib tests:         820 passed
 Integration tests: 35+ passed across multiple test files
 Known failures:    3 tests in embedding_to_lmhead_tests (metadata parsing bug)
 Known issues:      q_dequant_tests has compilation errors
                     attention_gpu_tests has compilation errors
+                    483 compiler warnings (mostly unused, no critical issues)
 ```
 
 ### What Actually Works
@@ -56,7 +57,7 @@ Based on actual testing:
    - CLI `generate` and `serve` commands not tested
    - End-to-end inference not validated with real models
 
-4. **Approximately 27 compiler warnings** (unused imports, deprecated methods)
+4. **11 compiler warnings** (unused imports, deprecated methods, dead code)
 
 ## Requirements
 
