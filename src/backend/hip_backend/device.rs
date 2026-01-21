@@ -31,6 +31,26 @@ impl HipDeviceProp {
     // This is after all the texture/surface fields - verified with C code
     const MULTI_PROCESSOR_COUNT_OFFSET: usize = 508;
 
+    // Offsets for launch limit fields (verified against hip_runtime_api.h struct layout)
+    // Based on: name[256]: 0-255 (256 bytes)
+    //           uuid: 256-271 (16 bytes)
+    //           luid[8]: 272-279 (8 bytes)
+    //           luidDeviceNodeMask: 280-283 (4 bytes)
+    //           totalGlobalMem: 284-291 (8 bytes)
+    //           sharedMemPerBlock: 292-299 (8 bytes)
+    //           regsPerBlock: 300-303 (4 bytes)
+    //           warpSize: 304-307 (4 bytes)
+    //           memPitch: 308-315 (8 bytes)
+    //           maxThreadsPerBlock: 316-319 (4 bytes)
+    //           maxThreadsDim[3]: 320-331 (12 bytes)
+    //           maxGridSize[3]: 332-343 (12 bytes)
+
+    const SHARED_MEM_PER_BLOCK_OFFSET: usize = 292;
+    const WARP_SIZE_OFFSET: usize = 304;
+    const MAX_THREADS_PER_BLOCK_OFFSET: usize = 316;
+    const MAX_THREADS_DIM_OFFSET: usize = 320;
+    const MAX_GRID_SIZE_OFFSET: usize = 332;
+
     /// Get device name (null-terminated C string)
     pub fn name(&self) -> String {
         let name_bytes = &self._buffer[Self::NAME_OFFSET..Self::NAME_OFFSET + 256];
