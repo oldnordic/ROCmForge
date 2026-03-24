@@ -419,9 +419,28 @@ pub fn dispatch_gemm(
 /// W layout: [out_dim, in_dim] row-major.
 pub fn gemv_f32(w: &[f32], x: &[f32], y: &mut [f32]) {
     let in_dim = x.len();
+
+    // AVX2 feature detection
+    #[cfg(target_arch = "x86_64")]
+    let use_avx2 =
+        is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") && in_dim % 8 == 0;
+    #[cfg(not(target_arch = "x86_64"))]
+    let use_avx2 = false;
+
     for (row, out) in y.iter_mut().enumerate() {
         let row_w = &w[row * in_dim..(row + 1) * in_dim];
-        *out = row_w.iter().zip(x.iter()).map(|(wi, xi)| wi * xi).sum();
+        *out = if use_avx2 {
+            #[cfg(target_arch = "x86_64")]
+            {
+                unsafe { dot_f32_avx2(row_w, x) }
+            }
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                row_w.iter().zip(x.iter()).map(|(wi, xi)| wi * xi).sum()
+            }
+        } else {
+            row_w.iter().zip(x.iter()).map(|(wi, xi)| wi * xi).sum()
+        };
     }
 }
 
@@ -429,6 +448,12 @@ pub fn gemv_f32(w: &[f32], x: &[f32], y: &mut [f32]) {
 pub fn gemv_q4_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
     let num_blocks = in_dim / Q4_BLOCK_ELEMS;
     let row_bytes = num_blocks * Q4_BLOCK_BYTES;
+
+    // AVX2 feature detection
+    #[cfg(target_arch = "x86_64")]
+    let use_avx2 = is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma");
+    #[cfg(not(target_arch = "x86_64"))]
+    let use_avx2 = false;
 
     for row in 0..out_dim {
         let row_w = &w[row * row_bytes..(row + 1) * row_bytes];
@@ -440,10 +465,25 @@ pub fn gemv_q4_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
             let qs = &block[2..18];
             let xb = &x[b * Q4_BLOCK_ELEMS..];
 
-            for i in 0..16 {
-                let lo = (((qs[i] & 0x0F) as i32) - 8) as f32 * scale;
-                let hi = (((qs[i] >> 4) as i32) - 8) as f32 * scale;
-                acc += lo * xb[i] + hi * xb[i + 16];
+            if use_avx2 {
+                #[cfg(target_arch = "x86_64")]
+                {
+                    acc += unsafe { dot_q4_0_block_avx2(qs, xb, scale) };
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                {
+                    for i in 0..16 {
+                        let q_lo = (((qs[i] & 0x0F) as i32) - 8) as f32 * scale;
+                        let q_hi = (((qs[i] >> 4) as i32) - 8) as f32 * scale;
+                        acc += q_lo * xb[i] + q_hi * xb[i + 16];
+                    }
+                }
+            } else {
+                for i in 0..16 {
+                    let q_lo = (((qs[i] & 0x0F) as i32) - 8) as f32 * scale;
+                    let q_hi = (((qs[i] >> 4) as i32) - 8) as f32 * scale;
+                    acc += q_lo * xb[i] + q_hi * xb[i + 16];
+                }
             }
         }
         y[row] = acc;
