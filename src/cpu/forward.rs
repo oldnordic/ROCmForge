@@ -219,6 +219,33 @@ pub fn cpu_full_forward(
     Ok(())
 }
 
+// ── Token embedding ──────────────────────────────────────────────────────────────
+
+/// Embed a single token into hidden state.
+///
+/// Looks up the token embedding and stores it in `hidden`.
+/// Dispatches based on embedding quantization type (F32, Q4_0, etc.)
+pub fn cpu_embed_token(
+    token_id: u32,
+    weights: &CpuModelWeights,
+    hidden: &mut [f32],
+    config: &ModelConfig,
+) {
+    let h = config.hidden_size;
+    match weights.token_emb_type {
+        GgmlType::F32 => {
+            let emb: &[f32] = unsafe {
+                std::slice::from_raw_parts(weights.token_emb.as_ptr() as *const f32, weights.token_emb.len() / 4)
+            };
+            super::quant::embed_f32(token_id as usize, emb, &mut hidden[..h]);
+        }
+        GgmlType::Q4_0 => {
+            super::quant::embed_q4_0(token_id as usize, &weights.token_emb, &mut hidden[..h], h);
+        }
+        _ => panic!("Unsupported embedding type: {:?}", weights.token_emb_type),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
