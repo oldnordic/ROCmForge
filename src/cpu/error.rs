@@ -1,5 +1,7 @@
 //! Weight loading errors.
 
+use crate::loader::LoadError;
+
 #[derive(Debug)]
 pub enum WeightError {
     TensorNotFound(String),
