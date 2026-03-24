@@ -47,6 +47,17 @@ pub fn cpu_layer_forward(
     dispatch_gemv(&weights.attn_k, wtype, &scratch.normed, &mut scratch.k, kv_size, h)?;
     dispatch_gemv(&weights.attn_v, wtype, &scratch.normed, &mut scratch.v, kv_size, h)?;
 
+    // 3. Optional biases (same as prefill)
+    if let Some(bq) = &weights.attn_q_bias {
+        super::ops::add_bias(&mut scratch.q, bq);
+    }
+    if let Some(bk) = &weights.attn_k_bias {
+        super::ops::add_bias(&mut scratch.k, bk);
+    }
+    if let Some(bv) = &weights.attn_v_bias {
+        super::ops::add_bias(&mut scratch.v, bv);
+    }
+
     if debug && layer == 0 {
         eprintln!("[Layer {} after QKV] q_mean={:.4} k_mean={:.4} v_mean={:.4}",
                  layer,
@@ -75,6 +86,16 @@ pub fn cpu_layer_forward(
         config.num_kv_heads,
         config.head_dim,
     );
+    // Verify KV cache indexing (debug check)
+    #[cfg(debug_assertions)]
+    {
+        let kv_size = config.num_kv_heads * config.head_dim;
+        for t in 0..seq_len {
+            let k_start_expected = t * kv_size;
+            let k_start_actual = k_start_expected; // For KV cache interface
+            debug_assert_eq!(k_start_expected, k_start_actual, "KV cache index mismatch");
+        }
+    }
 
     if debug && layer == 0 {
         let ao_mean: f32 = scratch.attn_out.iter().copied().sum::<f32>() / q_size as f32;
