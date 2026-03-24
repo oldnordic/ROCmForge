@@ -10,6 +10,10 @@ use half::f16;
 pub const Q4_BLOCK_ELEMS: usize = 32;
 pub const Q4_BLOCK_BYTES: usize = 18;
 
+/// Q4_1: 32 elements per block, 20 bytes (2 scale + 2 min + 16 nibbles)
+pub const Q4_1_BLOCK_ELEMS: usize = 32;
+pub const Q4_1_BLOCK_BYTES: usize = 20;
+
 /// Q8_0: 32 elements per block, 34 bytes (2 scale + 32 int8)
 pub const Q8_BLOCK_ELEMS: usize = 32;
 pub const Q8_BLOCK_BYTES: usize = 34;
@@ -80,6 +84,40 @@ pub fn embed_q4_0_batch(ids: &[u32], emb: &[u8], out: &mut [f32], hidden_size: u
     for (s, &id) in ids.iter().enumerate() {
         let or = &mut out[s * hidden_size..(s + 1) * hidden_size];
         embed_q4_0(id as usize, emb, or, hidden_size);
+    }
+}
+
+/// Dequantize Q4_1 embedding row: out = dequant(emb[token_id])
+///
+/// Q4_1 block: [f16 scale | f16 min | 16 bytes of 4-bit pairs] = 20 bytes for 32 values
+/// Values are in range [min, min + 15*scale]
+pub fn embed_q4_1(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usize) {
+    let num_blocks = hidden_size / Q4_1_BLOCK_ELEMS;
+    let row_offset = token_id * num_blocks * Q4_1_BLOCK_BYTES;
+
+    for b in 0..num_blocks {
+        let block = &emb[row_offset + b * Q4_1_BLOCK_BYTES..row_offset + (b + 1) * Q4_1_BLOCK_BYTES];
+        let scale = load_f16_scale(&block[0..2]);
+        let min = load_f16_scale(&block[2..4]);
+        let qs = &block[4..20];
+        let base = b * Q4_1_BLOCK_ELEMS;
+
+        // Each byte holds two 4-bit values: lo nibble and hi nibble
+        for i in 0..16 {
+            // lo nibble -> element i, hi nibble -> element i+16
+            let lo = (qs[i] & 0x0F) as f32; // 0 to 15
+            let hi = (qs[i] >> 4) as f32;
+            out[base + i] = lo * scale + min;
+            out[base + i + 16] = hi * scale + min;
+        }
+    }
+}
+
+/// Batch embed from Q4_1
+pub fn embed_q4_1_batch(ids: &[u32], emb: &[u8], out: &mut [f32], hidden_size: usize) {
+    for (s, &id) in ids.iter().enumerate() {
+        let or = &mut out[s * hidden_size..(s + 1) * hidden_size];
+        embed_q4_1(id as usize, emb, or, hidden_size);
     }
 }
 

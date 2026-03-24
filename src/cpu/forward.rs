@@ -295,6 +295,9 @@ pub fn cpu_embed_token(
         GgmlType::Q4_0 => {
             super::quant::embed_q4_0(token_id as usize, &weights.token_emb, &mut hidden[..h], h);
         }
+        GgmlType::Q4_1 => {
+            super::quant::embed_q4_1(token_id as usize, &weights.token_emb, &mut hidden[..h], h);
+        }
         GgmlType::Q8_0 => {
             super::quant::embed_q8_0(token_id as usize, &weights.token_emb, &mut hidden[..h], h);
         }

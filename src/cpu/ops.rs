@@ -8,7 +8,7 @@
 //! - Softmax and sampling utilities
 
 use rayon::prelude::*;
-use crate::cpu::quant::{Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS, Q8_BLOCK_BYTES, Q8_BLOCK_ELEMS, Q8_0_MAX, load_f16_scale};
+use crate::cpu::quant::{Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS, Q4_1_BLOCK_BYTES, Q4_1_BLOCK_ELEMS, Q8_BLOCK_BYTES, Q8_BLOCK_ELEMS, Q8_0_MAX, load_f16_scale};
 use crate::loader::GgmlType;
 
 // For runtime CPU feature detection
@@ -556,6 +556,54 @@ pub fn gemv_q4_0_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim
     });
 }
 
+/// Q4_1 × Q8_0 GEMV: quantize input to Q8_0 once, then integer dot product.
+///
+/// Q4_1 block format: [f16 scale | f16 min | 16 nibble bytes] = 20 bytes
+/// Values are in range [min, min + 15*scale]
+pub fn gemv_q4_1_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    let num_blocks = in_dim / Q4_1_BLOCK_ELEMS;
+    let row_bytes = num_blocks * Q4_1_BLOCK_BYTES;
+
+    // Quantize input to Q8_0 once (per call, not per row)
+    let mut x_q8 = vec![0u8; num_blocks * Q8_BLOCK_BYTES];
+    quantize_q8_0_single(x, &mut x_q8, in_dim);
+
+    #[cfg(target_arch = "x86_64")]
+    let use_avx2 = is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma");
+    #[cfg(not(target_arch = "x86_64"))]
+    let use_avx2 = false;
+
+    y.par_iter_mut().enumerate().for_each(|(row, out)| {
+        let row_w = &w[row * row_bytes..(row + 1) * row_bytes];
+        let mut acc = 0.0f32;
+        for b in 0..num_blocks {
+            let block = &row_w[b * Q4_1_BLOCK_BYTES..];
+            let w_scale = load_f16_scale(&block[0..2]);
+            let w_min = load_f16_scale(&block[2..4]);
+            let x_scale = load_f16_scale(&x_q8[b * Q8_BLOCK_BYTES..][0..2]);
+            // Q4_1 has min offset, Q8_0 is symmetric around 0
+            // Combined: (q4 * w_scale + w_min) * q8 * x_scale = q4 * q8 * w_scale * x_scale + w_min * q8 * x_scale
+            let combined_scale = w_scale * x_scale;
+            let qs = &block[4..20];
+            let q8 = &x_q8[b * Q8_BLOCK_BYTES + 2..][..Q8_BLOCK_ELEMS];
+            if use_avx2 {
+                #[cfg(target_arch = "x86_64")]
+                {
+                    acc += unsafe { dot_q4_1_q8_0_block_avx2(qs, q8, combined_scale, w_min * x_scale) };
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                {
+                    acc += dot_q4_1_q8_0_block_scalar(qs, q8, combined_scale, w_min * x_scale);
+                }
+            } else {
+                acc += dot_q4_1_q8_0_block_scalar(qs, q8, combined_scale, w_min * x_scale);
+            }
+        }
+        *out = acc;
+    });
+    let _ = out_dim;
+}
+
 /// Q8_0 GEMV: dequant on-the-fly.
 pub fn gemv_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
     let num_blocks = in_dim / Q8_BLOCK_ELEMS;
@@ -598,6 +646,7 @@ pub fn dispatch_gemv(
             gemv_f32(wf, x, y);
         }
         GgmlType::Q4_0 => gemv_q4_0_q8_0(w, x, y, out_dim, in_dim),
+        GgmlType::Q4_1 => gemv_q4_1_q8_0(w, x, y, out_dim, in_dim),
         GgmlType::Q8_0 => gemv_q8_0(w, x, y, out_dim, in_dim),
         other => return Err(super::CpuError::UnsupportedWeightType(other)),
     }
@@ -812,6 +861,96 @@ pub unsafe fn dot_q4_0_q8_0_block_avx2(qs: &[u8], q8: &[u8], scale: f32) -> f32 
     let dotf = mul_sum_q4_0_q8_0_block_avx2_unscaled(q4, q8);
     let scaled = _mm256_mul_ps(dotf, _mm256_set1_ps(scale));
     hsum_avx2(scaled)
+}
+
+// ── Q4_1 × Q8_0 kernels ─────────────────────────────────────────────────────────────
+
+/// Unpack Q4_1 nibbles to i8 values in __m256i.
+///
+/// Input: 16 bytes, each containing 2 nibbles (32 values total).
+/// Output: __m256i with 32 i8 values, each = nibble (range 0-15, not centered).
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+unsafe fn unpack_q4_1_nibbles_avx2(qs: &[u8]) -> std::arch::x86_64::__m256i {
+    use std::arch::x86_64::*;
+
+    debug_assert_eq!(
+        qs.len(),
+        16,
+        "unpack_q4_1_nibbles_avx2: qs must be 16 bytes"
+    );
+
+    let raw = _mm_loadu_si128(qs.as_ptr() as *const __m128i);
+    let lo_mask = _mm_set1_epi8(0x0F_u8 as i8);
+    let lo = _mm_and_si128(raw, lo_mask);
+    let hi = _mm_and_si128(_mm_srli_epi16(raw, 4), lo_mask);
+    let q4 = _mm256_inserti128_si256(_mm256_castsi128_si256(lo), hi, 1);
+    q4
+}
+
+/// Multiply-sum Q4_1 × Q8_0 block (unscaled).
+///
+/// Computes sum(q4[i] * q8[i]) for 32-element blocks.
+/// Returns __m256 with one i32 result per 8-element group.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+unsafe fn mul_sum_q4_1_q8_0_block_avx2_unscaled(
+    q4: std::arch::x86_64::__m256i,
+    q8: &[u8],
+) -> std::arch::x86_64::__m256 {
+    use std::arch::x86_64::*;
+
+    let q8v = _mm256_loadu_si256(q8.as_ptr() as *const __m256i);
+    let dot16 = _mm256_maddubs_epi16(q4, q8v); // q4 is unsigned (0-15)
+    let ones = _mm256_set1_epi16(1);
+    let dot32 = _mm256_madd_epi16(ones, dot16);
+    _mm256_cvtepi32_ps(dot32)
+}
+
+/// AVX2 Q4_1 × Q8_0 block dot product — one 32-element block.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+pub unsafe fn dot_q4_1_q8_0_block_avx2(qs: &[u8], q8: &[u8], scale: f32, min_offset: f32) -> f32 {
+    use std::arch::x86_64::*;
+
+    debug_assert_eq!(
+        qs.len(),
+        16,
+        "dot_q4_1_q8_0_block_avx2: qs must be 16 bytes"
+    );
+    debug_assert_eq!(
+        q8.len(),
+        Q8_BLOCK_ELEMS,
+        "dot_q4_1_q8_0_block_avx2: q8 must have 32 elements"
+    );
+
+    let q4 = unpack_q4_1_nibbles_avx2(qs);
+    let dotf = mul_sum_q4_1_q8_0_block_avx2_unscaled(q4, q8);
+    let scaled = _mm256_mul_ps(dotf, _mm256_set1_ps(scale));
+    hsum_avx2(scaled) + min_offset * (Q8_BLOCK_ELEMS as f32)
+}
+
+/// Scalar Q4_1 × Q8_0 block dot product — one 32-element block.
+fn dot_q4_1_q8_0_block_scalar(qs: &[u8], q8: &[u8], scale: f32, min_offset: f32) -> f32 {
+    debug_assert_eq!(
+        qs.len(),
+        16,
+        "dot_q4_1_q8_0_block_scalar: qs must be 16 bytes"
+    );
+    debug_assert_eq!(
+        q8.len(),
+        Q8_BLOCK_ELEMS,
+        "dot_q4_1_q8_0_block_scalar: q8 must have 32 elements"
+    );
+    let mut acc = 0i32;
+    for i in 0..16 {
+        let q_lo = (qs[i] & 0x0F) as i32; // 0 to 15
+        let q_hi = (qs[i] >> 4) as i32;
+        let x_lo = q8[i] as i8 as i32;
+        let x_hi = q8[i + 16] as i8 as i32;
+        acc += q_lo * x_lo + q_hi * x_hi;
+    }
+    (acc as f32) * scale + min_offset * (Q8_BLOCK_ELEMS as f32)
 }
 
 /// Scalar Q4_0 × Q8_0 block dot product — one 32-element block.
