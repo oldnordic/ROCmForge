@@ -99,7 +99,7 @@ fn parse_args() -> Args {
 
     Args {
         model: model.unwrap_or_else(|| usage()),
-        prompt: prompt.unwrap_or_else(|| usage()),
+        prompt: prompt.unwrap_or_default(),
         max_tokens,
         temperature,
         top_p,
