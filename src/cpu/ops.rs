@@ -9,6 +9,10 @@
 
 use rayon::prelude::*;
 
+// For runtime CPU feature detection
+#[cfg(target_arch = "x86_64")]
+use std::arch::x86_64::*;
+
 // ── Normalization ────────────────────────────────────────────────────────────────
 
 /// RMS normalization: out[i] = x[i] / rms(x) * w[i]
@@ -494,6 +498,187 @@ pub fn dispatch_gemv(
     Ok(())
 }
 
+// ── AVX2 kernels ─────────────────────────────────────────────────────────────
+
+/// Horizontal sum of __m256 register.
+///
+/// Folds 8-lane f32 vector to scalar sum using SSE instructions.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+unsafe fn hsum_avx2(v: std::arch::x86_64::__m256) -> f32 {
+    use std::arch::x86_64::*;
+    // Fold top 4 lanes into bottom 4
+    let hi = _mm256_extractf128_ps(v, 1);
+    let lo = _mm256_castps256_ps128(v);
+    let sum4 = _mm_add_ps(lo, hi);
+    // Fold top 2 into bottom 2
+    let shuf = _mm_movehdup_ps(sum4);
+    let sum2 = _mm_add_ps(sum4, shuf);
+    // Fold top 1 into bottom 1
+    let sum1 = _mm_add_ss(sum2, _mm_movehl_ps(sum2, sum2));
+    _mm_cvtss_f32(sum1)
+}
+
+/// Unpack Q4_0 nibbles to i8 values in __m256i.
+///
+/// Input: 16 bytes, each containing 2 nibbles (32 values total).
+/// Output: __m256i with 32 i8 values, each = nibble - 8.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+unsafe fn unpack_q4_0_nibbles_avx2(qs: &[u8]) -> std::arch::x86_64::__m256i {
+    use std::arch::x86_64::*;
+
+    debug_assert_eq!(
+        qs.len(),
+        16,
+        "unpack_q4_0_nibbles_avx2: qs must be 16 bytes"
+    );
+
+    let raw = _mm_loadu_si128(qs.as_ptr() as *const __m128i);
+    let lo_mask = _mm_set1_epi8(0x0F_u8 as i8);
+    let lo = _mm_and_si128(raw, lo_mask);
+    let hi = _mm_and_si128(_mm_srli_epi16(raw, 4), lo_mask);
+    let q4 = _mm256_inserti128_si256(_mm256_castsi128_si256(lo), hi, 1);
+    _mm256_sub_epi8(q4, _mm256_set1_epi8(8))
+}
+
+/// Multiply-sum Q4_0 × Q8_0 block (unscaled).
+///
+/// Computes sum(q4[i] * q8[i]) for 32-element blocks.
+/// Returns __m256 with one i32 result per 8-element group.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+unsafe fn mul_sum_q4_0_q8_0_block_avx2_unscaled(
+    q4: std::arch::x86_64::__m256i,
+    q8: &[u8],
+) -> std::arch::x86_64::__m256 {
+    use std::arch::x86_64::*;
+
+    debug_assert_eq!(
+        q8.len(),
+        Q8_BLOCK_ELEMS,
+        "mul_sum_q4_0_q8_0_block_avx2_unscaled: q8 must have 32 elements"
+    );
+
+    let q8v = _mm256_loadu_si256(q8.as_ptr() as *const __m256i);
+    let q4_abs = _mm256_sign_epi8(q4, q4);
+    let q8_signed = _mm256_sign_epi8(q8v, q4);
+    let dot16 = _mm256_maddubs_epi16(q4_abs, q8_signed);
+    let ones = _mm256_set1_epi16(1);
+    let dot32 = _mm256_madd_epi16(ones, dot16);
+    _mm256_cvtepi32_ps(dot32)
+}
+
+/// AVX2+FMA dot product: sum(a[i] * b[i]) for f32 slices.
+///
+/// `a` and `b` must have the same length, which must be a multiple of 8.
+/// Caller must ensure AVX2+FMA are available (checked via is_x86_feature_detected!).
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+pub unsafe fn dot_f32_avx2(a: &[f32], b: &[f32]) -> f32 {
+    use std::arch::x86_64::*;
+    let n = a.len();
+    debug_assert_eq!(
+        a.len(),
+        b.len(),
+        "dot_f32_avx2: a and b must have the same length"
+    );
+    debug_assert_eq!(n % 8, 0, "dot_f32_avx2: length must be multiple of 8");
+
+    let mut acc = _mm256_setzero_ps();
+    let mut i = 0;
+    while i + 8 <= n {
+        let va = _mm256_loadu_ps(a.as_ptr().add(i));
+        let vb = _mm256_loadu_ps(b.as_ptr().add(i));
+        acc = _mm256_fmadd_ps(va, vb, acc);
+        i += 8;
+    }
+    hsum_avx2(acc)
+}
+
+/// AVX2 Q4_0 block dot product — processes one 32-element block in 4 FMA ops.
+///
+/// Layout: qs[i] contains lo nibble (→ x[i]) and hi nibble (→ x[i+16])
+/// Dequant: (nibble - 8) * scale
+///
+/// `qs` must be exactly 16 bytes. `xb` must be at least 32 floats.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+pub unsafe fn dot_q4_0_block_avx2(qs: &[u8], xb: &[f32], scale: f32) -> f32 {
+    use std::arch::x86_64::*;
+
+    debug_assert_eq!(qs.len(), 16, "dot_q4_0_block_avx2: qs must be 16 bytes");
+    debug_assert!(
+        xb.len() >= 32,
+        "dot_q4_0_block_avx2: xb must have at least 32 elements"
+    );
+
+    // Load 16 nibble bytes into a 128-bit register
+    let raw = _mm_loadu_si128(qs.as_ptr() as *const __m128i);
+
+    // Extract lo nibbles (bits 0..3): AND with 0x0F
+    let lo_mask = _mm_set1_epi8(0x0F_u8 as i8);
+    let lo_bytes = _mm_and_si128(raw, lo_mask);
+
+    // Extract hi nibbles (bits 4..7): shift right 4 then mask
+    let hi_bytes = _mm_and_si128(_mm_srli_epi16(raw, 4), lo_mask);
+
+    // Subtract 8 from each nibble (as i8) to get signed values -8..7
+    let eight = _mm_set1_epi8(8i8);
+    let lo_signed = _mm_sub_epi8(lo_bytes, eight);
+    let hi_signed = _mm_sub_epi8(hi_bytes, eight);
+
+    let scale_v = _mm256_set1_ps(scale);
+    let mut acc = _mm256_setzero_ps();
+
+    // lo elements 0..8 dot x[0..8]
+    let lo_f0 = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(lo_signed));
+    let x0 = _mm256_loadu_ps(xb.as_ptr());
+    acc = _mm256_fmadd_ps(_mm256_mul_ps(lo_f0, scale_v), x0, acc);
+
+    // lo elements 8..16 dot x[8..16]
+    let lo_shifted = _mm_bsrli_si128(lo_signed, 8);
+    let lo_f1 = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(lo_shifted));
+    let x1 = _mm256_loadu_ps(xb.as_ptr().add(8));
+    acc = _mm256_fmadd_ps(_mm256_mul_ps(lo_f1, scale_v), x1, acc);
+
+    // hi elements 0..8 dot x[16..24]
+    let hi_f0 = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(hi_signed));
+    let x2 = _mm256_loadu_ps(xb.as_ptr().add(16));
+    acc = _mm256_fmadd_ps(_mm256_mul_ps(hi_f0, scale_v), x2, acc);
+
+    // hi elements 8..16 dot x[24..32]
+    let hi_shifted = _mm_bsrli_si128(hi_signed, 8);
+    let hi_f1 = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(hi_shifted));
+    let x3 = _mm256_loadu_ps(xb.as_ptr().add(24));
+    acc = _mm256_fmadd_ps(_mm256_mul_ps(hi_f1, scale_v), x3, acc);
+
+    hsum_avx2(acc)
+}
+
+/// AVX2 Q4_0 × Q8_0 block dot product — one 32-element block.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+pub unsafe fn dot_q4_0_q8_0_block_avx2(qs: &[u8], q8: &[u8], scale: f32) -> f32 {
+    use std::arch::x86_64::*;
+
+    debug_assert_eq!(
+        qs.len(),
+        16,
+        "dot_q4_0_q8_0_block_avx2: qs must be 16 bytes"
+    );
+    debug_assert_eq!(
+        q8.len(),
+        Q8_BLOCK_ELEMS,
+        "dot_q4_0_q8_0_block_avx2: q8 must have 32 elements"
+    );
+
+    let q4 = unpack_q4_0_nibbles_avx2(qs);
+    let dotf = mul_sum_q4_0_q8_0_block_avx2_unscaled(q4, q8);
+    let scaled = _mm256_mul_ps(dotf, _mm256_set1_ps(scale));
+    hsum_avx2(scaled)
+}
+
 // ── Sampling utilities ──────────────────────────────────────────────────────────
 
 /// Find index of maximum value.
@@ -722,5 +907,114 @@ mod tests {
         for (i, &yi) in y.iter().enumerate() {
             assert!((yi - 0.0_f32).abs() < 1e-5, "y[{}] = {}, expected 0", i, yi);
         }
+    }
+
+    // ── AVX2 tests ───────────────────────────────────────────────────────────────
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn avx2_q4_0_block_matches_scalar() {
+        if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
+            return; // Skip if AVX2+FMA not available
+        }
+
+        // Create Q4_0 block: scale=1.0, all nibbles = 9 (→ value = 1)
+        let mut qs = [0u8; 16];
+        qs[0] = 0x00;
+        qs[1] = 0x3C; // f16 1.0
+        for i in 2..18 {
+            qs[i] = 0x99; // nibble 9 for both lo and hi
+        }
+
+        // Input: all 1.0
+        let xb: Vec<f32> = (0..32).map(|_| 1.0).collect();
+        let scale = 1.0;
+
+        // Scalar reference
+        let mut scalar_acc = 0.0f32;
+        for i in 0..16 {
+            let lo = (((qs[i] & 0x0F) as i32) - 8) as f32 * scale;
+            let hi = (((qs[i] >> 4) as i32) - 8) as f32 * scale;
+            scalar_acc += lo * xb[i] + hi * xb[i + 16];
+        }
+
+        // AVX2 implementation
+        let avx2_acc = unsafe { dot_q4_0_block_avx2(&qs, &xb, scale) };
+        let rel_err = (scalar_acc - avx2_acc).abs() / scalar_acc.abs().max(1e-9);
+
+        assert!(
+            rel_err < 1e-6,
+            "rel error {rel_err}: scalar={scalar_acc}, avx2={avx2_acc}"
+        );
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn avx2_q4_0_q8_0_block_matches_scalar() {
+        if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
+            return;
+        }
+
+        // Q4_0: all nibbles = 9 (→ value = 1), scale=1.0
+        let mut qs = [0u8; 16];
+        qs[0] = 0x00;
+        qs[1] = 0x3C; // f16 1.0
+        for i in 2..18 {
+            qs[i] = 0x99;
+        }
+
+        // Q8_0: all bytes = 1 (→ value = 1 * scale), scale=1.0
+        let mut q8 = [0u8; 34];
+        q8[0] = 0x00;
+        q8[1] = 0x3C; // f16 1.0
+        for i in 2..34 {
+            q8[i] = 1u8;
+        }
+
+        let scale = 1.0;
+
+        // Scalar reference
+        let mut scalar_acc = 0.0f32;
+        for i in 0..16 {
+            let q4_lo = (((qs[i] & 0x0F) as i32) - 8) as f32;
+            let q4_hi = (((qs[i] >> 4) as i32) - 8) as f32;
+            let q8_lo = (q8[i] as i8) as f32;
+            let q8_hi = (q8[i + 16] as i8) as f32;
+            scalar_acc += q4_lo * q8_lo + q4_hi * q8_hi;
+        }
+        scalar_acc *= scale;
+
+        // AVX2 implementation
+        let avx2_acc = unsafe { dot_q4_0_q8_0_block_avx2(&qs, &q8, scale) };
+        let rel_err = (scalar_acc - avx2_acc).abs() / scalar_acc.abs().max(1e-9);
+
+        assert!(
+            rel_err < 1e-6,
+            "rel error {rel_err}: scalar={scalar_acc}, avx2={avx2_acc}"
+        );
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn avx2_dot_f32_matches_scalar() {
+        if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
+            return;
+        }
+
+        // Test with 8-element vectors (minimum for AVX2)
+        let a: Vec<f32> = (0..8).map(|i| i as f32 + 1.0).collect();
+        let b: Vec<f32> = (0..8).map(|i| (i as f32 + 1.0) * 2.0).collect();
+
+        // Scalar reference
+        let scalar: f32 = a.iter().zip(b.iter()).map(|(ai, bi)| ai * bi).sum();
+
+        // AVX2 implementation
+        let avx2 = unsafe { dot_f32_avx2(&a, &b) };
+        let rel_err = (scalar - avx2).abs() / scalar.abs().max(1e-9);
+
+        assert!(
+            rel_err < 1e-6,
+            "rel error {rel_err} too large: scalar={scalar}, avx2={avx2}"
+        );
     }
 }
