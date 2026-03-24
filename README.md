@@ -68,7 +68,7 @@ rocmforge --model path/to/model.gguf --list-tensors
 
 ## License
 
-GPL-3.0-or-later
+GPL-3.0
 
 See [LICENSE](LICENSE) for details.
 
