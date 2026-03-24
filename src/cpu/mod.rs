@@ -18,6 +18,7 @@ pub mod error;
 pub mod weights;
 pub mod cache;
 pub mod ops;
+pub mod quant;
 pub mod forward;
 pub mod prefill;
 pub mod sampler;
