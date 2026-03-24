@@ -14,6 +14,10 @@ pub const Q4_BLOCK_BYTES: usize = 18;
 pub const Q4_1_BLOCK_ELEMS: usize = 32;
 pub const Q4_1_BLOCK_BYTES: usize = 20;
 
+/// Q6_K: 256 elements per block, 210 bytes (128 ql + 64 qh + 16 scales + 2 d)
+pub const Q6_K_BLOCK_ELEMS: usize = 256;
+pub const Q6_K_BLOCK_BYTES: usize = 210;
+
 /// Q8_0: 32 elements per block, 34 bytes (2 scale + 32 int8)
 pub const Q8_BLOCK_ELEMS: usize = 32;
 pub const Q8_BLOCK_BYTES: usize = 34;
@@ -118,6 +122,43 @@ pub fn embed_q4_1_batch(ids: &[u32], emb: &[u8], out: &mut [f32], hidden_size: u
     for (s, &id) in ids.iter().enumerate() {
         let or = &mut out[s * hidden_size..(s + 1) * hidden_size];
         embed_q4_1(id as usize, emb, or, hidden_size);
+    }
+}
+
+/// Dequantize Q6_K embedding row: out = dequant(emb[token_id])
+///
+/// Q6_K block: [128 ql | 64 qh | 16 scales | 2 f16 d] = 210 bytes for 256 values
+/// Uses 2-bit quantization with multiple scales per block.
+pub fn embed_q6_k(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usize) {
+    let num_blocks = hidden_size / Q6_K_BLOCK_ELEMS;
+    let row_offset = token_id * num_blocks * Q6_K_BLOCK_BYTES;
+
+    for b in 0..num_blocks {
+        let block = &emb[row_offset + b * Q6_K_BLOCK_BYTES..row_offset + (b + 1) * Q6_K_BLOCK_BYTES];
+        let d = load_f16_scale(&block[0..2]);
+        let ql = &block[2..130]; // 128 bytes
+        let qh = &block[130..194]; // 64 bytes
+        let scales = &block[194..210]; // 16 bytes
+        let base = b * Q6_K_BLOCK_ELEMS;
+
+        // Process 128 values at a time
+        for g in 0..2 {
+            let offset = g * 128;
+            for l in 0..32 {
+                let is = l / 16;
+                let q1 = i32::from(((ql[l + offset] & 0xF) | (((qh[l] >> (is * 2)) & 3) << 4)) as i8) - 32;
+                let q2 = i32::from(((ql[l + 32 + offset] & 0xF) | (((qh[l] >> (is * 2 + 2)) & 3) << 4)) as i8) - 32;
+                let q3 = i32::from((((ql[l + offset] >> 4) & 0xF) | (((qh[l] >> (is * 2 + 4)) & 3) << 4)) as i8) - 32;
+                let q4 = i32::from((((ql[l + 32 + offset] >> 4) & 0xF) | (((qh[l] >> (is * 2 + 6)) & 3) << 4)) as i8) - 32;
+
+                let sc = scales[is * 4 + (l / 8)] as i8;
+
+                out[base + l + offset] = d * (sc as f32) * (q1 as f32);
+                out[base + l + 32 + offset] = d * (sc as f32) * (q2 as f32);
+                out[base + l + 64 + offset] = d * (sc as f32) * (q3 as f32);
+                out[base + l + 96 + offset] = d * (sc as f32) * (q4 as f32);
+            }
+        }
     }
 }
 

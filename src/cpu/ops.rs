@@ -8,7 +8,7 @@
 //! - Softmax and sampling utilities
 
 use rayon::prelude::*;
-use crate::cpu::quant::{Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS, Q4_1_BLOCK_BYTES, Q4_1_BLOCK_ELEMS, Q8_BLOCK_BYTES, Q8_BLOCK_ELEMS, Q8_0_MAX, load_f16_scale};
+use crate::cpu::quant::{Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS, Q4_1_BLOCK_BYTES, Q4_1_BLOCK_ELEMS, Q6_K_BLOCK_BYTES, Q6_K_BLOCK_ELEMS, Q8_BLOCK_BYTES, Q8_BLOCK_ELEMS, Q8_0_MAX, load_f16_scale};
 use crate::loader::GgmlType;
 
 // For runtime CPU feature detection
@@ -627,6 +627,53 @@ pub fn gemv_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
     });
 }
 
+/// Q6_K GEMV: dequantize on-the-fly.
+///
+/// Q6_K uses 2-bit quantization with multiple scales per block.
+/// Block format: [128 ql | 64 qh | 16 scales | 2 f16 d] = 210 bytes for 256 values
+/// - ql: lower 4 bits of each 2-bit quant
+/// - qh: upper 2 bits of each 2-bit quant
+/// - scales: quantized scales (8-bit) for 16 sub-blocks of 16 values
+/// - d: super-block scale (f16)
+pub fn gemv_q6_k(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    let num_blocks = in_dim / Q6_K_BLOCK_ELEMS;
+    let row_bytes = num_blocks * Q6_K_BLOCK_BYTES;
+
+    y.par_iter_mut().enumerate().for_each(|(row, out)| {
+        let row_w = &w[row * row_bytes..(row + 1) * row_bytes];
+        let mut acc = 0.0f32;
+        for b in 0..num_blocks {
+            let block = &row_w[b * Q6_K_BLOCK_BYTES..];
+            let d = load_f16_scale(&block[0..2]);
+            let ql = &block[2..130]; // 128 bytes of lower 4 bits
+            let qh = &block[130..194]; // 64 bytes of upper 2 bits
+            let scales = &block[194..210]; // 16 bytes of scales
+            let xb = &x[b * Q6_K_BLOCK_ELEMS..];
+
+            // Process 128 values at a time (2 groups per block)
+            for g in 0..2 {
+                for l in 0..32 {
+                    // Reconstruct 2-bit quant values (0-3 range)
+                    let is = l / 16; // scale index (0 or 1)
+                    let q1 = i32::from(((ql[l] & 0xF) | (((qh[l] >> (is * 2)) & 3) << 4)) as i8) - 32;
+                    let q2 = i32::from(((ql[l + 32] & 0xF) | (((qh[l] >> (is * 2 + 2)) & 3) << 4)) as i8) - 32;
+                    let q3 = i32::from((((ql[l] >> 4) & 0xF) | (((qh[l] >> (is * 2 + 4)) & 3) << 4)) as i8) - 32;
+                    let q4 = i32::from((((ql[l + 32] >> 4) & 0xF) | (((qh[l] >> (is * 2 + 6)) & 3) << 4)) as i8) - 32;
+
+                    // Get scale for this group
+                    let sc = scales[is * 4 + (l / 8)] as i8;
+
+                    acc += d * (sc as f32) * (q1 as f32) * xb[g * 128 + l];
+                    acc += d * (sc as f32) * (q2 as f32) * xb[g * 128 + l + 32];
+                    acc += d * (sc as f32) * (q3 as f32) * xb[g * 128 + l + 64];
+                    acc += d * (sc as f32) * (q4 as f32) * xb[g * 128 + l + 96];
+                }
+            }
+        }
+        *out = acc;
+    });
+}
+
 /// Dispatch GEMV based on weight type.
 ///
 /// Computes: y = W * x (matrix-vector multiply)
@@ -647,6 +694,7 @@ pub fn dispatch_gemv(
         }
         GgmlType::Q4_0 => gemv_q4_0_q8_0(w, x, y, out_dim, in_dim),
         GgmlType::Q4_1 => gemv_q4_1_q8_0(w, x, y, out_dim, in_dim),
+        GgmlType::Q6_K => gemv_q6_k(w, x, y, out_dim, in_dim),
         GgmlType::Q8_0 => gemv_q8_0(w, x, y, out_dim, in_dim),
         other => return Err(super::CpuError::UnsupportedWeightType(other)),
     }
