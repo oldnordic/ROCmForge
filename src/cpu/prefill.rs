@@ -5,7 +5,7 @@
 
 use super::cache::{CpuForwardScratch, CpuKvCache};
 use super::ops::{add_bias_batched, dispatch_gemv, dispatch_gemm, flash_attn_prefill, rms_norm, silu_fuse};
-use super::quant::{embed_f32_batch, embed_q4_0_batch, embed_q8_0_batch};
+use super::quant::{embed_f32_batch, embed_q4_0_batch, embed_q6_k_batch, embed_q8_0_batch};
 use super::weights::{CpuLayerWeights, CpuModelWeights};
 use super::CpuError;
 use crate::config::ModelConfig;
@@ -273,6 +273,9 @@ pub fn cpu_prefill_forward(
         }
         GgmlType::Q4_0 => {
             embed_q4_0_batch(tokens, &weights.token_emb, &mut ps.hidden, h);
+        }
+        GgmlType::Q6_K => {
+            embed_q6_k_batch(tokens, &weights.token_emb, &mut ps.hidden, h);
         }
         GgmlType::Q8_0 => {
             embed_q8_0_batch(tokens, &weights.token_emb, &mut ps.hidden, h);
