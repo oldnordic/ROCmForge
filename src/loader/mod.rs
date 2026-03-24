@@ -1,9 +1,11 @@
 mod error;
+mod file;
 mod ggml_type;
 mod metadata;
 mod parse;
 
 pub use error::LoadError;
+pub use file::{GgufFile, TensorView};
 pub use ggml_type::GgmlType;
 pub use metadata::GgufMetadata;
 pub use parse::{Header, TensorDesc, TokenizerData, TENSOR_ALIGNMENT};
