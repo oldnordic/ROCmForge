@@ -449,9 +449,9 @@ pub fn gemv_q4_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
     let num_blocks = in_dim / Q4_BLOCK_ELEMS;
     let row_bytes = num_blocks * Q4_BLOCK_BYTES;
 
-    // AVX2 feature detection - DISABLED (complex AVX2 Q4_0 implementation, use scalar instead)
+    // AVX2 feature detection
     #[cfg(target_arch = "x86_64")]
-    let use_avx2 = false;
+    let use_avx2 = is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma");
     #[cfg(not(target_arch = "x86_64"))]
     let use_avx2 = false;
 
@@ -671,27 +671,20 @@ pub unsafe fn dot_q4_0_block_avx2(qs: &[u8], xb: &[f32], scale: f32) -> f32 {
     let scale_v = _mm256_set1_ps(scale);
     let mut acc = _mm256_setzero_ps();
 
-    // lo elements 0..8 dot x[0..8]
+    // lo nibbles 0..7 dot x[0..7] and lo nibbles 8..15 dot x[8..15]
     let lo_f0 = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(lo_signed));
+    let lo_f1 = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(_mm_bsrli_si128(lo_signed, 8)));
     let x0 = _mm256_loadu_ps(xb.as_ptr());
-    acc = _mm256_fmadd_ps(_mm256_mul_ps(lo_f0, scale_v), x0, acc);
-
-    // lo elements 8..16 dot x[8..16]
-    let lo_shifted = _mm_bsrli_si128(lo_signed, 8);
-    let lo_f1 = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(lo_shifted));
     let x1 = _mm256_loadu_ps(xb.as_ptr().add(8));
+    acc = _mm256_fmadd_ps(_mm256_mul_ps(lo_f0, scale_v), x0, acc);
     acc = _mm256_fmadd_ps(_mm256_mul_ps(lo_f1, scale_v), x1, acc);
 
-    // hi elements 0..8 dot x[16..24]
-    let hi_shifted0 = _mm_bsrli_si128(hi_signed, 8);
-    let hi_f0 = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(hi_shifted0));
+    // hi nibbles 0..7 dot x[16..23] and hi nibbles 8..15 dot x[24..31]
+    let hi_f0 = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(hi_signed));
+    let hi_f1 = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(_mm_bsrli_si128(hi_signed, 8)));
     let x2 = _mm256_loadu_ps(xb.as_ptr().add(16));
-    acc = _mm256_fmadd_ps(_mm256_mul_ps(hi_f0, scale_v), x2, acc);
-
-    // hi elements 8..16 dot x[24..32]
-    let hi_shifted1 = _mm_bsrli_si128(hi_shifted0, 8);
-    let hi_f1 = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(hi_shifted1));
     let x3 = _mm256_loadu_ps(xb.as_ptr().add(24));
+    acc = _mm256_fmadd_ps(_mm256_mul_ps(hi_f0, scale_v), x2, acc);
     acc = _mm256_fmadd_ps(_mm256_mul_ps(hi_f1, scale_v), x3, acc);
 
     hsum_avx2(acc)
