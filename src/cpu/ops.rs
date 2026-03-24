@@ -321,8 +321,6 @@ pub fn residual_add_batched(a: &mut [f32], b: &[f32], dim: usize, seq_len: usize
 
 // ── GEMM (batched matrix multiply for prefill) ───────────────────────────────────
 
-use rayon::prelude::*;
-
 use super::quant::{Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS, Q8_BLOCK_BYTES, Q8_BLOCK_ELEMS};
 use crate::loader::GgmlType;
 
@@ -405,6 +403,92 @@ pub fn dispatch_gemm(
         }
         GgmlType::Q4_0 => gemm_q4_0(w, x, y, out_dim, in_dim),
         GgmlType::Q8_0 => gemm_q8_0(w, x, y, out_dim, in_dim),
+        other => return Err(super::CpuError::UnsupportedWeightType(other)),
+    }
+    Ok(())
+}
+
+// ── GEMV (matrix-vector multiply for decode) ────────────────────────────────
+
+/// F32 GEMV: y[row] = dot(W[row, :], x)
+///
+/// W layout: [out_dim, in_dim] row-major.
+pub fn gemv_f32(w: &[f32], x: &[f32], y: &mut [f32]) {
+    let in_dim = x.len();
+    for (row, out) in y.iter_mut().enumerate() {
+        let row_w = &w[row * in_dim..(row + 1) * in_dim];
+        *out = row_w.iter().zip(x.iter()).map(|(wi, xi)| wi * xi).sum();
+    }
+}
+
+/// Q4_0 GEMV: dequant on-the-fly.
+pub fn gemv_q4_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    let num_blocks = in_dim / Q4_BLOCK_ELEMS;
+    let row_bytes = num_blocks * Q4_BLOCK_BYTES;
+
+    for row in 0..out_dim {
+        let row_w = &w[row * row_bytes..(row + 1) * row_bytes];
+        let mut acc = 0.0f32;
+
+        for b in 0..num_blocks {
+            let block = &row_w[b * Q4_BLOCK_BYTES..];
+            let scale = super::quant::load_f16_scale(&block[0..2]);
+            let qs = &block[2..18];
+            let xb = &x[b * Q4_BLOCK_ELEMS..];
+
+            for i in 0..16 {
+                let lo = (((qs[i] & 0x0F) as i32) - 8) as f32 * scale;
+                let hi = (((qs[i] >> 4) as i32) - 8) as f32 * scale;
+                acc += lo * xb[i] + hi * xb[i + 16];
+            }
+        }
+        y[row] = acc;
+    }
+}
+
+/// Q8_0 GEMV: dequant on-the-fly.
+pub fn gemv_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    let num_blocks = in_dim / Q8_BLOCK_ELEMS;
+    let row_bytes = num_blocks * Q8_BLOCK_BYTES;
+
+    for row in 0..out_dim {
+        let row_w = &w[row * row_bytes..(row + 1) * row_bytes];
+        let mut acc = 0.0f32;
+
+        for b in 0..num_blocks {
+            let block = &row_w[b * Q8_BLOCK_BYTES..];
+            let scale = super::quant::load_f16_scale(&block[0..2]);
+            let qs = &block[2..34];
+            let xb = &x[b * Q8_BLOCK_ELEMS..];
+
+            for i in 0..Q8_BLOCK_ELEMS {
+                acc += (qs[i] as i8) as f32 * scale * xb[i];
+            }
+        }
+        y[row] = acc;
+    }
+}
+
+/// Dispatch GEMV based on weight type.
+///
+/// Computes: y = W * x (matrix-vector multiply)
+pub fn dispatch_gemv(
+    w: &[u8],
+    wtype: GgmlType,
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    in_dim: usize,
+) -> Result<(), super::CpuError> {
+    match wtype {
+        GgmlType::F32 => {
+            let wf: &[f32] = unsafe {
+                std::slice::from_raw_parts(w.as_ptr() as *const f32, w.len() / 4)
+            };
+            gemv_f32(wf, x, y);
+        }
+        GgmlType::Q4_0 => gemv_q4_0(w, x, y, out_dim, in_dim),
+        GgmlType::Q8_0 => gemv_q8_0(w, x, y, out_dim, in_dim),
         other => return Err(super::CpuError::UnsupportedWeightType(other)),
     }
     Ok(())
@@ -535,5 +619,108 @@ mod tests {
         // softmax scores: exp(1)/(exp(1)+exp(0)) ≈ 0.731, exp(0)/(exp(1)+exp(0)) ≈ 0.269
         // output = 0.731 * v[0] + 0.269 * v[1] ≈ 0.731*1 + 0.269*2 ≈ 1.269
         assert!(out[0] > 1.0 && out[0] < 1.5, "out[0] = {}, expected ~1.27", out[0]);
+    }
+
+    #[test]
+    fn gemv_f32_correct() {
+        // 2x3 matrix times 3-vector
+        let w = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]; // 2 rows, 3 cols
+        let x = vec![1.0, 2.0, 3.0];
+        let mut y = vec![0.0; 2];
+
+        gemv_f32(&w, &x, &mut y);
+
+        // Row 0: 1*1 + 2*2 + 3*3 = 14
+        // Row 1: 4*1 + 5*2 + 6*3 = 32
+        assert!((y[0] - 14.0_f32).abs() < 1e-5);
+        assert!((y[1] - 32.0_f32).abs() < 1e-5);
+    }
+
+    #[test]
+    fn gemv_q4_0_matches_f32() {
+        // Create a simple Q4_0 weight matrix: 2 rows, 32 cols (1 block per row)
+        // Scale = 1.0 for both blocks
+        let mut w_q4 = vec![
+            // Block 0 (row 0): scale=1.0 (f16 0x3C00), then 16 bytes of nibbles
+            0x00, 0x3C, // f16 1.0
+            // nibbles: each byte packs lo+hi nibbles, value = nibble - 8
+            // Let's use simple values: lo=8 (→0), hi=8 (→0) for all
+            0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88,
+            0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88,
+            // Block 1 (row 1): same
+            0x00, 0x3C,
+            0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88,
+            0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88,
+        ];
+
+        // Input: 32 zeros
+        let x = vec![0.0f32; 32];
+        let mut y = vec![0.0f32; 2];
+
+        gemv_q4_0(&w_q4, &x, &mut y, 2, 32);
+
+        // All zeros input, all zeros weights → output should be 0
+        assert!((y[0] - 0.0_f32).abs() < 1e-5);
+        assert!((y[1] - 0.0_f32).abs() < 1e-5);
+
+        // Now test with non-zero values
+        // Weights: nibbles 9,9 → value = 9-8 = 1, scale=1.0 → dequant=1.0
+        // But nibbles are packed: byte 0x99 means lo=9, hi=9
+        let mut w_q4_ones = vec![
+            // Block 0: scale=1.0
+            0x00, 0x3C,
+            // All nibbles = 9 → dequant = 1.0
+            0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99,
+            0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99,
+            // Block 1: scale=1.0
+            0x00, 0x3C,
+            0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99,
+            0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99,
+        ];
+
+        // Input: all 1.0
+        let x_ones = vec![1.0f32; 32];
+        let mut y2 = vec![0.0f32; 2];
+
+        gemv_q4_0(&w_q4_ones, &x_ones, &mut y2, 2, 32);
+
+        // Each row: sum of 32 values, each = 1.0 * 1.0 = 1.0
+        // So output should be 32.0
+        assert!((y2[0] - 32.0_f32).abs() < 1e-3, "y2[0] = {}, expected 32.0", y2[0]);
+        assert!((y2[1] - 32.0_f32).abs() < 1e-3, "y2[1] = {}, expected 32.0", y2[1]);
+    }
+
+    #[test]
+    fn gemv_q4_0_large_dim() {
+        // Test with multiple blocks (simulating ffn_down dimensions)
+        // 896 rows, 4864 cols = 896 rows, 152 blocks per row
+        let out_dim = 896;
+        let in_dim = 4864;
+        let num_blocks = in_dim / 32;
+        let row_bytes = num_blocks * 18;
+
+        // Create weight tensor: all zeros (nibble = 8 → value = 0)
+        let mut w = vec![0u8; out_dim * row_bytes];
+        for row in 0..out_dim {
+            for b in 0..num_blocks {
+                let off = row * row_bytes + b * 18;
+                w[off] = 0x00;
+                w[off + 1] = 0x3C; // scale = 1.0
+                for i in 0..16 {
+                    w[off + 2 + i] = 0x88; // nibble 8 → value 0
+                }
+            }
+        }
+
+        // Input: all zeros
+        let x = vec![0.0f32; in_dim];
+        let mut y = vec![0.0f32; out_dim];
+
+        gemv_q4_0(&w, &x, &mut y, out_dim, in_dim);
+
+        // All zeros → output should be all zeros
+        for (i, &yi) in y.iter().enumerate() {
+            assert!((yi - 0.0_f32).abs() < 1e-5, "y[{}] = {}, expected 0", i, yi);
+        }
     }
 }

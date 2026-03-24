@@ -4,101 +4,11 @@
 //! Uses KV cache for efficient attention computation.
 
 use super::cache::{CpuForwardScratch, CpuKvCache};
-use super::ops::{residual_add, rms_norm, rope, silu_fuse, flash_attn_decode};
+use super::ops::{dispatch_gemv, residual_add, rms_norm, rope, silu_fuse, flash_attn_decode};
 use super::weights::{CpuLayerWeights, CpuModelWeights};
 use super::CpuError;
 use crate::config::ModelConfig;
 use crate::loader::GgmlType;
-
-// ── GEMV dispatch ────────────────────────────────────────────────────────────────
-
-/// Dispatch GEMV based on weight type.
-///
-/// Computes: y = W * x (matrix-vector multiply)
-pub fn dispatch_gemv(
-    w: &[u8],
-    wtype: GgmlType,
-    x: &[f32],
-    y: &mut [f32],
-    out_dim: usize,
-    in_dim: usize,
-) -> Result<(), CpuError> {
-    match wtype {
-        GgmlType::F32 => {
-            let wf: &[f32] = unsafe {
-                std::slice::from_raw_parts(w.as_ptr() as *const f32, w.len() / 4)
-            };
-            gemv_f32(wf, x, y);
-        }
-        GgmlType::Q4_0 => gemv_q4_0(w, x, y, out_dim, in_dim),
-        GgmlType::Q8_0 => gemv_q8_0(w, x, y, out_dim, in_dim),
-        other => return Err(CpuError::UnsupportedWeightType(other)),
-    }
-    Ok(())
-}
-
-/// F32 GEMV: y[row] = dot(W[row, :], x)
-fn gemv_f32(w: &[f32], x: &[f32], y: &mut [f32]) {
-    let in_dim = x.len();
-    for (row, out) in y.iter_mut().enumerate() {
-        let row_w = &w[row * in_dim..(row + 1) * in_dim];
-        *out = row_w.iter().zip(x.iter()).map(|(wi, xi)| wi * xi).sum();
-    }
-}
-
-/// Q4_0 GEMV: dequantize on-the-fly
-fn gemv_q4_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
-    const Q4_BLOCK_ELEMS: usize = 32;
-    const Q4_BLOCK_BYTES: usize = 18;
-
-    let num_blocks = in_dim / Q4_BLOCK_ELEMS;
-    let row_bytes = num_blocks * Q4_BLOCK_BYTES;
-
-    for row in 0..out_dim {
-        let row_w = &w[row * row_bytes..(row + 1) * row_bytes];
-        let mut acc = 0.0f32;
-
-        for b in 0..num_blocks {
-            let block = &row_w[b * Q4_BLOCK_BYTES..];
-            let scale = super::quant::load_f16_scale(&block[0..2]);
-            let qs = &block[2..18];
-            let xb = &x[b * Q4_BLOCK_ELEMS..];
-
-            for i in 0..16 {
-                let lo = (((qs[i] & 0x0F) as i32) - 8) as f32 * scale;
-                let hi = (((qs[i] >> 4) as i32) - 8) as f32 * scale;
-                acc += lo * xb[i] + hi * xb[i + 16];
-            }
-        }
-        y[row] = acc;
-    }
-}
-
-/// Q8_0 GEMV: dequantize on-the-fly
-fn gemv_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
-    const Q8_BLOCK_ELEMS: usize = 32;
-    const Q8_BLOCK_BYTES: usize = 34;
-
-    let num_blocks = in_dim / Q8_BLOCK_ELEMS;
-    let row_bytes = num_blocks * Q8_BLOCK_BYTES;
-
-    for row in 0..out_dim {
-        let row_w = &w[row * row_bytes..(row + 1) * row_bytes];
-        let mut acc = 0.0f32;
-
-        for b in 0..num_blocks {
-            let block = &row_w[b * Q8_BLOCK_BYTES..];
-            let scale = super::quant::load_f16_scale(&block[0..2]);
-            let qs = &block[2..34];
-            let xb = &x[b * Q8_BLOCK_ELEMS..];
-
-            for i in 0..Q8_BLOCK_ELEMS {
-                acc += (qs[i] as i8) as f32 * scale * xb[i];
-            }
-        }
-        y[row] = acc;
-    }
-}
 
 // ── Layer forward ────────────────────────────────────────────────────────────────
 
@@ -113,6 +23,7 @@ pub fn cpu_layer_forward(
     layer: usize,
     pos: usize,
     config: &ModelConfig,
+    debug: bool,
 ) -> Result<(), CpuError> {
     let h = config.hidden_size;
     let q_size = config.num_heads * config.head_dim;
@@ -124,16 +35,31 @@ pub fn cpu_layer_forward(
     // 1. Attention RMS norm
     rms_norm(hidden, &weights.attn_norm, &mut scratch.normed, eps);
 
+    if debug && layer == 0 {
+        let norm_mean: f32 = scratch.normed.iter().copied().sum::<f32>() / h as f32;
+        let norm_std: f32 = ((scratch.normed.iter().map(|x| x * x).sum::<f32>() / h as f32) - norm_mean * norm_mean).sqrt();
+        eprintln!("[Layer {} after norm] mean={:.4} std={:.4}",
+                 layer, norm_mean, norm_std);
+    }
+
     // 2. QKV projections
     dispatch_gemv(&weights.attn_q, wtype, &scratch.normed, &mut scratch.q, q_size, h)?;
     dispatch_gemv(&weights.attn_k, wtype, &scratch.normed, &mut scratch.k, kv_size, h)?;
     dispatch_gemv(&weights.attn_v, wtype, &scratch.normed, &mut scratch.v, kv_size, h)?;
 
+    if debug && layer == 0 {
+        eprintln!("[Layer {} after QKV] q_mean={:.4} k_mean={:.4} v_mean={:.4}",
+                 layer,
+                 scratch.q.iter().copied().sum::<f32>() / q_size as f32,
+                 scratch.k.iter().copied().sum::<f32>() / kv_size as f32,
+                 scratch.v.iter().copied().sum::<f32>() / kv_size as f32);
+    }
+
     // 3. RoPE on Q and K
     rope(&mut scratch.q, config.num_heads, config.head_dim, pos, config.rope_theta, config.rope_neox);
     rope(&mut scratch.k, config.num_kv_heads, config.head_dim, pos, config.rope_theta, config.rope_neox);
 
-    // 4. Write K, V to cache
+    // 4. Write K, V in cache
     kv.write_k(layer, pos, &scratch.k);
     kv.write_v(layer, pos, &scratch.v);
 
@@ -150,11 +76,30 @@ pub fn cpu_layer_forward(
         config.head_dim,
     );
 
+    if debug && layer == 0 {
+        let ao_mean: f32 = scratch.attn_out.iter().copied().sum::<f32>() / q_size as f32;
+        let ao_std: f32 = ((scratch.attn_out.iter().map(|x| x * x).sum::<f32>() / q_size as f32) - ao_mean * ao_mean).sqrt();
+        eprintln!("[Layer {} after attn] out_mean={:.4} out_std={:.4}",
+                 layer, ao_mean, ao_std);
+    }
+
     // 6. Output projection
     dispatch_gemv(&weights.attn_o, wtype, &scratch.attn_out, &mut scratch.layer_out, h, q_size)?;
 
+    if debug && layer == 0 {
+        let lo_mean: f32 = scratch.layer_out.iter().copied().sum::<f32>() / h as f32;
+        let lo_std: f32 = ((scratch.layer_out.iter().map(|x| x * x).sum::<f32>() / h as f32) - lo_mean * lo_mean).sqrt();
+        eprintln!("[Layer {} attn_out_proj] layer_out mean={:.4} std={:.4}", layer, lo_mean, lo_std);
+    }
+
     // 7. Residual
     residual_add(hidden, &scratch.layer_out);
+
+    if debug && layer == 0 {
+        let h_mean: f32 = hidden.iter().copied().sum::<f32>() / h as f32;
+        let h_std: f32 = ((hidden.iter().map(|x| x * x).sum::<f32>() / h as f32) - h_mean * h_mean).sqrt();
+        eprintln!("[Layer {} after attn residual] hidden mean={:.4} std={:.4}", layer, h_mean, h_std);
+    }
 
     // 8. FFN RMS norm
     rms_norm(hidden, &weights.ffn_norm, &mut scratch.normed, eps);
@@ -163,14 +108,66 @@ pub fn cpu_layer_forward(
     dispatch_gemv(&weights.ffn_gate, wtype, &scratch.normed, &mut scratch.gate, ff_size, h)?;
     dispatch_gemv(&weights.ffn_up, wtype, &scratch.normed, &mut scratch.swiglu, ff_size, h)?;
 
+    if debug && layer == 0 {
+        let gate_mean: f32 = scratch.gate.iter().copied().sum::<f32>() / ff_size as f32;
+        let gate_std: f32 = ((scratch.gate.iter().map(|x| x * x).sum::<f32>() / ff_size as f32) - gate_mean * gate_mean).sqrt();
+        let up_mean: f32 = scratch.swiglu.iter().copied().sum::<f32>() / ff_size as f32;
+        let up_std: f32 = ((scratch.swiglu.iter().map(|x| x * x).sum::<f32>() / ff_size as f32) - up_mean * up_mean).sqrt();
+        eprintln!("[Layer {} ffn_gate] mean={:.4} std={:.4}", layer, gate_mean, gate_std);
+        eprintln!("[Layer {} ffn_up] mean={:.4} std={:.4}", layer, up_mean, up_std);
+        eprintln!("[Layer {} ffn_gate] [0..5] = {:?}", layer, &scratch.gate[0..5]);
+        eprintln!("[Layer {} ffn_up] [0..5] = {:?}", layer, &scratch.swiglu[0..5]);
+    }
+
     // 10. SwiGLU: silu(gate) * up
     silu_fuse(&scratch.gate, &mut scratch.swiglu);
 
+    if debug && layer == 0 {
+        let swiglu_mean: f32 = scratch.swiglu.iter().copied().sum::<f32>() / ff_size as f32;
+        let swiglu_std: f32 = ((scratch.swiglu.iter().map(|x| x * x).sum::<f32>() / ff_size as f32) - swiglu_mean * swiglu_mean).sqrt();
+        eprintln!("[Layer {} swiglu] mean={:.4} std={:.4}", layer, swiglu_mean, swiglu_std);
+    }
+
     // 11. Down projection
+    if debug && layer == 0 {
+        let num_blocks = ff_size / 32;
+        let row_bytes = num_blocks * 18;
+        let expected_weight_bytes = h * row_bytes;
+        eprintln!("[Layer {} ffn_down] out_dim={} in_dim={} num_blocks={} row_bytes={} expected_weight_bytes={} actual_weight_bytes={}",
+                 layer, h, ff_size, num_blocks, row_bytes, expected_weight_bytes, weights.ffn_down.len());
+        eprintln!("[Layer {} ffn_down] swiglu.len={} layer_out.len={}",
+                 layer, scratch.swiglu.len(), scratch.layer_out.len());
+        // Print first 5 values of swiglu
+        eprintln!("[Layer {} ffn_down] swiglu[0..5] = {:?}", layer, &scratch.swiglu[0..5]);
+        // Print first block of weights
+        let first_block = &weights.ffn_down[0..18];
+        eprintln!("[Layer {} ffn_down] first_weight_block = {:?}", layer, first_block);
+        let scale = super::quant::load_f16_scale(&first_block[0..2]);
+        let qs = &first_block[2..18];
+        let mut dequant = [0.0f32; 32];
+        for i in 0..16 {
+            dequant[i] = (((qs[i] & 0x0F) as i32) - 8) as f32 * scale;
+            dequant[i + 16] = (((qs[i] >> 4) as i32) - 8) as f32 * scale;
+        }
+        eprintln!("[Layer {} ffn_down] first_block dequant[0..5] = {:?}", layer, &dequant[0..5]);
+    }
     dispatch_gemv(&weights.ffn_down, wtype, &scratch.swiglu, &mut scratch.layer_out, h, ff_size)?;
+
+    if debug && layer == 0 {
+        let ffn_out_mean: f32 = scratch.layer_out.iter().copied().sum::<f32>() / h as f32;
+        let ffn_out_std: f32 = ((scratch.layer_out.iter().map(|x| x * x).sum::<f32>() / h as f32) - ffn_out_mean * ffn_out_mean).sqrt();
+        eprintln!("[Layer {} ffn_down] layer_out mean={:.4} std={:.4}", layer, ffn_out_mean, ffn_out_std);
+        eprintln!("[Layer {} ffn_down] layer_out[0..5] = {:?}", layer, &scratch.layer_out[0..5]);
+    }
 
     // 12. Residual
     residual_add(hidden, &scratch.layer_out);
+
+    if debug && layer == 0 {
+        let h_mean: f32 = hidden.iter().copied().sum::<f32>() / h as f32;
+        let h_std: f32 = ((hidden.iter().map(|x| x * x).sum::<f32>() / h as f32) - h_mean * h_mean).sqrt();
+        eprintln!("[Layer {} after ffn residual] hidden mean={:.4} std={:.4}", layer, h_mean, h_std);
+    }
 
     Ok(())
 }
@@ -188,6 +185,14 @@ pub fn cpu_full_forward(
     pos: usize,
     config: &ModelConfig,
 ) -> Result<(), CpuError> {
+    // Debug: input hidden statistics
+    let debug = std::env::var("ROCMFORGE_DEBUG").is_ok();
+    if debug {
+        let mean: f32 = hidden.iter().copied().sum::<f32>() / hidden.len() as f32;
+        let std: f32 = ((hidden.iter().map(|x| x * x).sum::<f32>() / hidden.len() as f32) - mean * mean).sqrt();
+        eprintln!("[Forward input] pos={} mean={:.4} std={:.4}", pos, mean, std);
+    }
+
     // Process all transformer layers
     for layer_idx in 0..config.num_layers {
         cpu_layer_forward(
@@ -198,11 +203,26 @@ pub fn cpu_full_forward(
             layer_idx,
             pos,
             config,
+            debug,
         )?;
+
+        // Debug: show hidden state after each layer
+        if debug && layer_idx < 2 {
+            let mean: f32 = hidden.iter().copied().sum::<f32>() / hidden.len() as f32;
+            let std: f32 = ((hidden.iter().map(|x| x * x).sum::<f32>() / hidden.len() as f32) - mean * mean).sqrt();
+            eprintln!("[After layer {}] mean={:.4} std={:.4}", layer_idx, mean, std);
+        }
     }
 
     // Final RMS norm
     rms_norm(hidden, &weights.output_norm, &mut scratch.normed, config.rms_norm_eps);
+
+    // Debug: show normed output
+    if debug {
+        let mean: f32 = scratch.normed.iter().copied().sum::<f32>() / scratch.normed.len() as f32;
+        let std: f32 = ((scratch.normed.iter().map(|x| x * x).sum::<f32>() / scratch.normed.len() as f32) - mean * mean).sqrt();
+        eprintln!("[After final norm] mean={:.4} std={:.4}", mean, std);
+    }
 
     // LM head: project to vocabulary
     let h = config.hidden_size;
@@ -215,6 +235,15 @@ pub fn cpu_full_forward(
         v,
         h,
     )?;
+
+    // Debug: show logits statistics
+    if debug {
+        let mean: f32 = scratch.logits.iter().copied().sum::<f32>() / scratch.logits.len() as f32;
+        let std: f32 = ((scratch.logits.iter().map(|x| x * x).sum::<f32>() / scratch.logits.len() as f32) - mean * mean).sqrt();
+        let min: f32 = scratch.logits.iter().cloned().fold(f32::INFINITY, f32::min);
+        let max: f32 = scratch.logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        eprintln!("[After LM head] mean={:.4} std={:.4} range=[{:.4}, {:.4}]", mean, std, min, max);
+    }
 
     Ok(())
 }
@@ -246,41 +275,3 @@ pub fn cpu_embed_token(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn make_test_config() -> ModelConfig {
-        ModelConfig {
-            num_layers: 2,
-            hidden_size: 64,
-            num_heads: 4,
-            num_kv_heads: 2,
-            head_dim: 16,
-            intermediate_size: 128,
-            vocab_size: 100,
-            max_seq_len: 32,
-            rms_norm_eps: 1e-6,
-            rope_theta: 10000.0,
-            rope_neox: true,
-            use_attention_bias: false,
-            attention_layout: crate::config::AttentionLayout::SplitQkv,
-            architecture: "qwen2".to_string(),
-        }
-    }
-
-    #[test]
-    fn gemv_f32_correct() {
-        // 2x3 matrix times 3-vector
-        let w = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]; // 2 rows, 3 cols
-        let x = vec![1.0, 2.0, 3.0];
-        let mut y = vec![0.0; 2];
-
-        gemv_f32(&w, &x, &mut y);
-
-        // Row 0: 1*1 + 2*2 + 3*3 = 14
-        // Row 1: 4*1 + 5*2 + 6*3 = 32
-        assert!((y[0] - 14.0).abs() < 1e-5);
-        assert!((y[1] - 32.0).abs() < 1e-5);
-    }
-}

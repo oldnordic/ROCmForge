@@ -4,7 +4,7 @@
 //! Populates KV cache for subsequent decode steps.
 
 use super::cache::{CpuForwardScratch, CpuKvCache};
-use super::ops::{add_bias_batched, dispatch_gemm, flash_attn_prefill, rms_norm, silu_fuse};
+use super::ops::{add_bias_batched, dispatch_gemv, dispatch_gemm, flash_attn_prefill, rms_norm, silu_fuse};
 use super::quant::{embed_f32_batch, embed_q4_0_batch};
 use super::weights::{CpuLayerWeights, CpuModelWeights};
 use super::CpuError;
@@ -301,7 +301,7 @@ pub fn cpu_prefill_forward(
 
     // 5. LM head GEMV (use decode path for single token)
     let v = config.vocab_size;
-    super::forward::dispatch_gemv(
+    dispatch_gemv(
         &weights.lm_head,
         weights.lm_head_type,
         &scratch.normed,
