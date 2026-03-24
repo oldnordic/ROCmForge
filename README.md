@@ -1,6 +1,6 @@
 # rocmforge
 
-**AMD-first LLM inference engine for Large Language Models**
+**AMD-first LLM inference engine**
 
 rocmforge provides fast, efficient inference for Qwen2.5 family large language models on AMD GPUs (via HIP) and CPUs, with explicit device selection and no fallback paths.
 
