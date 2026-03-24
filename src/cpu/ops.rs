@@ -8,6 +8,8 @@
 //! - Softmax and sampling utilities
 
 use rayon::prelude::*;
+use crate::cpu::quant::{Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS, Q8_BLOCK_BYTES, Q8_BLOCK_ELEMS, Q8_0_MAX, load_f16_scale};
+use crate::loader::GgmlType;
 
 // For runtime CPU feature detection
 #[cfg(target_arch = "x86_64")]
@@ -327,9 +329,6 @@ pub fn residual_add_batched(a: &mut [f32], b: &[f32], dim: usize, seq_len: usize
 
 // ── GEMM (batched matrix multiply for prefill) ───────────────────────────────────
 
-use super::quant::{Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS, Q8_BLOCK_BYTES, Q8_BLOCK_ELEMS};
-use crate::loader::GgmlType;
-
 /// F32 GEMM: Y[s, o] = dot(W[o, :], X[s, :])
 /// W: [out_dim, in_dim], X: [seq_len, in_dim], Y: [seq_len, out_dim]
 pub fn gemm_f32(w: &[f32], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
@@ -416,6 +415,29 @@ pub fn dispatch_gemm(
 
 // ── GEMV (matrix-vector multiply for decode) ────────────────────────────────
 
+/// Quantize a single f32 vector to Q8_0 (one block per Q8_BLOCK_ELEMS).
+///
+/// This is used for quantizing activations once per GEMV call for Q4_0 × Q8_0 dot products.
+fn quantize_q8_0_single(x: &[f32], out: &mut [u8], in_dim: usize) {
+    let num_blocks = in_dim / Q8_BLOCK_ELEMS;
+    debug_assert_eq!(out.len(), num_blocks * Q8_BLOCK_BYTES);
+
+    for b in 0..num_blocks {
+        let xb = &x[b * Q8_BLOCK_ELEMS..(b + 1) * Q8_BLOCK_ELEMS];
+        let off = b * Q8_BLOCK_BYTES;
+        let amax = xb.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        let scale = if amax > 0.0 { amax / Q8_0_MAX } else { 0.0 };
+        let inv_scale = if scale > 0.0 { 1.0 / scale } else { 0.0 };
+        let scale_bytes = half::f16::from_f32(scale).to_bits().to_le_bytes();
+        out[off] = scale_bytes[0];
+        out[off + 1] = scale_bytes[1];
+        for i in 0..Q8_BLOCK_ELEMS {
+            let q = (xb[i] * inv_scale).round().clamp(-128.0, 127.0) as i8;
+            out[off + 2 + i] = q as u8;
+        }
+    }
+}
+
 /// F32 GEMV: y[row] = dot(W[row, :], x)
 ///
 /// W layout: [out_dim, in_dim] row-major.
@@ -429,7 +451,7 @@ pub fn gemv_f32(w: &[f32], x: &[f32], y: &mut [f32]) {
     #[cfg(not(target_arch = "x86_64"))]
     let use_avx2 = false;
 
-    for (row, out) in y.iter_mut().enumerate() {
+    y.par_iter_mut().enumerate().for_each(|(row, out)| {
         let row_w = &w[row * in_dim..(row + 1) * in_dim];
         *out = if use_avx2 {
             #[cfg(target_arch = "x86_64")]
@@ -443,7 +465,7 @@ pub fn gemv_f32(w: &[f32], x: &[f32], y: &mut [f32]) {
         } else {
             row_w.iter().zip(x.iter()).map(|(wi, xi)| wi * xi).sum()
         };
-    }
+    });
 }
 
 /// Q4_0 GEMV: dequant on-the-fly.
@@ -492,12 +514,54 @@ pub fn gemv_q4_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
     }
 }
 
+/// Q4_0 × Q8_0 GEMV: quantize input to Q8_0 once, then integer dot product.
+/// This is faster than Q4_0 × f32 because it avoids 4× int→f32 conversions per block.
+pub fn gemv_q4_0_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    let num_blocks = in_dim / Q4_BLOCK_ELEMS;
+    let row_bytes = num_blocks * Q4_BLOCK_BYTES;
+
+    // Quantize input to Q8_0 once (per call, not per row)
+    let mut x_q8 = vec![0u8; num_blocks * Q8_BLOCK_BYTES];
+    quantize_q8_0_single(x, &mut x_q8, in_dim);
+
+    #[cfg(target_arch = "x86_64")]
+    let use_avx2 = is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma");
+    #[cfg(not(target_arch = "x86_64"))]
+    let use_avx2 = false;
+
+    y.par_iter_mut().enumerate().for_each(|(row, out)| {
+        let row_w = &w[row * row_bytes..(row + 1) * row_bytes];
+        let mut acc = 0.0f32;
+        for b in 0..num_blocks {
+            let block = &row_w[b * Q4_BLOCK_BYTES..];
+            let w_scale = load_f16_scale(&block[0..2]);
+            let x_scale = load_f16_scale(&x_q8[b * Q8_BLOCK_BYTES..][0..2]);
+            let combined_scale = w_scale * x_scale;
+            let qs = &block[2..18];
+            let q8 = &x_q8[b * Q8_BLOCK_BYTES + 2..][..Q8_BLOCK_ELEMS];
+            if use_avx2 {
+                #[cfg(target_arch = "x86_64")]
+                {
+                    acc += unsafe { dot_q4_0_q8_0_block_avx2(qs, q8, combined_scale) };
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                {
+                    acc += dot_q4_0_q8_0_block_scalar(qs, q8, combined_scale);
+                }
+            } else {
+                acc += dot_q4_0_q8_0_block_scalar(qs, q8, combined_scale);
+            }
+        }
+        *out = acc;
+    });
+}
+
 /// Q8_0 GEMV: dequant on-the-fly.
 pub fn gemv_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
     let num_blocks = in_dim / Q8_BLOCK_ELEMS;
     let row_bytes = num_blocks * Q8_BLOCK_BYTES;
 
-    for row in 0..out_dim {
+    y.par_iter_mut().enumerate().for_each(|(row, out)| {
         let row_w = &w[row * row_bytes..(row + 1) * row_bytes];
         let mut acc = 0.0f32;
 
@@ -511,8 +575,8 @@ pub fn gemv_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
                 acc += (qs[i] as i8) as f32 * scale * xb[i];
             }
         }
-        y[row] = acc;
-    }
+        *out = acc;
+    });
 }
 
 /// Dispatch GEMV based on weight type.
@@ -533,7 +597,7 @@ pub fn dispatch_gemv(
             };
             gemv_f32(wf, x, y);
         }
-        GgmlType::Q4_0 => gemv_q4_0(w, x, y, out_dim, in_dim),
+        GgmlType::Q4_0 => gemv_q4_0_q8_0(w, x, y, out_dim, in_dim),
         GgmlType::Q8_0 => gemv_q8_0(w, x, y, out_dim, in_dim),
         other => return Err(super::CpuError::UnsupportedWeightType(other)),
     }
@@ -585,6 +649,33 @@ unsafe fn unpack_q4_0_nibbles_avx2(qs: &[u8]) -> std::arch::x86_64::__m256i {
 }
 
 /// Multiply-sum Q4_0 × Q8_0 block (unscaled).
+///
+/// Computes sum(q4[i] * q8[i]) for 32-element blocks.
+/// Returns __m256 with one i32 result per 8-element group.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+#[target_feature(enable = "avxvnni")]
+unsafe fn mul_sum_q4_0_q8_0_block_avx2_vnni(
+    q4: std::arch::x86_64::__m256i,
+    q8: &[u8],
+) -> std::arch::x86_64::__m256 {
+    use std::arch::x86_64::*;
+
+    debug_assert_eq!(
+        q8.len(),
+        Q8_BLOCK_ELEMS,
+        "mul_sum_q4_0_q8_0_block_avx2_vnni: q8 must have 32 elements"
+    );
+
+    let q8v = _mm256_loadu_si256(q8.as_ptr() as *const __m256i);
+    // AVX2VNNI: compute dot product of signed i8 vectors
+    // This does both multiply and horizontal sum in one instruction
+    let zero = _mm256_setzero_si256();
+    let dot32 = _mm256_dpwssd_avx_epi32(zero, q4, q8v);
+    _mm256_cvtepi32_ps(dot32)
+}
+
+/// Multiply-sum Q4_0 × Q8_0 block (unscaled) without VNNI.
 ///
 /// Computes sum(q4[i] * q8[i]) for 32-element blocks.
 /// Returns __m256 with one i32 result per 8-element group.
@@ -710,9 +801,40 @@ pub unsafe fn dot_q4_0_q8_0_block_avx2(qs: &[u8], q8: &[u8], scale: f32) -> f32 
     );
 
     let q4 = unpack_q4_0_nibbles_avx2(qs);
+    // Use VNNI if available, otherwise fall back to regular AVX2
+    #[cfg(target_arch = "x86_64")]
+    let dotf = if is_x86_feature_detected!("avxvnni") {
+        mul_sum_q4_0_q8_0_block_avx2_vnni(q4, q8)
+    } else {
+        mul_sum_q4_0_q8_0_block_avx2_unscaled(q4, q8)
+    };
+    #[cfg(not(target_arch = "x86_64"))]
     let dotf = mul_sum_q4_0_q8_0_block_avx2_unscaled(q4, q8);
     let scaled = _mm256_mul_ps(dotf, _mm256_set1_ps(scale));
     hsum_avx2(scaled)
+}
+
+/// Scalar Q4_0 × Q8_0 block dot product — one 32-element block.
+fn dot_q4_0_q8_0_block_scalar(qs: &[u8], q8: &[u8], scale: f32) -> f32 {
+    debug_assert_eq!(
+        qs.len(),
+        16,
+        "dot_q4_0_q8_0_block_scalar: qs must be 16 bytes"
+    );
+    debug_assert_eq!(
+        q8.len(),
+        Q8_BLOCK_ELEMS,
+        "dot_q4_0_q8_0_block_scalar: q8 must have 32 elements"
+    );
+    let mut acc = 0i32;
+    for i in 0..16 {
+        let q_lo = (qs[i] & 0x0F) as i32 - 8;
+        let q_hi = (qs[i] >> 4) as i32 - 8;
+        let x_lo = q8[i] as i8 as i32;
+        let x_hi = q8[i + 16] as i8 as i32;
+        acc += q_lo * x_lo + q_hi * x_hi;
+    }
+    acc as f32 * scale
 }
 
 // ── Sampling utilities ──────────────────────────────────────────────────────────

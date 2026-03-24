@@ -139,6 +139,28 @@ pub fn dequant_q8_0_block(block: &[u8], out: &mut [f32]) {
     }
 }
 
+// ── Q8_0 quantization for activations ────────────────────────────────────────
+
+/// Quantize f32 values to Q8_0 bytes.
+///
+/// Returns quantized bytes and scale (f16).
+pub fn quantize_f32_to_q8_0(src: &[f32], dst: &mut [u8]) -> f32 {
+    debug_assert_eq!(src.len(), dst.len(), "src and dst must have same length");
+
+    // Find max absolute value to determine scale
+    let max_val = src.iter().map(|&x| x.abs()).fold(0.0f32, f32::max);
+    let scale = if max_val > 0.0 { max_val / Q8_0_MAX } else { 1.0 };
+    let inv_scale = if scale > 0.0 { Q8_0_MAX / max_val } else { 0.0 };
+
+    // Quantize: round to nearest, clamp to [-127, 127]
+    for (i, &val) in src.iter().enumerate() {
+        let q = (val * inv_scale).round() as i32;
+        dst[i] = q.clamp(-127, 127) as u8 as i8 as u8;
+    }
+
+    scale
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
