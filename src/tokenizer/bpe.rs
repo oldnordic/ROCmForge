@@ -230,7 +230,11 @@ impl BpeTokenizer {
             if piece.len() > 1 && (piece.ends_with('\n') || piece.ends_with('\r')) {
                 let mut cut = piece.len();
                 while cut > 0 {
-                    let ch = piece[..cut].chars().last().unwrap();
+                    // SAFETY: cut > 0 guarantees piece[..cut] is non-empty
+                    let ch = match piece[..cut].chars().next_back() {
+                        Some(c) => c,
+                        None => break, // defensive: should never happen when cut > 0
+                    };
                     if ch == '\n' || ch == '\r' {
                         cut -= ch.len_utf8();
                     } else {

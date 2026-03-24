@@ -47,6 +47,15 @@ pub struct ModelTraits {
 
 static REGISTRY: OnceLock<HashMap<&'static str, ModelTraits>> = OnceLock::new();
 
+/// Default traits for unknown architectures (LLaMA-compatible)
+static DEFAULT_TRAITS: ModelTraits = ModelTraits {
+    rope_style: RopeStyle::Normal,
+    attention_layout: AttentionLayout::SplitQkv,
+    use_attention_bias: false,
+    default_rope_theta: 10000.0,
+    default_norm_eps: 1e-5,
+};
+
 fn registry() -> &'static HashMap<&'static str, ModelTraits> {
     REGISTRY.get_or_init(|| {
         let mut m = HashMap::new();
@@ -137,9 +146,7 @@ impl ModelTraits {
     /// Look up traits for an architecture string, falling back to LLaMA defaults
     /// for unknown architectures rather than failing.
     pub fn for_arch(arch: &str) -> &'static ModelTraits {
-        registry()
-            .get(arch)
-            .unwrap_or_else(|| registry().get("llama").expect("llama always in registry"))
+        registry().get(arch).unwrap_or(&DEFAULT_TRAITS)
     }
 }
 
