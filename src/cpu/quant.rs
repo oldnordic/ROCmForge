@@ -59,7 +59,7 @@ pub fn embed_q4_0(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usi
     let row_offset = token_id * num_blocks * Q4_BLOCK_BYTES;
 
     for b in 0..num_blocks {
-        let block = &emb[row_offset + b * Q4_BLOCK_BYTES..];
+        let block = &emb[row_offset + b * Q4_BLOCK_BYTES..row_offset + (b + 1) * Q4_BLOCK_BYTES];
         let scale = load_f16_scale(&block[0..2]);
         let qs = &block[2..18];
         let base = b * Q4_BLOCK_ELEMS;
@@ -80,6 +80,31 @@ pub fn embed_q4_0_batch(ids: &[u32], emb: &[u8], out: &mut [f32], hidden_size: u
     for (s, &id) in ids.iter().enumerate() {
         let or = &mut out[s * hidden_size..(s + 1) * hidden_size];
         embed_q4_0(id as usize, emb, or, hidden_size);
+    }
+}
+
+/// Embed Q8_0 token: out = dequant(emb[token_id])
+pub fn embed_q8_0(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usize) {
+    let num_blocks = hidden_size / Q8_BLOCK_ELEMS;
+    let row_offset = token_id * num_blocks * Q8_BLOCK_BYTES;
+
+    for b in 0..num_blocks {
+        let block = &emb[row_offset + b * Q8_BLOCK_BYTES..row_offset + (b + 1) * Q8_BLOCK_BYTES];
+        let scale = load_f16_scale(&block[0..2]);
+        let qs = &block[2..34];
+        let base = b * Q8_BLOCK_ELEMS;
+
+        for i in 0..Q8_BLOCK_ELEMS {
+            out[base + i] = (qs[i] as i8) as f32 * scale;
+        }
+    }
+}
+
+/// Batch embed from Q8_0
+pub fn embed_q8_0_batch(ids: &[u32], emb: &[u8], out: &mut [f32], hidden_size: usize) {
+    for (s, &id) in ids.iter().enumerate() {
+        let or = &mut out[s * hidden_size..(s + 1) * hidden_size];
+        embed_q8_0(id as usize, emb, or, hidden_size);
     }
 }
 

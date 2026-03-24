@@ -234,7 +234,7 @@ mod tests {
         let mut qs = [0u8; 16];
         qs[0] = 0x00;
         qs[1] = 0x3C; // f16 1.0
-        for i in 2..18 {
+        for i in 2..16 {
             qs[i] = 0x99; // nibble 9 for both lo and hi
         }
 
@@ -271,15 +271,15 @@ mod tests {
         let mut qs = [0u8; 16];
         qs[0] = 0x00;
         qs[1] = 0x3C; // f16 1.0
-        for i in 2..18 {
+        for i in 2..16 {
             qs[i] = 0x99;
         }
 
         // Q8_0: all bytes = 1 (→ value = 1 * scale), scale=1.0
-        let mut q8 = [0u8; 34];
+        let mut q8 = [0u8; 32];
         q8[0] = 0x00;
         q8[1] = 0x3C; // f16 1.0
-        for i in 2..34 {
+        for i in 2..32 {
             q8[i] = 1u8;
         }
 

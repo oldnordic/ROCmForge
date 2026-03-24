@@ -227,6 +227,9 @@ pub fn cpu_full_forward(
     // LM head: project to vocabulary
     let h = config.hidden_size;
     let v = config.vocab_size;
+    if debug {
+        eprintln!("[LM head] type={:?} h={} v={}", weights.lm_head_type, h, v);
+    }
     dispatch_gemv(
         &weights.lm_head,
         weights.lm_head_type,
@@ -270,6 +273,9 @@ pub fn cpu_embed_token(
         }
         GgmlType::Q4_0 => {
             super::quant::embed_q4_0(token_id as usize, &weights.token_emb, &mut hidden[..h], h);
+        }
+        GgmlType::Q8_0 => {
+            super::quant::embed_q8_0(token_id as usize, &weights.token_emb, &mut hidden[..h], h);
         }
         _ => panic!("Unsupported embedding type: {:?}", weights.token_emb_type),
     }

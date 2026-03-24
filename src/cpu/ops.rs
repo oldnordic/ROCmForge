@@ -351,7 +351,7 @@ pub fn gemm_q4_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
             let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
             let mut acc = 0.0f32;
             for b in 0..num_blocks {
-                let block = &row_w[b * Q4_BLOCK_BYTES..];
+                let block = &row_w[b * Q4_BLOCK_BYTES..(b + 1) * Q4_BLOCK_BYTES];
                 let scale = super::quant::load_f16_scale(&block[0..2]);
                 let qs = &block[2..18];
                 let xb = &x_row[b * Q4_BLOCK_ELEMS..];
@@ -377,7 +377,7 @@ pub fn gemm_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
             let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
             let mut acc = 0.0f32;
             for b in 0..num_blocks {
-                let block = &row_w[b * Q8_BLOCK_BYTES..];
+                let block = &row_w[b * Q8_BLOCK_BYTES..(b + 1) * Q8_BLOCK_BYTES];
                 let scale = super::quant::load_f16_scale(&block[0..2]);
                 let qs = &block[2..34];
                 let xb = &x_row[b * Q8_BLOCK_ELEMS..];
@@ -449,9 +449,9 @@ pub fn gemv_q4_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
     let num_blocks = in_dim / Q4_BLOCK_ELEMS;
     let row_bytes = num_blocks * Q4_BLOCK_BYTES;
 
-    // AVX2 feature detection
+    // AVX2 feature detection - DISABLED FOR DEBUGGING
     #[cfg(target_arch = "x86_64")]
-    let use_avx2 = is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma");
+    let use_avx2 = false;
     #[cfg(not(target_arch = "x86_64"))]
     let use_avx2 = false;
 
@@ -460,7 +460,7 @@ pub fn gemv_q4_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
         let mut acc = 0.0f32;
 
         for b in 0..num_blocks {
-            let block = &row_w[b * Q4_BLOCK_BYTES..];
+            let block = &row_w[b * Q4_BLOCK_BYTES..(b + 1) * Q4_BLOCK_BYTES];
             let scale = super::quant::load_f16_scale(&block[0..2]);
             let qs = &block[2..18];
             let xb = &x[b * Q4_BLOCK_ELEMS..];
@@ -500,7 +500,7 @@ pub fn gemv_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
         let mut acc = 0.0f32;
 
         for b in 0..num_blocks {
-            let block = &row_w[b * Q8_BLOCK_BYTES..];
+            let block = &row_w[b * Q8_BLOCK_BYTES..(b + 1) * Q8_BLOCK_BYTES];
             let scale = super::quant::load_f16_scale(&block[0..2]);
             let qs = &block[2..34];
             let xb = &x[b * Q8_BLOCK_ELEMS..];
@@ -683,7 +683,8 @@ pub unsafe fn dot_q4_0_block_avx2(qs: &[u8], xb: &[f32], scale: f32) -> f32 {
     acc = _mm256_fmadd_ps(_mm256_mul_ps(lo_f1, scale_v), x1, acc);
 
     // hi elements 0..8 dot x[16..24]
-    let hi_f0 = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(hi_signed));
+    let hi_shifted = _mm_bsrli_si128(hi_signed, 8);
+    let hi_f0 = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(hi_shifted));
     let x2 = _mm256_loadu_ps(xb.as_ptr().add(16));
     acc = _mm256_fmadd_ps(_mm256_mul_ps(hi_f0, scale_v), x2, acc);
 
