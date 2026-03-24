@@ -23,6 +23,9 @@ pub mod forward;
 pub mod prefill;
 pub mod sampler;
 
+#[cfg(test)]
+mod ops_tests;
+
 use crate::config::ModelConfig;
 use crate::loader::{GgmlType, GgufFile, LoadError};
 
