@@ -1,8 +1,4 @@
-# rocmforge
-
-**AMD-first LLM inference engine**
-
-rocmforge provides fast, efficient inference for Qwen2.5 family large language models on AMD GPUs (via HIP) and CPUs, with explicit device selection and no fallback paths.
+rocmforge provides fast, efficient inference for large language models on AMD GPUs (via HIP) and CPUs, with explicit device selection and no fallback paths.
 
 ## Features
 
@@ -16,11 +12,6 @@ rocmforge provides fast, efficient inference for Qwen2.5 family large language m
 - **Q4_0/Q8_0 quantization support** - Efficient dequantization on-the-fly
 - **Flash attention** - GQA-aware for efficient KV caching
 - **SwiGLU activation** - Fast SiLU implementation
-
-## Supported Models
-
-- **Qwen2.5** family (0.5B, 3B, 7B, 14B, 32B)
-- **Qwen2.5-Instruct** variants (chat, instruct)
 
 ## Architecture
 
@@ -52,14 +43,14 @@ cargo build --release
 ### Basic inference
 
 ```bash
-rocmforge --model path/to/qwen2.5.gguf --device cpu \
+rocmforge --model path/to/model.gguf --device cpu \
     --prompt "What is the capital of France?" --max-tokens 100
 ```
 
 ### List model tensors
 
 ```bash
-rocmforge --model path/to/qwen2.5.gguf --list-tensors
+rocmforge --model path/to/model.gguf --list-tensors
 ```
 
 ### CLI Options
