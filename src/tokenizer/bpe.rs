@@ -71,7 +71,6 @@ pub struct BpeTokenizer {
     token_to_id: HashMap<BytesKey, u32>,
     merges: HashMap<(BytesKey, BytesKey), BpeRank>,
     special_tokens: HashSet<u32>,
-    vocab_type: VocabType,
     pre_type: PreTokenizerType,
     bos_id: Option<u32>,
     eos_id: Option<u32>,
@@ -85,22 +84,19 @@ pub struct BpeTokenizer {
 impl BpeTokenizer {
     /// Build from GGUF tokenizer arrays.
     pub fn from_gguf(data: &crate::loader::TokenizerData) -> Self {
-        // For rocmforge, we only support BPE (GPT-2 style)
-        let vocab_type = VocabType::Bpe;
-
         // Determine pre-tokenizer type
         let pre_type = match data.pre.as_deref() {
             Some("qwen2") => PreTokenizerType::Qwen2,
             _ => PreTokenizerType::Qwen2, // Default to Qwen2 for rocmforge
         };
 
-        Self::new(data.tokens.clone(), data.merges.clone(), vocab_type)
+        Self::new(data.tokens.clone(), data.merges.clone())
             .with_special_tokens(data.bos_token_id, data.eos_token_id, data.unk_token_id)
             .with_special_tokens_add(data.add_bos, data.add_eos)
             .with_pre_tokenizer(pre_type)
     }
 
-    fn new(vocab: Vec<Vec<u8>>, merges: Vec<(Vec<u8>, Vec<u8>)>, vocab_type: VocabType) -> Self {
+    fn new(vocab: Vec<Vec<u8>>, merges: Vec<(Vec<u8>, Vec<u8>)>) -> Self {
         let mut token_to_id = HashMap::with_capacity(vocab.len());
         let mut special_tokens = HashSet::new();
         for (id, token) in vocab.iter().enumerate() {
@@ -123,7 +119,6 @@ impl BpeTokenizer {
             token_to_id,
             merges: merge_map,
             special_tokens,
-            vocab_type,
             pre_type: PreTokenizerType::Qwen2,
             bos_id: None,
             eos_id: None,
@@ -548,7 +543,7 @@ mod tests {
             (b"he".to_vec(), b"ll".to_vec()),
             (b"hel".to_vec(), b"lo".to_vec()),
         ];
-        BpeTokenizer::new(vocab, merges, VocabType::Bpe).with_special_tokens(None, Some(9), None)
+        BpeTokenizer::new(vocab, merges).with_special_tokens(None, Some(9), None)
     }
 
     #[test]
