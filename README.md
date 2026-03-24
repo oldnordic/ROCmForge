@@ -1,6 +1,6 @@
 # rocmforge
 
-**AMD-first LLM inference engine for Qwen2.5 models**
+**AMD-first LLM inference engine for Large Language Models**
 
 rocmforge provides fast, efficient inference for Qwen2.5 family large language models on AMD GPUs (via HIP) and CPUs, with explicit device selection and no fallback paths.
 
@@ -77,7 +77,7 @@ rocmforge --model path/to/qwen2.5.gguf --list-tensors
 
 ## License
 
-Apache License 2.0
+GPL-3.0-or-later
 
 See [LICENSE](LICENSE) for details.
 
