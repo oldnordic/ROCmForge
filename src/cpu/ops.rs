@@ -745,33 +745,6 @@ unsafe fn unpack_q4_0_nibbles_avx2(qs: &[u8]) -> std::arch::x86_64::__m256i {
     _mm256_sub_epi8(q4, _mm256_set1_epi8(8))
 }
 
-/// Multiply-sum Q4_0 × Q8_0 block (unscaled).
-///
-/// Computes sum(q4[i] * q8[i]) for 32-element blocks.
-/// Returns __m256 with one i32 result per 8-element group.
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2,fma")]
-#[target_feature(enable = "avxvnni")]
-unsafe fn mul_sum_q4_0_q8_0_block_avx2_vnni(
-    q4: std::arch::x86_64::__m256i,
-    q8: &[u8],
-) -> std::arch::x86_64::__m256 {
-    use std::arch::x86_64::*;
-
-    debug_assert_eq!(
-        q8.len(),
-        Q8_BLOCK_ELEMS,
-        "mul_sum_q4_0_q8_0_block_avx2_vnni: q8 must have 32 elements"
-    );
-
-    let q8v = _mm256_loadu_si256(q8.as_ptr() as *const __m256i);
-    // AVX2VNNI: compute dot product of signed i8 vectors
-    // This does both multiply and horizontal sum in one instruction
-    let zero = _mm256_setzero_si256();
-    let dot32 = _mm256_dpwssd_avx_epi32(zero, q4, q8v);
-    _mm256_cvtepi32_ps(dot32)
-}
-
 /// Multiply-sum Q4_0 × Q8_0 block (unscaled) without VNNI.
 ///
 /// Computes sum(q4[i] * q8[i]) for 32-element blocks.
@@ -898,14 +871,6 @@ pub unsafe fn dot_q4_0_q8_0_block_avx2(qs: &[u8], q8: &[u8], scale: f32) -> f32 
     );
 
     let q4 = unpack_q4_0_nibbles_avx2(qs);
-    // Use VNNI if available, otherwise fall back to regular AVX2
-    #[cfg(target_arch = "x86_64")]
-    let dotf = if is_x86_feature_detected!("avxvnni") {
-        mul_sum_q4_0_q8_0_block_avx2_vnni(q4, q8)
-    } else {
-        mul_sum_q4_0_q8_0_block_avx2_unscaled(q4, q8)
-    };
-    #[cfg(not(target_arch = "x86_64"))]
     let dotf = mul_sum_q4_0_q8_0_block_avx2_unscaled(q4, q8);
     let scaled = _mm256_mul_ps(dotf, _mm256_set1_ps(scale));
     hsum_avx2(scaled)
