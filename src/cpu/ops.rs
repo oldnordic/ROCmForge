@@ -296,12 +296,118 @@ pub fn add_bias(x: &mut [f32], bias: &[f32]) {
     }
 }
 
+/// Batched bias add: x[s, :] += bias[:] for each s in 0..seq_len
+pub fn add_bias_batched(x: &mut [f32], bias: &[f32], dim: usize, seq_len: usize) {
+    for s in 0..seq_len {
+        let xr = &mut x[s * dim..(s + 1) * dim];
+        add_bias(xr, bias);
+    }
+}
+
 /// Residual add: a[i] += b[i]
 pub fn residual_add(a: &mut [f32], b: &[f32]) {
     debug_assert_eq!(a.len(), b.len(), "residual dimension mismatch");
     for (ai, bi) in a.iter_mut().zip(b.iter()) {
         *ai += bi;
     }
+}
+
+/// Batched residual add: a[s, :] += b[s, :] for each s in 0..seq_len
+pub fn residual_add_batched(a: &mut [f32], b: &[f32], dim: usize, seq_len: usize) {
+    for i in 0..seq_len * dim {
+        a[i] += b[i];
+    }
+}
+
+// ── GEMM (batched matrix multiply for prefill) ───────────────────────────────────
+
+use rayon::prelude::*;
+
+use super::quant::{Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS, Q8_BLOCK_BYTES, Q8_BLOCK_ELEMS};
+use crate::loader::GgmlType;
+
+/// F32 GEMM: Y[s, o] = dot(W[o, :], X[s, :])
+/// W: [out_dim, in_dim], X: [seq_len, in_dim], Y: [seq_len, out_dim]
+pub fn gemm_f32(w: &[f32], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
+        let x_row = &x[s * in_dim..(s + 1) * in_dim];
+        for o in 0..out_dim {
+            let w_row = &w[o * in_dim..(o + 1) * in_dim];
+            y_row[o] = w_row.iter().zip(x_row.iter()).map(|(wi, xi)| wi * xi).sum();
+        }
+    });
+}
+
+/// Q4_0 GEMM: dequant on-the-fly.
+pub fn gemm_q4_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    let num_blocks = in_dim / Q4_BLOCK_ELEMS;
+    let row_bytes = num_blocks * Q4_BLOCK_BYTES;
+
+    y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
+        let x_row = &x[s * in_dim..(s + 1) * in_dim];
+        for o in 0..out_dim {
+            let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
+            let mut acc = 0.0f32;
+            for b in 0..num_blocks {
+                let block = &row_w[b * Q4_BLOCK_BYTES..];
+                let scale = super::quant::load_f16_scale(&block[0..2]);
+                let qs = &block[2..18];
+                let xb = &x_row[b * Q4_BLOCK_ELEMS..];
+                for i in 0..16 {
+                    let q_lo = (((qs[i] & 0x0F) as i32) - 8) as f32 * scale;
+                    let q_hi = (((qs[i] >> 4) as i32) - 8) as f32 * scale;
+                    acc += q_lo * xb[i] + q_hi * xb[i + 16];
+                }
+            }
+            y_row[o] = acc;
+        }
+    });
+}
+
+/// Q8_0 GEMM: dequant on-the-fly.
+pub fn gemm_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    let num_blocks = in_dim / Q8_BLOCK_ELEMS;
+    let row_bytes = num_blocks * Q8_BLOCK_BYTES;
+
+    y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
+        let x_row = &x[s * in_dim..(s + 1) * in_dim];
+        for o in 0..out_dim {
+            let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
+            let mut acc = 0.0f32;
+            for b in 0..num_blocks {
+                let block = &row_w[b * Q8_BLOCK_BYTES..];
+                let scale = super::quant::load_f16_scale(&block[0..2]);
+                let qs = &block[2..34];
+                let xb = &x_row[b * Q8_BLOCK_ELEMS..];
+                for i in 0..Q8_BLOCK_ELEMS {
+                    acc += (qs[i] as i8) as f32 * scale * xb[i];
+                }
+            }
+            y_row[o] = acc;
+        }
+    });
+}
+
+/// Dispatch GEMM by weight type.
+pub fn dispatch_gemm(
+    w: &[u8],
+    wtype: GgmlType,
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    in_dim: usize,
+) -> Result<(), super::CpuError> {
+    match wtype {
+        GgmlType::F32 => {
+            let wf: &[f32] =
+                unsafe { std::slice::from_raw_parts(w.as_ptr() as *const f32, w.len() / 4) };
+            gemm_f32(wf, x, y, out_dim, in_dim);
+        }
+        GgmlType::Q4_0 => gemm_q4_0(w, x, y, out_dim, in_dim),
+        GgmlType::Q8_0 => gemm_q8_0(w, x, y, out_dim, in_dim),
+        other => return Err(super::CpuError::UnsupportedWeightType(other)),
+    }
+    Ok(())
 }
 
 // ── Sampling utilities ──────────────────────────────────────────────────────────

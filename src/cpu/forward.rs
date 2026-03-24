@@ -15,7 +15,7 @@ use crate::loader::GgmlType;
 /// Dispatch GEMV based on weight type.
 ///
 /// Computes: y = W * x (matrix-vector multiply)
-fn dispatch_gemv(
+pub fn dispatch_gemv(
     w: &[u8],
     wtype: GgmlType,
     x: &[f32],
