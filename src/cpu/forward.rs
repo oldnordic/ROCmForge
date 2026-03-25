@@ -248,16 +248,30 @@ pub fn cpu_full_forward(
     let h = config.hidden_size;
     let v = config.vocab_size;
     if debug {
-        eprintln!("[LM head] type={:?} h={} v={}", weights.lm_head_type, h, v);
+        eprintln!("[LM head] type={:?} h={} v={} tied={}", weights.lm_head_type, h, v, weights.lm_head_tied);
     }
-    dispatch_gemv(
-        &weights.lm_head,
-        weights.lm_head_type,
-        &scratch.normed,
-        &mut scratch.logits,
-        v,
-        h,
-    )?;
+    // For tied embeddings (W is [hidden_size, vocab_size]), compute y = W^T * x
+    // by using regular GEMV with swapped dimensions: gemv(W, x, y, out_dim=v, in_dim=h)
+    // Standard GEMV expects W [out_dim, in_dim], so we pass in_dim as "out_dim" and out_dim as "in_dim"
+    if weights.lm_head_tied {
+        super::ops::dispatch_gemv(
+            &weights.lm_head,
+            weights.lm_head_type,
+            &scratch.normed,
+            &mut scratch.logits,
+            v,  // Pass vocab_size as out_dim for GEMV
+            h,  // Pass hidden_size as in_dim for GEMV
+        )?;
+    } else {
+        super::ops::dispatch_gemv(
+            &weights.lm_head,
+            weights.lm_head_type,
+            &scratch.normed,
+            &mut scratch.logits,
+            v,
+            h,
+        )?;
+    }
 
     // Debug: show logits statistics
     if debug {

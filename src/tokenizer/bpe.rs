@@ -92,11 +92,12 @@ impl BpeTokenizer {
 
         Self::new(data.tokens.clone(), data.merges.clone(),
                  data.bos_token_id, data.eos_token_id, data.unk_token_id,
-                 data.add_bos, data.add_eos)
-            .with_pre_tokenizer(pre_type)
+                 data.add_bos, data.add_eos, pre_type)
     }
 
-    fn new(vocab: Vec<Vec<u8>>, merges: Vec<(Vec<u8>, Vec<u8>)>, bos: Option<u32>, eos: Option<u32>, unk: Option<u32>, add_bos: bool, add_eos: bool) -> Self {
+    fn new(vocab: Vec<Vec<u8>>, merges: Vec<(Vec<u8>, Vec<u8>)>,
+            bos: Option<u32>, eos: Option<u32>, unk: Option<u32>,
+            add_bos: bool, add_eos: bool, pre_type: PreTokenizerType) -> Self {
         let mut token_to_id = HashMap::with_capacity(vocab.len());
         let mut special_tokens = HashSet::new();
         for (id, token) in vocab.iter().enumerate() {
@@ -119,28 +120,15 @@ impl BpeTokenizer {
             token_to_id,
             merges: merge_map,
             special_tokens,
-            pre_type: PreTokenizerType::Qwen2,
+            pre_type,
             bos_id: bos,
             eos_id: eos,
             unk_id: unk,
-            add_bos: add_bos,
-            add_eos: add_eos,
+            add_bos,
+            add_eos,
             byte_encoder,
             byte_decoder,
         }
-        .with_special_tokens(bos, eos, unk)
-    }
-
-    fn with_special_tokens(mut self, bos: Option<u32>, eos: Option<u32>, unk: Option<u32>) -> Self {
-        self.bos_id = bos;
-        self.eos_id = eos;
-        self.unk_id = unk;
-        self
-    }
-
-    fn with_pre_tokenizer(mut self, t: PreTokenizerType) -> Self {
-        self.pre_type = t;
-        self
     }
 
     // ── Encode ──────────────────────────────────────────────────────────────────
@@ -475,6 +463,16 @@ impl BpeTokenizer {
         self.eos_id
     }
 
+    /// Returns whether BOS token should be added.
+    pub fn add_bos(&self) -> bool {
+        self.add_bos
+    }
+
+    /// Returns whether EOS token should be added.
+    pub fn add_eos(&self) -> bool {
+        self.add_eos
+    }
+
     // ── Byte encoder ────────────────────────────────────────────────────────────
 
     fn build_byte_encoder() -> HashMap<u8, String> {
@@ -538,7 +536,7 @@ mod tests {
             (b"he".to_vec(), b"ll".to_vec()),
             (b"hel".to_vec(), b"lo".to_vec()),
         ];
-        BpeTokenizer::new(vocab, merges).with_special_tokens(None, Some(9), None)
+        BpeTokenizer::new(vocab, merges, None, Some(9), None, false, false, PreTokenizerType::Qwen2)
     }
 
     #[test]

@@ -302,15 +302,28 @@ pub fn cpu_prefill_forward(
     rms_norm(last_row, &weights.output_norm, &mut scratch.normed, config.rms_norm_eps);
 
     // 5. LM head GEMV (use decode path for single token)
+    let h = config.hidden_size;
     let v = config.vocab_size;
-    dispatch_gemv(
-        &weights.lm_head,
-        weights.lm_head_type,
-        &scratch.normed,
-        &mut scratch.logits,
-        v,
-        h,
-    )?;
+    // For tied embeddings, use regular GEMV with swapped dimensions
+    if weights.lm_head_tied {
+        super::ops::dispatch_gemv(
+            &weights.lm_head,
+            weights.lm_head_type,
+            &scratch.normed,
+            &mut scratch.logits,
+            v,  // Pass vocab_size as out_dim
+            h,  // Pass hidden_size as in_dim
+        )?;
+    } else {
+        super::ops::dispatch_gemv(
+            &weights.lm_head,
+            weights.lm_head_type,
+            &scratch.normed,
+            &mut scratch.logits,
+            v,
+            h,
+        )?;
+    }
 
     Ok(())
 }

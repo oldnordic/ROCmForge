@@ -1037,3 +1037,125 @@ pub fn argmax(x: &[f32]) -> usize {
         .map(|(i, _)| i)
         .unwrap_or(0)
 }
+
+// ── Transposed GEMV for tied embeddings ────────────────────────────────────
+
+/// Q8_0 GEMV transposed for tied embeddings.
+///
+/// Computes: y = W^T * x where W has shape [in_dim, out_dim]
+/// instead of the standard [out_dim, in_dim].
+///
+/// This is used when the LM head shares token embedding weights.
+/// Token embeddings are stored as [hidden_size, vocab_size] but
+/// for output projection we need to compute: logits[v] = sum_i(x[i] * W[i, v])
+///
+/// The weights are in row-major format: W[i, v] at offset i * out_dim + v
+pub fn gemv_q8_0_transposed(
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    in_dim: usize,
+) {
+    // Initialize output to zero
+    y.fill(0.0);
+
+    // Debug: check first few elements
+    if std::env::var("ROCmFORGE_DEBUG_GEMV").is_ok() {
+        eprintln!("[Transposed GEMV] in_dim={} out_dim={} total_weights={}",
+                 in_dim, out_dim, w.len());
+        eprintln!("[Transposed GEMV] x[0..5]={:?}", &x[..5.min(in_dim)]);
+        // Check W[0, 0], W[0, 1], W[1, 0], W[1, 1]
+        for (i, v) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+            if i < in_dim && v < out_dim {
+                let offset = i * out_dim + v;
+                let block_idx = offset / Q8_BLOCK_ELEMS;
+                let elem_in_block = offset % Q8_BLOCK_ELEMS;
+                let block_start = block_idx * Q8_BLOCK_BYTES;
+                let scale = load_f16_scale(&w[block_start..block_start + 2]);
+                let q_val = (w[block_start + 2 + elem_in_block] as i8) as f32 * scale;
+                eprintln!("[Transposed GEMV] W[{}, {}] = {} (scale={:.4})",
+                         i, v, q_val, scale);
+            }
+        }
+    }
+
+    // For each output dimension (vocab token)
+    for v in 0..out_dim {
+        let mut acc = 0.0f32;
+
+        // Compute dot product: sum_i(x[i] * W[i, v])
+        for i in 0..in_dim {
+            // W[i, v] is at linear offset: i * out_dim + v
+            let element_offset = i * out_dim + v;
+
+            // Find the Q8_0 block containing this element
+            let block_idx = element_offset / Q8_BLOCK_ELEMS;
+            let elem_in_block = element_offset % Q8_BLOCK_ELEMS;
+
+            // Each block: [2-byte f16 scale | 32 i8 values]
+            let block_start = block_idx * Q8_BLOCK_BYTES;
+            let scale = load_f16_scale(&w[block_start..block_start + 2]);
+            let q_val = (w[block_start + 2 + elem_in_block] as i8) as f32 * scale;
+
+            acc += x[i] * q_val;
+        }
+
+        y[v] = acc;
+    }
+}
+
+/// Dispatch GEMV with transposed flag for tied embeddings.
+///
+/// When `transposed` is true, computes: y = W^T * x
+/// Otherwise computes: y = W * x
+pub fn dispatch_gemv_transposed(
+    w: &[u8],
+    wtype: GgmlType,
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    in_dim: usize,
+    transposed: bool,
+) -> Result<(), super::CpuError> {
+    match wtype {
+        GgmlType::F32 => {
+            let wf: &[f32] = unsafe {
+                std::slice::from_raw_parts(w.as_ptr() as *const f32, w.len() / 4)
+            };
+            if transposed {
+                gemv_f32_transposed(wf, x, y, out_dim, in_dim);
+            } else {
+                gemv_f32(wf, x, y);
+            }
+        }
+        GgmlType::Q8_0 => {
+            if transposed {
+                gemv_q8_0_transposed(w, x, y, out_dim, in_dim);
+            } else {
+                gemv_q8_0(w, x, y, out_dim, in_dim);
+            }
+        }
+        other => return Err(super::CpuError::UnsupportedWeightType(other)),
+    }
+    Ok(())
+}
+
+/// F32 GEMV transposed for tied embeddings.
+fn gemv_f32_transposed(
+    w: &[f32],
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    in_dim: usize,
+) {
+    // y = W^T * x, where W has shape [in_dim, out_dim]
+    // y[v] = sum_i(x[i] * W[i, v])
+    for v in 0..out_dim {
+        let mut acc = 0.0f32;
+        for i in 0..in_dim {
+            acc += x[i] * w[i * out_dim + v];
+        }
+        y[v] = acc;
+    }
+}

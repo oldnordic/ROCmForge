@@ -163,12 +163,17 @@ pub fn embed_q6_k(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usi
 }
 
 /// Embed Q8_0 token: out = dequant(emb[token_id])
+///
+/// The embedding tensor has shape [hidden_size, vocab_size] = [896, 151936].
+/// To embed token_id, we need the column vocab_id of the matrix.
+/// Each column has hidden_size elements, stored in Q8_0 blocks.
 pub fn embed_q8_0(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usize) {
     let num_blocks = hidden_size / Q8_BLOCK_ELEMS;
-    let row_offset = token_id * num_blocks * Q8_BLOCK_BYTES;
+    // For [hidden_size, vocab_size] layout, column vocab_id is at offset vocab_id * hidden_size
+    let col_offset = token_id * num_blocks * Q8_BLOCK_BYTES;
 
     for b in 0..num_blocks {
-        let block = &emb[row_offset + b * Q8_BLOCK_BYTES..row_offset + (b + 1) * Q8_BLOCK_BYTES];
+        let block = &emb[col_offset + b * Q8_BLOCK_BYTES..col_offset + (b + 1) * Q8_BLOCK_BYTES];
         let scale = load_f16_scale(&block[0..2]);
         let qs = &block[2..34];
         let base = b * Q8_BLOCK_ELEMS;

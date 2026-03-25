@@ -180,6 +180,8 @@ fn run_cpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("[Args] model path: {}", args.model);
     let config = ModelConfig::from_gguf(&file)?;
     let tok = BpeTokenizer::from_gguf(file.tokenizer_data());
+    eprintln!("[Tokenizer] bos_id={:?} eos_id={:?} add_bos={} add_eos={}",
+             tok.bos_id(), tok.eos_id(), tok.add_bos(), tok.add_eos());
 
     eprintln!(
         "Model: {} layers, {} vocab, {} hidden",

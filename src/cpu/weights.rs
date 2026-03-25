@@ -178,6 +178,8 @@ pub struct CpuModelWeights {
     pub token_emb_type: GgmlType,
     /// Quantization type for LM head
     pub lm_head_type: GgmlType,
+    /// Whether LM head is tied to token embeddings (shared weights)
+    pub lm_head_tied: bool,
 }
 
 impl CpuModelWeights {
@@ -202,16 +204,16 @@ impl CpuModelWeights {
         let output_norm = copy_f32(file, "output_norm.weight")?;
 
         // LM head: use output.weight if present, otherwise tie to embeddings
-        let (lm_head, lm_head_type) = if file.has_tensor("output.weight") {
+        let (lm_head, lm_head_type, lm_head_tied) = if file.has_tensor("output.weight") {
             let lm_type = file
                 .tensor("output.weight")
                 .map_err(WeightError::Load)?
                 .map(|t| t.ggml_type)
                 .unwrap_or(GgmlType::F32);
-            (copy_tensor(file, "output.weight")?, lm_type)
+            (copy_tensor(file, "output.weight")?, lm_type, false)
         } else {
             // Weight tying: lm_head shares embedding weights
-            (token_emb.clone(), token_emb_type)
+            (token_emb.clone(), token_emb_type, true)
         };
 
         // Load all layers
@@ -231,6 +233,7 @@ impl CpuModelWeights {
             lm_head,
             token_emb_type,
             lm_head_type,
+            lm_head_tied,
         })
     }
 
