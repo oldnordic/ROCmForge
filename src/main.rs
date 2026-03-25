@@ -135,6 +135,19 @@ fn list_tensors(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 /// Print top-k tokens with their probabilities.
 fn print_top_k_tokens(logits: &[f32], tok: &BpeTokenizer, k: usize) {
+    // Check for NaN/Inf in logits
+    let nan_count = logits.iter().filter(|l| l.is_nan()).count();
+    let inf_count = logits.iter().filter(|l| l.is_infinite()).count();
+    if nan_count > 0 || inf_count > 0 {
+        eprintln!("ERROR: logits contain {} NaN and {} Inf values", nan_count, inf_count);
+        eprintln!("  Stats: min={:.4}, max={:.4}, mean={:.4}",
+            logits.iter().cloned().fold(f32::INFINITY, f32::min),
+            logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max),
+            logits.iter().sum::<f32>() / logits.len() as f32
+        );
+        return;
+    }
+
     // Softmax to get probabilities
     let max_logit = logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
     let mut probs: Vec<f32> = logits.iter().map(|l| (l - max_logit).exp()).collect();

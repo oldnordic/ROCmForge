@@ -74,7 +74,6 @@ fn prefill_layer_forward(
     let kv_s = config.num_kv_heads * config.head_dim;
     let ff = config.intermediate_size;
     let eps = config.rms_norm_eps;
-    let wtype = weights.weight_type;
 
     // 1. RMS norm each row: normed[s, :] = rms_norm(hidden[s, :], attn_norm)
     for s in 0..seq_len {
@@ -86,7 +85,7 @@ fn prefill_layer_forward(
     // 2. QKV GEMM
     dispatch_gemm(
         &weights.attn_q,
-        wtype,
+        weights.attn_q_type,
         &ps.normed,
         &mut ps.q,
         q_s,
@@ -94,7 +93,7 @@ fn prefill_layer_forward(
     )?;
     dispatch_gemm(
         &weights.attn_k,
-        wtype,
+        weights.attn_k_type,
         &ps.normed,
         &mut ps.k,
         kv_s,
@@ -102,7 +101,7 @@ fn prefill_layer_forward(
     )?;
     dispatch_gemm(
         &weights.attn_v,
-        wtype,
+        weights.attn_v_type,
         &ps.normed,
         &mut ps.v,
         kv_s,
@@ -170,7 +169,7 @@ fn prefill_layer_forward(
     // 7. O projection GEMM
     dispatch_gemm(
         &weights.attn_o,
-        wtype,
+        weights.attn_o_type,
         &ps.attn_out,
         &mut ps.layer_out,
         h,
@@ -192,7 +191,7 @@ fn prefill_layer_forward(
     // 10. MLP: gate + up projections
     dispatch_gemm(
         &weights.ffn_gate,
-        wtype,
+        weights.ffn_gate_type,
         &ps.normed,
         &mut ps.gate,
         ff,
@@ -200,7 +199,7 @@ fn prefill_layer_forward(
     )?;
     dispatch_gemm(
         &weights.ffn_up,
-        wtype,
+        weights.ffn_up_type,
         &ps.normed,
         &mut ps.swiglu,
         ff,
@@ -213,7 +212,7 @@ fn prefill_layer_forward(
     // 12. Down projection GEMM
     dispatch_gemm(
         &weights.ffn_down,
-        wtype,
+        weights.ffn_down_type,
         &ps.swiglu,
         &mut ps.layer_out,
         h,

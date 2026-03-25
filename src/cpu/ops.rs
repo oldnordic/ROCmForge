@@ -8,8 +8,14 @@
 //! - Softmax and sampling utilities
 
 use rayon::prelude::*;
-use crate::cpu::quant::{Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS, Q4_1_BLOCK_BYTES, Q4_1_BLOCK_ELEMS, Q6_K_BLOCK_BYTES, Q6_K_BLOCK_ELEMS, Q8_BLOCK_BYTES, Q8_BLOCK_ELEMS, Q8_0_MAX, load_f16_scale};
+use crate::cpu::quant::{Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS, Q4_1_BLOCK_BYTES, Q4_1_BLOCK_ELEMS, Q8_BLOCK_BYTES, Q8_BLOCK_ELEMS, Q8_0_MAX, load_f16_scale};
 use crate::loader::GgmlType;
+
+/// Load f16 value from bytes as f32.
+fn load_f16_as_f32(bytes: &[u8]) -> f32 {
+    let u = u16::from_le_bytes([bytes[0], bytes[1]]);
+    f32::from(half::f16::from_bits(u))
+}
 
 // For runtime CPU feature detection
 #[cfg(target_arch = "x86_64")]
@@ -367,6 +373,33 @@ pub fn gemm_q4_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
     });
 }
 
+/// Q4_1 GEMM: dequant on-the-fly with min offset.
+pub fn gemm_q4_1(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    let num_blocks = in_dim / Q4_1_BLOCK_ELEMS;
+    let row_bytes = num_blocks * Q4_1_BLOCK_BYTES;
+
+    y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
+        let x_row = &x[s * in_dim..(s + 1) * in_dim];
+        for o in 0..out_dim {
+            let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
+            let mut acc = 0.0f32;
+            for b in 0..num_blocks {
+                let block = &row_w[b * Q4_1_BLOCK_BYTES..(b + 1) * Q4_1_BLOCK_BYTES];
+                let scale = load_f16_scale(&block[0..2]);
+                let min = load_f16_as_f32(&block[2..4]);
+                let qs = &block[4..20];
+                let xb = &x_row[b * Q4_1_BLOCK_ELEMS..];
+                for i in 0..16 {
+                    let q_lo = (qs[i] & 0x0F) as f32 * scale + min;
+                    let q_hi = (qs[i] >> 4) as f32 * scale + min;
+                    acc += q_lo * xb[i] + q_hi * xb[i + 16];
+                }
+            }
+            y_row[o] = acc;
+        }
+    });
+}
+
 /// Q8_0 GEMM: dequant on-the-fly.
 pub fn gemm_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
     let num_blocks = in_dim / Q8_BLOCK_ELEMS;
@@ -407,6 +440,7 @@ pub fn dispatch_gemm(
             gemm_f32(wf, x, y, out_dim, in_dim);
         }
         GgmlType::Q4_0 => gemm_q4_0(w, x, y, out_dim, in_dim),
+        GgmlType::Q4_1 => gemm_q4_1(w, x, y, out_dim, in_dim),
         GgmlType::Q8_0 => gemm_q8_0(w, x, y, out_dim, in_dim),
         other => return Err(super::CpuError::UnsupportedWeightType(other)),
     }
@@ -627,53 +661,6 @@ pub fn gemv_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
     });
 }
 
-/// Q6_K GEMV: dequantize on-the-fly.
-///
-/// Q6_K uses 2-bit quantization with multiple scales per block.
-/// Block format: [128 ql | 64 qh | 16 scales | 2 f16 d] = 210 bytes for 256 values
-/// - ql: lower 4 bits of each 2-bit quant
-/// - qh: upper 2 bits of each 2-bit quant
-/// - scales: quantized scales (8-bit) for 16 sub-blocks of 16 values
-/// - d: super-block scale (f16)
-pub fn gemv_q6_k(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
-    let num_blocks = in_dim / Q6_K_BLOCK_ELEMS;
-    let row_bytes = num_blocks * Q6_K_BLOCK_BYTES;
-
-    y.par_iter_mut().enumerate().for_each(|(row, out)| {
-        let row_w = &w[row * row_bytes..(row + 1) * row_bytes];
-        let mut acc = 0.0f32;
-        for b in 0..num_blocks {
-            let block = &row_w[b * Q6_K_BLOCK_BYTES..];
-            let d = load_f16_scale(&block[0..2]);
-            let ql = &block[2..130]; // 128 bytes of lower 4 bits
-            let qh = &block[130..194]; // 64 bytes of upper 2 bits
-            let scales = &block[194..210]; // 16 bytes of scales
-            let xb = &x[b * Q6_K_BLOCK_ELEMS..];
-
-            // Process 128 values at a time (2 groups per block)
-            for g in 0..2 {
-                for l in 0..32 {
-                    // Reconstruct 2-bit quant values (0-3 range)
-                    let is = l / 16; // scale index (0 or 1)
-                    let q1 = i32::from(((ql[l] & 0xF) | (((qh[l] >> (is * 2)) & 3) << 4)) as i8) - 32;
-                    let q2 = i32::from(((ql[l + 32] & 0xF) | (((qh[l] >> (is * 2 + 2)) & 3) << 4)) as i8) - 32;
-                    let q3 = i32::from((((ql[l] >> 4) & 0xF) | (((qh[l] >> (is * 2 + 4)) & 3) << 4)) as i8) - 32;
-                    let q4 = i32::from((((ql[l + 32] >> 4) & 0xF) | (((qh[l] >> (is * 2 + 6)) & 3) << 4)) as i8) - 32;
-
-                    // Get scale for this group
-                    let sc = scales[is * 4 + (l / 8)] as i8;
-
-                    acc += d * (sc as f32) * (q1 as f32) * xb[g * 128 + l];
-                    acc += d * (sc as f32) * (q2 as f32) * xb[g * 128 + l + 32];
-                    acc += d * (sc as f32) * (q3 as f32) * xb[g * 128 + l + 64];
-                    acc += d * (sc as f32) * (q4 as f32) * xb[g * 128 + l + 96];
-                }
-            }
-        }
-        *out = acc;
-    });
-}
-
 /// Dispatch GEMV based on weight type.
 ///
 /// Computes: y = W * x (matrix-vector multiply)
@@ -694,7 +681,6 @@ pub fn dispatch_gemv(
         }
         GgmlType::Q4_0 => gemv_q4_0_q8_0(w, x, y, out_dim, in_dim),
         GgmlType::Q4_1 => gemv_q4_1_q8_0(w, x, y, out_dim, in_dim),
-        GgmlType::Q6_K => gemv_q6_k(w, x, y, out_dim, in_dim),
         GgmlType::Q8_0 => gemv_q8_0(w, x, y, out_dim, in_dim),
         other => return Err(super::CpuError::UnsupportedWeightType(other)),
     }
@@ -743,6 +729,33 @@ unsafe fn unpack_q4_0_nibbles_avx2(qs: &[u8]) -> std::arch::x86_64::__m256i {
     let hi = _mm_and_si128(_mm_srli_epi16(raw, 4), lo_mask);
     let q4 = _mm256_inserti128_si256(_mm256_castsi128_si256(lo), hi, 1);
     _mm256_sub_epi8(q4, _mm256_set1_epi8(8))
+}
+
+/// Multiply-sum Q4_0 × Q8_0 block (unscaled).
+///
+/// Computes sum(q4[i] * q8[i]) for 32-element blocks.
+/// Returns __m256 with one i32 result per 8-element group.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+#[target_feature(enable = "avxvnni")]
+unsafe fn mul_sum_q4_0_q8_0_block_avx2_vnni(
+    q4: std::arch::x86_64::__m256i,
+    q8: &[u8],
+) -> std::arch::x86_64::__m256 {
+    use std::arch::x86_64::*;
+
+    debug_assert_eq!(
+        q8.len(),
+        Q8_BLOCK_ELEMS,
+        "mul_sum_q4_0_q8_0_block_avx2_vnni: q8 must have 32 elements"
+    );
+
+    let q8v = _mm256_loadu_si256(q8.as_ptr() as *const __m256i);
+    // AVX2VNNI: compute dot product of signed i8 vectors
+    // This does both multiply and horizontal sum in one instruction
+    let zero = _mm256_setzero_si256();
+    let dot32 = _mm256_dpwssd_avx_epi32(zero, q4, q8v);
+    _mm256_cvtepi32_ps(dot32)
 }
 
 /// Multiply-sum Q4_0 × Q8_0 block (unscaled) without VNNI.
@@ -871,6 +884,14 @@ pub unsafe fn dot_q4_0_q8_0_block_avx2(qs: &[u8], q8: &[u8], scale: f32) -> f32 
     );
 
     let q4 = unpack_q4_0_nibbles_avx2(qs);
+    // Use VNNI if available, otherwise fall back to regular AVX2
+    #[cfg(target_arch = "x86_64")]
+    let dotf = if is_x86_feature_detected!("avxvnni") {
+        mul_sum_q4_0_q8_0_block_avx2_vnni(q4, q8)
+    } else {
+        mul_sum_q4_0_q8_0_block_avx2_unscaled(q4, q8)
+    };
+    #[cfg(not(target_arch = "x86_64"))]
     let dotf = mul_sum_q4_0_q8_0_block_avx2_unscaled(q4, q8);
     let scaled = _mm256_mul_ps(dotf, _mm256_set1_ps(scale));
     hsum_avx2(scaled)
@@ -937,28 +958,22 @@ pub unsafe fn dot_q4_1_q8_0_block_avx2(qs: &[u8], q8: &[u8], scale: f32, min_off
         "dot_q4_1_q8_0_block_avx2: q8 must have 32 elements"
     );
 
-    let q4 = unpack_q4_1_nibbles_avx2(qs);
-    let dotf = mul_sum_q4_1_q8_0_block_avx2_unscaled(q4, q8);
-
-    // Compute sum of Q8_0 values (signed int8, symmetric around 0)
+    // Compute sum of Q8_0 values for min_offset correction
     let q8v = _mm256_loadu_si256(q8.as_ptr() as *const __m256i);
     let q8_low = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(q8v));
     let q8_high = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(q8v, 1));
     let q8_sum16 = _mm256_add_epi16(q8_low, q8_high);
-    let q8_sum32 = _mm256_madd_epi16(_mm256_set1_epi16(1), q8_sum16);
-    let q8_sum = _mm256_extract_epi32(q8_sum32, 0) as f32 +
-                 _mm256_extract_epi32(q8_sum32, 1) as f32 +
-                 _mm256_extract_epi32(q8_sum32, 2) as f32 +
-                 _mm256_extract_epi32(q8_sum32, 3) as f32 +
-                 _mm256_extract_epi32(q8_sum32, 4) as f32 +
-                 _mm256_extract_epi32(q8_sum32, 5) as f32 +
-                 _mm256_extract_epi32(q8_sum32, 6) as f32 +
-                 _mm256_extract_epi32(q8_sum32, 7) as f32;
+    // Horizontal sum 16-bit values: pairwise, then to 32-bit, then final sum
+    let q8_hadd = _mm256_hadd_epi16(q8_sum16, q8_sum16);
+    let q8_hadd2 = _mm256_hadd_epi16(q8_hadd, q8_hadd);
+    // Extract the result (only first two elements needed)
+    let q8_sum = (_mm256_extract_epi16(q8_hadd2, 0) as i32)
+        + (_mm256_extract_epi16(q8_hadd2, 4) as i32);
 
-    // sum((q4 * w_scale + w_min) * q8 * x_scale)
-    // = sum(q4 * q8) * w_scale * x_scale + w_min * x_scale * sum(q8)
+    let q4 = unpack_q4_1_nibbles_avx2(qs);
+    let dotf = mul_sum_q4_1_q8_0_block_avx2_unscaled(q4, q8);
     let scaled = _mm256_mul_ps(dotf, _mm256_set1_ps(scale));
-    hsum_avx2(scaled) + min_offset * q8_sum
+    hsum_avx2(scaled) + min_offset * (q8_sum as f32)
 }
 
 /// Scalar Q4_1 × Q8_0 block dot product — one 32-element block.
@@ -974,17 +989,10 @@ fn dot_q4_1_q8_0_block_scalar(qs: &[u8], q8: &[u8], scale: f32, min_offset: f32)
         "dot_q4_1_q8_0_block_scalar: q8 must have 32 elements"
     );
     let mut acc = 0i32;
+    let mut q8_sum = 0i32;
     for i in 0..16 {
         let q_lo = (qs[i] & 0x0F) as i32; // 0 to 15
         let q_hi = (qs[i] >> 4) as i32;
-        let x_lo = q8[i] as i8 as i32;
-        let x_hi = q8[i + 16] as i8 as i32;
-        acc += q_lo * x_lo + q_hi * x_hi;
-    }
-    let mut q8_sum = 0i32;
-    for i in 0..16 {
-        let q_lo = (qs[i] & 0x0F) as i32 - 8;
-        let q_hi = (qs[i] >> 4) as i32 - 8;
         let x_lo = q8[i] as i8 as i32;
         let x_hi = q8[i + 16] as i8 as i32;
         acc += q_lo * x_lo + q_hi * x_hi;
@@ -992,7 +1000,7 @@ fn dot_q4_1_q8_0_block_scalar(qs: &[u8], q8: &[u8], scale: f32, min_offset: f32)
     }
     // sum((q4 * w_scale + w_min) * q8 * x_scale)
     // = sum(q4 * q8) * w_scale * x_scale + w_min * x_scale * sum(q8)
-    (acc as f32) * scale + min_offset * (q8_sum as f32) + min_offset * (Q8_BLOCK_ELEMS as f32)
+    (acc as f32) * scale + min_offset * (q8_sum as f32)
 }
 
 /// Scalar Q4_0 × Q8_0 block dot product — one 32-element block.
@@ -1015,7 +1023,8 @@ fn dot_q4_0_q8_0_block_scalar(qs: &[u8], q8: &[u8], scale: f32) -> f32 {
         let x_hi = q8[i + 16] as i8 as i32;
         acc += q_lo * x_lo + q_hi * x_hi;
     }
-    acc as f32 * scale
+    // Q4_0 is symmetric around 0, no min_offset needed
+    (acc as f32) * scale
 }
 
 // ── Sampling utilities ──────────────────────────────────────────────────────────

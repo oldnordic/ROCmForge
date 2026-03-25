@@ -30,7 +30,6 @@ pub fn cpu_layer_forward(
     let kv_size = config.num_kv_heads * config.head_dim;
     let ff_size = config.intermediate_size;
     let eps = config.rms_norm_eps;
-    let wtype = weights.weight_type;
 
     // 1. Attention RMS norm
     rms_norm(hidden, &weights.attn_norm, &mut scratch.normed, eps);
@@ -43,9 +42,9 @@ pub fn cpu_layer_forward(
     }
 
     // 2. QKV projections
-    dispatch_gemv(&weights.attn_q, wtype, &scratch.normed, &mut scratch.q, q_size, h)?;
-    dispatch_gemv(&weights.attn_k, wtype, &scratch.normed, &mut scratch.k, kv_size, h)?;
-    dispatch_gemv(&weights.attn_v, wtype, &scratch.normed, &mut scratch.v, kv_size, h)?;
+    dispatch_gemv(&weights.attn_q, weights.attn_q_type, &scratch.normed, &mut scratch.q, q_size, h)?;
+    dispatch_gemv(&weights.attn_k, weights.attn_k_type, &scratch.normed, &mut scratch.k, kv_size, h)?;
+    dispatch_gemv(&weights.attn_v, weights.attn_v_type, &scratch.normed, &mut scratch.v, kv_size, h)?;
 
     // 3. Optional biases (same as prefill)
     if let Some(bq) = &weights.attn_q_bias {
@@ -105,7 +104,7 @@ pub fn cpu_layer_forward(
     }
 
     // 6. Output projection
-    dispatch_gemv(&weights.attn_o, wtype, &scratch.attn_out, &mut scratch.layer_out, h, q_size)?;
+    dispatch_gemv(&weights.attn_o, weights.attn_o_type, &scratch.attn_out, &mut scratch.layer_out, h, q_size)?;
 
     if debug && layer == 0 {
         let lo_mean: f32 = scratch.layer_out.iter().copied().sum::<f32>() / h as f32;
@@ -126,8 +125,8 @@ pub fn cpu_layer_forward(
     rms_norm(hidden, &weights.ffn_norm, &mut scratch.normed, eps);
 
     // 9. FFN: gate + up projections
-    dispatch_gemv(&weights.ffn_gate, wtype, &scratch.normed, &mut scratch.gate, ff_size, h)?;
-    dispatch_gemv(&weights.ffn_up, wtype, &scratch.normed, &mut scratch.swiglu, ff_size, h)?;
+    dispatch_gemv(&weights.ffn_gate, weights.ffn_gate_type, &scratch.normed, &mut scratch.gate, ff_size, h)?;
+    dispatch_gemv(&weights.ffn_up, weights.ffn_up_type, &scratch.normed, &mut scratch.swiglu, ff_size, h)?;
 
     if debug && layer == 0 {
         let gate_mean: f32 = scratch.gate.iter().copied().sum::<f32>() / ff_size as f32;
@@ -172,7 +171,7 @@ pub fn cpu_layer_forward(
         }
         eprintln!("[Layer {} ffn_down] first_block dequant[0..5] = {:?}", layer, &dequant[0..5]);
     }
-    dispatch_gemv(&weights.ffn_down, wtype, &scratch.swiglu, &mut scratch.layer_out, h, ff_size)?;
+    dispatch_gemv(&weights.ffn_down, weights.ffn_down_type, &scratch.swiglu, &mut scratch.layer_out, h, ff_size)?;
 
     if debug && layer == 0 {
         let ffn_out_mean: f32 = scratch.layer_out.iter().copied().sum::<f32>() / h as f32;
