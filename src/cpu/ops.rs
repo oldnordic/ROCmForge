@@ -939,8 +939,26 @@ pub unsafe fn dot_q4_1_q8_0_block_avx2(qs: &[u8], q8: &[u8], scale: f32, min_off
 
     let q4 = unpack_q4_1_nibbles_avx2(qs);
     let dotf = mul_sum_q4_1_q8_0_block_avx2_unscaled(q4, q8);
+
+    // Compute sum of Q8_0 values (signed int8, symmetric around 0)
+    let q8v = _mm256_loadu_si256(q8.as_ptr() as *const __m256i);
+    let q8_low = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(q8v));
+    let q8_high = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(q8v, 1));
+    let q8_sum16 = _mm256_add_epi16(q8_low, q8_high);
+    let q8_sum32 = _mm256_madd_epi16(_mm256_set1_epi16(1), q8_sum16);
+    let q8_sum = _mm256_extract_epi32(q8_sum32, 0) as f32 +
+                 _mm256_extract_epi32(q8_sum32, 1) as f32 +
+                 _mm256_extract_epi32(q8_sum32, 2) as f32 +
+                 _mm256_extract_epi32(q8_sum32, 3) as f32 +
+                 _mm256_extract_epi32(q8_sum32, 4) as f32 +
+                 _mm256_extract_epi32(q8_sum32, 5) as f32 +
+                 _mm256_extract_epi32(q8_sum32, 6) as f32 +
+                 _mm256_extract_epi32(q8_sum32, 7) as f32;
+
+    // sum((q4 * w_scale + w_min) * q8 * x_scale)
+    // = sum(q4 * q8) * w_scale * x_scale + w_min * x_scale * sum(q8)
     let scaled = _mm256_mul_ps(dotf, _mm256_set1_ps(scale));
-    hsum_avx2(scaled) + min_offset * (Q8_BLOCK_ELEMS as f32)
+    hsum_avx2(scaled) + min_offset * q8_sum
 }
 
 /// Scalar Q4_1 × Q8_0 block dot product — one 32-element block.
@@ -963,7 +981,18 @@ fn dot_q4_1_q8_0_block_scalar(qs: &[u8], q8: &[u8], scale: f32, min_offset: f32)
         let x_hi = q8[i + 16] as i8 as i32;
         acc += q_lo * x_lo + q_hi * x_hi;
     }
-    (acc as f32) * scale + min_offset * (Q8_BLOCK_ELEMS as f32)
+    let mut q8_sum = 0i32;
+    for i in 0..16 {
+        let q_lo = (qs[i] & 0x0F) as i32 - 8;
+        let q_hi = (qs[i] >> 4) as i32 - 8;
+        let x_lo = q8[i] as i8 as i32;
+        let x_hi = q8[i + 16] as i8 as i32;
+        acc += q_lo * x_lo + q_hi * x_hi;
+        q8_sum += x_lo + x_hi;
+    }
+    // sum((q4 * w_scale + w_min) * q8 * x_scale)
+    // = sum(q4 * q8) * w_scale * x_scale + w_min * x_scale * sum(q8)
+    (acc as f32) * scale + min_offset * (q8_sum as f32) + min_offset * (Q8_BLOCK_ELEMS as f32)
 }
 
 /// Scalar Q4_0 × Q8_0 block dot product — one 32-element block.
