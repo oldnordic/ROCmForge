@@ -276,6 +276,9 @@ fn run_cpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 
         // Decode and print token
         let text = tok.decode_token(next_token);
+        if args.debug {
+            eprintln!("[Generated] token_id={} text={:?}", next_token, text);
+        }
         print!("{}", text);
         std::io::stdout().flush().ok();
         n_generated += 1;
