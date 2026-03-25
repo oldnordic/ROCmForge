@@ -1,3 +1,14 @@
 .planning/
 target/
 *.gguf
+# Codegraph database and config
+.codegraph/
+*.codegraph.db
+*.codegraph.db-shm
+*.codegraph.db-wal
+
+# Magellan database and files
+.magellan/
+*.magellan.db
+*.magellan.db-shm
+*.magellan.db-wal
