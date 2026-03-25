@@ -177,6 +177,7 @@ fn print_top_k_tokens(logits: &[f32], tok: &BpeTokenizer, k: usize) {
 fn run_cpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     // Load GGUF file
     let file = GgufFile::open(&args.model)?;
+    eprintln!("[Args] model path: {}", args.model);
     let config = ModelConfig::from_gguf(&file)?;
     let tok = BpeTokenizer::from_gguf(file.tokenizer_data());
 

@@ -90,13 +90,13 @@ impl BpeTokenizer {
             _ => PreTokenizerType::Qwen2, // Default to Qwen2 for rocmforge
         };
 
-        Self::new(data.tokens.clone(), data.merges.clone())
-            .with_special_tokens(data.bos_token_id, data.eos_token_id, data.unk_token_id)
-            .with_special_tokens_add(data.add_bos, data.add_eos)
+        Self::new(data.tokens.clone(), data.merges.clone(),
+                 data.bos_token_id, data.eos_token_id, data.unk_token_id,
+                 data.add_bos, data.add_eos)
             .with_pre_tokenizer(pre_type)
     }
 
-    fn new(vocab: Vec<Vec<u8>>, merges: Vec<(Vec<u8>, Vec<u8>)>) -> Self {
+    fn new(vocab: Vec<Vec<u8>>, merges: Vec<(Vec<u8>, Vec<u8>)>, bos: Option<u32>, eos: Option<u32>, unk: Option<u32>, add_bos: bool, add_eos: bool) -> Self {
         let mut token_to_id = HashMap::with_capacity(vocab.len());
         let mut special_tokens = HashSet::new();
         for (id, token) in vocab.iter().enumerate() {
@@ -120,26 +120,21 @@ impl BpeTokenizer {
             merges: merge_map,
             special_tokens,
             pre_type: PreTokenizerType::Qwen2,
-            bos_id: None,
-            eos_id: None,
-            unk_id: None,
-            add_bos: false,
-            add_eos: false,
+            bos_id: bos,
+            eos_id: eos,
+            unk_id: unk,
+            add_bos: add_bos,
+            add_eos: add_eos,
             byte_encoder,
             byte_decoder,
         }
+        .with_special_tokens(bos, eos, unk)
     }
 
     fn with_special_tokens(mut self, bos: Option<u32>, eos: Option<u32>, unk: Option<u32>) -> Self {
         self.bos_id = bos;
         self.eos_id = eos;
         self.unk_id = unk;
-        self
-    }
-
-    fn with_special_tokens_add(mut self, add_bos: bool, add_eos: bool) -> Self {
-        self.add_bos = add_bos;
-        self.add_eos = add_eos;
         self
     }
 
