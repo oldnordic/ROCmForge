@@ -18,6 +18,15 @@ pub const Q4_1_BLOCK_BYTES: usize = 20;
 pub const Q4_K_BLOCK_ELEMS: usize = 256;
 pub const Q4_K_BLOCK_BYTES: usize = 144;
 
+/// Q5_0: 32 elements per block, 22 bytes (2 scale + 4 qh + 16 qs)
+/// Q5_0 block format:
+/// - d: f16 scale (2 bytes)
+/// - qh: 4 bytes of high bits (1 bit per value)
+/// - qs: 16 bytes of low 4 bits (2 values per byte)
+/// Total: 22 bytes for 32 values (5.5 bits per weight)
+pub const Q5_0_BLOCK_ELEMS: usize = 32;
+pub const Q5_0_BLOCK_BYTES: usize = 22;
+
 /// Q6_K: 256 elements per block, 210 bytes (128 ql + 64 qh + 16 scales + 2 d)
 pub const Q6_K_BLOCK_ELEMS: usize = 256;
 pub const Q6_K_BLOCK_BYTES: usize = 210;
