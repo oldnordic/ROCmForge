@@ -34,6 +34,8 @@ pub use crate::hardware::{CpuCapabilities, BatchConfig, detect, derive_batch_con
 pub use self::features::{CpuFeatures, KernelPreference};
 // Re-export SIMD kernel system
 pub use self::simd::{SimdKernels, SimdActivations};
+// Re-export Q4_K kernels
+pub use self::kernels::gemm_q4k_q8::{gemv_q4_k_q8_k_dispatch, gemm_q4_k_q8_k_dispatch_gemm};
 
 #[cfg(test)]
 mod ops_tests;

@@ -928,6 +928,10 @@ pub fn dispatch_gemv(
                 gemv_q8_0(w, x, y, out_dim, in_dim);
             }
         }
+        GgmlType::Q4_K => {
+            // GEMV uses same signature for all types
+            crate::cpu::kernels::gemm_q4k_q8::gemv_q4_k_q8_k_dispatch(w, x, y, out_dim, in_dim);
+        }
         other => return Err(super::CpuError::UnsupportedWeightType(other)),
     }
     Ok(())
