@@ -10,11 +10,12 @@ use rocmforge::config::{detect_chat_template, ModelConfig};
 use rocmforge::cpu::{
     cache::{CpuForwardScratch, CpuKvCache},
     forward::{cpu_embed_token, cpu_full_forward},
-    prefill::cpu_prefill_forward,
+    prefill::cpu_prefill_forward_parallel,
     sampler::{cpu_sample_greedy, cpu_sample_top_p},
     weights::CpuModelWeights,
     CpuError,
 };
+use rocmforge::hardware::{detect, derive_batch_config, CpuCapabilities, BatchConfig};
 use rocmforge::loader::GgufFile;
 use rocmforge::tokenizer::BpeTokenizer;
 
@@ -175,6 +176,19 @@ fn print_top_k_tokens(logits: &[f32], tok: &BpeTokenizer, k: usize) {
 // ── CPU Inference ────────────────────────────────────────────────────────────────
 
 fn run_cpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Detect hardware capabilities
+    eprint!("Detecting CPU capabilities... ");
+    let caps: CpuCapabilities = detect().map_err(|e| format!("hardware detection: {}", e))?;
+    eprintln!("done");
+    eprintln!("  Physical cores: {}", caps.physical_cores);
+    eprintln!("  Logical CPUs: {}", caps.logical_cpus);
+    if caps.has_l3_cache() {
+        eprintln!("  L3 cache: {:.1} MB", caps.l3_cache_mb());
+    } else {
+        eprintln!("  L3 cache: undetectable (using fallback)");
+    }
+    eprintln!("  Total memory: {:.1} GB", caps.total_memory_gb());
+
     // Load GGUF file
     let file = GgufFile::open(&args.model)?;
     eprintln!("[Args] model path: {}", args.model);
@@ -188,6 +202,14 @@ fn run_cpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         config.num_layers, config.vocab_size, config.hidden_size
     );
     eprintln!("Device: CPU");
+
+    // 2. Derive batch config from hardware + model
+    let batch_config: BatchConfig = derive_batch_config(&caps, &config);
+    eprintln!(
+        "Batch config: max {} tokens/batch, use {} cores",
+        batch_config.max_tokens_per_batch,
+        batch_config.num_cores
+    );
 
     // Load weights
     eprint!("Loading weights... ");
@@ -233,8 +255,16 @@ fn run_cpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("  hidden[0..5]: {:?}", &test_hidden[0..5]);
     }
 
-    cpu_prefill_forward(&prompt_tokens, &weights, &mut kv, &mut scratch, 0, &config)
-        .map_err(|e: CpuError| format!("prefill: {}", e))?;
+    cpu_prefill_forward_parallel(
+        &prompt_tokens,
+        &weights,
+        &mut kv,
+        &mut scratch,
+        0,
+        &config,
+        &batch_config,
+    )
+    .map_err(|e: CpuError| format!("prefill: {}", e))?;
 
     // Debug: show top tokens after prefill
     if args.debug {

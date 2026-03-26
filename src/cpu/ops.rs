@@ -9,6 +9,7 @@
 
 use rayon::prelude::*;
 use crate::cpu::quant::{Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS, Q4_1_BLOCK_BYTES, Q4_1_BLOCK_ELEMS, Q8_BLOCK_BYTES, Q8_BLOCK_ELEMS, Q8_0_MAX, load_f16_scale};
+use crate::cpu::weights::WeightMeta;
 use crate::loader::GgmlType;
 
 /// Load f16 value from bytes as f32.
@@ -16,10 +17,6 @@ fn load_f16_as_f32(bytes: &[u8]) -> f32 {
     let u = u16::from_le_bytes([bytes[0], bytes[1]]);
     f32::from(half::f16::from_bits(u))
 }
-
-// For runtime CPU feature detection
-#[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::*;
 
 // ── Normalization ────────────────────────────────────────────────────────────────
 
@@ -424,27 +421,252 @@ pub fn gemm_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
     });
 }
 
-/// Dispatch GEMM by weight type.
+/// Dispatch GEMM by weight type with automatic transposition detection.
+///
+/// Uses metadata to determine if weights need transposed access.
 pub fn dispatch_gemm(
+    w: &[u8],
+    meta: &WeightMeta,
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    in_dim: usize,
+) -> Result<(), super::CpuError> {
+    match meta.wtype {
+        GgmlType::F32 => {
+            let wf: &[f32] =
+                unsafe { std::slice::from_raw_parts(w.as_ptr() as *const f32, w.len() / 4) };
+            if meta.needs_transpose {
+                gemm_f32_transposed(wf, x, y, out_dim, in_dim);
+            } else {
+                gemm_f32(wf, x, y, out_dim, in_dim);
+            }
+        }
+        GgmlType::Q4_0 => {
+            if meta.needs_transpose {
+                gemm_q4_0_transposed_gemm(w, x, y, out_dim, in_dim);
+            } else {
+                gemm_q4_0(w, x, y, out_dim, in_dim);
+            }
+        }
+        GgmlType::Q4_1 => {
+            if meta.needs_transpose {
+                gemm_q4_1_transposed_gemm(w, x, y, out_dim, in_dim);
+            } else {
+                gemm_q4_1(w, x, y, out_dim, in_dim);
+            }
+        }
+        GgmlType::Q8_0 => {
+            if meta.needs_transpose {
+                gemm_q8_0_transposed_gemm(w, x, y, out_dim, in_dim);
+            } else {
+                gemm_q8_0(w, x, y, out_dim, in_dim);
+            }
+        }
+        other => return Err(super::CpuError::UnsupportedWeightType(other)),
+    }
+    Ok(())
+}
+
+/// Dispatch GEMM with transposed flag for transposed weight matrices.
+///
+/// When `transposed` is true, computes: Y = W^T * X
+/// Otherwise computes: Y = W * X
+///
+/// Used for FFN down projection where weights are stored as [in_dim, out_dim].
+pub fn dispatch_gemm_transposed(
     w: &[u8],
     wtype: GgmlType,
     x: &[f32],
     y: &mut [f32],
     out_dim: usize,
     in_dim: usize,
+    transposed: bool,
 ) -> Result<(), super::CpuError> {
     match wtype {
         GgmlType::F32 => {
             let wf: &[f32] =
                 unsafe { std::slice::from_raw_parts(w.as_ptr() as *const f32, w.len() / 4) };
-            gemm_f32(wf, x, y, out_dim, in_dim);
+            if transposed {
+                gemm_f32_transposed(wf, x, y, out_dim, in_dim);
+            } else {
+                gemm_f32(wf, x, y, out_dim, in_dim);
+            }
         }
-        GgmlType::Q4_0 => gemm_q4_0(w, x, y, out_dim, in_dim),
-        GgmlType::Q4_1 => gemm_q4_1(w, x, y, out_dim, in_dim),
-        GgmlType::Q8_0 => gemm_q8_0(w, x, y, out_dim, in_dim),
+        GgmlType::Q4_0 => {
+            if transposed {
+                gemm_q4_0_transposed_gemm(w, x, y, out_dim, in_dim);
+            } else {
+                gemm_q4_0(w, x, y, out_dim, in_dim);
+            }
+        }
+        GgmlType::Q4_1 => {
+            if transposed {
+                gemm_q4_1_transposed_gemm(w, x, y, out_dim, in_dim);
+            } else {
+                gemm_q4_1(w, x, y, out_dim, in_dim);
+            }
+        }
+        GgmlType::Q8_0 => {
+            if transposed {
+                gemm_q8_0_transposed_gemm(w, x, y, out_dim, in_dim);
+            } else {
+                gemm_q8_0(w, x, y, out_dim, in_dim);
+            }
+        }
         other => return Err(super::CpuError::UnsupportedWeightType(other)),
     }
     Ok(())
+}
+
+/// Q4_0 GEMM transposed for transposed weight matrices.
+///
+/// Computes: Y = W^T * X where W has shape [in_dim, out_dim]
+/// stored in column-major Q4_0 blocked format.
+pub fn gemm_q4_0_transposed_gemm(
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    in_dim: usize,
+) {
+    let num_blocks_per_col = in_dim / Q4_BLOCK_ELEMS;
+    let col_bytes = num_blocks_per_col * Q4_BLOCK_BYTES;
+    let seq_len = x.len() / in_dim;
+
+    // For each output dimension (column in original matrix)
+    for o in 0..out_dim {
+        let col_offset = o * col_bytes;
+
+        // Process all sequences in parallel
+        y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
+            let x_row = &x[s * in_dim..(s + 1) * in_dim];
+            let mut acc = 0.0f32;
+
+            // Iterate through blocks in this column
+            for b in 0..num_blocks_per_col {
+                let block = &w[col_offset + b * Q4_BLOCK_BYTES..col_offset + (b + 1) * Q4_BLOCK_BYTES];
+                let scale = super::quant::load_f16_scale(&block[0..2]);
+                let qs = &block[2..18];
+                let xb = &x_row[b * Q4_BLOCK_ELEMS..];
+
+                for i in 0..16 {
+                    let q_lo = (((qs[i] & 0x0F) as i32) - 8) as f32 * scale;
+                    let q_hi = (((qs[i] >> 4) as i32) - 8) as f32 * scale;
+                    acc += q_lo * xb[i] + q_hi * xb[i + 16];
+                }
+            }
+
+            y_row[o] = acc;
+        });
+    }
+}
+
+/// Q4_1 GEMM transposed for transposed weight matrices.
+pub fn gemm_q4_1_transposed_gemm(
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    in_dim: usize,
+) {
+    let num_blocks_per_col = in_dim / Q4_1_BLOCK_ELEMS;
+    let col_bytes = num_blocks_per_col * Q4_1_BLOCK_BYTES;
+    let seq_len = x.len() / in_dim;
+
+    // For each output dimension (column in original matrix)
+    for o in 0..out_dim {
+        let col_offset = o * col_bytes;
+
+        // Process all sequences in parallel
+        y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
+            let x_row = &x[s * in_dim..(s + 1) * in_dim];
+            let mut acc = 0.0f32;
+
+            // Iterate through blocks in this column
+            for b in 0..num_blocks_per_col {
+                let block = &w[col_offset + b * Q4_1_BLOCK_BYTES..col_offset + (b + 1) * Q4_1_BLOCK_BYTES];
+                let w_scale = super::quant::load_f16_scale(&block[0..2]);
+                let w_min = super::quant::load_f16_scale(&block[2..4]);
+                let qs = &block[4..20];
+                let xb = &x_row[b * Q4_1_BLOCK_ELEMS..];
+
+                for i in 0..16 {
+                    let q_lo = ((qs[i] & 0x0F) as i32) as f32;
+                    let q_hi = ((qs[i] >> 4) as i32) as f32;
+                    let v_lo = (q_lo * w_scale + w_min) * xb[i];
+                    let v_hi = (q_hi * w_scale + w_min) * xb[i + 16];
+                    acc += v_lo + v_hi;
+                }
+            }
+
+            y_row[o] = acc;
+        });
+    }
+}
+
+/// Q8_0 GEMM transposed for transposed weight matrices.
+pub fn gemm_q8_0_transposed_gemm(
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    in_dim: usize,
+) {
+    let num_blocks_per_col = in_dim / Q8_BLOCK_ELEMS;
+    let col_bytes = num_blocks_per_col * Q8_BLOCK_BYTES;
+
+    // For each output dimension (column in original matrix)
+    for o in 0..out_dim {
+        let col_offset = o * col_bytes;
+
+        // Process all sequences in parallel
+        y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
+            let x_row = &x[s * in_dim..(s + 1) * in_dim];
+            let mut acc = 0.0f32;
+
+            // Iterate through blocks in this column
+            for b in 0..num_blocks_per_col {
+                let block = &w[col_offset + b * Q8_BLOCK_BYTES..col_offset + (b + 1) * Q8_BLOCK_BYTES];
+                let scale = super::quant::load_f16_scale(&block[0..2]);
+                let qs = &block[2..34];
+                let xb = &x_row[b * Q8_BLOCK_ELEMS..];
+
+                for i in 0..Q8_BLOCK_ELEMS {
+                    acc += (qs[i] as i8) as f32 * scale * xb[i];
+                }
+            }
+
+            y_row[o] = acc;
+        });
+    }
+}
+
+/// F32 GEMM transposed.
+fn gemm_f32_transposed(
+    w: &[f32],
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    in_dim: usize,
+) {
+    let seq_len = x.len() / in_dim;
+
+    // For each output dimension (column in original matrix)
+    for o in 0..out_dim {
+        // Process all sequences in parallel
+        y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
+            let x_row = &x[s * in_dim..(s + 1) * in_dim];
+            let mut acc = 0.0f32;
+
+            // Compute dot product: sum_i(x[i] * W[i, o])
+            for i in 0..in_dim {
+                acc += x_row[i] * w[i * out_dim + o];
+            }
+
+            y_row[o] = acc;
+        });
+    }
 }
 
 // ── GEMV (matrix-vector multiply for decode) ────────────────────────────────
@@ -661,27 +883,51 @@ pub fn gemv_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
     });
 }
 
-/// Dispatch GEMV based on weight type.
+/// Dispatch GEMV based on weight type with automatic transposition detection.
 ///
-/// Computes: y = W * x (matrix-vector multiply)
+/// Uses metadata to determine if weights need transposed access.
+///
+/// Computes: y = W * x (matrix-vector multiply) or y = W^T * x if transposed
 pub fn dispatch_gemv(
     w: &[u8],
-    wtype: GgmlType,
+    meta: &WeightMeta,
     x: &[f32],
     y: &mut [f32],
     out_dim: usize,
     in_dim: usize,
 ) -> Result<(), super::CpuError> {
-    match wtype {
+    match meta.wtype {
         GgmlType::F32 => {
             let wf: &[f32] = unsafe {
                 std::slice::from_raw_parts(w.as_ptr() as *const f32, w.len() / 4)
             };
-            gemv_f32(wf, x, y);
+            if meta.needs_transpose {
+                gemv_f32_transposed(wf, x, y, out_dim, in_dim);
+            } else {
+                gemv_f32(wf, x, y);
+            }
         }
-        GgmlType::Q4_0 => gemv_q4_0_q8_0(w, x, y, out_dim, in_dim),
-        GgmlType::Q4_1 => gemv_q4_1_q8_0(w, x, y, out_dim, in_dim),
-        GgmlType::Q8_0 => gemv_q8_0(w, x, y, out_dim, in_dim),
+        GgmlType::Q4_0 => {
+            if meta.needs_transpose {
+                gemv_q4_0_transposed(w, x, y, out_dim, in_dim);
+            } else {
+                gemv_q4_0_q8_0(w, x, y, out_dim, in_dim);
+            }
+        }
+        GgmlType::Q4_1 => {
+            if meta.needs_transpose {
+                gemv_q4_1_transposed(w, x, y, out_dim, in_dim);
+            } else {
+                gemv_q4_1_q8_0(w, x, y, out_dim, in_dim);
+            }
+        }
+        GgmlType::Q8_0 => {
+            if meta.needs_transpose {
+                gemv_q8_0_transposed(w, x, y, out_dim, in_dim);
+            } else {
+                gemv_q8_0(w, x, y, out_dim, in_dim);
+            }
+        }
         other => return Err(super::CpuError::UnsupportedWeightType(other)),
     }
     Ok(())
@@ -1046,10 +1292,13 @@ pub fn argmax(x: &[f32]) -> usize {
 /// instead of the standard [out_dim, in_dim].
 ///
 /// This is used when the LM head shares token embedding weights.
-/// Token embeddings are stored as [hidden_size, vocab_size] but
-/// for output projection we need to compute: logits[v] = sum_i(x[i] * W[i, v])
+/// Token embeddings are stored as [hidden_size, vocab_size] in COLUMN-MAJOR format.
+/// For output projection we need to compute: logits[v] = sum_i(x[i] * W[i, v])
 ///
-/// The weights are in row-major format: W[i, v] at offset i * out_dim + v
+/// In column-major Q8_0 format:
+/// - Each column (vocab token) is stored contiguously
+/// - Column v starts at offset: v * num_blocks * Q8_BLOCK_BYTES
+/// - Within each column, elements are stored in Q8_0 blocks of 32 elements
 pub fn gemv_q8_0_transposed(
     w: &[u8],
     x: &[f32],
@@ -1060,45 +1309,121 @@ pub fn gemv_q8_0_transposed(
     // Initialize output to zero
     y.fill(0.0);
 
-    // Debug: check first few elements
-    if std::env::var("ROCmFORGE_DEBUG_GEMV").is_ok() {
-        eprintln!("[Transposed GEMV] in_dim={} out_dim={} total_weights={}",
-                 in_dim, out_dim, w.len());
-        eprintln!("[Transposed GEMV] x[0..5]={:?}", &x[..5.min(in_dim)]);
-        // Check W[0, 0], W[0, 1], W[1, 0], W[1, 1]
-        for (i, v) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
-            if i < in_dim && v < out_dim {
-                let offset = i * out_dim + v;
-                let block_idx = offset / Q8_BLOCK_ELEMS;
-                let elem_in_block = offset % Q8_BLOCK_ELEMS;
-                let block_start = block_idx * Q8_BLOCK_BYTES;
-                let scale = load_f16_scale(&w[block_start..block_start + 2]);
-                let q_val = (w[block_start + 2 + elem_in_block] as i8) as f32 * scale;
-                eprintln!("[Transposed GEMV] W[{}, {}] = {} (scale={:.4})",
-                         i, v, q_val, scale);
-            }
-        }
-    }
+    let num_blocks = in_dim / Q8_BLOCK_ELEMS;
+    let col_bytes = num_blocks * Q8_BLOCK_BYTES;
 
-    // For each output dimension (vocab token)
+    // For each output dimension (vocab token) - each is a column in the matrix
     for v in 0..out_dim {
         let mut acc = 0.0f32;
 
-        // Compute dot product: sum_i(x[i] * W[i, v])
-        for i in 0..in_dim {
-            // W[i, v] is at linear offset: i * out_dim + v
-            let element_offset = i * out_dim + v;
+        // Column v starts at this offset in the weight data
+        let col_offset = v * col_bytes;
 
-            // Find the Q8_0 block containing this element
-            let block_idx = element_offset / Q8_BLOCK_ELEMS;
-            let elem_in_block = element_offset % Q8_BLOCK_ELEMS;
+        // Iterate through blocks in this column
+        for b in 0..num_blocks {
+            let block = &w[col_offset + b * Q8_BLOCK_BYTES..col_offset + (b + 1) * Q8_BLOCK_BYTES];
+            let scale = super::quant::load_f16_scale(&block[0..2]);
+            let qs = &block[2..34];
+            let xb = &x[b * Q8_BLOCK_ELEMS..];
 
-            // Each block: [2-byte f16 scale | 32 i8 values]
-            let block_start = block_idx * Q8_BLOCK_BYTES;
-            let scale = load_f16_scale(&w[block_start..block_start + 2]);
-            let q_val = (w[block_start + 2 + elem_in_block] as i8) as f32 * scale;
+            // Compute dot product for this block
+            for i in 0..Q8_BLOCK_ELEMS {
+                acc += (qs[i] as i8) as f32 * scale * xb[i];
+            }
+        }
 
-            acc += x[i] * q_val;
+        y[v] = acc;
+    }
+}
+
+/// Q4_0 GEMV transposed for transposed weight matrices.
+///
+/// Computes: y = W^T * x where W has shape [in_dim, out_dim]
+/// stored in column-major Q4_0 blocked format.
+///
+/// Used for FFN down projection where weights are stored as [in_dim, out_dim].
+pub fn gemv_q4_0_transposed(
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    in_dim: usize,
+) {
+    // Initialize output to zero
+    y.fill(0.0);
+
+    let num_blocks_per_col = in_dim / Q4_BLOCK_ELEMS;
+    let col_bytes = num_blocks_per_col * Q4_BLOCK_BYTES;
+
+    // For each output dimension (column in the original matrix)
+    for v in 0..out_dim {
+        let mut acc = 0.0f32;
+
+        // Column v starts at this offset in the weight data
+        let col_offset = v * col_bytes;
+
+        // Iterate through blocks in this column
+        for b in 0..num_blocks_per_col {
+            let block = &w[col_offset + b * Q4_BLOCK_BYTES..col_offset + (b + 1) * Q4_BLOCK_BYTES];
+            let scale = super::quant::load_f16_scale(&block[0..2]);
+            let qs = &block[2..18];
+            let xb = &x[b * Q4_BLOCK_ELEMS..];
+
+            // Dequantize and compute dot product for this block
+            for i in 0..16 {
+                let q_lo = (((qs[i] & 0x0F) as i32) - 8) as f32 * scale;
+                let q_hi = (((qs[i] >> 4) as i32) - 8) as f32 * scale;
+                acc += q_lo * xb[i] + q_hi * xb[i + 16];
+            }
+        }
+
+        y[v] = acc;
+    }
+}
+
+/// Q4_1 GEMV transposed for transposed weight matrices.
+///
+/// Computes: y = W^T * x where W has shape [in_dim, out_dim]
+/// stored in column-major Q4_1 blocked format.
+///
+/// Used for FFN down projection where weights are stored as [in_dim, out_dim].
+pub fn gemv_q4_1_transposed(
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    in_dim: usize,
+) {
+    // Initialize output to zero
+    y.fill(0.0);
+
+    let num_blocks_per_col = in_dim / Q4_1_BLOCK_ELEMS;
+    let col_bytes = num_blocks_per_col * Q4_1_BLOCK_BYTES;
+
+    // For each output dimension (column in the original matrix)
+    for v in 0..out_dim {
+        let mut acc = 0.0f32;
+
+        // Column v starts at this offset in the weight data
+        let col_offset = v * col_bytes;
+
+        // Iterate through blocks in this column
+        for b in 0..num_blocks_per_col {
+            let block = &w[col_offset + b * Q4_1_BLOCK_BYTES..col_offset + (b + 1) * Q4_1_BLOCK_BYTES];
+            let w_scale = super::quant::load_f16_scale(&block[0..2]);
+            let w_min = super::quant::load_f16_scale(&block[2..4]);
+            let qs = &block[4..20];
+            let xb = &x[b * Q4_1_BLOCK_ELEMS..];
+
+            // Dequantize and compute dot product for this block
+            // Q4_1: value = q4 * scale + min
+            for i in 0..16 {
+                let q_lo = ((qs[i] & 0x0F) as i32) as f32;
+                let q_hi = ((qs[i] >> 4) as i32) as f32;
+                let v_lo = (q_lo * w_scale + w_min) * xb[i];
+                let v_hi = (q_hi * w_scale + w_min) * xb[i + 16];
+                acc += v_lo + v_hi;
+            }
         }
 
         y[v] = acc;
@@ -1134,6 +1459,20 @@ pub fn dispatch_gemv_transposed(
                 gemv_q8_0_transposed(w, x, y, out_dim, in_dim);
             } else {
                 gemv_q8_0(w, x, y, out_dim, in_dim);
+            }
+        }
+        GgmlType::Q4_0 => {
+            if transposed {
+                gemv_q4_0_transposed(w, x, y, out_dim, in_dim);
+            } else {
+                gemv_q4_0_q8_0(w, x, y, out_dim, in_dim);
+            }
+        }
+        GgmlType::Q4_1 => {
+            if transposed {
+                gemv_q4_1_transposed(w, x, y, out_dim, in_dim);
+            } else {
+                gemv_q4_1_q8_0(w, x, y, out_dim, in_dim);
             }
         }
         other => return Err(super::CpuError::UnsupportedWeightType(other)),

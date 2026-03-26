@@ -5,6 +5,7 @@
 
 use crate::config::ModelConfig;
 use crate::loader::{GgmlType, GgufFile, LoadError};
+use super::transpose::compute_transpose_flag;
 
 // ── Error ─────────────────────────────────────────────────────────────────────────
 
@@ -28,6 +29,31 @@ impl std::error::Error for WeightError {}
 impl From<LoadError> for WeightError {
     fn from(e: LoadError) -> Self {
         WeightError::Load(e)
+    }
+}
+
+// ── Weight Metadata ─────────────────────────────────────────────────────────────
+
+/// Metadata for a weight tensor, including its quantization type,
+/// dimensions from GGUF, and whether it needs transposition.
+#[derive(Clone, Debug)]
+pub struct WeightMeta {
+    /// Quantization type (F32, Q4_0, Q4_1, Q8_0, etc.)
+    pub wtype: GgmlType,
+    /// Dimensions from GGUF (innermost first, i.e., [cols, rows] for 2D matrices)
+    pub dims: Vec<u64>,
+    /// Whether this weight tensor needs transposed access
+    pub needs_transpose: bool,
+}
+
+impl WeightMeta {
+    /// Create metadata from a GGUF tensor descriptor.
+    pub fn from_desc(desc: &crate::loader::TensorDesc, needs_transpose: bool) -> Self {
+        Self {
+            wtype: desc.ggml_type,
+            dims: desc.dims.clone(),
+            needs_transpose,
+        }
     }
 }
 
@@ -73,6 +99,25 @@ fn optional_f32(opt: Option<Vec<u8>>) -> Option<Vec<f32>> {
     opt.map(|b| copy_f32_from_bytes(&b))
 }
 
+/// Copy tensor bytes and create metadata.
+fn copy_tensor_with_meta(
+    file: &GgufFile,
+    name: &str,
+    needs_transpose: bool,
+) -> Result<(Vec<u8>, WeightMeta), WeightError> {
+    let t = file
+        .tensor(name)
+        .map_err(WeightError::Load)?
+        .ok_or_else(|| WeightError::TensorNotFound(name.to_string()))?;
+    let data = t.data.to_vec();
+    let meta = WeightMeta {
+        wtype: t.ggml_type,
+        dims: t.dims.to_vec(),
+        needs_transpose,
+    };
+    Ok((data, meta))
+}
+
 // ── Per-layer weights ─────────────────────────────────────────────────────────────────
 
 /// Weights for a single transformer layer.
@@ -84,39 +129,39 @@ pub struct CpuLayerWeights {
     pub attn_norm: Vec<f32>,
     /// Query projection weights (quantized)
     pub attn_q: Vec<u8>,
-    pub attn_q_type: GgmlType,
+    pub attn_q_meta: WeightMeta,
     /// Query bias (optional, always F32 if present)
     pub attn_q_bias: Option<Vec<f32>>,
     /// Key projection weights (quantized)
     pub attn_k: Vec<u8>,
-    pub attn_k_type: GgmlType,
+    pub attn_k_meta: WeightMeta,
     /// Key bias (optional, always F32 if present)
     pub attn_k_bias: Option<Vec<f32>>,
     /// Value projection weights (quantized)
     pub attn_v: Vec<u8>,
-    pub attn_v_type: GgmlType,
+    pub attn_v_meta: WeightMeta,
     /// Value bias (optional, always F32 if present)
     pub attn_v_bias: Option<Vec<f32>>,
     /// Attention output projection (quantized)
     pub attn_o: Vec<u8>,
-    pub attn_o_type: GgmlType,
+    pub attn_o_meta: WeightMeta,
     /// RMS norm weights for FFN (always F32)
     pub ffn_norm: Vec<f32>,
     /// FFN gate projection (SwiGLU gate) (quantized)
     pub ffn_gate: Vec<u8>,
-    pub ffn_gate_type: GgmlType,
+    pub ffn_gate_meta: WeightMeta,
     /// FFN up projection (SwiGLU up) (quantized)
     pub ffn_up: Vec<u8>,
-    pub ffn_up_type: GgmlType,
+    pub ffn_up_meta: WeightMeta,
     /// FFN down projection (quantized)
     pub ffn_down: Vec<u8>,
-    pub ffn_down_type: GgmlType,
+    pub ffn_down_meta: WeightMeta,
     /// General quantization type for this layer (legacy)
     pub weight_type: GgmlType,
 }
 
 impl CpuLayerWeights {
-    fn load(file: &GgufFile, layer: usize) -> Result<Self, WeightError> {
+    fn load(file: &GgufFile, layer: usize, config: &ModelConfig) -> Result<Self, WeightError> {
         let p = |s: &str| format!("blk.{}.{}", layer, s);
 
         // Helper to get tensor type
@@ -128,35 +173,45 @@ impl CpuLayerWeights {
                 .unwrap_or(GgmlType::F32)
         };
 
-        let attn_q_type = get_type(&p("attn_q.weight"));
-        let attn_k_type = get_type(&p("attn_k.weight"));
-        let attn_v_type = get_type(&p("attn_v.weight"));
-        let attn_o_type = get_type(&p("attn_output.weight"));
-        let ffn_gate_type = get_type(&p("ffn_gate.weight"));
-        let ffn_up_type = get_type(&p("ffn_up.weight"));
-        let ffn_down_type = get_type(&p("ffn_down.weight"));
-        let weight_type = attn_q_type; // Legacy: use attn_q type as general type
+        // Helper to load weight with metadata
+        let load_weight = |name: &str| -> Result<(Vec<u8>, WeightMeta), WeightError> {
+            let desc = file.tensor(name)
+                .map_err(WeightError::Load)?
+                .ok_or_else(|| WeightError::TensorNotFound(name.to_string()))?;
+            let needs_transpose = compute_transpose_flag(name, &desc.dims, desc.ggml_type, config, false, false);
+            copy_tensor_with_meta(file, name, needs_transpose)
+        };
+
+        let (attn_q, attn_q_meta) = load_weight(&p("attn_q.weight"))?;
+        let (attn_k, attn_k_meta) = load_weight(&p("attn_k.weight"))?;
+        let (attn_v, attn_v_meta) = load_weight(&p("attn_v.weight"))?;
+        let (attn_o, attn_o_meta) = load_weight(&p("attn_output.weight"))?;
+        let (ffn_gate, ffn_gate_meta) = load_weight(&p("ffn_gate.weight"))?;
+        let (ffn_up, ffn_up_meta) = load_weight(&p("ffn_up.weight"))?;
+        let (ffn_down, ffn_down_meta) = load_weight(&p("ffn_down.weight"))?;
+
+        let weight_type = attn_q_meta.wtype; // Legacy: use attn_q type as general type
 
         Ok(Self {
             attn_norm: copy_f32(file, &p("attn_norm.weight"))?,
-            attn_q: copy_tensor(file, &p("attn_q.weight"))?,
-            attn_q_type,
+            attn_q,
+            attn_q_meta,
             attn_q_bias: optional_f32(copy_tensor_optional(file, &p("attn_q.bias"))?),
-            attn_k: copy_tensor(file, &p("attn_k.weight"))?,
-            attn_k_type,
+            attn_k,
+            attn_k_meta,
             attn_k_bias: optional_f32(copy_tensor_optional(file, &p("attn_k.bias"))?),
-            attn_v: copy_tensor(file, &p("attn_v.weight"))?,
-            attn_v_type,
+            attn_v,
+            attn_v_meta,
             attn_v_bias: optional_f32(copy_tensor_optional(file, &p("attn_v.bias"))?),
-            attn_o: copy_tensor(file, &p("attn_output.weight"))?,
-            attn_o_type,
+            attn_o,
+            attn_o_meta,
             ffn_norm: copy_f32(file, &p("ffn_norm.weight"))?,
-            ffn_gate: copy_tensor(file, &p("ffn_gate.weight"))?,
-            ffn_gate_type,
-            ffn_up: copy_tensor(file, &p("ffn_up.weight"))?,
-            ffn_up_type,
-            ffn_down: copy_tensor(file, &p("ffn_down.weight"))?,
-            ffn_down_type,
+            ffn_gate,
+            ffn_gate_meta,
+            ffn_up,
+            ffn_up_meta,
+            ffn_down,
+            ffn_down_meta,
             weight_type,
         })
     }
@@ -170,14 +225,12 @@ pub struct CpuModelWeights {
     pub layers: Vec<CpuLayerWeights>,
     /// Token embedding matrix (quantized)
     pub token_emb: Vec<u8>,
+    pub token_emb_meta: WeightMeta,
     /// Final RMS norm weights (always F32)
     pub output_norm: Vec<f32>,
     /// Language model head / output projection (quantized)
     pub lm_head: Vec<u8>,
-    /// Quantization type for token embeddings
-    pub token_emb_type: GgmlType,
-    /// Quantization type for LM head
-    pub lm_head_type: GgmlType,
+    pub lm_head_meta: WeightMeta,
     /// Whether LM head is tied to token embeddings (shared weights)
     pub lm_head_tied: bool,
 }
@@ -194,34 +247,41 @@ impl CpuModelWeights {
     pub fn load(file: &GgufFile, config: &ModelConfig) -> Result<Self, WeightError> {
         let n = config.num_layers;
 
-        // Load embedding weights
-        let token_emb_type = file
-            .tensor("token_embd.weight")
+        // Load embedding weights with metadata
+        let token_emb_desc = file.tensor("token_embd.weight")
             .map_err(WeightError::Load)?
-            .map(|t| t.ggml_type)
-            .unwrap_or(GgmlType::F32);
-        let token_emb = copy_tensor(file, "token_embd.weight")?;
+            .ok_or_else(|| WeightError::TensorNotFound("token_embd.weight".to_string()))?;
+        let (token_emb, token_emb_meta) = copy_tensor_with_meta(file, "token_embd.weight", false)?;
         let output_norm = copy_f32(file, "output_norm.weight")?;
 
         // LM head: use output.weight if present, otherwise tie to embeddings
-        let (lm_head, lm_head_type, lm_head_tied) = if file.has_tensor("output.weight") {
-            let lm_type = file
-                .tensor("output.weight")
+        let (lm_head, lm_head_meta, lm_head_tied) = if file.has_tensor("output.weight") {
+            let lm_view = file.tensor("output.weight")
                 .map_err(WeightError::Load)?
-                .map(|t| t.ggml_type)
-                .unwrap_or(GgmlType::F32);
-            // TEMPORARILY DISABLED: force use of output.weight tensor instead of tied embeddings
-            // This is to test if FFN down Q4_1 issue is related to tied embeddings
-            (copy_tensor(file, "output.weight")?, lm_type, false)
+                .ok_or_else(|| WeightError::TensorNotFound("output.weight".to_string()))?;
+            let needs_transpose = compute_transpose_flag("output.weight", &lm_view.dims, lm_view.ggml_type, config, true, false);
+            let data = copy_tensor(file, "output.weight")?;
+            let meta = WeightMeta {
+                wtype: lm_view.ggml_type,
+                dims: lm_view.dims.to_vec(),
+                needs_transpose,
+            };
+            (data, meta, false)
         } else {
             // Weight tying: lm_head shares embedding weights
-            (token_emb.clone(), token_emb_type, true)
+            // Tied embeddings need transposed access (W is [hidden_size, vocab_size])
+            let tied_meta = WeightMeta {
+                wtype: token_emb_meta.wtype,
+                dims: token_emb_meta.dims.clone(),
+                needs_transpose: true,  // Tied embeddings always need transpose
+            };
+            (token_emb.clone(), tied_meta, true)
         };
 
         // Load all layers
         let mut layers = Vec::with_capacity(n);
         for i in 0..n {
-            let layer = CpuLayerWeights::load(file, i)?;
+            let layer = CpuLayerWeights::load(file, i, config)?;
             if i == 0 || (i + 1) % 8 == 0 || i + 1 == n {
                 eprintln!("[cpu weights] layer {}/{} loaded", i + 1, n);
             }
@@ -231,10 +291,10 @@ impl CpuModelWeights {
         Ok(Self {
             layers,
             token_emb,
+            token_emb_meta,
             output_norm,
             lm_head,
-            token_emb_type,
-            lm_head_type,
+            lm_head_meta,
             lm_head_tied,
         })
     }

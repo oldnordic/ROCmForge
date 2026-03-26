@@ -15,6 +15,7 @@
 //! - Explicit device selection: CPU path has no GPU fallback
 
 pub mod error;
+pub mod transpose;
 pub mod weights;
 pub mod cache;
 pub mod ops;
@@ -23,11 +24,13 @@ pub mod forward;
 pub mod prefill;
 pub mod sampler;
 
+// Re-export hardware for convenience
+pub use crate::hardware::{CpuCapabilities, BatchConfig, detect, derive_batch_config};
+
 #[cfg(test)]
 mod ops_tests;
 
-use crate::config::ModelConfig;
-use crate::loader::{GgmlType, GgufFile, LoadError};
+use crate::loader::{GgmlType, LoadError};
 
 // ── Error ─────────────────────────────────────────────────────────────────────────
 

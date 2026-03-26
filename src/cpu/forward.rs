@@ -42,9 +42,9 @@ pub fn cpu_layer_forward(
     }
 
     // 2. QKV projections
-    dispatch_gemv(&weights.attn_q, weights.attn_q_type, &scratch.normed, &mut scratch.q, q_size, h)?;
-    dispatch_gemv(&weights.attn_k, weights.attn_k_type, &scratch.normed, &mut scratch.k, kv_size, h)?;
-    dispatch_gemv(&weights.attn_v, weights.attn_v_type, &scratch.normed, &mut scratch.v, kv_size, h)?;
+    dispatch_gemv(&weights.attn_q, &weights.attn_q_meta, &scratch.normed, &mut scratch.q, q_size, h)?;
+    dispatch_gemv(&weights.attn_k, &weights.attn_k_meta, &scratch.normed, &mut scratch.k, kv_size, h)?;
+    dispatch_gemv(&weights.attn_v, &weights.attn_v_meta, &scratch.normed, &mut scratch.v, kv_size, h)?;
 
     // 3. Optional biases (same as prefill)
     if let Some(bq) = &weights.attn_q_bias {
@@ -104,7 +104,7 @@ pub fn cpu_layer_forward(
     }
 
     // 6. Output projection
-    dispatch_gemv(&weights.attn_o, weights.attn_o_type, &scratch.attn_out, &mut scratch.layer_out, h, q_size)?;
+    dispatch_gemv(&weights.attn_o, &weights.attn_o_meta, &scratch.attn_out, &mut scratch.layer_out, h, q_size)?;
 
     if debug && layer == 0 {
         let lo_mean: f32 = scratch.layer_out.iter().copied().sum::<f32>() / h as f32;
@@ -125,8 +125,8 @@ pub fn cpu_layer_forward(
     rms_norm(hidden, &weights.ffn_norm, &mut scratch.normed, eps);
 
     // 9. FFN: gate + up projections
-    dispatch_gemv(&weights.ffn_gate, weights.ffn_gate_type, &scratch.normed, &mut scratch.gate, ff_size, h)?;
-    dispatch_gemv(&weights.ffn_up, weights.ffn_up_type, &scratch.normed, &mut scratch.swiglu, ff_size, h)?;
+    dispatch_gemv(&weights.ffn_gate, &weights.ffn_gate_meta, &scratch.normed, &mut scratch.gate, ff_size, h)?;
+    dispatch_gemv(&weights.ffn_up, &weights.ffn_up_meta, &scratch.normed, &mut scratch.swiglu, ff_size, h)?;
 
     if debug && layer == 0 {
         let gate_mean: f32 = scratch.gate.iter().copied().sum::<f32>() / ff_size as f32;
@@ -149,12 +149,14 @@ pub fn cpu_layer_forward(
     }
 
     // 11. Down projection
+    // Note: FFN down weights are stored as [in_dim, out_dim] = [ff_size, h]
+    // We need to compute: layer_out = ffn_down^T * swiglu
     if debug && layer == 0 {
-        let num_blocks = ff_size / 32;
-        let row_bytes = num_blocks * 18;
-        let expected_weight_bytes = h * row_bytes;
-        eprintln!("[Layer {} ffn_down] out_dim={} in_dim={} num_blocks={} row_bytes={} expected_weight_bytes={} actual_weight_bytes={}",
-                 layer, h, ff_size, num_blocks, row_bytes, expected_weight_bytes, weights.ffn_down.len());
+        let num_blocks_per_col = ff_size / 32;
+        let col_bytes = num_blocks_per_col * 18;
+        let expected_weight_bytes = h * col_bytes;
+        eprintln!("[Layer {} ffn_down] out_dim={} in_dim={} num_blocks_per_col={} col_bytes={} expected_weight_bytes={} actual_weight_bytes={}",
+                 layer, h, ff_size, num_blocks_per_col, col_bytes, expected_weight_bytes, weights.ffn_down.len());
         eprintln!("[Layer {} ffn_down] swiglu.len={} layer_out.len={}",
                  layer, scratch.swiglu.len(), scratch.layer_out.len());
         // Print first 5 values of swiglu
@@ -171,7 +173,15 @@ pub fn cpu_layer_forward(
         }
         eprintln!("[Layer {} ffn_down] first_block dequant[0..5] = {:?}", layer, &dequant[0..5]);
     }
-    dispatch_gemv(&weights.ffn_down, weights.ffn_down_type, &scratch.swiglu, &mut scratch.layer_out, h, ff_size)?;
+    // FFN down projection - uses metadata to determine if transposition is needed
+    super::ops::dispatch_gemv(
+        &weights.ffn_down,
+        &weights.ffn_down_meta,
+        &scratch.swiglu,
+        &mut scratch.layer_out,
+        h,  // out_dim (hidden_size)
+        ff_size,  // in_dim (intermediate_size)
+    )?;
 
     if debug && layer == 0 {
         let ffn_out_mean: f32 = scratch.layer_out.iter().copied().sum::<f32>() / h as f32;
@@ -248,30 +258,19 @@ pub fn cpu_full_forward(
     let h = config.hidden_size;
     let v = config.vocab_size;
     if debug {
-        eprintln!("[LM head] type={:?} h={} v={} tied={}", weights.lm_head_type, h, v, weights.lm_head_tied);
+        eprintln!("[LM head] type={:?} h={} v={} tied={} transpose={}",
+                 weights.lm_head_meta.wtype, h, v, weights.lm_head_tied,
+                 weights.lm_head_meta.needs_transpose);
     }
-    // For tied embeddings (W is [hidden_size, vocab_size]), compute y = W^T * x
-    // by using regular GEMV with swapped dimensions: gemv(W, x, y, out_dim=v, in_dim=h)
-    // Standard GEMV expects W [out_dim, in_dim], so we pass in_dim as "out_dim" and out_dim as "in_dim"
-    if weights.lm_head_tied {
-        super::ops::dispatch_gemv(
-            &weights.lm_head,
-            weights.lm_head_type,
-            &scratch.normed,
-            &mut scratch.logits,
-            v,  // Pass vocab_size as out_dim for GEMV
-            h,  // Pass hidden_size as in_dim for GEMV
-        )?;
-    } else {
-        super::ops::dispatch_gemv(
-            &weights.lm_head,
-            weights.lm_head_type,
-            &scratch.normed,
-            &mut scratch.logits,
-            v,
-            h,
-        )?;
-    }
+    // Use metadata to automatically select correct kernel (regular or transposed)
+    super::ops::dispatch_gemv(
+        &weights.lm_head,
+        &weights.lm_head_meta,
+        &scratch.normed,
+        &mut scratch.logits,
+        v,  // vocab_size (out_dim)
+        h,  // hidden_size (in_dim)
+    )?;
 
     // Debug: show logits statistics
     if debug {
@@ -298,7 +297,7 @@ pub fn cpu_embed_token(
     config: &ModelConfig,
 ) {
     let h = config.hidden_size;
-    match weights.token_emb_type {
+    match weights.token_emb_meta.wtype {
         GgmlType::F32 => {
             let emb: &[f32] = unsafe {
                 std::slice::from_raw_parts(weights.token_emb.as_ptr() as *const f32, weights.token_emb.len() / 4)
@@ -317,7 +316,7 @@ pub fn cpu_embed_token(
         GgmlType::Q8_0 => {
             super::quant::embed_q8_0(token_id as usize, &weights.token_emb, &mut hidden[..h], h);
         }
-        _ => panic!("Unsupported embedding type: {:?}", weights.token_emb_type),
+        _ => panic!("Unsupported embedding type: {:?}", weights.token_emb_meta.wtype),
     }
 }
 
