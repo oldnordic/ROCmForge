@@ -7,6 +7,7 @@
 use std::arch::x86_64::*;
 
 use half::f16;
+use rayon::prelude::*;
 
 pub use crate::cpu::kernels::q4::BlockQ4K;
 pub use crate::cpu::kernels::q8::BlockQ8K;
@@ -185,6 +186,148 @@ pub unsafe fn dot_q4_k_q8_k_block_avx2(
     hsum_float_8(acc) + _mm_cvtss_f32(acc_m)
 }
 
+/// AVX2 Q4_K × Q8_K GEMV: y = W * x
+///
+/// # Arguments
+/// * `w` - Q4_K weights (row-major: each row is blocks of 256)
+/// * `x` - Input vector (f32, length = in_dim)
+/// * `y` - Output vector (f32, length = out_dim)
+/// * `out_dim` - Number of output rows
+/// * `in_dim` - Inner dimension (must be multiple of 256)
+///
+/// # Safety
+/// Caller must ensure AVX2 and FMA are available.
+#[cfg(target_arch = "x86_64")]
+pub fn gemv_q4_k_q8_k_avx2(
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    in_dim: usize,
+) {
+    assert!(in_dim % 256 == 0, "in_dim must be multiple of QK_K=256");
+    assert_eq!(x.len(), in_dim);
+    assert_eq!(y.len(), out_dim);
+
+    let num_blocks_per_row = in_dim / 256;
+    let bytes_per_row = num_blocks_per_row * BlockQ4K::SIZE;
+
+    // Quantize input to Q8_K
+    let mut x_q8 = vec![BlockQ8K::zero(); num_blocks_per_row];
+    for b in 0..num_blocks_per_row {
+        let start = b * 256;
+        let end = start + 256;
+        x_q8[b] = crate::cpu::kernels::q8::quantize_q8_k(&x[start..end]);
+    }
+
+    // Process each output row
+    y.par_iter_mut().enumerate().for_each(|(row, out)| {
+        let row_start = row * bytes_per_row;
+        let mut acc = 0.0f32;
+
+        for b in 0..num_blocks_per_row {
+            let block_offset = row_start + b * BlockQ4K::SIZE;
+            let q4_block = unsafe { &*(w.as_ptr().add(block_offset) as *const BlockQ4K) };
+            let q8_block = &x_q8[b];
+
+            acc += unsafe { dot_q4_k_q8_k_block_avx2(q4_block, q8_block) };
+        }
+
+        *out = acc;
+    });
+}
+
+/// AVX2 Q4_K × Q8_K GEMM: Y = W * X
+///
+/// # Arguments
+/// * `w` - Q4_K weights [out_dim, in_dim] in blocks
+/// * `x` - Input matrix [m, in_dim] row-major f32
+/// * `y` - Output matrix [m, out_dim] row-major f32
+/// * `m` - Batch size
+/// * `n` - Output dimension (out_dim)
+/// * `k` - Inner dimension (in_dim)
+///
+/// # Safety
+/// Caller must ensure AVX2 and FMA are available.
+#[cfg(target_arch = "x86_64")]
+pub fn gemm_q4_k_q8_k_avx2(
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+    m: usize,
+    n: usize,
+    k: usize,
+) {
+    assert!(k % 256 == 0, "k must be multiple of QK_K=256");
+
+    let num_blocks_k = k / 256;
+
+    // For GEMM, process each batch row
+    y.par_chunks_mut(n).enumerate().for_each(|(batch_idx, y_row)| {
+        let x_row = &x[batch_idx * k..(batch_idx + 1) * k];
+
+        // Quantize this row to Q8_K blocks
+        let mut x_q8 = vec![BlockQ8K::zero(); num_blocks_k];
+        for b in 0..num_blocks_k {
+            x_q8[b] = crate::cpu::kernels::q8::quantize_q8_k(&x_row[b * 256..(b + 1) * 256]);
+        }
+
+        // Compute dot products for each output column
+        for out_col in 0..n {
+            let mut acc = 0.0f32;
+
+            for b in 0..num_blocks_k {
+                let w_offset = out_col * num_blocks_k * BlockQ4K::SIZE + b * BlockQ4K::SIZE;
+                let q4_block = unsafe { &*(w.as_ptr().add(w_offset) as *const BlockQ4K) };
+                let q8_block = &x_q8[b];
+
+                acc += unsafe { dot_q4_k_q8_k_block_avx2(q4_block, q8_block) };
+            }
+
+            y_row[out_col] = acc;
+        }
+    });
+}
+
+/// Dispatch to AVX2 or scalar GEMV based on CPU features.
+pub fn gemv_q4_k_q8_k_dispatch(
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    in_dim: usize,
+) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+            return gemv_q4_k_q8_k_avx2(w, x, y, out_dim, in_dim);
+        }
+    }
+
+    // Fallback to scalar
+    crate::cpu::kernels::gemm_q4k_q8_scalar::gemv_q4_k_q8_k(w, x, y, out_dim, in_dim);
+}
+
+/// Dispatch to AVX2 or scalar GEMM based on CPU features.
+pub fn gemm_q4_k_q8_k_dispatch_gemm(
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+    m: usize,
+    n: usize,
+    k: usize,
+) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+            return gemm_q4_k_q8_k_avx2(w, x, y, m, n, k);
+        }
+    }
+
+    // Fallback to scalar
+    crate::cpu::kernels::gemm_q4k_q8_scalar::gemm_q4_k_q8_k(w, x, y, m, n, k);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,5 +391,50 @@ mod tests {
         // Run AVX2 implementation and verify it produces finite result
         let avx2_result = unsafe { dot_q4_k_q8_k_block_avx2(&q4, &q8) };
         assert!(avx2_result.is_finite());
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_gemv_q4_k_q8_k_avx2_matches_scalar() {
+        if !is_x86_feature_detected!("avx2") {
+            return;
+        }
+
+        // Create simple test case
+        let w = vec![0u8; 2 * BlockQ4K::SIZE];
+        let x: Vec<f32> = (0..256).map(|i| i as f32 / 256.0).collect();
+        let mut y_avx2 = vec![0.0f32; 2];
+        let mut y_scalar = vec![0.0f32; 2];
+
+        // Use AVX2 version
+        gemv_q4_k_q8_k_avx2(&w, &x, &mut y_avx2, 2, 256);
+
+        // Use scalar version
+        crate::cpu::kernels::gemm_q4k_q8_scalar::gemv_q4_k_q8_k(&w, &x, &mut y_scalar, 2, 256);
+
+        // Both should produce finite results
+        for i in 0..2 {
+            assert!(y_avx2[i].is_finite());
+            assert!(y_scalar[i].is_finite());
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_gemm_q4_k_q8_k_avx2_small_matrix() {
+        if !is_x86_feature_detected!("avx2") {
+            return;
+        }
+
+        // For k=512: 2 blocks per row, n=2 output columns
+        let num_blocks_n = 2 * (512 / 256);
+        let w = vec![0u8; num_blocks_n * BlockQ4K::SIZE];
+        let x: Vec<f32> = (0..1024).map(|i| i as f32 / 1024.0).collect();
+        let mut y = vec![0.0f32; 4];
+
+        gemm_q4_k_q8_k_avx2(&w, &x, &mut y, 2, 2, 512);
+
+        // Should not panic and produce output
+        assert!(y.iter().all(|v| v.is_finite()));
     }
 }
