@@ -14,6 +14,9 @@
 //! - Metadata-driven: all shapes from ModelConfig, no model-specific code
 //! - Explicit device selection: CPU path has no GPU fallback
 
+pub mod features;
+pub mod simd;
+pub mod kernels;
 pub mod error;
 pub mod transpose;
 pub mod weights;
@@ -26,6 +29,11 @@ pub mod sampler;
 
 // Re-export hardware for convenience
 pub use crate::hardware::{CpuCapabilities, BatchConfig, detect, derive_batch_config};
+
+// Re-export CPU features
+pub use self::features::{CpuFeatures, KernelPreference};
+// Re-export SIMD kernel system
+pub use self::simd::{SimdKernels, SimdActivations};
 
 #[cfg(test)]
 mod ops_tests;

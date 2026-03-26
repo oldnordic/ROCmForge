@@ -115,12 +115,14 @@ mod tests {
     }
 
     fn make_test_caps() -> CpuCapabilities {
+        use crate::hardware::SimdFeatures;
         CpuCapabilities {
             physical_cores: 8,
             logical_cpus: 16,
             l3_cache_bytes: 96 * 1024 * 1024,
             l2_cache_bytes: 2 * 1024 * 1024,
             total_memory_bytes: 16 * 1024 * 1024 * 1024,
+            simd: SimdFeatures::default(),
         }
     }
 

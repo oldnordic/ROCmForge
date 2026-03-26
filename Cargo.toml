@@ -19,6 +19,7 @@ rayon = "1"
 sysinfo = "0.38"
 
 [dev-dependencies]
+fastrand = "2"
 
 [[bin]]
 name = "rocmforge"

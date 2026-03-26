@@ -24,7 +24,7 @@ mod caps;
 mod config;
 
 pub use error::HardwareError;
-pub use caps::CpuCapabilities;
+pub use caps::{CpuCapabilities, SimdFeatures};
 pub use config::{BatchConfig, memory_per_token};
 
 /// Detect CPU hardware capabilities.
@@ -64,6 +64,7 @@ mod tests {
             l3_cache_bytes: 96 * 1024 * 1024,
             l2_cache_bytes: 2 * 1024 * 1024,
             total_memory_bytes: 16 * 1024 * 1024 * 1024,
+            simd: SimdFeatures::default(),
         };
 
         let config = crate::config::ModelConfig {

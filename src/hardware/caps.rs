@@ -3,6 +3,88 @@
 use super::error::HardwareError;
 use sysinfo::System;
 
+/// SIMD feature support flags for kernel selection.
+///
+/// Used to dispatch to optimized kernels based on available CPU features.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SimdFeatures {
+    /// AVX2 support (256-bit integer vectors)
+    pub has_avx2: bool,
+    /// AVX-512 support (512-bit vectors)
+    pub has_avx512: bool,
+    /// NEON support (ARM)
+    pub has_neon: bool,
+    /// SVE support (ARM scalable vectors)
+    pub has_sve: bool,
+}
+
+impl SimdFeatures {
+    /// Detect SIMD features at runtime.
+    pub fn detect() -> Self {
+        #[cfg(target_arch = "x86_64")]
+        {
+            use std::arch::x86_64::*;
+            let cpuid_avx2 = unsafe { __cpuid_count(0x00000007, 0) };
+            let has_avx = unsafe { _xgetbv(0) } & 0x6 == 0x6;
+            let has_avx2 = has_avx && (cpuid_avx2.ebx & (1 << 5) != 0);
+            let has_avx512 = has_avx2 && (cpuid_avx2.ebx & (1 << 16) != 0);
+
+            Self {
+                has_avx2,
+                has_avx512,
+                has_neon: false,
+                has_sve: false,
+            }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            Self {
+                has_avx2: false,
+                has_avx512: false,
+                has_neon: true,  // Always available on aarch64
+                has_sve: cfg!(target_feature = "sve"),
+            }
+        }
+
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            Self::default()
+        }
+    }
+
+    /// Get human-readable SIMD feature description.
+    pub fn description(&self) -> &'static str {
+        if self.has_avx512 {
+            "AVX-512"
+        } else if self.has_avx2 {
+            "AVX2"
+        } else if self.has_neon {
+            "NEON"
+        } else if self.has_sve {
+            "SVE"
+        } else {
+            "Scalar"
+        }
+    }
+
+    /// Get the kernel preference enum value.
+    pub fn kernel_preference(&self) -> crate::cpu::features::KernelPreference {
+        use crate::cpu::features::KernelPreference;
+        if self.has_avx512 {
+            KernelPreference::Avx512
+        } else if self.has_avx2 {
+            KernelPreference::Avx2
+        } else if self.has_neon {
+            KernelPreference::Neon
+        } else if self.has_sve {
+            KernelPreference::Sve
+        } else {
+            KernelPreference::Scalar
+        }
+    }
+}
+
 /// Detected CPU hardware capabilities.
 ///
 /// Contains information about CPU topology, cache sizes, and memory.
@@ -32,6 +114,8 @@ pub struct CpuCapabilities {
     ///
     /// This is the amount of RAM available to the system.
     pub total_memory_bytes: usize,
+    /// SIMD feature support for kernel dispatch.
+    pub simd: SimdFeatures,
 }
 
 impl CpuCapabilities {
@@ -75,12 +159,16 @@ impl CpuCapabilities {
         // For production cache-aware batching, consider hwloc-rs crate.
         let (l3_cache_bytes, l2_cache_bytes) = (0, 0);
 
+        // Detect SIMD features for optimized kernel dispatch
+        let simd = SimdFeatures::detect();
+
         Ok(Self {
             physical_cores,
             logical_cpus,
             l3_cache_bytes,
             l2_cache_bytes,
             total_memory_bytes,
+            simd,
         })
     }
 

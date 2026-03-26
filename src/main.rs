@@ -16,6 +16,7 @@ use rocmforge::cpu::{
     CpuError,
 };
 use rocmforge::hardware::{detect, derive_batch_config, CpuCapabilities, BatchConfig};
+use rocmforge::cpu::{CpuFeatures, SimdKernels};
 use rocmforge::loader::GgufFile;
 use rocmforge::tokenizer::BpeTokenizer;
 
@@ -182,12 +183,17 @@ fn run_cpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("done");
     eprintln!("  Physical cores: {}", caps.physical_cores);
     eprintln!("  Logical CPUs: {}", caps.logical_cpus);
+    eprintln!("  SIMD features: {}", caps.simd.description());
     if caps.has_l3_cache() {
         eprintln!("  L3 cache: {:.1} MB", caps.l3_cache_mb());
     } else {
         eprintln!("  L3 cache: undetectable (using fallback)");
     }
     eprintln!("  Total memory: {:.1} GB", caps.total_memory_gb());
+
+    // Initialize SIMD kernels
+    let _simd_kernels = SimdKernels::new(caps.simd.kernel_preference());
+    eprintln!("  Kernel preference: {}", _simd_kernels.description());
 
     // Load GGUF file
     let file = GgufFile::open(&args.model)?;
