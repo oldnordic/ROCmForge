@@ -8,7 +8,7 @@
 
 use super::cache::{CpuForwardScratch, CpuKvCache};
 use super::ops::{add_bias_batched, dispatch_gemm, dispatch_gemv, flash_attn_prefill, rms_norm, silu_fuse};
-use super::quant::{embed_f32_batch, embed_q4_0_batch, embed_q4_k_batch, embed_q6_k_batch, embed_q8_0_batch};
+use super::quant::{embed_f32_batch, embed_q4_0_batch, embed_q4_k_batch, embed_q5_0_batch, embed_q6_k_batch, embed_q8_0_batch};
 use super::weights::{CpuLayerWeights, CpuModelWeights};
 use super::CpuError;
 use crate::config::ModelConfig;
@@ -384,6 +384,9 @@ pub fn cpu_prefill_forward(
             GgmlType::Q4_K => {
                 embed_q4_k_batch(batch_tokens, &weights.token_emb, &mut ps.hidden, h);
             }
+            GgmlType::Q5_0 => {
+                embed_q5_0_batch(batch_tokens, &weights.token_emb, &mut ps.hidden, h);
+            }
             GgmlType::Q6_K => {
                 embed_q6_k_batch(batch_tokens, &weights.token_emb, &mut ps.hidden, h);
             }
@@ -539,6 +542,9 @@ pub fn cpu_prefill_forward_parallel(
                 }
                 GgmlType::Q4_K => {
                     embed_q4_k_batch(batch_tokens, &weights_shared.token_emb, &mut ps.hidden, h);
+                }
+                GgmlType::Q5_0 => {
+                    embed_q5_0_batch(batch_tokens, &weights_shared.token_emb, &mut ps.hidden, h);
                 }
                 GgmlType::Q6_K => {
                     embed_q6_k_batch(batch_tokens, &weights_shared.token_emb, &mut ps.hidden, h);
