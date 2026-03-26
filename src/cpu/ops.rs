@@ -421,6 +421,51 @@ pub fn gemm_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
     });
 }
 
+/// Q6_K GEMM fallback: dequant on-the-fly (slow but works).
+pub fn gemm_q6_k_fallback(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    use super::quant::{Q6_K_BLOCK_BYTES, Q6_K_BLOCK_ELEMS};
+
+    let num_blocks = in_dim / Q6_K_BLOCK_ELEMS;
+    let row_bytes = num_blocks * Q6_K_BLOCK_BYTES;
+
+    y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
+        let x_row = &x[s * in_dim..(s + 1) * in_dim];
+        for o in 0..out_dim {
+            let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
+            let mut acc = 0.0f32;
+            for b in 0..num_blocks {
+                let block = &row_w[b * Q6_K_BLOCK_BYTES..(b + 1) * Q6_K_BLOCK_BYTES];
+                let d = super::quant::load_f16_scale(&block[0..2]);
+                let ql = &block[2..130]; // 128 bytes
+                let qh = &block[130..194]; // 64 bytes
+                let scales = &block[194..210]; // 16 bytes
+                let xb = &x_row[b * Q6_K_BLOCK_ELEMS..];
+
+                // Process 128 values at a time
+                for g in 0..2 {
+                    let offset = g * 128;
+                    for l in 0..32 {
+                        let is = l / 16;
+                        let q1 = i32::from(((ql[l + offset] & 0xF) | (((qh[l] >> (is * 2)) & 3) << 4)) as i8) - 32;
+                        let q2 = i32::from(((ql[l + 32 + offset] & 0xF) | (((qh[l] >> (is * 2 + 2)) & 3) << 4)) as i8) - 32;
+                        let q3 = i32::from((((ql[l + offset] >> 4) & 0xF) | (((qh[l] >> (is * 2 + 4)) & 3) << 4)) as i8) - 32;
+                        let q4 = i32::from((((ql[l + 32 + offset] >> 4) & 0xF) | (((qh[l] >> (is * 2 + 6)) & 3) << 4)) as i8) - 32;
+
+                        let sc = scales[is * 4 + (l / 8)] as i8;
+                        let scale = d * (sc as f32);
+
+                        acc += scale * (q1 as f32) * xb[l + offset];
+                        acc += scale * (q2 as f32) * xb[l + 32 + offset];
+                        acc += scale * (q3 as f32) * xb[l + 64 + offset];
+                        acc += scale * (q4 as f32) * xb[l + 96 + offset];
+                    }
+                }
+            }
+            y_row[o] = acc;
+        }
+    });
+}
+
 /// Dispatch GEMM by weight type with automatic transposition detection.
 ///
 /// Uses metadata to determine if weights need transposed access.
@@ -461,6 +506,24 @@ pub fn dispatch_gemm(
                 gemm_q8_0_transposed_gemm(w, x, y, out_dim, in_dim);
             } else {
                 gemm_q8_0(w, x, y, out_dim, in_dim);
+            }
+        }
+        GgmlType::Q4_K => {
+            // Q4_K × Q8_K GEMM: quantize input on the fly
+            if meta.needs_transpose {
+                // TODO: add transposed Q4_K GEMM if needed
+                return Err(super::CpuError::UnsupportedWeightType(GgmlType::Q4_K));
+            } else {
+                crate::cpu::kernels::gemm_q4k_q8::gemm_q4_k_q8_k_dispatch_gemm(w, x, y, 1, out_dim, in_dim);
+            }
+        }
+        GgmlType::Q6_K => {
+            // Q6_K: dequantize to f32 on the fly (slower but works)
+            if meta.needs_transpose {
+                // TODO: add transposed Q6_K GEMM if needed
+                return Err(super::CpuError::UnsupportedWeightType(GgmlType::Q6_K));
+            } else {
+                gemm_q6_k_fallback(w, x, y, out_dim, in_dim);
             }
         }
         other => return Err(super::CpuError::UnsupportedWeightType(other)),

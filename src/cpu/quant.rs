@@ -14,6 +14,10 @@ pub const Q4_BLOCK_BYTES: usize = 18;
 pub const Q4_1_BLOCK_ELEMS: usize = 32;
 pub const Q4_1_BLOCK_BYTES: usize = 20;
 
+/// Q4_K: 256 elements per block, 144 bytes (2 d + 2 dmin + 12 scales + 128 qs)
+pub const Q4_K_BLOCK_ELEMS: usize = 256;
+pub const Q4_K_BLOCK_BYTES: usize = 144;
+
 /// Q6_K: 256 elements per block, 210 bytes (128 ql + 64 qh + 16 scales + 2 d)
 pub const Q6_K_BLOCK_ELEMS: usize = 256;
 pub const Q6_K_BLOCK_BYTES: usize = 210;
@@ -125,6 +129,57 @@ pub fn embed_q4_1_batch(ids: &[u32], emb: &[u8], out: &mut [f32], hidden_size: u
     }
 }
 
+/// Dequantize Q4_K embedding row: out = dequant(emb[token_id])
+///
+/// Q4_K block: [d f16 | dmin f16 | scales[12] | qs[128]] = 144 bytes for 256 values
+/// Uses 4.5-bit quantization with multiple scales and mins per block.
+pub fn embed_q4_k(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usize) {
+    let num_blocks = hidden_size / Q4_K_BLOCK_ELEMS;
+    let row_offset = token_id * num_blocks * Q4_K_BLOCK_BYTES;
+
+    for b in 0..num_blocks {
+        let block = &emb[row_offset + b * Q4_K_BLOCK_BYTES..row_offset + (b + 1) * Q4_K_BLOCK_BYTES];
+        let d = load_f16_scale(&block[0..2]);
+        let dmin = load_f16_scale(&block[2..4]);
+        let scales = &block[4..16]; // 12 bytes of packed 6-bit scales + mins
+        let qs = &block[16..144]; // 128 bytes of 4-bit quants
+        let base = b * Q4_K_BLOCK_ELEMS;
+
+        // Helper to unpack scale and min (following llama.cpp's get_scale_min_k4)
+        let get_scale_min = |j: usize| -> (i8, i8) {
+            if j < 4 {
+                let sc = ((scales[j] & 63) as i8).wrapping_sub(32);
+                let m = ((scales[j + 4] & 63) as i8).wrapping_sub(32);
+                (sc, m)
+            } else {
+                let sc = ((scales[j + 4] & 0xF) as i8 | (((scales[j - 4] >> 6) as i8) << 4)).wrapping_sub(32);
+                let m = ((scales[j + 4] >> 4) as i8 | (((scales[j] >> 6) as i8) << 4)).wrapping_sub(32);
+                (sc, m)
+            }
+        };
+
+        // Dequantize 256 values, 32 at a time (8 groups of 32)
+        for j in 0..8 {
+            let offset = j * 32;
+            for i in 0..32 {
+                let q = (qs[(offset + i) / 2] >> (((offset + i) % 2) * 4)) & 0x0F;
+                let (sc, m) = get_scale_min(j);
+                let ls = (d * (sc as f32)) * (q as f32);
+                let lm = dmin * (m as f32);
+                out[base + offset + i] = ls + lm;
+            }
+        }
+    }
+}
+
+/// Batch embed from Q4_K
+pub fn embed_q4_k_batch(ids: &[u32], emb: &[u8], out: &mut [f32], hidden_size: usize) {
+    for (s, &id) in ids.iter().enumerate() {
+        let or = &mut out[s * hidden_size..(s + 1) * hidden_size];
+        embed_q4_k(id as usize, emb, or, hidden_size);
+    }
+}
+
 /// Dequantize Q6_K embedding row: out = dequant(emb[token_id])
 ///
 /// Q6_K block: [128 ql | 64 qh | 16 scales | 2 f16 d] = 210 bytes for 256 values
@@ -189,6 +244,14 @@ pub fn embed_q8_0_batch(ids: &[u32], emb: &[u8], out: &mut [f32], hidden_size: u
     for (s, &id) in ids.iter().enumerate() {
         let or = &mut out[s * hidden_size..(s + 1) * hidden_size];
         embed_q8_0(id as usize, emb, or, hidden_size);
+    }
+}
+
+/// Batch embed from Q6_K
+pub fn embed_q6_k_batch(ids: &[u32], emb: &[u8], out: &mut [f32], hidden_size: usize) {
+    for (s, &id) in ids.iter().enumerate() {
+        let or = &mut out[s * hidden_size..(s + 1) * hidden_size];
+        embed_q6_k(id as usize, emb, or, hidden_size);
     }
 }
 
