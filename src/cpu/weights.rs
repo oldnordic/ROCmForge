@@ -210,6 +210,8 @@ impl CpuModelWeights {
                 .map_err(WeightError::Load)?
                 .map(|t| t.ggml_type)
                 .unwrap_or(GgmlType::F32);
+            // TEMPORARILY DISABLED: force use of output.weight tensor instead of tied embeddings
+            // This is to test if FFN down Q4_1 issue is related to tied embeddings
             (copy_tensor(file, "output.weight")?, lm_type, false)
         } else {
             // Weight tying: lm_head shares embedding weights
