@@ -3,4 +3,6 @@ pub mod config;
 pub mod tokenizer;
 pub mod cpu;
 pub mod hardware;
+
+#[cfg(feature = "gpu")]
 pub mod gpu;

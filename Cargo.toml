@@ -18,6 +18,11 @@ rayon = "1"
 # Hardware detection
 sysinfo = "0.38"
 
+[features]
+default = []
+# GPU support requires ROCm/HIP installation
+gpu = []
+
 [dev-dependencies]
 fastrand = "2"
 
