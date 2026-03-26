@@ -20,6 +20,9 @@ use rocmforge::cpu::{CpuFeatures, SimdKernels};
 use rocmforge::loader::GgufFile;
 use rocmforge::tokenizer::BpeTokenizer;
 
+#[cfg(feature = "gpu")]
+use rocmforge::gpu;
+
 // ── CLI Args ─────────────────────────────────────────────────────────────────────
 
 struct Args {
@@ -31,6 +34,7 @@ struct Args {
     no_template: bool,
     list_tensors: bool,
     debug: bool,
+    gpu: bool,
 }
 
 fn usage() -> ! {
@@ -49,6 +53,7 @@ fn usage() -> ! {
     eprintln!("  --no-template          Disable chat template");
     eprintln!("  --list-tensors         List tensors in model file and exit");
     eprintln!("  --debug                Show debug info (top logits, etc.)");
+    eprintln!("  --gpu                  Use GPU backend (requires ROCm/HIP)");
     eprintln!();
     eprintln!("Examples:");
     eprintln!("  rocmforge --model qwen2.5-7b.gguf --prompt \"Hello, world!\"");
@@ -66,6 +71,7 @@ fn parse_args() -> Args {
     let mut no_template = false;
     let mut list_tensors = false;
     let mut debug = false;
+    let mut gpu = false;
 
     while let Some(flag) = args.next() {
         match flag.as_str() {
@@ -95,6 +101,7 @@ fn parse_args() -> Args {
             "--no-template" => no_template = true,
             "--list-tensors" => list_tensors = true,
             "--debug" => debug = true,
+            "--gpu" => gpu = true,
             "-h" | "--help" => usage(),
             other => {
                 eprintln!("Unknown flag: {}", other);
@@ -112,6 +119,7 @@ fn parse_args() -> Args {
         no_template,
         list_tensors,
         debug,
+        gpu,
     }
 }
 
@@ -177,7 +185,7 @@ fn print_top_k_tokens(logits: &[f32], tok: &BpeTokenizer, k: usize) {
 // ── CPU Inference ────────────────────────────────────────────────────────────────
 
 fn run_cpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Detect hardware capabilities
+    // 1. Detect CPU hardware capabilities
     eprint!("Detecting CPU capabilities... ");
     let caps: CpuCapabilities = detect().map_err(|e| format!("hardware detection: {}", e))?;
     eprintln!("done");
@@ -195,6 +203,29 @@ fn run_cpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let _simd_kernels = SimdKernels::new(caps.simd.kernel_preference());
     eprintln!("  Kernel preference: {}", _simd_kernels.description());
 
+    // 2. Detect GPU (if gpu feature enabled)
+    #[cfg(feature = "gpu")]
+    let gpu_caps = {
+        eprint!("Detecting GPU capabilities... ");
+        let caps = gpu::detect();
+        match &caps {
+            Some(gpu) => {
+                eprintln!("done");
+                eprintln!("  GPU: {}", gpu.device_name);
+                eprintln!("  VRAM: {:.1} GB / {:.1} GB",
+                    gpu.free_vram_gb(),
+                    gpu.total_vram_gb()
+                );
+            }
+            None => {
+                eprintln!("none detected");
+            }
+        }
+        caps
+    };
+
+    // Load GGUF file
+
     // Load GGUF file
     let file = GgufFile::open(&args.model)?;
     eprintln!("[Args] model path: {}", args.model);
@@ -207,7 +238,22 @@ fn run_cpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         "Model: {} layers, {} vocab, {} hidden",
         config.num_layers, config.vocab_size, config.hidden_size
     );
-    eprintln!("Device: CPU");
+
+    // 3. Choose backend based on GPU availability and preference
+    #[cfg(feature = "gpu")]
+    let use_gpu = args.gpu && gpu_caps.as_ref()
+        .map(|g| g.can_fit_model(file.size_bytes()))
+        .unwrap_or(false);
+
+    #[cfg(not(feature = "gpu"))]
+    let use_gpu = false;
+
+    if use_gpu {
+        eprintln!("Device: GPU");
+        return Err("GPU inference not implemented yet".into());
+    } else {
+        eprintln!("Device: CPU");
+    }
 
     // 2. Derive batch config from hardware + model
     let batch_config: BatchConfig = derive_batch_config(&caps, &config);
