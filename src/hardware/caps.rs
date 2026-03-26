@@ -55,33 +55,13 @@ impl SimdFeatures {
 
     /// Get human-readable SIMD feature description.
     pub fn description(&self) -> &'static str {
-        if self.has_avx512 {
-            "AVX-512"
-        } else if self.has_avx2 {
-            "AVX2"
-        } else if self.has_neon {
-            "NEON"
-        } else if self.has_sve {
-            "SVE"
-        } else {
-            "Scalar"
-        }
+        // Use the CPU features module for accurate detection
+        crate::cpu::features::CpuFeatures::get().description().leak()
     }
 
     /// Get the kernel preference enum value.
     pub fn kernel_preference(&self) -> crate::cpu::features::KernelPreference {
-        use crate::cpu::features::KernelPreference;
-        if self.has_avx512 {
-            KernelPreference::Avx512
-        } else if self.has_avx2 {
-            KernelPreference::Avx2
-        } else if self.has_neon {
-            KernelPreference::Neon
-        } else if self.has_sve {
-            KernelPreference::Sve
-        } else {
-            KernelPreference::Scalar
-        }
+        crate::cpu::features::CpuFeatures::get().kernel
     }
 }
 

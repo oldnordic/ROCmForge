@@ -42,9 +42,9 @@ pub fn cpu_layer_forward(
     }
 
     // 2. QKV projections
-    dispatch_gemv(&weights.attn_q, &weights.attn_q_meta, &scratch.normed, &mut scratch.q, q_size, h)?;
-    dispatch_gemv(&weights.attn_k, &weights.attn_k_meta, &scratch.normed, &mut scratch.k, kv_size, h)?;
-    dispatch_gemv(&weights.attn_v, &weights.attn_v_meta, &scratch.normed, &mut scratch.v, kv_size, h)?;
+    dispatch_gemv(&weights.attn_q, &weights.attn_q_meta, &scratch.normed, &mut scratch.q, q_size, h, Some(&mut scratch.q8_scratch))?;
+    dispatch_gemv(&weights.attn_k, &weights.attn_k_meta, &scratch.normed, &mut scratch.k, kv_size, h, Some(&mut scratch.q8_scratch))?;
+    dispatch_gemv(&weights.attn_v, &weights.attn_v_meta, &scratch.normed, &mut scratch.v, kv_size, h, Some(&mut scratch.q8_scratch))?;
 
     // 3. Optional biases (same as prefill)
     if let Some(bq) = &weights.attn_q_bias {
@@ -104,7 +104,7 @@ pub fn cpu_layer_forward(
     }
 
     // 6. Output projection
-    dispatch_gemv(&weights.attn_o, &weights.attn_o_meta, &scratch.attn_out, &mut scratch.layer_out, h, q_size)?;
+    dispatch_gemv(&weights.attn_o, &weights.attn_o_meta, &scratch.attn_out, &mut scratch.layer_out, h, q_size, Some(&mut scratch.q8_scratch))?;
 
     if debug && layer == 0 {
         let lo_mean: f32 = scratch.layer_out.iter().copied().sum::<f32>() / h as f32;
@@ -125,8 +125,8 @@ pub fn cpu_layer_forward(
     rms_norm(hidden, &weights.ffn_norm, &mut scratch.normed, eps);
 
     // 9. FFN: gate + up projections
-    dispatch_gemv(&weights.ffn_gate, &weights.ffn_gate_meta, &scratch.normed, &mut scratch.gate, ff_size, h)?;
-    dispatch_gemv(&weights.ffn_up, &weights.ffn_up_meta, &scratch.normed, &mut scratch.swiglu, ff_size, h)?;
+    dispatch_gemv(&weights.ffn_gate, &weights.ffn_gate_meta, &scratch.normed, &mut scratch.gate, ff_size, h, Some(&mut scratch.q8_scratch))?;
+    dispatch_gemv(&weights.ffn_up, &weights.ffn_up_meta, &scratch.normed, &mut scratch.swiglu, ff_size, h, Some(&mut scratch.q8_scratch))?;
 
     if debug && layer == 0 {
         let gate_mean: f32 = scratch.gate.iter().copied().sum::<f32>() / ff_size as f32;
@@ -181,6 +181,7 @@ pub fn cpu_layer_forward(
         &mut scratch.layer_out,
         h,  // out_dim (hidden_size)
         ff_size,  // in_dim (intermediate_size)
+        Some(&mut scratch.q8_scratch),
     )?;
 
     if debug && layer == 0 {
@@ -270,6 +271,7 @@ pub fn cpu_full_forward(
         &mut scratch.logits,
         v,  // vocab_size (out_dim)
         h,  // hidden_size (in_dim)
+        Some(&mut scratch.q8_scratch),
     )?;
 
     // Debug: show logits statistics

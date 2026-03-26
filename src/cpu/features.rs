@@ -1,12 +1,13 @@
-//! CPU SIMD feature detection.
+//! CPU SIMD feature detection with caching.
 //!
-//! Detects available CPU instruction sets for optimized kernel selection:
-//! - x86: SSE, SSE2, SSE3, SSSE3, AVX, AVX2, AVX-512, FMA
+//! Detects available CPU instruction sets at startup and caches results:
+//! - x86: SSE, SSE2, SSE3, SSSE3, AVX, AVX2, AVX-512, AVX-VNNI, FMA
 //! - ARM: NEON, SVE, SVE2
 //!
-//! Uses std::arch module and cpuid crate for runtime detection.
+//! Uses std::arch module for runtime detection with OnceLock for caching.
 
 use std::arch::x86_64::*;
+use std::sync::OnceLock;
 
 /// Detected CPU SIMD features for kernel dispatch.
 #[derive(Debug, Clone, Copy)]
@@ -23,6 +24,8 @@ pub struct CpuFeatures {
     pub has_avx2: bool,
     /// AVX-512 (512-bit vectors)
     pub has_avx512: bool,
+    /// AVX-VNNI (vector neural network instructions)
+    pub has_avxvnni: bool,
     /// FMA (Fused Multiply-Add)
     pub has_fma: bool,
     /// ARM NEON (128-bit SIMD)
@@ -48,6 +51,10 @@ pub enum KernelPreference {
     Avx,
     /// AVX2 kernels (256-bit integer vectors)
     Avx2,
+    /// AVX-VNNI kernels (AVX2 vector neural network instructions)
+    AvxVnni,
+    /// AVX-512 VNNI kernels (AVX-512 vector neural network instructions)
+    Avx512Vnni,
     /// AVX-512 kernels (512-bit vectors)
     Avx512,
     /// ARM NEON kernels (128-bit vectors)
@@ -58,7 +65,23 @@ pub enum KernelPreference {
     Sve2,
 }
 
+/// Global cached CPU features (detected once at startup).
+static CACHED_FEATURES: OnceLock<CpuFeatures> = OnceLock::new();
+
 impl CpuFeatures {
+    /// Get cached CPU features (detected once at startup).
+    ///
+    /// This is the preferred method for accessing CPU features in hot paths,
+    /// as it avoids repeated CPUID checks.
+    ///
+    /// # Returns
+    ///
+    /// Detected features with kernel preference selected.
+    #[inline]
+    pub fn get() -> &'static Self {
+        CACHED_FEATURES.get_or_init(|| Self::detect())
+    }
+
     /// Detect CPU SIMD features at runtime.
     ///
     /// On x86_64: uses CPUID to detect SSE/AVX extensions.
@@ -113,13 +136,19 @@ impl CpuFeatures {
         let cpuid_avx2 = unsafe { __cpuid_count(0x00000007, 0) };
         let has_avx2 = has_avx && (cpuid_avx2.ebx & (1 << 5) != 0);
 
+        // AVX-VNNI variants detection (CPUID 0x00000007, subleaf 0, ECX bits)
+        // ECX bit 3: AVX512_VNNI (AVX-512 VNNI) - AMD Zen 4+
+        // ECX bit 4: AVX_VNNI (AVX2 VNNI) - Intel Cascade Lake+
+        let has_avx2_vnni = has_avx2 && (cpuid_avx2.ecx & (1 << 4) != 0);
+        let has_avx512_vnni = has_avx2 && (cpuid_avx2.ebx & (1 << 16) != 0) && (cpuid_avx2.ecx & (1 << 3) != 0);
+
         // AVX-512 detection (multiple flags)
         let has_avx512 = has_avx2
             && (cpuid_avx2.ebx & (1 << 16) != 0)  // AVX512F
             && (cpuid_avx2.ebx & (1 << 17) != 0); // AVX512DQ
 
         let kernel = Self::select_kernel_x86(
-            has_sse2, has_ssse3, has_avx, has_avx2, has_avx512,
+            has_sse2, has_ssse3, has_avx, has_avx2, has_avx512, has_avx2_vnni, has_avx512_vnni,
         );
 
         Self {
@@ -129,6 +158,9 @@ impl CpuFeatures {
             has_avx,
             has_avx2,
             has_avx512,
+            // Only report AVX-VNNI as true if we have AVX2 VNNI (Intel)
+            // AVX-512 VNNI requires different kernel implementation (mm512 instructions)
+            has_avxvnni: has_avx2_vnni,
             has_fma,
             has_neon: false,
             has_sve: false,
@@ -162,6 +194,7 @@ impl CpuFeatures {
             has_avx: false,
             has_avx2: false,
             has_avx512: false,
+            has_avxvnni: false,
             has_fma: false,
             has_neon,
             has_sve,
@@ -177,8 +210,16 @@ impl CpuFeatures {
         has_avx: bool,
         has_avx2: bool,
         has_avx512: bool,
+        has_avx2_vnni: bool,
+        has_avx512_vnni: bool,
     ) -> KernelPreference {
-        if has_avx512 {
+        // AVX-512 VNNI requires separate kernel implementation (using _mm512 instructions)
+        // For now, fall back to AVX-512 when we have AVX-512 VNNI but no AVX512 VNNI kernel
+        if has_avx2_vnni {
+            KernelPreference::AvxVnni
+        } else if has_avx512_vnni {
+            KernelPreference::Avx512  // TODO: Implement AVX-512 VNNI kernels for Zen 4
+        } else if has_avx512 {
             KernelPreference::Avx512
         } else if has_avx2 {
             KernelPreference::Avx2
@@ -205,12 +246,18 @@ impl CpuFeatures {
         }
     }
 
-    /// Get a human-readable description of the detected features.
+    /// Get human-readable description of the detected features.
     pub fn description(&self) -> String {
         let mut features = Vec::new();
 
-        if self.has_avx512 {
+        if self.has_avx512 && self.kernel == KernelPreference::Avx512Vnni {
+            features.push("AVX-512 VNNI");
+        }
+        if self.has_avx512 && !matches!(self.kernel, KernelPreference::Avx512Vnni) {
             features.push("AVX-512");
+        }
+        if self.has_avxvnni {
+            features.push("AVX-VNNI");
         }
         if self.has_avx2 {
             features.push("AVX2");

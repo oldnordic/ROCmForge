@@ -133,6 +133,9 @@ pub struct CpuForwardScratch {
     pub swiglu: Vec<f32>,
     /// Final logits [vocab_size]
     pub logits: Vec<f32>,
+    /// Q8_0 scratch buffer for GEMV quantization [hidden_size / 32 * 34 bytes]
+    /// Reused across all GEMV calls to avoid repeated heap allocations.
+    pub q8_scratch: Vec<u8>,
 }
 
 impl CpuForwardScratch {
@@ -143,6 +146,14 @@ impl CpuForwardScratch {
         let kv = config.num_kv_heads * config.head_dim;
         let ff = config.intermediate_size;
         let v = config.vocab_size;
+
+        // Q8_0 scratch buffer for GEMV quantization
+        // Size: (hidden_size / 32) * 34 bytes per Q8_0 block
+        use super::quant::Q8_BLOCK_ELEMS;
+        use super::quant::Q8_BLOCK_BYTES;
+        let num_blocks = h / Q8_BLOCK_ELEMS;
+        let q8_scratch = vec![0u8; num_blocks * Q8_BLOCK_BYTES];
+
         Self {
             normed: vec![0.0; h],
             q: vec![0.0; q],
@@ -153,6 +164,7 @@ impl CpuForwardScratch {
             gate: vec![0.0; ff],
             swiglu: vec![0.0; ff],
             logits: vec![0.0; v],
+            q8_scratch,
         }
     }
 
@@ -168,6 +180,7 @@ impl CpuForwardScratch {
             + self.swiglu.len()
             + self.logits.len())
             * std::mem::size_of::<f32>()
+            + self.q8_scratch.len() * std::mem::size_of::<u8>()
     }
 }
 

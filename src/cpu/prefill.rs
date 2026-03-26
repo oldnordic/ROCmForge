@@ -8,7 +8,7 @@
 
 use super::cache::{CpuForwardScratch, CpuKvCache};
 use super::ops::{add_bias_batched, dispatch_gemm, dispatch_gemv, flash_attn_prefill, rms_norm, silu_fuse};
-use super::quant::{embed_f32_batch, embed_q4_0_batch, embed_q4_k_batch, embed_q5_0_batch, embed_q6_k_batch, embed_q8_0_batch};
+use super::quant::{embed_f32_batch, embed_q4_0_batch, embed_q4_1_batch, embed_q4_k_batch, embed_q5_0_batch, embed_q6_k_batch, embed_q8_0_batch};
 use super::weights::{CpuLayerWeights, CpuModelWeights};
 use super::CpuError;
 use crate::config::ModelConfig;
@@ -51,6 +51,8 @@ struct CpuPrefillScratch {
     gate: Vec<f32>,
     /// FFN SwiGLU [batch_len * intermediate_size]
     swiglu: Vec<f32>,
+    /// Q8_0 scratch buffer for GEMV quantization
+    q8_scratch: Vec<u8>,
 }
 
 impl CpuPrefillScratch {
@@ -60,6 +62,13 @@ impl CpuPrefillScratch {
         let q = config.num_heads * config.head_dim;
         let kv = config.num_kv_heads * config.head_dim;
         let ff = config.intermediate_size;
+
+        // Q8_0 scratch buffer
+        use super::quant::Q8_BLOCK_ELEMS;
+        use super::quant::Q8_BLOCK_BYTES;
+        let num_blocks = h / Q8_BLOCK_ELEMS;
+        let q8_scratch = vec![0u8; num_blocks * Q8_BLOCK_BYTES];
+
         Self {
             hidden: vec![0.0; n * h],
             normed: vec![0.0; n * h],
@@ -70,6 +79,7 @@ impl CpuPrefillScratch {
             layer_out: vec![0.0; n * h],
             gate: vec![0.0; n * ff],
             swiglu: vec![0.0; n * ff],
+            q8_scratch,
         }
     }
 }
@@ -100,6 +110,8 @@ struct CpuParallelPrefillScratch {
     per_thread_gate: Vec<Vec<f32>>,
     /// Per-thread FFN SwiGLU [num_threads][sub_batch_len * intermediate_size]
     per_thread_swiglu: Vec<Vec<f32>>,
+    /// Per-thread Q8_0 scratch buffers for GEMV quantization
+    per_thread_q8_scratch: Vec<Vec<u8>>,
     /// Number of threads (should be num_cores)
     num_threads: usize,
 }
@@ -115,6 +127,12 @@ impl CpuParallelPrefillScratch {
         let sub_batch_len = 1; // Will be set dynamically per batch
         let n = sub_batch_len;
 
+        // Q8_0 scratch buffer size
+        use super::quant::Q8_BLOCK_ELEMS;
+        use super::quant::Q8_BLOCK_BYTES;
+        let num_blocks = h / Q8_BLOCK_ELEMS;
+        let q8_scratch_size = num_blocks * Q8_BLOCK_BYTES;
+
         Self {
             per_thread_hidden: (0..num_threads).map(|_| vec![0.0; n * h]).collect(),
             per_thread_normed: (0..num_threads).map(|_| vec![0.0; n * h]).collect(),
@@ -125,6 +143,7 @@ impl CpuParallelPrefillScratch {
             per_thread_layer_out: (0..num_threads).map(|_| vec![0.0; n * h]).collect(),
             per_thread_gate: (0..num_threads).map(|_| vec![0.0; n * ff]).collect(),
             per_thread_swiglu: (0..num_threads).map(|_| vec![0.0; n * ff]).collect(),
+            per_thread_q8_scratch: (0..num_threads).map(|_| vec![0u8; q8_scratch_size]).collect(),
             num_threads,
         }
     }
@@ -135,6 +154,12 @@ impl CpuParallelPrefillScratch {
         let q = config.num_heads * config.head_dim;
         let kv = config.num_kv_heads * config.head_dim;
         let ff = config.intermediate_size;
+
+        // Q8_0 scratch buffer size (doesn't depend on batch_len)
+        use super::quant::Q8_BLOCK_ELEMS;
+        use super::quant::Q8_BLOCK_BYTES;
+        let num_blocks = h / Q8_BLOCK_ELEMS;
+        let q8_scratch_size = num_blocks * Q8_BLOCK_BYTES;
 
         for i in 0..self.num_threads {
             if self.per_thread_hidden[i].len() != sub_batch_len * h {
@@ -147,6 +172,10 @@ impl CpuParallelPrefillScratch {
                 self.per_thread_layer_out[i] = vec![0.0; sub_batch_len * h];
                 self.per_thread_gate[i] = vec![0.0; sub_batch_len * ff];
                 self.per_thread_swiglu[i] = vec![0.0; sub_batch_len * ff];
+                // Q8_0 scratch buffer size is fixed, only need to ensure it exists
+                if self.per_thread_q8_scratch[i].len() != q8_scratch_size {
+                    self.per_thread_q8_scratch[i] = vec![0u8; q8_scratch_size];
+                }
             }
         }
     }
@@ -433,6 +462,7 @@ pub fn cpu_prefill_forward(
                 &mut scratch.logits,
                 v,  // vocab_size (out_dim)
                 h,  // hidden_size (in_dim)
+                Some(&mut scratch.q8_scratch),
             )?;
         }
     }
@@ -630,8 +660,14 @@ pub fn cpu_prefill_forward_parallel(
         GgmlType::Q4_0 => {
             embed_q4_0_batch(batch_tokens, &weights.token_emb, &mut ps_last.hidden, h);
         }
+        GgmlType::Q4_1 => {
+            super::quant::embed_q4_1_batch(batch_tokens, &weights.token_emb, &mut ps_last.hidden, h);
+        }
         GgmlType::Q4_K => {
             embed_q4_k_batch(batch_tokens, &weights.token_emb, &mut ps_last.hidden, h);
+        }
+        GgmlType::Q5_0 => {
+            embed_q5_0_batch(batch_tokens, &weights.token_emb, &mut ps_last.hidden, h);
         }
         GgmlType::Q6_K => {
             embed_q6_k_batch(batch_tokens, &weights.token_emb, &mut ps_last.hidden, h);
@@ -672,6 +708,7 @@ pub fn cpu_prefill_forward_parallel(
         &mut scratch.logits,
         config.vocab_size,
         h,
+        Some(&mut scratch.q8_scratch),
     )?;
 
     Ok(())

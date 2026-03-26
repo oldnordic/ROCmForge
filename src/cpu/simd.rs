@@ -37,6 +37,8 @@ impl SimdKernels {
             KernelPreference::Ssse3 => "SSSE3",
             KernelPreference::Avx => "AVX",
             KernelPreference::Avx2 => "AVX2",
+            KernelPreference::AvxVnni => "AVX-VNNI",
+            KernelPreference::Avx512Vnni => "AVX-512 VNNI",
             KernelPreference::Avx512 => "AVX-512",
             KernelPreference::Neon => "NEON",
             KernelPreference::Sve => "SVE",
@@ -85,7 +87,7 @@ impl SimdActivations {
 
         #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
         {
-            if matches!(self.kernel, KernelPreference::Avx2 | KernelPreference::Avx512) {
+            if matches!(self.kernel, KernelPreference::Avx2 | KernelPreference::AvxVnni | KernelPreference::Avx512 | KernelPreference::Avx512Vnni) {
                 return self.gelu_avx2(x, y);
             }
         }
@@ -109,7 +111,7 @@ impl SimdActivations {
 
         #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
         {
-            if matches!(self.kernel, KernelPreference::Avx2 | KernelPreference::Avx512) {
+            if matches!(self.kernel, KernelPreference::Avx2 | KernelPreference::AvxVnni | KernelPreference::Avx512 | KernelPreference::Avx512Vnni) {
                 return self.silu_avx2(x, y);
             }
         }

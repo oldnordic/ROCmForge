@@ -28,7 +28,7 @@ fn main() {
 
     // Warmup
     gemv_q4_0(&w, &x, &mut y_f32, OUT_DIM, H);
-    gemv_q4_0_q8_0(&w, &x, &mut y_q8, OUT_DIM, H);
+    gemv_q4_0_q8_0(&w, &x, &mut y_q8, OUT_DIM, H, None);
 
     // Benchmark Q4_0 × f32
     let start = std::time::Instant::now();
@@ -42,7 +42,7 @@ fn main() {
     // Benchmark Q4_0 × Q8_0
     let start = std::time::Instant::now();
     for _ in 0..iterations {
-        gemv_q4_0_q8_0(&w, &x, &mut y_q8, OUT_DIM, H);
+        gemv_q4_0_q8_0(&w, &x, &mut y_q8, OUT_DIM, H, None);
     }
     let elapsed_q8 = start.elapsed();
     let tps_q8 = (iterations as f64 * 1000.0) / elapsed_q8.as_secs_f64();

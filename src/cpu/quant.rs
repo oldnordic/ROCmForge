@@ -38,6 +38,32 @@ pub const Q8_BLOCK_BYTES: usize = 34;
 /// Q8_0 max value for quantization
 pub const Q8_0_MAX: f32 = 127.0;
 
+// ── Dimension validation helpers ─────────────────────────────────────────────────────
+
+/// Validate that dimensions are compatible with block size.
+/// Returns Ok(()) if valid, or error with details if not.
+pub fn validate_block_size(dim: usize, block_elems: usize, name: &str) -> Result<(), String> {
+    if dim % block_elems != 0 {
+        Err(format!(
+            "{} dimension {} is not a multiple of block size {} (remainder: {})",
+            name, dim, block_elems, dim % block_elems
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+/// Calculate padded dimension for block-aligned operations.
+/// Returns the dimension rounded up to the next multiple of block_elems.
+pub fn padded_dim(dim: usize, block_elems: usize) -> usize {
+    ((dim + block_elems - 1) / block_elems) * block_elems
+}
+
+/// Calculate number of full blocks and remaining elements.
+pub fn block_remainder(dim: usize, block_elems: usize) -> (usize, usize) {
+    (dim / block_elems, dim % block_elems)
+}
+
 // ── f16 helpers ─────────────────────────────────────────────────────────────────
 
 /// Load little-endian f16 from bytes and convert to f32.
@@ -226,37 +252,84 @@ pub fn embed_q4_k_batch(ids: &[u32], emb: &[u8], out: &mut [f32], hidden_size: u
 
 /// Dequantize Q6_K embedding row: out = dequant(emb[token_id])
 ///
-/// Q6_K block: [128 ql | 64 qh | 16 scales | 2 f16 d] = 210 bytes for 256 values
-/// Uses 2-bit quantization with multiple scales per block.
+/// Q6_K block layout (from llama.cpp ggml-common.h):
+/// struct block_q6_K {
+///     uint8_t ql[QK_K/2];      // 128 bytes
+///     uint8_t qh[QK_K/4];      // 64 bytes
+///     int8_t  scales[QK_K/16]; // 16 bytes
+///     ggml_half d;             // 2 bytes (AT THE END!)
+/// }
+/// Total: 210 bytes for 256 values
+///
+/// Following llama.cpp dequantize_row_q6_k pattern exactly.
 pub fn embed_q6_k(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usize) {
     let num_blocks = hidden_size / Q6_K_BLOCK_ELEMS;
     let row_offset = token_id * num_blocks * Q6_K_BLOCK_BYTES;
 
     for b in 0..num_blocks {
         let block = &emb[row_offset + b * Q6_K_BLOCK_BYTES..row_offset + (b + 1) * Q6_K_BLOCK_BYTES];
-        let d = load_f16_scale(&block[0..2]);
-        let ql = &block[2..130]; // 128 bytes
-        let qh = &block[130..194]; // 64 bytes
-        let scales = &block[194..210]; // 16 bytes
-        let base = b * Q6_K_BLOCK_ELEMS;
 
-        // Process 128 values at a time
-        for g in 0..2 {
-            let offset = g * 128;
+        // Q6_K block layout: ql[0..128], qh[128..192], scales[192..208], d[208..210]
+        let mut ql = &block[0..128];
+        let mut qh = &block[128..192];
+        let mut sc: &[i8] = unsafe {
+            std::slice::from_raw_parts(block[192..208].as_ptr() as *const i8, 16)
+        };
+        let d = load_f16_scale(&block[208..210]);
+
+        let base = b * Q6_K_BLOCK_ELEMS;
+        let mut out_offset = 0; // Offset within block (0, then 128)
+
+        // for (int n = 0; n < QK_K; n += 128) {
+        // This iterates TWICE: n=0, n=128
+        for _ in 0..2 {
+            // for (int l = 0; l < 32; ++l) {
             for l in 0..32 {
                 let is = l / 16;
-                let q1 = i32::from(((ql[l + offset] & 0xF) | (((qh[l] >> (is * 2)) & 3) << 4)) as i8) - 32;
-                let q2 = i32::from(((ql[l + 32 + offset] & 0xF) | (((qh[l] >> (is * 2 + 2)) & 3) << 4)) as i8) - 32;
-                let q3 = i32::from((((ql[l + offset] >> 4) & 0xF) | (((qh[l] >> (is * 2 + 4)) & 3) << 4)) as i8) - 32;
-                let q4 = i32::from((((ql[l + 32 + offset] >> 4) & 0xF) | (((qh[l] >> (is * 2 + 6)) & 3) << 4)) as i8) - 32;
 
-                let sc = scales[is * 4 + (l / 8)] as i8;
+                // const int8_t q1 = (int8_t)((ql[l +  0] & 0xF) | (((qh[l] >> 0) & 3) << 4)) - 32;
+                let q1_ql_part = ql[l + 0] & 0xF;
+                let q1_qh_part = ((qh[l] >> 0) & 3) << 4;
+                let q1_combined = q1_ql_part | q1_qh_part;
+                let q1 = q1_combined as i8 as i32 - 32;
 
-                out[base + l + offset] = d * (sc as f32) * (q1 as f32);
-                out[base + l + 32 + offset] = d * (sc as f32) * (q2 as f32);
-                out[base + l + 64 + offset] = d * (sc as f32) * (q3 as f32);
-                out[base + l + 96 + offset] = d * (sc as f32) * (q4 as f32);
+                // const int8_t q2 = (int8_t)((ql[l + 32] & 0xF) | (((qh[l] >> 2) & 3) << 4)) - 32;
+                let q2_ql_part = ql[l + 32] & 0xF;
+                let q2_qh_part = ((qh[l] >> 2) & 3) << 4;
+                let q2_combined = q2_ql_part | q2_qh_part;
+                let q2 = q2_combined as i8 as i32 - 32;
+
+                // const int8_t q3 = (int8_t)((ql[l +  0]  >> 4) | (((qh[l] >> 4) & 3) << 4)) - 32;
+                let q3_ql_part = (ql[l + 0] >> 4) & 0xF;
+                let q3_qh_part = ((qh[l] >> 4) & 3) << 4;
+                let q3_combined = q3_ql_part | q3_qh_part;
+                let q3 = q3_combined as i8 as i32 - 32;
+
+                // const int8_t q4 = (int8_t)((ql[l + 32]  >> 4) | (((qh[l] >> 6) & 3) << 4)) - 32;
+                let q4_ql_part = (ql[l + 32] >> 4) & 0xF;
+                let q4_qh_part = ((qh[l] >> 6) & 3) << 4;
+                let q4_combined = q4_ql_part | q4_qh_part;
+                let q4 = q4_combined as i8 as i32 - 32;
+
+                // llama.cpp: y[l + 0] = d * sc[is + 0] * q1;
+                // But we use: out[base + out_offset + l + 0] = d * sc[is + 0] * q1;
+                let scale1 = d * (sc[is + 0] as f32);
+                let scale2 = d * (sc[is + 2] as f32);
+                let scale3 = d * (sc[is + 4] as f32);
+                let scale4 = d * (sc[is + 6] as f32);
+
+                out[base + out_offset + l + 0] = scale1 * (q1 as f32);
+                out[base + out_offset + l + 32] = scale2 * (q2 as f32);
+                out[base + out_offset + l + 64] = scale3 * (q3 as f32);
+                out[base + out_offset + l + 96] = scale4 * (q4 as f32);
             }
+
+            // Advance pointers for next 128 elements (llama.cpp pattern)
+            // y  += 128;  ql += 64;  qh += 32;  sc += 8;
+            ql = &ql[64..];
+            qh = &qh[32..];
+            sc = &sc[8..];
+            out_offset += 128;
         }
     }
 }
