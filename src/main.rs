@@ -241,9 +241,7 @@ fn run_cpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 
     // 3. Choose backend based on GPU availability and preference
     #[cfg(feature = "gpu")]
-    let use_gpu = args.gpu && gpu_caps.as_ref()
-        .map(|g| g.can_fit_model(file.size_bytes()))
-        .unwrap_or(false);
+    let use_gpu = args.gpu && gpu_caps.is_some();
 
     #[cfg(not(feature = "gpu"))]
     let use_gpu = false;
