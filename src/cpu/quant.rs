@@ -138,6 +138,41 @@ pub fn embed_q4_1_batch(ids: &[u32], emb: &[u8], out: &mut [f32], hidden_size: u
     }
 }
 
+/// Dequantize Q5_0 embedding row: out = dequant(emb[token_id])
+///
+/// Q5_0 block: [d f16 | qh[4] | qs[16]] = 22 bytes for 32 values
+/// Uses 5-bit quantization: x = scale * q
+pub fn embed_q5_0(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usize) {
+    let num_blocks = hidden_size / Q5_0_BLOCK_ELEMS;
+    let row_offset = token_id * num_blocks * Q5_0_BLOCK_BYTES;
+
+    for b in 0..num_blocks {
+        let block = &emb[row_offset + b * Q5_0_BLOCK_BYTES..row_offset + (b + 1) * Q5_0_BLOCK_BYTES];
+        let d = load_f16_scale(&block[0..2]);
+        let qh = &block[2..6]; // 4 bytes, 32 bits (high bit of each 5-bit value)
+        let qs = &block[6..22]; // 16 bytes, 32 nibbles (low 4 bits)
+        let base = b * Q5_0_BLOCK_ELEMS;
+
+        for i in 0..32 {
+            // Get high bit from qh
+            let high_bit = ((qh[i / 8] >> (i % 8)) & 1) << 4;
+            // Get low 4 bits from qs
+            let low_bits = qs[i / 2] >> (((i % 2) * 4)) & 0x0F;
+            // Combine to get 5-bit value (0-31), then shift to signed range (-16 to 15)
+            let q = ((high_bit | low_bits) as i32) - 16;
+            out[base + i] = d * (q as f32);
+        }
+    }
+}
+
+/// Batch embed from Q5_0
+pub fn embed_q5_0_batch(ids: &[u32], emb: &[u8], out: &mut [f32], hidden_size: usize) {
+    for (s, &id) in ids.iter().enumerate() {
+        let or = &mut out[s * hidden_size..(s + 1) * hidden_size];
+        embed_q5_0(id as usize, emb, or, hidden_size);
+    }
+}
+
 /// Dequantize Q4_K embedding row: out = dequant(emb[token_id])
 ///
 /// Q4_K block: [d f16 | dmin f16 | scales[12] | qs[128]] = 144 bytes for 256 values
@@ -368,5 +403,40 @@ mod tests {
             assert!((out[i] - expected_lo).abs() < 0.01, "lo mismatch at {}: got {} expected {}", i, out[i], expected_lo);
             assert!((out[i + 16] - expected_hi).abs() < 0.01, "hi mismatch at {}: got {} expected {}", i, out[i + 16], expected_hi);
         }
+    }
+
+    #[test]
+    fn test_q5_0_block_size() {
+        assert_eq!(Q5_0_BLOCK_BYTES, 22);
+        assert_eq!(Q5_0_BLOCK_ELEMS, 32);
+    }
+
+    #[test]
+    fn test_q5_0_dequant() {
+        // Create a test block with known values
+        let mut block = [0u8; 22];
+        // Set scale to 1.0 (f16 in little-endian: 0x00, 0x3C)
+        block[0] = 0x00;
+        block[1] = 0x3C;
+        // Set all qh to 0 (no high bits)
+        // Set all qs to 8 (value 8)
+        for i in 0..16 {
+            block[6 + i] = 0x88;
+        }
+
+        let mut out = [0.0f32; 32];
+        let d = load_f16_scale(&block[0..2]);
+        let qh = &block[2..6];
+        let qs = &block[6..22];
+
+        for i in 0..32 {
+            let high_bit = ((qh[i / 8] >> (i % 8)) & 1) << 4;
+            let low_bits = qs[i / 2] >> (((i % 2) * 4)) & 0x0F;
+            let q = ((high_bit | low_bits) as i32) - 16;
+            out[i] = d * (q as f32);
+        }
+
+        // Value 8 - 16 = -8, scale 1.0, so result should be -8.0
+        assert!((out[0] - (-8.0)).abs() < 0.01);
     }
 }
