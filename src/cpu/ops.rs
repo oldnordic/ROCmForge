@@ -8,7 +8,7 @@
 //! - Softmax and sampling utilities
 
 use rayon::prelude::*;
-use crate::cpu::quant::{Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS, Q4_1_BLOCK_BYTES, Q4_1_BLOCK_ELEMS, Q8_BLOCK_BYTES, Q8_BLOCK_ELEMS, Q8_0_MAX, load_f16_scale};
+use crate::cpu::quant::{Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS, Q4_1_BLOCK_BYTES, Q4_1_BLOCK_ELEMS, Q5_0_BLOCK_BYTES, Q5_0_BLOCK_ELEMS, Q8_BLOCK_BYTES, Q8_BLOCK_ELEMS, Q8_0_MAX, load_f16_scale};
 use crate::cpu::weights::WeightMeta;
 use crate::loader::GgmlType;
 
@@ -397,6 +397,41 @@ pub fn gemm_q4_1(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
     });
 }
 
+/// Q5_0 GEMM: dequant on-the-fly.
+pub fn gemm_q5_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    let num_blocks = in_dim / Q5_0_BLOCK_ELEMS;
+    let row_bytes = num_blocks * Q5_0_BLOCK_BYTES;
+
+    y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
+        let x_row = &x[s * in_dim..(s + 1) * in_dim];
+        for o in 0..out_dim {
+            let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
+            let mut acc = 0.0f32;
+            for b in 0..num_blocks {
+                let block = &row_w[b * Q5_0_BLOCK_BYTES..(b + 1) * Q5_0_BLOCK_BYTES];
+                let d = super::quant::load_f16_scale(&block[0..2]);
+                let qh = &block[2..6];
+                let qs = &block[6..22];
+                let xb = &x_row[b * Q5_0_BLOCK_ELEMS..];
+
+                for i in 0..16 {
+                    // Process 2 values per iteration
+                    let high_bit_0 = ((qh[i / 8] >> (i % 8)) & 1) << 4;
+                    let low_bits_0 = qs[i] & 0x0F;
+                    let q0 = ((high_bit_0 | low_bits_0) as i32) - 16;
+
+                    let high_bit_1 = ((qh[i / 8 + 2] >> (i % 8)) & 1) << 4;
+                    let low_bits_1 = (qs[i] >> 4) & 0x0F;
+                    let q1 = ((high_bit_1 | low_bits_1) as i32) - 16;
+
+                    acc += d * (q0 as f32) * xb[i] + d * (q1 as f32) * xb[i + 16];
+                }
+            }
+            y_row[o] = acc;
+        }
+    });
+}
+
 /// Q8_0 GEMM: dequant on-the-fly.
 pub fn gemm_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
     let num_blocks = in_dim / Q8_BLOCK_ELEMS;
@@ -499,6 +534,13 @@ pub fn dispatch_gemm(
                 gemm_q4_1_transposed_gemm(w, x, y, out_dim, in_dim);
             } else {
                 gemm_q4_1(w, x, y, out_dim, in_dim);
+            }
+        }
+        GgmlType::Q5_0 => {
+            if meta.needs_transpose {
+                gemm_q5_0_transposed(w, x, y, out_dim, in_dim);
+            } else {
+                gemm_q5_0(w, x, y, out_dim, in_dim);
             }
         }
         GgmlType::Q8_0 => {
@@ -666,6 +708,13 @@ pub fn gemm_q4_1_transposed_gemm(
             y_row[o] = acc;
         });
     }
+}
+
+/// Q5_0 GEMM transposed for transposed weight matrices.
+pub fn gemm_q5_0_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    // For now, just use the non-transposed version
+    // TODO: implement proper transposed access if needed
+    gemm_q5_0(w, x, y, out_dim, in_dim);
 }
 
 /// Q8_0 GEMM transposed for transposed weight matrices.
