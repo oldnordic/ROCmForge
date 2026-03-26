@@ -7,6 +7,7 @@
 
 pub mod q4;
 pub mod q8;
+pub mod q8_scalar;
 
 pub use q4::BlockQ4K;
 pub use q8::BlockQ8K;
