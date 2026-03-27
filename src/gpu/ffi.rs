@@ -89,6 +89,7 @@ pub fn hip_get_device_info(device_id: i32) -> GpuResult<DeviceInfo> {
             compute_units: props.multiProcessorCount as usize,
             max_clock_mhz: props.clockRate as usize / 1000,  // kHz to MHz
             device_id,
+            arch_name: String::from("unknown"), // Placeholder - will query from HIP in next task
         })
     }
 }
@@ -263,6 +264,8 @@ pub struct DeviceInfo {
     pub compute_units: usize,
     pub max_clock_mhz: usize,
     pub device_id: i32,
+    /// Device architecture name (e.g., "gfx1100")
+    pub arch_name: String,
 }
 
 #[cfg(test)]
