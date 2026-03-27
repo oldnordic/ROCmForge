@@ -6,7 +6,7 @@
 
 **Architecture:** Three independent components - Criterion-based kernel statistical benchmarking, end-to-end real model inference benchmarking with profiling, and report generator aggregating results from both sources into publication-ready markdown.
 
-**Tech Stack:** Rust, Criterion 0.5 (statistical benchmarking), clap 4.5 (CLI parsing), sysinfo 0.30 (memory measurement), serde_json (JSON parsing)
+**Tech Stack:** Rust, Criterion 0.5 (statistical benchmarking), clap 4.5 (CLI parsing), sysinfo 0.38 (memory measurement, already present), chrono 0.4 (timestamp generation), serde_json 1.0 (JSON parsing)
 
 ---
 
@@ -45,19 +45,19 @@ Run: `cat Cargo.toml`
 
 Expected: See current dependencies and dev-dependencies sections
 
-- [ ] **Step 2: Add sysinfo to dependencies (if not present)**
+- [ ] **Step 2: Verify sysinfo dependency (already present)**
 
-Check if sysinfo exists:
-```bash
-grep sysinfo Cargo.toml
-```
+Run: `grep sysinfo Cargo.toml`
 
-If not found, add to `[dependencies]` section:
+Expected: `sysinfo = "0.38"` (already in dependencies, no action needed)
+
+- [ ] **Step 3: Add dependencies to Cargo.toml**
+
+Add to `[dependencies]` section (for chrono and serde_json):
 ```toml
-sysinfo = "0.30"
+chrono = "0.4"
+serde_json = "1"
 ```
-
-- [ ] **Step 3: Add Criterion to dev-dependencies**
 
 Add to `[dev-dependencies]` section:
 ```toml
@@ -65,7 +65,7 @@ criterion = "0.5"
 clap = { version = "4.5", features = ["derive"] }
 ```
 
-Note: Add `clap` even if other deps exist - place alphabetically or at end
+Note: `bench_gemv.rs` uses manual timing (Instant::now), not Criterion. This is a NEW addition.
 
 - [ ] **Step 4: Add [[bench]] section**
 
@@ -240,12 +240,49 @@ Run: `cargo check --lib 2>&1 | grep -E "error|warning" | head -10`
 
 Expected: No errors, maybe warnings about unused reporter module
 
+- [ ] **Step 6a: Run discovery tests**
+
+Run: `cargo test --lib bench::discovery 2>&1 | tail -5`
+
+Expected: "test result: ok. 2 passed"
+
 - [ ] **Step 7: Commit benchmark utilities module**
 
 ```bash
 git add src/bench/ src/lib.rs
 git commit -m "feat(bench): add benchmark utilities module with model discovery"
 ```
+
+---
+
+## Task 2.5: Verify Kernel Functions Exist
+
+**Files:**
+- None (verification only)
+
+- [ ] **Step 1: Verify gemv_q4k_q8_dispatch function exists**
+
+Run: `rg "pub fn gemv_q4_k_q8_k_dispatch" src/cpu/kernels/`
+
+Expected: `src/cpu/kernels/gemm_q4k_q8.rs:pub fn gemv_q4_k_q8_k_dispatch(`
+
+- [ ] **Step 2: Verify scalar variant exists**
+
+Run: `rg "pub fn gemv_q4_k_q8_k_scalar" src/cpu/kernels/gemm_q4k_q8_scalar/`
+
+Expected: Function definition found
+
+- [ ] **Step 3: Verify BlockQ4K is exported**
+
+Run: `rg "pub struct BlockQ4K" src/cpu/kernels/q4.rs`
+
+Expected: BlockQ4K struct is public
+
+- [ ] **Step 4: Verify CpuFeatures::get() exists**
+
+Run: `rg "pub fn get()" src/cpu/features.rs`
+
+Expected: Public function in CpuFeatures module
 
 ---
 
@@ -772,9 +809,10 @@ struct CriterionData {
 }
 
 fn parse_criterion_json(criterion_dir: &Path, benchmark_name: &str) -> Result<Vec<CriterionData>, String> {
-    // This is a simplified version - real implementation would parse
-    // target/criterion/<benchmark_name>/<variant>/estimates.json
-    // For now, return placeholder data
+    // NOTE: This is a simplified implementation that returns placeholder data.
+    // A complete implementation would parse target/criterion/<benchmark_name>/<variant>/estimates.json
+    // For initial implementation, this verifies the report generation pipeline works.
+    // Future enhancement: Implement full JSON parsing.
     Ok(vec![
         CriterionData {
             avx2_mean: 0.045,
@@ -833,6 +871,9 @@ fn get_git_commit() -> String {
 }
 
 /// Export benchmark data to CSV.
+///
+/// NOTE: Initial implementation uses hardcoded data. Full implementation would
+/// parse Criterion JSON results and aggregate real measurements.
 pub fn export_csv(criterion_dir: &Path, output_path: &Path) -> Result<(), String> {
     let mut csv = String::new();
     csv.push_str("timestamp,benchmark_name,kernel_type,quantization,operation,dimension,throughput_ms,speedup_vs_baseline,git_commit\n");
@@ -952,7 +993,7 @@ Expected: "✓ Report written to..."
 
 Run: `ls docs/benchmarks/ 2>&1`
 
-Expected: See PERFORCE_REPORT_*.md and data.csv
+Expected: See PERFORMANCE_REPORT_*.md and data.csv
 
 - [ ] **Step 7: Commit report generator**
 
