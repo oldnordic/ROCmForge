@@ -975,3 +975,78 @@ fn test_flash_attn_decode_kernel_correctness() {
     // Use higher tolerance for the complex reduction
     assert_close(&expected, gpu_out_f32, 1e-2); // 1% tolerance
 }
+
+// ============================================================================
+// Zero-Fill Kernel Tests
+// ============================================================================
+
+#[test]
+#[serial]
+fn test_zero_fill_kernel_correctness() {
+    require_gpu!();
+    require_vram!(4);
+
+    use rocmforge::gpu::{GpuBuffer, GpuDevice, zero_fill};
+
+    let n = 1024;
+
+    // Allocate GPU buffer and fill with non-zero values
+    let mut gpu_buf = GpuBuffer::alloc(n * 4).unwrap();
+    let init_data: Vec<u8> = (0..n * 4).map(|_| 0xFF).collect();
+    gpu_buf.copy_from_host(&init_data).unwrap();
+
+    // Initialize device
+    let device = GpuDevice::init(0).expect("GPU device init should succeed");
+
+    // Run zero-fill kernel (async on device stream)
+    zero_fill(gpu_buf.as_ptr() as *mut f32, n, &device)
+        .expect("Zero-fill kernel should succeed");
+
+    // Synchronize to ensure kernel completes
+    device.synchronize().expect("Stream synchronize should succeed");
+
+    // Copy back and verify all zeros
+    let mut result = vec![0u8; n * 4];
+    gpu_buf.copy_to_host(&mut result).unwrap();
+
+    // Check all elements are zero
+    for &byte in &result {
+        assert_eq!(byte, 0, "All bytes should be zero after zero_fill");
+    }
+}
+
+#[test]
+#[serial]
+fn test_full_gpu_init_pipeline() {
+    require_gpu!();
+    require_vram!(4);
+
+    use rocmforge::gpu::{GpuBuffer, GpuDevice, zero_fill};
+
+    // Step 1: Detect GPU
+    let caps = rocmforge::gpu::detect().expect("GPU detection should succeed");
+    assert!(!caps.device_name.is_empty());
+    assert!(caps.total_vram_bytes > 0);
+
+    // Step 2: Initialize device
+    let device = GpuDevice::init(caps.device_id).expect("Device init should succeed");
+
+    // Step 3: Allocate buffer and zero-fill using kernel
+    let n = 1024;
+    let mut gpu_buf = GpuBuffer::alloc(n * 4).unwrap();
+
+    zero_fill(gpu_buf.as_ptr() as *mut f32, n, &device)
+        .expect("Zero-fill should succeed");
+
+    device.synchronize().expect("Sync should succeed");
+
+    // Step 4: Verify result
+    let mut result = vec![0u8; n * 4];
+    gpu_buf.copy_to_host(&mut result).unwrap();
+
+    for &byte in &result {
+        assert_eq!(byte, 0, "Full pipeline should produce zeros");
+    }
+
+    // Device cleanup happens automatically on drop (RAII)
+}

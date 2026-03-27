@@ -81,6 +81,17 @@ __global__ void silu_kernel(
     }
 }
 
+/// Zero-fill kernel: initialize GPU memory to zeros
+__global__ void zero_fill_kernel(
+    float* __restrict__ ptr,
+    const int n
+) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        ptr[i] = 0.0f;
+    }
+}
+
 /// Batched element-wise add for prefill: out[s, i] = x[s, i] + y[i]
 /// where x is [seq_len, n] and y is [n] (broadcast)
 __global__ void add_batched_kernel(
@@ -244,6 +255,23 @@ hipError_t gpu_mul_batched(
         mul_batched_kernel,
         grid, block_size, 0, 0,
         d_x, d_y, d_out, n, seq_len
+    );
+
+    return hipGetLastError();
+}
+
+hipError_t gpu_zero_fill(
+    float* d_ptr,
+    const int n,
+    hipStream_t stream
+) {
+    const int block_size = 256;
+    const int grid_size = (n + block_size - 1) / block_size;
+
+    hipLaunchKernelGGL(
+        zero_fill_kernel,
+        grid_size, block_size, 0, stream,
+        d_ptr, n
     );
 
     return hipGetLastError();

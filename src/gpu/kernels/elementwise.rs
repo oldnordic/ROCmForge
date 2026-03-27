@@ -3,7 +3,8 @@
 //! Safety-first: bounds checked before kernel launch.
 
 use super::super::error::{GpuError, GpuResult};
-use super::super::ffi::hipError_t;
+use super::super::ffi::{hipError_t, hipStream_t};
+use super::super::GpuDevice;
 use std::os::raw::c_int;
 
 /// Element-wise add: out = x + y
@@ -204,6 +205,38 @@ pub fn mul_batched(
     Ok(())
 }
 
+/// Zero-fill GPU memory: ptr[i] = 0.0f for i in 0..n
+///
+/// Launches asynchronously on device's stream.
+/// Caller must call device.synchronize() if sync needed.
+pub fn zero_fill(
+    ptr: *mut f32,
+    n: usize,
+    device: &GpuDevice,
+) -> GpuResult<()> {
+    if n == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "zero_fill: n cannot be zero".to_string(),
+        });
+    }
+
+    let stream = device.stream();
+
+    let result = unsafe {
+        gpu_zero_fill(ptr, n as c_int, stream)
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("zero_fill kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
 // FFI declarations - will be linked from compiled HIP kernels
 unsafe extern "C" {
     fn gpu_add(
@@ -254,6 +287,12 @@ unsafe extern "C" {
         n: c_int,
         seq_len: c_int,
     ) -> hipError_t;
+
+    fn gpu_zero_fill(
+        ptr: *mut f32,
+        n: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
 }
 
 #[cfg(test)]
@@ -290,6 +329,18 @@ mod tests {
             128,
             0,
         );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn zero_fill_rejects_zero_n() {
+        use super::super::super::GpuDevice;
+
+        let device = GpuDevice::init(0);
+        let result = match device {
+            Ok(d) => zero_fill(std::ptr::null_mut(), 0, &d),
+            Err(_) => return, // Skip test if GPU unavailable
+        };
         assert!(result.is_err());
     }
 }
