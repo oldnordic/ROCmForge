@@ -39,11 +39,13 @@ mod ffi;
 mod detect;
 mod device;
 mod weights;
+mod kernels;
 
 pub use error::{GpuError, GpuResult};
 pub use detect::GpuCapabilities;
 pub use device::GpuDevice;
 pub use weights::{WeightMeta, GpuBuffer, GpuLayerWeights, GpuModelWeights};
+pub use kernels::{kv_write, kv_write_batched};
 
 /// Detect AMD GPU capabilities (safe wrapper).
 ///
