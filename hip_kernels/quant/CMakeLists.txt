@@ -51,6 +51,22 @@ set_target_properties(q4_k_dequantize PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
 
+# Q4_K verification kernel
+add_library(q4_k_verify STATIC
+    q4_k_verify.hip
+)
+
+# Link common library to Q4_K verify kernel
+target_link_libraries(q4_k_verify
+    quant_common
+)
+
+# Set output directory to match Cargo expectations
+set_target_properties(q4_k_verify PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
 # Test kernel library (for Phase 1 verification)
 add_library(test_quant STATIC
     test_kernel.hip
