@@ -39,27 +39,46 @@ mod gpu_build {
                 continue;
             }
 
-            let output_file = format!("{}/{}.o", out_dir, name);
+            let obj_file = format!("{}/{}.o", out_dir, name);
+            let lib_file = format!("{}/lib{}.a", out_dir, name);
 
             println!("cargo:warning=Compiling HIP kernel: {}", name);
 
-            let status = Command::new(&hipcc)
+            // Compile to object file
+            let compile_status = Command::new(&hipcc)
                 .arg(source_file)
                 .arg("-o")
-                .arg(&output_file)
+                .arg(&obj_file)
                 .arg("-c")
                 .arg("-fPIC")
                 .arg("-O3")
                 .arg("--amdgpu-target=gfx1100")
                 .status();
 
-            match status {
+            match compile_status {
                 Ok(s) if s.success() => {
-                    println!("cargo:rustc-link-lib=static={}", name);
-                    println!("cargo:rustc-link-search=native={}", out_dir);
+                    // Create static library from object file
+                    let ar_status = Command::new("ar")
+                        .arg("rcs")
+                        .arg(&lib_file)
+                        .arg(&obj_file)
+                        .status();
+
+                    match ar_status {
+                        Ok(_) => {
+                            println!("cargo:rustc-link-lib=static={}", name);
+                            println!("cargo:rustc-link-search=native={}", out_dir);
+                        }
+                        Err(e) => {
+                            println!("cargo:warning=Failed to archive kernel {}: {:?}", name, e);
+                        }
+                    }
                 }
-                _ => {
-                    println!("cargo:warning=Failed to compile kernel {}, will use fallback", name);
+                Ok(s) => {
+                    println!("cargo:warning=Kernel {} compilation returned non-zero exit code: {:?}", name, s.code());
+                }
+                Err(e) => {
+                    println!("cargo:warning=Kernel {} compilation failed: {:?}", name, e);
                 }
             }
         }
