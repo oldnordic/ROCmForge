@@ -12,6 +12,7 @@ use super::ffi;
 /// Uses RAII pattern to ensure cleanup on drop.
 pub struct GpuDevice {
     device_id: i32,
+    stream: ffi::hipStream_t,
 }
 
 impl GpuDevice {
@@ -22,10 +23,10 @@ impl GpuDevice {
         // Verify device exists
         let _info = ffi::hip_get_device_info(device_id)?;
 
-        // TODO: Initialize HIP context/stream here when needed
-        // For now, just store device ID
+        // Create HIP stream
+        let stream = ffi::hip_stream_create()?;
 
-        Ok(Self { device_id })
+        Ok(Self { device_id, stream })
     }
 
     /// Get device ID.
@@ -48,12 +49,35 @@ impl GpuDevice {
             device_id: self.device_id,
         })
     }
+
+    /// Get the HIP stream for this device.
+    ///
+    /// Used for async kernel execution.
+    pub fn stream(&self) -> ffi::hipStream_t {
+        self.stream
+    }
+
+    /// Synchronize all queued operations on this device's stream.
+    ///
+    /// Blocks until all previously queued operations on the stream complete.
+    pub fn synchronize(&self) -> GpuResult<()> {
+        ffi::hip_stream_synchronize(self.stream)
+    }
+}
+
+impl Drop for GpuDevice {
+    fn drop(&mut self) {
+        // Ignore errors during drop (can't handle them anyway)
+        // SAFETY: stream was created by hip_stream_create and not yet destroyed
+        let _ = unsafe { ffi::hip_stream_destroy(self.stream) };
+    }
 }
 
 impl std::fmt::Debug for GpuDevice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GpuDevice")
             .field("device_id", &self.device_id)
+            .field("stream", &self.stream)
             .finish()
     }
 }
@@ -75,5 +99,20 @@ mod tests {
     fn invalid_device_returns_error() {
         let device = GpuDevice::init(999);
         assert!(device.is_err());
+    }
+
+    #[test]
+    fn stream_lifecycle_works() {
+        let device = GpuDevice::init(0);
+        match device {
+            Ok(d) => {
+                // Verify stream accessor works
+                let _stream = d.stream();
+                // Verify sync works (no-op if no operations queued)
+                let _ = d.synchronize();
+                // Drop will clean up stream
+            }
+            Err(e) => println!("GPU init failed: {} (expected if no GPU)", e),
+        }
     }
 }

@@ -167,6 +167,37 @@ pub fn hip_get_driver_version() -> GpuResult<u32> {
     Ok(0)
 }
 
+/// Create HIP stream.
+///
+/// Stream enables async kernel execution and proper sequencing.
+pub fn hip_stream_create() -> GpuResult<hipStream_t> {
+    unsafe {
+        let mut stream_ptr: *mut c_void = std::ptr::null_mut();
+        let code = hipStreamCreate(&mut stream_ptr);
+        hip_check(code)?;
+        Ok(hipStream_t { _private: stream_ptr })
+    }
+}
+
+/// Destroy HIP stream.
+///
+/// # Safety
+/// Stream must have been created with hip_stream_create and not already destroyed.
+pub unsafe fn hip_stream_destroy(stream: hipStream_t) -> GpuResult<()> {
+    let code = hipStreamDestroy(stream);
+    hip_check(code)
+}
+
+/// Synchronize HIP stream.
+///
+/// Blocks until all queued operations in stream complete.
+pub fn hip_stream_synchronize(stream: hipStream_t) -> GpuResult<()> {
+    unsafe {
+        let code = hipStreamSynchronize(stream);
+        hip_check(code)
+    }
+}
+
 // ── FFI Declarations ───────────────────────────────────────────────────────────────
 
 #[repr(C)]
@@ -194,7 +225,14 @@ enum hipMemcpyKind {
 }
 
 /// Opaque HIP stream type
-pub enum hipStream_t {}
+///
+/// In C, this is a pointer to an opaque struct. We represent it as a
+/// raw pointer so it can be freely copied and passed to FFI functions.
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct hipStream_t {
+    _private: *mut c_void,
+}
 
 extern "C" {
     fn hipGetDeviceCount(count: *mut i32) -> hipError_t;
@@ -210,7 +248,7 @@ extern "C" {
     fn hipGetErrorString(error: hipError_t) -> *const c_char;
     fn hipMemGetInfo(free: *mut usize, total: *mut usize) -> hipError_t;
     fn hipGetDriverVersion(driverVersion: *mut c_int) -> hipError_t;
-    fn hipStreamCreate(stream: *mut hipStream_t) -> hipError_t;
+    fn hipStreamCreate(stream: *mut *mut c_void) -> hipError_t;
     fn hipStreamDestroy(stream: hipStream_t) -> hipError_t;
     fn hipStreamSynchronize(stream: hipStream_t) -> hipError_t;
 }
