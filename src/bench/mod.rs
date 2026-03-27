@@ -9,3 +9,4 @@ pub mod discovery;
 pub mod reporter;
 
 pub use discovery::discover_models;
+pub use reporter::{generate_report, export_csv};
