@@ -268,6 +268,28 @@ pub struct DeviceInfo {
     pub arch_name: String,
 }
 
+/// Q4_K quantized block (144 bytes for 256 f32 values)
+/// Matches llama.cpp block_q4_k structure
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub struct GpuQ4KBlock {
+    pub d: half::f16,        // delta/scale (2 bytes)
+    pub dmin: half::f16,     // minimum scale (2 bytes)
+    pub scales: [u8; 12],    // quantized scales (12 bytes)
+    pub qs: [u8; 128],       // quants, 4-bit values (128 bytes)
+}
+
+impl Default for GpuQ4KBlock {
+    fn default() -> Self {
+        Self {
+            d: half::f16::from_f32(1.0),
+            dmin: half::f16::from_f32(0.0),
+            scales: [0; 12],
+            qs: [0; 128],
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
