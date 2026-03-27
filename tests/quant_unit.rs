@@ -340,3 +340,35 @@ fn test_block_alignment() {
                    "BLOCK_SIZE should be divisible by {}", threads);
     }
 }
+
+/// Test Q4_K constants match llama.cpp
+#[test]
+#[serial]
+fn test_q4_k_constants() {
+    use rocmforge::gpu::{QK_K, K_SCALE_SIZE, Q4_K_BLOCK_SIZE};
+
+    assert_eq!(QK_K, 256, "QK_K must be 256 elements per block");
+    assert_eq!(K_SCALE_SIZE, 12, "K_SCALE_SIZE must be 12");
+    assert_eq!(Q4_K_BLOCK_SIZE, 144, "Q4_K_BLOCK_SIZE must be 144 bytes");
+}
+
+/// Test Q4KBlock size
+#[test]
+#[serial]
+fn test_q4_k_block_struct_size() {
+    use rocmforge::gpu::Q4KBlock;
+
+    let block = Q4KBlock::default();
+    assert_eq!(std::mem::size_of::<Q4KBlock>(), 144);
+}
+
+/// Test Q4KBlock default values
+#[test]
+#[serial]
+fn test_q4_k_block_default() {
+    use rocmforge::gpu::Q4KBlock;
+
+    let block = Q4KBlock::default();
+    assert_eq!(block.scales.len(), 12);
+    assert_eq!(block.qs.len(), 128);
+}
