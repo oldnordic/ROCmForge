@@ -523,3 +523,102 @@ fn test_silu_kernel_correctness() {
 
     assert_close(&cpu_out, gpu_out_f32, gpu_test_utils::F32_TOLERANCE);
 }
+
+// ============================================================================
+// RMS Norm Kernel Correctness Tests
+// ============================================================================
+
+#[test]
+#[serial]
+fn test_rms_norm_kernel_correctness() {
+    require_gpu!();
+    require_vram!(4);
+
+    use rocmforge::gpu::{GpuBuffer, rms_norm};
+    use rocmforge::cpu::ops as cpu_ops;
+    use gpu_test_utils::assert_close;
+
+    let n = 1024;
+    let eps = 1e-5f32;
+
+    // Test data: mix of positive values
+    let x: Vec<f32> = (1..=n).map(|i| (i % 10) as f32 + 0.1).collect();
+    let weight: Vec<f32> = (1..=n).map(|_| 1.0).collect();
+    let mut cpu_out = vec![0.0f32; n];
+
+    // Run CPU reference (from src/cpu/ops.rs:30)
+    cpu_ops::rms_norm(&x, &weight, &mut cpu_out, eps);
+
+    // Allocate GPU buffers
+    let mut gpu_x = GpuBuffer::alloc(n * 4).unwrap();
+    let mut gpu_weight = GpuBuffer::alloc(n * 4).unwrap();
+    let mut gpu_out = GpuBuffer::alloc(n * 4).unwrap();
+
+    // Copy to GPU
+    gpu_x.copy_from_host(unsafe { std::slice::from_raw_parts(x.as_ptr() as *const u8, n * 4) }).unwrap();
+    gpu_weight.copy_from_host(unsafe { std::slice::from_raw_parts(weight.as_ptr() as *const u8, n * 4) }).unwrap();
+
+    // Run GPU kernel (from hip_kernels/norm.hip:18)
+    rms_norm(
+        gpu_x.as_ptr() as *const f32,
+        gpu_weight.as_ptr() as *const f32,
+        gpu_out.as_ptr() as *mut f32,
+        n,
+        eps,
+    ).expect("GPU rms_norm kernel should succeed");
+
+    // Copy result back
+    let mut gpu_result = vec![0u8; n * 4];
+    gpu_out.copy_to_host(&mut gpu_result).unwrap();
+    let gpu_out_f32: &[f32] = unsafe { std::slice::from_raw_parts(gpu_result.as_ptr() as *const f32, n) };
+
+    // Compare - RMS norm uses parallel reduction, allow slightly higher tolerance
+    assert_close(&cpu_out, gpu_out_f32, 1e-3); // 1e-3 for reduction accumulation
+}
+
+#[test]
+#[serial]
+fn test_rms_norm_batched_kernel_correctness() {
+    require_gpu!();
+    require_vram!(4);
+
+    use rocmforge::gpu::{GpuBuffer, rms_norm_batched};
+    use rocmforge::cpu::ops as cpu_ops;
+    use gpu_test_utils::assert_close;
+
+    let n = 128;      // Hidden size
+    let seq_len = 8;  // Number of sequences
+    let eps = 1e-5f32;
+
+    // Test data: [seq_len][n]
+    let x: Vec<f32> = (0..seq_len * n).map(|i| ((i % 20) as f32 + 0.1)).collect();
+    let weight: Vec<f32> = (1..=n).map(|_| 1.0).collect();
+    let mut cpu_out = vec![0.0f32; seq_len * n];
+
+    // Run CPU reference (from src/cpu/ops.rs:46)
+    cpu_ops::rms_norm_batch(&x, &weight, &mut cpu_out, n, eps);
+
+    // Allocate GPU buffers
+    let mut gpu_x = GpuBuffer::alloc(seq_len * n * 4).unwrap();
+    let mut gpu_weight = GpuBuffer::alloc(n * 4).unwrap();
+    let mut gpu_out = GpuBuffer::alloc(seq_len * n * 4).unwrap();
+
+    gpu_x.copy_from_host(unsafe { std::slice::from_raw_parts(x.as_ptr() as *const u8, seq_len * n * 4) }).unwrap();
+    gpu_weight.copy_from_host(unsafe { std::slice::from_raw_parts(weight.as_ptr() as *const u8, n * 4) }).unwrap();
+
+    // Run GPU kernel (from hip_kernels/norm.hip:56)
+    rms_norm_batched(
+        gpu_x.as_ptr() as *const f32,
+        gpu_weight.as_ptr() as *const f32,
+        gpu_out.as_ptr() as *mut f32,
+        n,
+        eps,
+        seq_len,
+    ).expect("GPU rms_norm_batched kernel should succeed");
+
+    let mut gpu_result = vec![0u8; seq_len * n * 4];
+    gpu_out.copy_to_host(&mut gpu_result).unwrap();
+    let gpu_out_f32: &[f32] = unsafe { std::slice::from_raw_parts(gpu_result.as_ptr() as *const f32, seq_len * n) };
+
+    assert_close(&cpu_out, gpu_out_f32, 1e-3);
+}
