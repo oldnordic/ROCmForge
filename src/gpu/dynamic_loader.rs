@@ -16,8 +16,9 @@ use std::fmt;
 /// Search paths for kernel library, in order of priority.
 ///
 /// 1. ROCMFORGE_KERNEL_LIB environment variable (user-specified)
-/// 2. System library paths (LD_LIBRARY_PATH, /usr/local/lib, /opt/rocm/lib)
-/// 3. Memoria build path (fallback for development)
+/// 2. ROCm installation paths (auto-detected from ROCm version)
+/// 3. System library paths (LD_LIBRARY_PATH, /usr/local/lib, /opt/rocm/lib)
+/// 4. Memoria build path (fallback for development)
 fn kernel_library_search_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
@@ -26,7 +27,12 @@ fn kernel_library_search_paths() -> Vec<PathBuf> {
         paths.push(PathBuf::from(lib_path));
     }
 
-    // 2. System library paths
+    // 2. Auto-detect ROCm installation
+    if let Ok(rocm_path) = detect_rocm_path() {
+        paths.push(rocm_path.join("lib"));
+    }
+
+    // 3. System library paths
     if let Ok(ld_path) = std::env::var("LD_LIBRARY_PATH") {
         for path in std::env::split_paths(&ld_path) {
             paths.push(path);
@@ -36,10 +42,41 @@ fn kernel_library_search_paths() -> Vec<PathBuf> {
     paths.push(PathBuf::from("/usr/lib"));
     paths.push(PathBuf::from("/opt/rocm/lib"));
 
-    // 3. Memoria fallback (development only)
+    // 4. Memoria fallback (development only)
     paths.push(PathBuf::from("/home/feanor/Projects/Memoria/gpu/libgpu.so"));
 
     paths
+}
+
+/// Detect ROCm installation path from system.
+///
+/// Checks for ROCm environment variables and common installation locations.
+/// Returns ROCm base path if found (e.g., /opt/rocm)
+fn detect_rocm_path() -> Result<PathBuf, ()> {
+    // Check ROCm environment variable
+    if let Ok(rocm_path) = std::env::var("ROCM_PATH") {
+        return Ok(PathBuf::from(rocm_path));
+    }
+
+    // Check common ROCm installation directories
+    let rocm_dirs = [
+        "/opt/rocm",
+        "/opt/rocm-@VERSION@",  // Versioned installations
+        "/usr/lib/x86_64-linux-gnu",  // System ROCm packages
+    ];
+
+    for dir in rocm_dirs {
+        let path = PathBuf::from(dir);
+        if path.exists() {
+            // Verify it's actually ROCm (check for hip libraries)
+            let hip_lib = path.join("lib/libhiprtc.so");
+            if hip_lib.exists() {
+                return Ok(path);
+            }
+        }
+    }
+
+    Err(())
 }
 
 /// RAII wrapper for dynamically loaded library.
