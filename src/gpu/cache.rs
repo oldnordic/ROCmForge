@@ -196,6 +196,9 @@ mod tests {
             use_attention_bias: false,
             attention_layout: crate::config::AttentionLayout::SplitQkv,
             architecture: "test".to_string(),
+            tensor_registry: crate::config::TensorNameRegistry::from_scheme(
+                &crate::config::TensorNamingScheme::Gguf
+            ),
         }
     }
 
@@ -398,6 +401,9 @@ mod scratch_tests {
             use_attention_bias: false,
             attention_layout: crate::config::AttentionLayout::SplitQkv,
             architecture: "test".to_string(),
+            tensor_registry: crate::config::TensorNameRegistry::from_scheme(
+                &crate::config::TensorNamingScheme::Gguf
+            ),
         }
     }
 

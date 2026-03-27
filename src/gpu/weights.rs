@@ -7,7 +7,7 @@
 
 use super::error::{GpuError, GpuResult};
 use super::ffi;
-use crate::config::{ModelConfig, TensorName};
+use crate::config::{ModelConfig, TensorName, TensorNamingScheme};
 use crate::loader::{GgmlType, GgufFile, TensorDesc};
 use std::ptr::NonNull;
 
@@ -280,6 +280,28 @@ impl GpuLayerWeights {
             Ok((buf, meta))
         };
 
+        // Helper to load weight with fallback names (for MoE models)
+        let load_weight_fallback = |names: &[&str]| -> GpuResult<(GpuBuffer, WeightMeta)> {
+            for name in names {
+                if let Ok(Some(t)) = file.tensor(name) {
+                    let data = t.data;
+                    let size = data.len();
+                    let meta = WeightMeta {
+                        wtype: t.ggml_type,
+                        dims: t.dims.to_vec(),
+                        needs_transpose: false,
+                    };
+                    let mut buf = GpuBuffer::alloc(size)?;
+                    buf.copy_from_host(data)?;
+                    return Ok((buf, meta));
+                }
+            }
+            Err(GpuError::HipApiError {
+                code: -1,
+                description: format!("tensor not found: tried {:?}", names),
+            })
+        };
+
         // Helper to load F32 weight
         let load_f32 = |name: &str| -> GpuResult<GpuBuffer> {
             let t = file.tensor(name)
@@ -321,9 +343,32 @@ impl GpuLayerWeights {
         let attn_v_bias = load_f32_opt(&config.tensor_registry.resolve_optional(TensorName::AttnVBias, layer).unwrap_or_default())?;
         let (attn_o, attn_o_meta) = load_weight(&config.tensor_registry.resolve(TensorName::AttnOutput, layer))?;
         let ffn_norm = load_f32(&config.tensor_registry.resolve(TensorName::FfnNorm, layer))?;
-        let (ffn_gate, ffn_gate_meta) = load_weight(&config.tensor_registry.resolve(TensorName::FfnGate, layer))?;
-        let (ffn_up, ffn_up_meta) = load_weight(&config.tensor_registry.resolve(TensorName::FfnUp, layer))?;
-        let (ffn_down, ffn_down_meta) = load_weight(&config.tensor_registry.resolve(TensorName::FfnDown, layer))?;
+
+        // For MoE models, try _exps tensors first, then fall back to standard names
+        let ffn_gate_name = config.tensor_registry.resolve(TensorName::FfnGate, layer);
+        let ffn_up_name = config.tensor_registry.resolve(TensorName::FfnUp, layer);
+        let ffn_down_name = config.tensor_registry.resolve(TensorName::FfnDown, layer);
+
+        let (ffn_gate, ffn_gate_meta) = if matches!(config.tensor_registry.scheme, TensorNamingScheme::GgufMoE) {
+            let ffn_gate_exps_name = config.tensor_registry.resolve(TensorName::FfnGateExps, layer);
+            load_weight_fallback(&[&ffn_gate_exps_name, &ffn_gate_name])?
+        } else {
+            load_weight(&ffn_gate_name)?
+        };
+
+        let (ffn_up, ffn_up_meta) = if matches!(config.tensor_registry.scheme, TensorNamingScheme::GgufMoE) {
+            let ffn_up_exps_name = config.tensor_registry.resolve(TensorName::FfnUpExps, layer);
+            load_weight_fallback(&[&ffn_up_exps_name, &ffn_up_name])?
+        } else {
+            load_weight(&ffn_up_name)?
+        };
+
+        let (ffn_down, ffn_down_meta) = if matches!(config.tensor_registry.scheme, TensorNamingScheme::GgufMoE) {
+            let ffn_down_exps_name = config.tensor_registry.resolve(TensorName::FfnDownExps, layer);
+            load_weight_fallback(&[&ffn_down_exps_name, &ffn_down_name])?
+        } else {
+            load_weight(&ffn_down_name)?
+        };
 
         Ok(Self {
             attn_norm,

@@ -42,6 +42,7 @@ mod weights;
 mod kernels;
 mod cache;
 mod dynamic_loader;
+mod arch;
 
 pub use error::{GpuError, GpuResult};
 pub use detect::GpuCapabilities;
