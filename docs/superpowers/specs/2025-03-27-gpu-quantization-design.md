@@ -812,8 +812,7 @@ fn test_quantization_sequential() {
 
 ### Remaining Questions
 
-1. **CI/CD GPU runners?** Do we have GPU-enabled CI infrastructure or should this be tested locally only?
-2. **Process isolation?** Should we implement the process-isolated test executable (Phase 1, point 9) immediately or defer?
+1. **Process isolation?** Should we implement the process-isolated test executable (Phase 1, point 9) immediately or defer to later phases?
 
 ---
 
