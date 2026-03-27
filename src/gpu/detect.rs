@@ -3,6 +3,7 @@
 //! Design principle: Never panic, always return Option or GpuError.
 //! If GPU unavailable, return None (not an error).
 
+use super::arch::GpuArchitecture;
 use super::error::{GpuError, GpuResult};
 use super::ffi::{self, DeviceInfo};
 
@@ -32,6 +33,9 @@ pub struct GpuCapabilities {
 
     /// Device ID (for hipSetDevice, typically 0 for single GPU systems)
     pub device_id: i32,
+
+    /// GPU architecture (gfx1100, gfx1030, etc.)
+    pub architecture: GpuArchitecture,
 }
 
 impl GpuCapabilities {
@@ -138,6 +142,7 @@ mod tests {
             max_clock_mhz: 2500,
             hip_driver_version: 0x05060000,
             device_id: 0,
+            architecture: GpuArchitecture::Unknown(0),
         };
 
         assert!(caps.can_fit_model(4 * 1024 * 1024 * 1024));
@@ -154,6 +159,7 @@ mod tests {
             max_clock_mhz: 2500,
             hip_driver_version: 0x05060000,
             device_id: 0,
+            architecture: GpuArchitecture::Unknown(0),
         };
 
         let batch = caps.recommend_batch_size(1024 * 1024);
@@ -171,6 +177,7 @@ mod tests {
             max_clock_mhz: 2500,
             hip_driver_version: 0x05060000,
             device_id: 0,
+            architecture: GpuArchitecture::Unknown(0),
         };
 
         let _gb = caps.total_vram_gb();
