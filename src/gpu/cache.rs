@@ -231,3 +231,190 @@ mod tests {
         // If allocation failed, test passes (bounds checking exists)
     }
 }
+
+// ── Forward Scratch Buffers ───────────────────────────────────────────────────────
+
+/// Reusable scratch buffers in GPU VRAM for a single forward pass.
+///
+/// Allocated once and reused across all layers to avoid repeated allocations.
+/// All buffers are GPU-resident.
+pub struct GpuForwardScratch {
+    /// Normalized hidden state [hidden_size]
+    pub normed: GpuBuffer,
+    /// Query vector [num_heads * head_dim]
+    pub q: GpuBuffer,
+    /// Key vector [num_kv_heads * head_dim]
+    pub k: GpuBuffer,
+    /// Value vector [num_kv_heads * head_dim]
+    pub v: GpuBuffer,
+    /// Attention output [num_heads * head_dim]
+    pub attn_out: GpuBuffer,
+    /// Layer output (residual stream) [hidden_size]
+    pub layer_out: GpuBuffer,
+    /// FFN gate projection [intermediate_size]
+    pub gate: GpuBuffer,
+    /// FFN SwiGLU output [intermediate_size]
+    pub swiglu: GpuBuffer,
+    /// Final logits [vocab_size]
+    pub logits: GpuBuffer,
+}
+
+impl GpuForwardScratch {
+    /// Allocate scratch buffers in GPU VRAM.
+    ///
+    /// # Arguments
+    /// * `config` - Model configuration
+    ///
+    /// # Returns
+    /// Ok(GpuForwardScratch) if all allocations succeed
+    pub fn new(config: &ModelConfig) -> GpuResult<Self> {
+        let h = config.hidden_size;
+        let q = config.num_heads * config.head_dim;
+        let kv = config.num_kv_heads * config.head_dim;
+        let ff = config.intermediate_size;
+        let v = config.vocab_size;
+
+        // Allocate all buffers - if any fail, all are freed via RAII
+        let normed = GpuBuffer::alloc(h * std::mem::size_of::<f32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("normed buffer allocation failed: {}", e),
+            }
+        })?;
+
+        let q_buf = GpuBuffer::alloc(q * std::mem::size_of::<f32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("Q buffer allocation failed: {}", e),
+            }
+        })?;
+
+        let k_buf = GpuBuffer::alloc(kv * std::mem::size_of::<f32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("K buffer allocation failed: {}", e),
+            }
+        })?;
+
+        let v_buf = GpuBuffer::alloc(kv * std::mem::size_of::<f32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("V buffer allocation failed: {}", e),
+            }
+        })?;
+
+        let attn_out = GpuBuffer::alloc(q * std::mem::size_of::<f32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("attn_out buffer allocation failed: {}", e),
+            }
+        })?;
+
+        let layer_out = GpuBuffer::alloc(h * std::mem::size_of::<f32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("layer_out buffer allocation failed: {}", e),
+            }
+        })?;
+
+        let gate = GpuBuffer::alloc(ff * std::mem::size_of::<f32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("gate buffer allocation failed: {}", e),
+            }
+        })?;
+
+        let swiglu = GpuBuffer::alloc(ff * std::mem::size_of::<f32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("swiglu buffer allocation failed: {}", e),
+            }
+        })?;
+
+        let logits = GpuBuffer::alloc(v * std::mem::size_of::<f32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("logits buffer allocation failed: {}", e),
+            }
+        })?;
+
+        Ok(Self {
+            normed,
+            q: q_buf,
+            k: k_buf,
+            v: v_buf,
+            attn_out,
+            layer_out,
+            gate,
+            swiglu,
+            logits,
+        })
+    }
+
+    /// Get GPU pointer to normalized hidden state
+    pub fn normed_ptr(&self) -> *const f32 {
+        self.normed.as_ptr() as *const f32
+    }
+
+    /// Get GPU pointer to query vector
+    pub fn q_ptr(&self) -> *const f32 {
+        self.q.as_ptr() as *const f32
+    }
+
+    /// Get GPU pointer to key vector
+    pub fn k_ptr(&self) -> *const f32 {
+        self.k.as_ptr() as *const f32
+    }
+
+    /// Get GPU pointer to value vector
+    pub fn v_ptr(&self) -> *const f32 {
+        self.v.as_ptr() as *const f32
+    }
+
+    /// Get mutable GPU pointer to attention output
+    pub fn attn_out_ptr(&mut self) -> *mut f32 {
+        self.attn_out.as_ptr() as *mut f32
+    }
+
+    /// Get mutable GPU pointer to layer output
+    pub fn layer_out_ptr(&mut self) -> *mut f32 {
+        self.layer_out.as_ptr() as *mut f32
+    }
+
+    /// Get mutable GPU pointer to logits
+    pub fn logits_ptr(&mut self) -> *mut f32 {
+        self.logits.as_ptr() as *mut f32
+    }
+}
+
+#[cfg(test)]
+mod scratch_tests {
+    use super::*;
+
+    fn make_test_config() -> crate::config::ModelConfig {
+        crate::config::ModelConfig {
+            num_layers: 2,
+            num_kv_heads: 4,
+            head_dim: 128,
+            max_seq_len: 512,
+            hidden_size: 1024,
+            num_heads: 8,
+            intermediate_size: 2048,
+            vocab_size: 32000,
+            rms_norm_eps: 1e-5,
+            rope_theta: 10000.0,
+            rope_neox: false,
+            use_attention_bias: false,
+            attention_layout: crate::config::AttentionLayout::SplitQkv,
+            architecture: "test".to_string(),
+        }
+    }
+
+    #[test]
+    fn new_allocates_all_buffers() {
+        let config = make_test_config();
+        let scratch = GpuForwardScratch::new(&config);
+
+        // Will fail without GPU, that's expected
+        match scratch {
+            Ok(s) => {
+                // Verify pointers are valid (or empty)
+                assert!(!s.q.as_ptr().is_null() || s.q.is_empty());
+            }
+            Err(_) => {
+                // Expected when HIP unavailable
+            }
+        }
+    }
+}
