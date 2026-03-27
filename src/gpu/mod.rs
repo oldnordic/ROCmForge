@@ -43,7 +43,7 @@ mod weights;
 pub use error::{GpuError, GpuResult};
 pub use detect::GpuCapabilities;
 pub use device::GpuDevice;
-pub use weights::WeightMeta;
+pub use weights::{WeightMeta, GpuBuffer};
 
 /// Detect AMD GPU capabilities (safe wrapper).
 ///
