@@ -3,6 +3,7 @@
 //! Safety-first: bounds checked before kernel launch.
 
 use super::super::error::{GpuError, GpuResult};
+use super::super::ffi::hipError_t;
 use std::os::raw::c_int;
 
 /// Write K/V to cache at a single position.
@@ -42,9 +43,10 @@ pub fn kv_write(
         gpu_kv_write(k_cache, v_cache, k, v, pos as c_int, kv_size as c_int, max_seq as c_int)
     };
 
-    if result != 0 {
-        return Err(GpuError::KernelLaunchFailed {
-            kernel: "kv_write".to_string(),
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("kv_write kernel failed: {:?}", result),
         });
     }
 
@@ -104,9 +106,10 @@ pub fn kv_write_batched(
         )
     };
 
-    if result != 0 {
-        return Err(GpuError::KernelLaunchFailed {
-            kernel: "kv_write_batched".to_string(),
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("kv_write_batched kernel failed: {:?}", result),
         });
     }
 
@@ -154,9 +157,10 @@ pub fn flash_attn_decode(
         )
     };
 
-    if result != 0 {
-        return Err(GpuError::KernelLaunchFailed {
-            kernel: "flash_attn_decode".to_string(),
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("flash_attn_decode kernel failed: {:?}", result),
         });
     }
 
@@ -203,9 +207,10 @@ pub fn flash_attn_prefill(
         )
     };
 
-    if result != 0 {
-        return Err(GpuError::KernelLaunchFailed {
-            kernel: "flash_attn_prefill".to_string(),
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("flash_attn_prefill kernel failed: {:?}", result),
         });
     }
 
@@ -222,7 +227,7 @@ unsafe extern "C" {
         pos: c_int,
         kv_size: c_int,
         max_seq: c_int,
-    ) -> c_int;
+    ) -> hipError_t;
 
     fn gpu_kv_write_batched(
         k_cache: *mut f32,
@@ -233,7 +238,7 @@ unsafe extern "C" {
         kv_size: c_int,
         max_seq: c_int,
         seq_len: c_int,
-    ) -> c_int;
+    ) -> hipError_t;
 
     fn gpu_flash_attn_decode(
         out: *mut f32,
@@ -243,7 +248,7 @@ unsafe extern "C" {
         seq_len: c_int,
         head_dim: c_int,
         scale: f32,
-    ) -> c_int;
+    ) -> hipError_t;
 
     fn gpu_flash_attn_prefill(
         out: *mut f32,
@@ -253,7 +258,7 @@ unsafe extern "C" {
         seq_len: c_int,
         head_dim: c_int,
         scale: f32,
-    ) -> c_int;
+    ) -> hipError_t;
 }
 
 #[cfg(test)]

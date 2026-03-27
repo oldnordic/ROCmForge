@@ -3,6 +3,7 @@
 //! Safety-first: bounds checked before kernel launch.
 
 use super::super::error::{GpuError, GpuResult};
+use super::super::ffi::hipError_t;
 use std::os::raw::c_int;
 
 /// Element-wise add: out = x + y
@@ -23,9 +24,10 @@ pub fn add(
         gpu_add(x, y, out, n as c_int)
     };
 
-    if result != 0 {
-        return Err(GpuError::KernelLaunchFailed {
-            kernel: "add".to_string(),
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("add kernel failed: {:?}", result),
         });
     }
 
@@ -50,9 +52,10 @@ pub fn mul(
         gpu_mul(x, y, out, n as c_int)
     };
 
-    if result != 0 {
-        return Err(GpuError::KernelLaunchFailed {
-            kernel: "mul".to_string(),
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("mul kernel failed: {:?}", result),
         });
     }
 
@@ -77,9 +80,10 @@ pub fn scale(
         gpu_scale(x, out, scale, n as c_int)
     };
 
-    if result != 0 {
-        return Err(GpuError::KernelLaunchFailed {
-            kernel: "scale".to_string(),
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("scale kernel failed: {:?}", result),
         });
     }
 
@@ -104,9 +108,10 @@ pub fn gelu(
         gpu_gelu(x, out, n as c_int)
     };
 
-    if result != 0 {
-        return Err(GpuError::KernelLaunchFailed {
-            kernel: "gelu".to_string(),
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("gelu kernel failed: {:?}", result),
         });
     }
 
@@ -130,9 +135,10 @@ pub fn silu(
         gpu_silu(x, out, n as c_int)
     };
 
-    if result != 0 {
-        return Err(GpuError::KernelLaunchFailed {
-            kernel: "silu".to_string(),
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("silu kernel failed: {:?}", result),
         });
     }
 
@@ -159,9 +165,10 @@ pub fn add_batched(
         gpu_add_batched(x, y, out, n as c_int, seq_len as c_int)
     };
 
-    if result != 0 {
-        return Err(GpuError::KernelLaunchFailed {
-            kernel: "add_batched".to_string(),
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("add_batched kernel failed: {:?}", result),
         });
     }
 
@@ -187,9 +194,10 @@ pub fn mul_batched(
         gpu_mul_batched(x, y, out, n as c_int, seq_len as c_int)
     };
 
-    if result != 0 {
-        return Err(GpuError::KernelLaunchFailed {
-            kernel: "mul_batched".to_string(),
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("mul_batched kernel failed: {:?}", result),
         });
     }
 
@@ -203,33 +211,33 @@ unsafe extern "C" {
         y: *const f32,
         out: *mut f32,
         n: c_int,
-    ) -> c_int;
+    ) -> hipError_t;
 
     fn gpu_mul(
         x: *const f32,
         y: *const f32,
         out: *mut f32,
         n: c_int,
-    ) -> c_int;
+    ) -> hipError_t;
 
     fn gpu_scale(
         x: *const f32,
         out: *mut f32,
         scale: f32,
         n: c_int,
-    ) -> c_int;
+    ) -> hipError_t;
 
     fn gpu_gelu(
         x: *const f32,
         out: *mut f32,
         n: c_int,
-    ) -> c_int;
+    ) -> hipError_t;
 
     fn gpu_silu(
         x: *const f32,
         out: *mut f32,
         n: c_int,
-    ) -> c_int;
+    ) -> hipError_t;
 
     fn gpu_add_batched(
         x: *const f32,
@@ -237,7 +245,7 @@ unsafe extern "C" {
         out: *mut f32,
         n: c_int,
         seq_len: c_int,
-    ) -> c_int;
+    ) -> hipError_t;
 
     fn gpu_mul_batched(
         x: *const f32,
@@ -245,7 +253,7 @@ unsafe extern "C" {
         out: *mut f32,
         n: c_int,
         seq_len: c_int,
-    ) -> c_int;
+    ) -> hipError_t;
 }
 
 #[cfg(test)]

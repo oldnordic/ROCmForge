@@ -29,6 +29,7 @@ gpu = []
 
 [dev-dependencies]
 fastrand = "2"
+serial_test = "3"
 
 [[bin]]
 name = "rocmforge"

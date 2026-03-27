@@ -3,6 +3,7 @@
 //! Safety-first: bounds checked before kernel launch.
 
 use super::super::error::{GpuError, GpuResult};
+use super::super::ffi::hipError_t;
 use std::os::raw::c_int;
 
 /// RoPE in-place transformation for a single token.
@@ -47,9 +48,10 @@ pub fn rope(
         gpu_rope(x, pos as c_int, dim as c_int, theta_base)
     };
 
-    if result != 0 {
-        return Err(GpuError::KernelLaunchFailed {
-            kernel: "rope".to_string(),
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("rope kernel failed: {:?}", result),
         });
     }
 
@@ -89,9 +91,10 @@ pub fn rope_batched(
         gpu_rope_batched(x, start_pos as c_int, dim as c_int, theta_base, seq_len as c_int)
     };
 
-    if result != 0 {
-        return Err(GpuError::KernelLaunchFailed {
-            kernel: "rope_batched".to_string(),
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("rope_batched kernel failed: {:?}", result),
         });
     }
 
@@ -105,7 +108,7 @@ unsafe extern "C" {
         pos: c_int,
         dim: c_int,
         theta_base: f32,
-    ) -> c_int;
+    ) -> hipError_t;
 
     fn gpu_rope_batched(
         x: *mut f32,
@@ -113,7 +116,7 @@ unsafe extern "C" {
         dim: c_int,
         theta_base: f32,
         seq_len: c_int,
-    ) -> c_int;
+    ) -> hipError_t;
 }
 
 #[cfg(test)]

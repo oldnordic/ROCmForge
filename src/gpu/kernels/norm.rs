@@ -3,6 +3,7 @@
 //! Safety-first: bounds checked before kernel launch.
 
 use super::super::error::{GpuError, GpuResult};
+use super::super::ffi::hipError_t;
 use std::os::raw::c_int;
 
 /// RMS normalization: out = x * rsqrt(mean(x^2) + eps) * weight
@@ -39,9 +40,10 @@ pub fn rms_norm(
         gpu_rms_norm(x, weight, out, n as c_int, eps)
     };
 
-    if result != 0 {
-        return Err(GpuError::KernelLaunchFailed {
-            kernel: "rms_norm".to_string(),
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("rms_norm kernel failed: {:?}", result),
         });
     }
 
@@ -76,9 +78,10 @@ pub fn rms_norm_batched(
         gpu_rms_norm_batched(x, weight, out, n as c_int, eps, seq_len as c_int)
     };
 
-    if result != 0 {
-        return Err(GpuError::KernelLaunchFailed {
-            kernel: "rms_norm_batched".to_string(),
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("rms_norm_batched kernel failed: {:?}", result),
         });
     }
 
@@ -93,7 +96,7 @@ unsafe extern "C" {
         out: *mut f32,
         n: c_int,
         eps: f32,
-    ) -> c_int;
+    ) -> hipError_t;
 
     fn gpu_rms_norm_batched(
         x: *const f32,
@@ -102,7 +105,7 @@ unsafe extern "C" {
         n: c_int,
         eps: f32,
         seq_len: c_int,
-    ) -> c_int;
+    ) -> hipError_t;
 }
 
 #[cfg(test)]

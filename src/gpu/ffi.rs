@@ -48,7 +48,7 @@ fn hip_check(code: hipError_t) -> GpuResult<()> {
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum hipError_t {
+pub enum hipError_t {
     hipSuccess = 0,
     hipErrorInvalidValue = 1,
     hipErrorOutOfMemory = 2,
