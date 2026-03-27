@@ -749,3 +749,162 @@ fn test_rope_batched_kernel_correctness() {
     // Once the HIP kernel is fixed, remove the #[ignore] attribute.
     assert_close(&cpu_x, gpu_out_f32, 1e-3);
 }
+
+// ============================================================================
+// KV Write Kernel Correctness Tests
+// ============================================================================
+
+#[test]
+#[serial]
+fn test_kv_write_kernel_correctness() {
+    require_gpu!();
+    require_vram!(4);
+
+    use rocmforge::gpu::{GpuBuffer, kv_write};
+    use gpu_test_utils::assert_close;
+
+    let max_seq = 512;
+    let kv_size = 512;  // 4 heads * 128 dim
+    let write_pos = 100; // Position to write at
+
+    // Test K and V vectors
+    let k: Vec<f32> = (0..kv_size).map(|i| i as f32 * 0.1).collect();
+    let v: Vec<f32> = (0..kv_size).map(|i| i as f32 * 0.2).collect();
+
+    // Pre-fill cache with known values (so we can verify write happened)
+    let cache_size = max_seq * kv_size;
+    let k_cache_init = vec![999.0f32; cache_size];
+    let v_cache_init = vec![888.0f32; cache_size];
+
+    // Allocate GPU buffers
+    let mut gpu_k_cache = GpuBuffer::alloc(cache_size * 4).unwrap();
+    let mut gpu_v_cache = GpuBuffer::alloc(cache_size * 4).unwrap();
+    let mut gpu_k = GpuBuffer::alloc(kv_size * 4).unwrap();
+    let mut gpu_v = GpuBuffer::alloc(kv_size * 4).unwrap();
+
+    // Initialize cache with known values
+    gpu_k_cache.copy_from_host(unsafe { std::slice::from_raw_parts(
+        k_cache_init.as_ptr() as *const u8, cache_size * 4
+    ) }).unwrap();
+    gpu_v_cache.copy_from_host(unsafe { std::slice::from_raw_parts(
+        v_cache_init.as_ptr() as *const u8, cache_size * 4
+    ) }).unwrap();
+
+    // Copy K/V to write
+    gpu_k.copy_from_host(unsafe { std::slice::from_raw_parts(k.as_ptr() as *const u8, kv_size * 4) }).unwrap();
+    gpu_v.copy_from_host(unsafe { std::slice::from_raw_parts(v.as_ptr() as *const u8, kv_size * 4) }).unwrap();
+
+    // Run KV write kernel (from hip_kernels/attention.hip:14)
+    kv_write(
+        gpu_k_cache.as_ptr() as *mut f32,
+        gpu_v_cache.as_ptr() as *mut f32,
+        gpu_k.as_ptr() as *const f32,
+        gpu_v.as_ptr() as *const f32,
+        write_pos,
+        kv_size,
+        max_seq,
+    ).expect("GPU kv_write kernel should succeed");
+
+    // Copy back and verify
+    let mut k_result = vec![0u8; cache_size * 4];
+    let mut v_result = vec![0u8; cache_size * 4];
+    gpu_k_cache.copy_to_host(&mut k_result).unwrap();
+    gpu_v_cache.copy_to_host(&mut v_result).unwrap();
+
+    let k_cache_out: &[f32] = unsafe { std::slice::from_raw_parts(k_result.as_ptr() as *const f32, cache_size) };
+    let v_cache_out: &[f32] = unsafe { std::slice::from_raw_parts(v_result.as_ptr() as *const f32, cache_size) };
+
+    // Verify that K/V were written at the correct position
+    let k_start = write_pos * kv_size;
+    let v_start = write_pos * kv_size;
+
+    let k_written = &k_cache_out[k_start..k_start + kv_size];
+    let v_written = &v_cache_out[v_start..v_start + kv_size];
+
+    assert_close(k_written, &k, 1e-5);
+    assert_close(v_written, &v, 1e-5);
+
+    // Verify other positions weren't modified
+    for pos in 0..max_seq {
+        if pos != write_pos {
+            let offset = pos * kv_size;
+            // Should still have initial values
+            for i in 0..kv_size.min(10) { // Check first 10 elements
+                assert_eq!(k_cache_out[offset + i], 999.0, "K cache at pos {} should be unchanged", pos);
+                assert_eq!(v_cache_out[offset + i], 888.0, "V cache at pos {} should be unchanged", pos);
+            }
+        }
+    }
+}
+
+#[test]
+#[serial]
+fn test_kv_write_batched_kernel_correctness() {
+    require_gpu!();
+    require_vram!(4);
+
+    use rocmforge::gpu::{GpuBuffer, kv_write_batched};
+    use gpu_test_utils::assert_close;
+
+    let max_seq = 512;
+    let kv_size = 512;
+    let start_pos = 50;
+    let seq_len = 10;
+
+    // Test data for 10 positions
+    let k: Vec<f32> = (0..seq_len * kv_size).map(|i| i as f32 * 0.1).collect();
+    let v: Vec<f32> = (0..seq_len * kv_size).map(|i| i as f32 * 0.2).collect();
+
+    let cache_size = max_seq * kv_size;
+    let k_cache_init = vec![999.0f32; cache_size];
+    let v_cache_init = vec![888.0f32; cache_size];
+
+    let mut gpu_k_cache = GpuBuffer::alloc(cache_size * 4).unwrap();
+    let mut gpu_v_cache = GpuBuffer::alloc(cache_size * 4).unwrap();
+    let mut gpu_k = GpuBuffer::alloc(seq_len * kv_size * 4).unwrap();
+    let mut gpu_v = GpuBuffer::alloc(seq_len * kv_size * 4).unwrap();
+
+    gpu_k_cache.copy_from_host(unsafe { std::slice::from_raw_parts(
+        k_cache_init.as_ptr() as *const u8, cache_size * 4
+    ) }).unwrap();
+    gpu_v_cache.copy_from_host(unsafe { std::slice::from_raw_parts(
+        v_cache_init.as_ptr() as *const u8, cache_size * 4
+    ) }).unwrap();
+
+    gpu_k.copy_from_host(unsafe { std::slice::from_raw_parts(k.as_ptr() as *const u8, seq_len * kv_size * 4) }).unwrap();
+    gpu_v.copy_from_host(unsafe { std::slice::from_raw_parts(v.as_ptr() as *const u8, seq_len * kv_size * 4) }).unwrap();
+
+    kv_write_batched(
+        gpu_k_cache.as_ptr() as *mut f32,
+        gpu_v_cache.as_ptr() as *mut f32,
+        gpu_k.as_ptr() as *const f32,
+        gpu_v.as_ptr() as *const f32,
+        start_pos,
+        kv_size,
+        max_seq,
+        seq_len,
+    ).expect("GPU kv_write_batched kernel should succeed");
+
+    let mut k_result = vec![0u8; cache_size * 4];
+    let mut v_result = vec![0u8; cache_size * 4];
+    gpu_k_cache.copy_to_host(&mut k_result).unwrap();
+    gpu_v_cache.copy_to_host(&mut v_result).unwrap();
+
+    let k_cache_out: &[f32] = unsafe { std::slice::from_raw_parts(k_result.as_ptr() as *const f32, cache_size) };
+    let v_cache_out: &[f32] = unsafe { std::slice::from_raw_parts(v_result.as_ptr() as *const f32, cache_size) };
+
+    // Verify all written positions
+    for s in 0..seq_len {
+        let pos = start_pos + s;
+        let offset = pos * kv_size;
+        let k_offset = s * kv_size;
+
+        let k_written = &k_cache_out[offset..offset + kv_size];
+        let v_written = &v_cache_out[offset..offset + kv_size];
+        let k_expected = &k[k_offset..k_offset + kv_size];
+        let v_expected = &v[k_offset..k_offset + kv_size];
+
+        assert_close(k_written, k_expected, 1e-5);
+        assert_close(v_written, v_expected, 1e-5);
+    }
+}

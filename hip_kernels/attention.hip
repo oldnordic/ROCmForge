@@ -47,8 +47,8 @@ __global__ void kv_write_batched_kernel(
     const int kv_size,
     const int seq_len
 ) {
-    const int s = blockIdx.x;
-    const int i = blockIdx.y * blockDim.x + threadIdx.x;
+    const int s = blockIdx.y;  // Sequence index from second dimension
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;  // Element index from first dimension
 
     if (s < seq_len && i < kv_size) {
         const int pos = start_pos + s;
