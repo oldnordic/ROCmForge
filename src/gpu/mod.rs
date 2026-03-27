@@ -51,6 +51,7 @@ pub use weights::{WeightMeta, GpuBuffer, GpuLayerWeights, GpuModelWeights};
 pub use kernels::{kv_write, kv_write_batched, rms_norm, rms_norm_batched, rope, rope_batched, add, mul, scale, gelu, silu, add_batched, mul_batched, zero_fill, flash_attn_decode, flash_attn_prefill};
 pub use cache::{GpuKvCache, GpuForwardScratch};
 pub use dynamic_loader::{DynamicLibrary, library_info, LibraryInfo};
+pub use arch::GpuArchitecture;
 
 /// Detect AMD GPU capabilities (safe wrapper).
 ///
