@@ -41,6 +41,7 @@ Add to `src/gpu/ffi.rs` after the existing structs:
 ```rust
 /// Q4_K quantized block (144 bytes for 256 f32 values)
 /// Matches llama.cpp block_q4_k structure
+#[derive(Default, Clone, Copy)]
 #[repr(C)]
 pub struct GpuQ4KBlock {
     pub d: f16,              // delta/scale (2 bytes)
@@ -95,7 +96,7 @@ pub const K_SCALE_SIZE: usize = 12;
 pub const Q4_K_BLOCK_SIZE: usize = 128 + 12 + 4; // qs + scales + d/dmin
 
 /// Rust-owned Q4_K block
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct Q4KBlock {
     pub d: f16,              // delta/scale (2 bytes)
@@ -346,16 +347,18 @@ extern "C" hipError_t hip_quantize_q4_k(
 Modify `hip_kernels/quant/CMakeLists.txt`, add to QUANT_SOURCES or create new library:
 
 ```cmake
-# Q4_K quantization library
-add_library(q4_k_quant STATIC
+# Add to existing CMakeLists.txt - create q4_k library
+set(QUANT_SOURCES
     q4_k_quantize.hip
 )
 
-target_link_libraries(q4_k_quant
+add_library(q4_k STATIC ${QUANT_SOURCES})
+
+target_link_libraries(q4_k
     quant_common
 )
 
-set_target_properties(q4_k_quant PROPERTIES
+set_target_properties(q4_k PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
@@ -364,7 +367,7 @@ set_target_properties(q4_k_quant PROPERTIES
 - [ ] **Step 3: Test CMake build**
 
 Run: `cmake --build hip_kernels/quant/build`
-Expected: SUCCESS, builds libq4_k_quant.a
+Expected: SUCCESS, builds libq4_k.a
 
 - [ ] **Step 4: Commit**
 
@@ -493,25 +496,19 @@ extern "C" hipError_t hip_dequantize_q4_k(
 Add to `hip_kernels/quant/CMakeLists.txt`:
 
 ```cmake
-# Add to q4_k_quant library or create dequantize library
-add_library(q4_k_dequant STATIC
+# Add q4_k_dequantize.hip to existing q4_k library
+set(QUANT_SOURCES
+    q4_k_quantize.hip
     q4_k_dequantize.hip
 )
 
-target_link_libraries(q4_k_dequant
-    quant_common
-)
-
-set_target_properties(q4_k_dequant PROPERTIES
-    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
-)
+add_library(q4_k STATIC ${QUANT_SOURCES})
 ```
 
 - [ ] **Step 3: Test CMake build**
 
 Run: `cmake --build hip_kernels/quant/build`
-Expected: SUCCESS
+Expected: SUCCESS, builds libq4_k.a
 
 - [ ] **Step 4: Commit**
 
@@ -647,18 +644,14 @@ extern "C" hipError_t hip_verify_q4_k(
 Add to `hip_kernels/quant/CMakeLists.txt`:
 
 ```cmake
-add_library(q4_k_verify STATIC
+# Add q4_k_verify.hip to existing q4_k library
+set(QUANT_SOURCES
+    q4_k_quantize.hip
+    q4_k_dequantize.hip
     q4_k_verify.hip
 )
 
-target_link_libraries(q4_k_verify
-    quant_common
-)
-
-set_target_properties(q4_k_verify PROPERTIES
-    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
-)
+add_library(q4_k STATIC ${QUANT_SOURCES})
 ```
 
 - [ ] **Step 3: Test CMake build**
@@ -694,6 +687,14 @@ Add to `src/gpu/ffi.rs` extern block:
 ```rust
 extern "C" {
     // ... existing declarations ...
+
+    /// Initialize device memory with value
+    pub fn hipMemsetAsync(
+        dst: *mut std::ffi::c_void,
+        value: i32,
+        size: usize,
+        stream: hipStream_t,
+    ) -> hipError_t;
 
     /// Verify dequantized values match original
     pub fn hip_verify_q4_k(
@@ -738,7 +739,7 @@ Create `src/gpu/quant.rs`:
 //! GPU quantization wrapper - safe interface to HIP kernels
 
 use super::ffi::{
-    hipDevice_t, hipStream_t, hipError_t, hipSuccess,
+    hipStream_t, hipError_t, hipSuccess,
     hip_quantize_q4_k, hip_dequantize_q4_k, hip_verify_q4_k,
     GpuQ4KBlock,
 };
@@ -747,20 +748,21 @@ use super::arch::GpuArchitecture;
 
 /// Safe wrapper for GPU quantization operations
 pub struct GpuQuant {
-    device: hipDevice_t,
-    stream: hipStream_t,
+    device_id: i32,          // Device ID (matches GpuDevice pattern)
+    stream: hipStream_t,     // HIP stream (matches GpuDevice pattern)
     architecture: GpuArchitecture,
 }
 
 impl GpuQuant {
     /// Create new GpuQuant from existing GpuDevice
     pub fn new(device: &GpuDevice) -> GpuResult<Self> {
-        // Get device handle (reuse existing patterns from device.rs)
-        // For now, use placeholder - will be filled in implementation
+        // Extract device info using existing GpuDevice methods
+        let props = device.get_properties()?;
+
         Ok(GpuQuant {
-            device: std::ptr::null_mut(),
-            stream: std::ptr::null_mut(),
-            architecture: GpuArchitecture::Unknown(0),
+            device_id: device.device_id(),
+            stream: device.stream(),
+            architecture: props.architecture,
         })
     }
 
