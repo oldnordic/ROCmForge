@@ -143,9 +143,16 @@ impl CpuFeatures {
         let has_avx512_vnni = has_avx2 && (cpuid_avx2.ebx & (1 << 16) != 0) && (cpuid_avx2.ecx & (1 << 3) != 0);
 
         // AVX-512 detection (multiple flags)
-        let has_avx512 = has_avx2
-            && (cpuid_avx2.ebx & (1 << 16) != 0)  // AVX512F
-            && (cpuid_avx2.ebx & (1 << 17) != 0); // AVX512DQ
+        // Need: F (foundation), CD (conflict detection), BW (byte/word), DQ, VL (vector length)
+        let has_avx512f = cpuid_avx2.ebx & (1 << 16) != 0;
+        let has_avx512cd = cpuid_avx2.ebx & (1 << 28) != 0;
+        let has_avx512bw = cpuid_avx2.ebx & (1 << 30) != 0;
+        let has_avx512vl = cpuid_avx2.ebx & (1 << 31) != 0;
+        let has_avx512dq = cpuid_avx2.ebx & (1 << 17) != 0;
+
+        // AVX-512 VNNI requires AVX-512F + VNNI (ECX bit 3)
+        let has_avx512 = has_avx512f && has_avx512cd && has_avx512bw && has_avx512vl && has_avx512dq;
+        let has_avx512_vnni = has_avx512 && (cpuid_avx2.ecx & (1 << 3) != 0);
 
         let kernel = Self::select_kernel_x86(
             has_sse2, has_ssse3, has_avx, has_avx2, has_avx512, has_avx2_vnni, has_avx512_vnni,
@@ -158,8 +165,8 @@ impl CpuFeatures {
             has_avx,
             has_avx2,
             has_avx512,
-            // Only report AVX-VNNI as true if we have AVX2 VNNI (Intel)
-            // AVX-512 VNNI requires different kernel implementation (mm512 instructions)
+            // Report AVX-VNNI for AVX2 VNNI (Intel)
+            // AVX-512 VNNI is tracked separately via has_avx512_vnni in kernel selection
             has_avxvnni: has_avx2_vnni,
             has_fma,
             has_neon: false,
@@ -213,12 +220,20 @@ impl CpuFeatures {
         has_avx2_vnni: bool,
         has_avx512_vnni: bool,
     ) -> KernelPreference {
-        // AVX-512 VNNI requires separate kernel implementation (using _mm512 instructions)
-        // For now, fall back to AVX-512 when we have AVX-512 VNNI but no AVX512 VNNI kernel
-        if has_avx2_vnni {
+        // Priority order for best performance:
+        // 1. AVX-512 VNNI (Zen 4, Ice Lake+) - fastest for quantized inference
+        // 2. AVX2 VNNI (Cascade Lake+) - good for quantized workloads
+        // 3. AVX-512 (512-bit vectors)
+        // 4. AVX2 (256-bit integer vectors)
+        // 5. AVX (256-bit float vectors)
+        // 6. SSSE3 (horizontal ops)
+        // 7. SSE2 (baseline)
+        // 8. Scalar (fallback)
+
+        if has_avx512_vnni {
+            KernelPreference::Avx512Vnni
+        } else if has_avx2_vnni {
             KernelPreference::AvxVnni
-        } else if has_avx512_vnni {
-            KernelPreference::Avx512  // TODO: Implement AVX-512 VNNI kernels for Zen 4
         } else if has_avx512 {
             KernelPreference::Avx512
         } else if has_avx2 {
