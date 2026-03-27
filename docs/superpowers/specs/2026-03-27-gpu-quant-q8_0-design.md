@@ -137,7 +137,11 @@ __global__ void dequantize_q8_0_batched_kernel(
 __global__ void verify_q8_0_accuracy_kernel(
     const float* original,  // Original f32 values
     const void* quantized,  // Q8_0 quantized blocks
-    float* errors,          // [4] Error metrics (atomic update)
+    float* errors,          // [4] Error metrics (atomic update):
+                           //   errors[0]: max error (atomic max)
+                           //   errors[1]: MSE (accumulated, atomic add)
+                           //   errors[2]: sum of original values (atomic add)
+                           //   errors[3]: sum of errors (atomic add)
     int n
 );
 
@@ -187,21 +191,21 @@ impl Default for Q8_0Block {
 
 ```rust
 /// Quantize f32 data to Q8_0 format
-pub fn quantize_q8_k(
+pub fn quantize_q8_0(
     input: *const f32,
     output: *mut u8,
     n: usize,
 ) -> GpuResult<()>;
 
 /// Dequantize Q8_0 data to f32
-pub fn dequantize_q8_k(
+pub fn dequantize_q8_0(
     input: *const u8,
     output: *mut f32,
     n: usize,
 ) -> GpuResult<()>;
 
 /// Batched dequantize Q8_0 data
-pub fn dequantize_q8_k_batched(
+pub fn dequantize_q8_0_batched(
     input: *const u8,
     output: *mut f32,
     n: usize,
@@ -209,20 +213,53 @@ pub fn dequantize_q8_k_batched(
 ) -> GpuResult<()>;
 
 /// Verify Q8_0 accuracy
-pub fn verify_q8_k_accuracy(
+pub fn verify_q8_0_accuracy(
     original: *const f32,
     quantized: *const u8,
     errors: *mut f32,
     n: usize,
 ) -> GpuResult<(f32, f32, f32)>;
 
-// FFI declarations
+/// Finalize Q8_0 accuracy metrics
+pub fn finalize_q8_0_metrics(
+    errors: *const f32,
+    metrics: *mut f32,
+    n: usize,
+) -> GpuResult<()>;
+
+// FFI declarations - complete signatures matching Q4_K pattern
 unsafe extern "C" {
-    fn quantize_q8_0_kernel(...) -> hipError_t;
-    fn dequantize_q8_0_kernel(...) -> hipError_t;
-    fn dequantize_q8_0_batched_kernel(...) -> hipError_t;
-    fn verify_q8_0_accuracy_kernel(...) -> hipError_t;
-    fn finalize_q8_0_metrics_kernel(...) -> hipError_t;
+    fn quantize_q8_0_kernel(
+        input: *const f32,
+        output: *mut u8,
+        n: c_int,
+    ) -> hipError_t;
+
+    fn dequantize_q8_0_kernel(
+        input: *const u8,
+        output: *mut f32,
+        n: c_int,
+    ) -> hipError_t;
+
+    fn dequantize_q8_0_batched_kernel(
+        input: *const u8,
+        output: *mut f32,
+        n: c_int,
+        batch_size: c_int,
+    ) -> hipError_t;
+
+    fn verify_q8_0_accuracy_kernel(
+        original: *const f32,
+        quantized: *const u8,
+        errors: *mut f32,
+        n: c_int,
+    ) -> hipError_t;
+
+    fn finalize_q8_0_metrics_kernel(
+        errors: *const f32,
+        metrics: *mut f32,
+        n: c_int,
+    ) -> hipError_t;
 }
 ```
 
@@ -234,34 +271,181 @@ unsafe extern "C" {
 impl GpuQuant {
     /// Quantize f32 data to Q8_0 format
     pub fn quantize_q8_0(&self, input: *const f32, output: *mut u8, n: usize) -> GpuResult<()> {
+        if n == 0 {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "quantize_q8_0: n cannot be zero".to_string(),
+            });
+        }
+
         // Validate pointers
+        if input.is_null() {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "quantize_q8_0: input pointer is null".to_string(),
+            });
+        }
+
+        if output.is_null() {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "quantize_q8_0: output pointer is null".to_string(),
+            });
+        }
+
         // Call kernel
-        // Synchronize
+        quantize_q8_0(input, output, n)?;
+
+        // Synchronize to ensure kernel completes
+        self.device.synchronize()?;
+
+        Ok(())
     }
 
     /// Dequantize Q8_0 data to f32
     pub fn dequantize_q8_0(&self, input: *const u8, output: *mut f32, n: usize) -> GpuResult<()> {
+        if n == 0 {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "dequantize_q8_0: n cannot be zero".to_string(),
+            });
+        }
+
         // Validate pointers
+        if input.is_null() {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "dequantize_q8_0: input pointer is null".to_string(),
+            });
+        }
+
+        if output.is_null() {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "dequantize_q8_0: output pointer is null".to_string(),
+            });
+        }
+
         // Call kernel
+        dequantize_q8_0(input, output, n)?;
+
         // Synchronize
+        self.device.synchronize()?;
+
+        Ok(())
     }
 
     /// Batched dequantize Q8_0 data
     pub fn dequantize_q8_0_batched(&self, input: *const u8, output: *mut f32, n: usize, batch_size: usize) -> GpuResult<()> {
-        // Validate pointers
+        if n == 0 || batch_size == 0 {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "dequantize_q8_0_batched: n and batch_size cannot be zero".to_string(),
+            });
+        }
+
+        // Validate pointers (same pattern as above)
+        if input.is_null() || output.is_null() {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "dequantize_q8_0_batched: pointer is null".to_string(),
+            });
+        }
+
         // Call kernel
+        dequantize_q8_0_batched(input, output, n, batch_size)?;
+
         // Synchronize
+        self.device.synchronize()?;
+
+        Ok(())
     }
 
     /// Verify Q8_0 quantization accuracy
     pub fn verify_accuracy_q8_0(&self, original: *const f32, quantized: *const u8, n: usize) -> GpuResult<(f32, f32, f32)> {
-        // Allocate GPU memory for metrics
+        if n == 0 {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "verify_accuracy_q8_0: n cannot be zero".to_string(),
+            });
+        }
+
+        // Validate pointers
+        if original.is_null() {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "verify_accuracy_q8_0: original pointer is null".to_string(),
+            });
+        }
+
+        if quantized.is_null() {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "verify_accuracy_q8_0: quantized pointer is null".to_string(),
+            });
+        }
+
+        // Allocate GPU memory for error metrics
+        let errors_gpu = unsafe {
+            ffi::hip_malloc(4 * std::mem::size_of::<f32>())?
+        };
+        let metrics_gpu = unsafe {
+            ffi::hip_malloc(3 * std::mem::size_of::<f32>())?
+        };
+
+        // Initialize errors to zero
+        let zeros = vec![0.0f32; 4];
+        unsafe {
+            ffi::hip_memcpy_h2d(errors_gpu, zeros.as_ptr() as *const u8, 4 * std::mem::size_of::<f32>())?;
+        }
+
         // Run verification kernel
+        verify_q8_0_accuracy(original, quantized, errors_gpu as *mut f32, n)?;
+
         // Finalize metrics
-        // Copy results back
+        finalize_q8_0_metrics(errors_gpu as *const f32, metrics_gpu as *mut f32, n)?;
+
+        // Synchronize
+        self.device.synchronize()?;
+
+        // Copy metrics back to host
+        let mut metrics = [0.0f32; 3];
+        unsafe {
+            ffi::hip_memcpy_d2h(
+                metrics.as_mut_ptr() as *mut u8,
+                metrics_gpu as *const u8,
+                3 * std::mem::size_of::<f32>()
+            )?;
+        }
+
         // Cleanup
+        unsafe {
+            ffi::hip_free(errors_gpu);
+            ffi::hip_free(metrics_gpu);
+        }
+
+        Ok((metrics[0], metrics[1], metrics[2]))
     }
 }
+```
+
+### 5. Build System Integration
+
+**File:** `build.rs` (extend existing)
+
+Add Q8_0 libraries to the `libs_to_copy` array:
+
+```rust
+let libs_to_copy = vec![
+    ("libtest_quant.a", "test_quant"),
+    ("libq4_k_quantize.a", "q4_k_quantize"),
+    ("libq4_k_dequantize.a", "q4_k_dequantize"),
+    ("libq4_k_verify.a", "q4_k_verify"),
+    // Q8_0 libraries (new):
+    ("libq8_0_quantize.a", "q8_0_quantize"),
+    ("libq8_0_dequantize.a", "q8_0_dequantize"),
+    ("libq8_0_verify.a", "q8_0_verify"),
+];
 ```
 
 ### 5. CMake Build Integration
@@ -331,6 +515,17 @@ Reuse Q4_K's 256-element test for consistency:
 
 ## Kernel Implementation Details
 
+### Thread Strategy
+
+**Key Optimization:** Q8_0's 32-element block size maps perfectly to RDNA wavefronts:
+- One thread block = one Q8_0 block (32 elements)
+- Use 32 threads per block (1 wavefront on RDNA)
+- Each thread processes 1 element
+- No loop striding needed for quantization/dequantization
+- Warp reduction for max finding (single __shfl_down)
+
+This is simpler than Q4_K which requires 256 elements with complex striding.
+
 ### Quantization Kernel
 
 ```cpp
@@ -342,40 +537,44 @@ __global__ void quantize_q8_0_kernel(
     int block_idx = blockIdx.x;
     const float* x = &input[block_idx * QK8_0];
 
-    // Shared memory for reduction
-    __shared__ float s_max_val;
-    __shared__ half s_scale;
+    // Each thread loads one element (QK8_0 = 32 threads)
+    float val = (threadIdx.x < QK8_0) ? x[threadIdx.x] : 0.0f;
+    float abs_val = fabsf(val);
 
-    // Find max absolute value in block
-    float max_val = 0.0f;
-    for (int i = threadIdx.x; i < QK8_0; i += blockDim.x) {
-        max_val = fmaxf(max_val, fabsf(x[i]));
+    // Warp reduction to find max (RDNA warp = 32 threads)
+    // After reduction, threadIdx.x == 0 has the max
+    float max_val = abs_val;
+    #pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        max_val = fmaxf(max_val, __shfl_down_sync(0xFFFFFFFF, max_val, offset));
     }
 
-    // Warp reduction
-    // ... (same pattern as Q4_K)
-
-    // Compute scale
+    // Compute scale (thread 0 only)
+    __shared__ half s_scale;
     if (threadIdx.x == 0) {
+        // Avoid division by zero with max(1e-30f, ...)
         s_scale = __float2half(fmaxf(max_val / 127.0f, 1e-30f));
     }
     __syncthreads();
 
-    // Quantize values
+    // Quantize values (each thread processes its element)
     uint8_t* out = static_cast<uint8_t*>(output) + block_idx * Q8_0_BLOCK_SIZE;
 
-    // Write scale
+    // Thread 0 writes scale (f16 = 2 bytes)
     if (threadIdx.x == 0) {
         half* d_ptr = reinterpret_cast<half*>(out);
         *d_ptr = s_scale;
     }
 
-    // Write quantized values
-    for (int i = threadIdx.x; i < QK8_0; i += blockDim.x) {
+    // All threads write their quantized value
+    // NOTE: Offset by 2 bytes for Q8_0 (vs 4 bytes for Q4_K)
+    // Q8_0 block: [d: 2 bytes] [qs[0]: 1 byte] [qs[1]: 1 byte] ...
+    // Q4_K block:  [scales: 4 bytes] [qs[0]: 1/2 byte] ...
+    if (threadIdx.x < QK8_0) {
         int8_t q = static_cast<int8_t>(
-            fminf(fmaxf(x[i] / __half2float(s_scale), -127.0f), 127.0f)
+            fminf(fmaxf(val / __half2float(s_scale), -127.0f), 127.0f)
         );
-        out[2 + i] = reinterpret_cast<uint8_t&>(q);
+        out[2 + threadIdx.x] = reinterpret_cast<uint8_t&>(q);
     }
 }
 ```
@@ -391,18 +590,59 @@ __global__ void dequantize_q8_0_kernel(
     int block_idx = blockIdx.x;
     const uint8_t* in = static_cast<const uint8_t*>(input) + block_idx * Q8_0_BLOCK_SIZE;
 
-    // Read scale
+    // Read scale (first 2 bytes of Q8_0 block)
     half scale = *reinterpret_cast<const half*>(in);
 
-    // Dequantize values
-    const int8_t* qs = reinterpret_cast<const int8_t*>(in + 2);
+    // Dequantize values (each thread processes 1 element)
+    const int8_t* qs = reinterpret_cast<const int8_t*>(in + 2);  // Skip 2-byte header
     float* out = &output[block_idx * QK8_0];
 
-    for (int i = threadIdx.x; i < QK8_0; i += blockDim.x) {
-        out[i] = static_cast<float>(qs[i]) * __half2float(scale);
+    // Each thread dequantizes its element (32 threads = 32 elements)
+    if (threadIdx.x < QK8_0) {
+        out[threadIdx.x] = static_cast<float>(qs[threadIdx.x]) * __half2float(scale);
     }
 }
 ```
+
+## Memory Alignment Considerations
+
+**Block Alignment:**
+- Q8_0 blocks are 34 bytes (not power-of-2 aligned)
+- For optimal memory access, ensure block arrays start on 16-byte boundary
+- ROCm typically handles unaligned loads/stores, but alignment improves performance
+
+**Element Access Pattern:**
+- Quantized values (int8) are accessed sequentially
+- Scale (f16) is accessed once per block
+- Coalesced reads: sequential threads reading sequential addresses
+
+**Memory Layout:**
+```
+Block N: [d: f16][qs0: int8][qs1: int8]...[qs31: int8]
+Block N+1: [d: f16][qs0: int8][qs1: int8]...[qs31: int8]
+```
+
+**Total size for N elements:** `(N / 32) * 34` bytes
+
+## Performance Expectations
+
+**Throughput (per SM on RDNA3):**
+- Quantization: ~500-800 GB/s memory bandwidth limited
+- Dequantization: ~600-900 GB/s (simpler than quantization)
+
+**Latency:**
+- Quantization per 256 elements: ~1-2 microseconds
+- Dequantization per 256 elements: ~0.5-1 microsecond
+
+**Comparison to Q4_K:**
+- Q8_0 is ~2x faster than Q4_K for quantization (simpler algorithm)
+- Q8_0 dequantization is ~1.5x faster (uniform vs non-uniform)
+- Tradeoff: Q8_0 uses 2x memory vs Q4_K (34 vs 144 bytes for 256 elements)
+
+**Optimization Opportunities:**
+- Vector loads for quantized values (4 int8 = 32 bits per load)
+- Pre-fetching next block during current block processing
+- Batched kernels for multi-tensor processing
 
 ## Success Criteria
 
