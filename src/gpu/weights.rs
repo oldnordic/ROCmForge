@@ -7,7 +7,7 @@
 
 use super::error::{GpuError, GpuResult};
 use super::ffi;
-use crate::config::ModelConfig;
+use crate::config::{ModelConfig, TensorName};
 use crate::loader::{GgmlType, GgufFile, TensorDesc};
 use std::ptr::NonNull;
 
@@ -251,10 +251,8 @@ impl GpuLayerWeights {
     pub fn load(
         file: &GgufFile,
         layer: usize,
-        _config: &ModelConfig,
+        config: &ModelConfig,
     ) -> GpuResult<Self> {
-        let p = |s: &str| format!("blk.{}.{}", layer, s);
-
         // Helper to load weight into GPU buffer with metadata
         let load_weight = |name: &str| -> GpuResult<(GpuBuffer, WeightMeta)> {
             let t = file.tensor(name)
@@ -314,18 +312,18 @@ impl GpuLayerWeights {
         };
 
         // Load all weights - if any fail, this entire struct is dropped (RAII cleanup)
-        let attn_norm = load_f32(&p("attn_norm.weight"))?;
-        let (attn_q, attn_q_meta) = load_weight(&p("attn_q.weight"))?;
-        let attn_q_bias = load_f32_opt(&p("attn_q.bias"))?;
-        let (attn_k, attn_k_meta) = load_weight(&p("attn_k.weight"))?;
-        let attn_k_bias = load_f32_opt(&p("attn_k.bias"))?;
-        let (attn_v, attn_v_meta) = load_weight(&p("attn_v.weight"))?;
-        let attn_v_bias = load_f32_opt(&p("attn_v.bias"))?;
-        let (attn_o, attn_o_meta) = load_weight(&p("attn_output.weight"))?;
-        let ffn_norm = load_f32(&p("ffn_norm.weight"))?;
-        let (ffn_gate, ffn_gate_meta) = load_weight(&p("ffn_gate.weight"))?;
-        let (ffn_up, ffn_up_meta) = load_weight(&p("ffn_up.weight"))?;
-        let (ffn_down, ffn_down_meta) = load_weight(&p("ffn_down.weight"))?;
+        let attn_norm = load_f32(&config.tensor_registry.resolve(TensorName::AttnNorm, layer))?;
+        let (attn_q, attn_q_meta) = load_weight(&config.tensor_registry.resolve(TensorName::AttnQ, layer))?;
+        let attn_q_bias = load_f32_opt(&config.tensor_registry.resolve_optional(TensorName::AttnQBias, layer).unwrap_or_default())?;
+        let (attn_k, attn_k_meta) = load_weight(&config.tensor_registry.resolve(TensorName::AttnK, layer))?;
+        let attn_k_bias = load_f32_opt(&config.tensor_registry.resolve_optional(TensorName::AttnKBias, layer).unwrap_or_default())?;
+        let (attn_v, attn_v_meta) = load_weight(&config.tensor_registry.resolve(TensorName::AttnV, layer))?;
+        let attn_v_bias = load_f32_opt(&config.tensor_registry.resolve_optional(TensorName::AttnVBias, layer).unwrap_or_default())?;
+        let (attn_o, attn_o_meta) = load_weight(&config.tensor_registry.resolve(TensorName::AttnOutput, layer))?;
+        let ffn_norm = load_f32(&config.tensor_registry.resolve(TensorName::FfnNorm, layer))?;
+        let (ffn_gate, ffn_gate_meta) = load_weight(&config.tensor_registry.resolve(TensorName::FfnGate, layer))?;
+        let (ffn_up, ffn_up_meta) = load_weight(&config.tensor_registry.resolve(TensorName::FfnUp, layer))?;
+        let (ffn_down, ffn_down_meta) = load_weight(&config.tensor_registry.resolve(TensorName::FfnDown, layer))?;
 
         Ok(Self {
             attn_norm,
@@ -399,20 +397,23 @@ impl GpuModelWeights {
             Ok((buf, meta))
         };
 
-        // Load token embeddings
-        let (token_emb, token_emb_meta) = load_tensor("token_embd.weight")?;
+        // Load token embeddings using registry
+        let token_emb_name = config.tensor_registry.resolve(TensorName::TokenEmb, 0);
+        let (token_emb, token_emb_meta) = load_tensor(&token_emb_name)?;
 
-        // Load output norm
-        let output_norm_view = file.tensor("output_norm.weight")
+        // Load output norm using registry
+        let output_norm_name = config.tensor_registry.resolve(TensorName::OutputNorm, 0);
+        let output_norm_view = file.tensor(&output_norm_name)
             .map_err(|_| GpuError::WeightTransferFailed { layer: 0 })?
             .ok_or_else(|| GpuError::WeightTransferFailed { layer: 0 })?;
 
         let mut output_norm = GpuBuffer::alloc(output_norm_view.data.len())?;
         output_norm.copy_from_host(output_norm_view.data)?;
 
-        // LM head: use output.weight if present, otherwise tie to embeddings
-        let (lm_head, lm_head_meta, lm_head_tied) = if file.has_tensor("output.weight") {
-            let (buf, mut meta) = load_tensor("output.weight")?;
+        // LM head: use lm_head.weight if present, otherwise tie to embeddings
+        let lm_head_name = config.tensor_registry.resolve(TensorName::LmHead, 0);
+        let (lm_head, lm_head_meta, lm_head_tied) = if file.has_tensor(&lm_head_name) {
+            let (buf, mut meta) = load_tensor(&lm_head_name)?;
             meta.needs_transpose = true; // LM head needs transpose
             (buf, meta, false)
         } else {
