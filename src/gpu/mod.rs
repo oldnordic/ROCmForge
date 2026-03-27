@@ -44,6 +44,7 @@ mod cache;
 mod dynamic_loader;
 mod arch;
 mod quant;
+mod quant_wrapper;
 
 pub use error::{GpuError, GpuResult};
 pub use detect::GpuCapabilities;
@@ -54,6 +55,7 @@ pub use cache::{GpuKvCache, GpuForwardScratch};
 pub use dynamic_loader::{DynamicLibrary, library_info, LibraryInfo};
 pub use arch::GpuArchitecture;
 pub use quant::{QK_K, K_SCALE_SIZE, Q4_K_BLOCK_SIZE, Q4KBlock};
+pub use quant_wrapper::GpuQuant;
 
 /// Detect AMD GPU capabilities (safe wrapper).
 ///
