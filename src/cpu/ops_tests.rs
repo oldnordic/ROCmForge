@@ -263,6 +263,7 @@ mod tests {
     #[test]
     #[cfg(target_arch = "x86_64")]
     fn avx2_q4_0_q8_0_block_matches_scalar() {
+        // Skip if AVX2 or FMA not available
         if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
             return;
         }

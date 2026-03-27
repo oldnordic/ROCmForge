@@ -18,7 +18,7 @@ pub use crate::cpu::kernels::q8::BlockQ8K;
 /// Caller must ensure AVX2 is available.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-unsafe fn get_scale_shuffle_k4(j: usize) -> __m256i {
+pub unsafe fn get_scale_shuffle_k4(j: usize) -> __m256i {
     // Shuffle masks for selecting 6-bit scale values
     // Each mask is 32 bytes for AVX2 shuffle operation
     // Reference: llama.cpp ggml/src/ggml-cpu/arch/x86/quants.c:2230

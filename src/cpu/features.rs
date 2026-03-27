@@ -129,6 +129,13 @@ impl CpuFeatures {
         let has_ssse3 = cpuid.ecx & (1 << 9) != 0;
         let has_fma = cpuid.ecx & (1 << 12) != 0;
 
+        // Get CPU vendor using CPUID 0x0
+        // Returns vendor string in EBX, EDX, ECX (note the order!)
+        let vendor_info = unsafe { __cpuid(0x00000000) };
+        let is_intel = vendor_info.ebx == 0x756e6547 // "Genu"
+            && vendor_info.edx == 0x49656e69 // "ineI"
+            && vendor_info.ecx == 0x6c65746e; // "ntel"
+
         // AVX detection requires checking both CPUID feature flag and OS support
         let has_avx = cpuid.ecx & (1 << 28) != 0 && Self::is_xgetbv_enabled();
 
@@ -139,8 +146,11 @@ impl CpuFeatures {
         // AVX-VNNI variants detection (CPUID 0x00000007, subleaf 0, ECX bits)
         // ECX bit 3: AVX512_VNNI (AVX-512 VNNI) - AMD Zen 4+
         // ECX bit 4: AVX_VNNI (AVX2 VNNI) - Intel Cascade Lake+
-        let has_avx2_vnni = has_avx2 && (cpuid_avx2.ecx & (1 << 4) != 0);
-        let has_avx512_vnni = has_avx2 && (cpuid_avx2.ebx & (1 << 16) != 0) && (cpuid_avx2.ecx & (1 << 3) != 0);
+        // NOTE: AVX_VNNI and AVX512_VNNI are DIFFERENT instruction sets!
+        // AVX_VNNI: Intel extension (_mm256_dpwssd_avx_epi32, _mm256_dpbusd_epi32)
+        // AVX512_VNNI: AMD Zen 4+ extension (_mm512_dpwssd_epi32, etc.)
+        // AVX_VNNI (Intel) is only supported on Intel CPUs
+        let has_avx2_vnni = is_intel && has_avx2 && (cpuid_avx2.ecx & (1 << 4) != 0);
 
         // AVX-512 detection (multiple flags)
         // Need: F (foundation), CD (conflict detection), BW (byte/word), DQ, VL (vector length)

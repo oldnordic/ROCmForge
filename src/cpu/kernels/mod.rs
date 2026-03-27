@@ -20,6 +20,8 @@
 //! - **q8_scalar**: Scalar Q8_K operations
 //! - **gemm_q4k_q8_scalar**: Scalar fallback for Q4_K × Q8_K
 //! - **gemm_q4k_q8**: AVX2-optimized Q4_K × Q8_K kernels with dispatch
+//! - **gemm_q4k_q8_avx512**: AVX-512 kernels (uses AVX2 pattern for compatibility)
+//! - **gemm_q5_0_q8**: Q5_0 × Q8 kernels
 //!
 //! # References
 //!
