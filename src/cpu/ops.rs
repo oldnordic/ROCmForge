@@ -776,10 +776,47 @@ pub fn gemm_q4_1_transposed_gemm(
 }
 
 /// Q5_0 GEMM transposed for transposed weight matrices.
+///
+/// Computes: Y = W^T * X where W has shape [in_dim, out_dim]
+/// stored in column-major Q5_0 blocked format.
 pub fn gemm_q5_0_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
-    // For now, just use the non-transposed version
-    // TODO: implement proper transposed access if needed
-    gemm_q5_0(w, x, y, out_dim, in_dim);
+    let num_blocks_per_col = in_dim / Q5_0_BLOCK_ELEMS;
+    let col_bytes = num_blocks_per_col * Q5_0_BLOCK_BYTES;
+
+    // For each output dimension (column in original matrix)
+    for o in 0..out_dim {
+        let col_offset = o * col_bytes;
+
+        // Process all sequences in parallel
+        y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
+            let x_row = &x[s * in_dim..(s + 1) * in_dim];
+            let mut acc = 0.0f32;
+
+            // Iterate through blocks in this column
+            for b in 0..num_blocks_per_col {
+                let block = &w[col_offset + b * Q5_0_BLOCK_BYTES..col_offset + (b + 1) * Q5_0_BLOCK_BYTES];
+                let d = super::quant::load_f16_scale(&block[0..2]);
+                let qh = &block[2..6];
+                let qs = &block[6..22];
+                let xb = &x_row[b * Q5_0_BLOCK_ELEMS..];
+
+                for i in 0..16 {
+                    // Process 2 values per iteration
+                    let high_bit_0 = ((qh[i / 8] >> (i % 8)) & 1) << 4;
+                    let low_bits_0 = qs[i] & 0x0F;
+                    let q0 = ((high_bit_0 | low_bits_0) as i32) - 16;
+
+                    let high_bit_1 = ((qh[i / 8 + 2] >> (i % 8)) & 1) << 4;
+                    let low_bits_1 = (qs[i] >> 4) & 0x0F;
+                    let q1 = ((high_bit_1 | low_bits_1) as i32) - 16;
+
+                    acc += d * (q0 as f32) * xb[i] + d * (q1 as f32) * xb[i + 16];
+                }
+            }
+
+            y_row[o] = acc;
+        });
+    }
 }
 
 /// Q8_0 GEMM transposed for transposed weight matrices.
