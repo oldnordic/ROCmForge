@@ -700,7 +700,6 @@ fn test_rope_kernel_correctness() {
 
 #[test]
 #[serial]
-#[ignore = "Bug in hip_kernels/rope.hip:58-59 - blockIdx.x and blockIdx.y are swapped"]
 fn test_rope_batched_kernel_correctness() {
     require_gpu!();
     require_vram!(4);

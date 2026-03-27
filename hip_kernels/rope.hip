@@ -55,8 +55,8 @@ __global__ void rope_batched_kernel(
     const float theta_base,
     const int seq_len
 ) {
-    const int s = blockIdx.x;
-    const int i = blockIdx.y * blockDim.x + threadIdx.x;
+    const int s = blockIdx.y;  // Sequence index from second dimension
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;  // Pair index from first dimension
 
     if (s >= seq_len || i >= dim / 2) return;
 
