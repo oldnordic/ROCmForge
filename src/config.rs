@@ -763,4 +763,96 @@ mod tests {
         let text = "raw prompt";
         assert_eq!(ChatTemplate::None.apply(text), text);
     }
+
+    // TensorNameRegistry tests
+    #[test]
+    fn gguf_scheme_formats_correctly() {
+        let registry = TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf);
+        assert_eq!(registry.resolve(TensorName::FfnGate, 0), "blk.0.ffn_gate.weight");
+        assert_eq!(registry.resolve(TensorName::AttnQ, 5), "blk.5.attn_q.weight");
+        assert_eq!(registry.resolve(TensorName::AttnNorm, 2), "blk.2.attn_norm.weight");
+    }
+
+    #[test]
+    fn huggingface_scheme_formats_correctly() {
+        let registry = TensorNameRegistry::from_scheme(&TensorNamingScheme::HuggingFace);
+        assert_eq!(registry.resolve(TensorName::FfnGate, 0), "model.layers.0.mlp.gate_proj.weight");
+        assert_eq!(registry.resolve(TensorName::AttnQ, 5), "model.layers.5.self_attn.q_proj.weight");
+        assert_eq!(registry.resolve(TensorName::AttnNorm, 2), "model.layers.2.input_layernorm.weight");
+    }
+
+    #[test]
+    fn gguf_scheme_maps_all_tensors() {
+        let registry = TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf);
+        let all_names = [
+            TensorName::AttnQ, TensorName::AttnK, TensorName::AttnV, TensorName::AttnOutput,
+            TensorName::AttnQBias, TensorName::AttnKBias, TensorName::AttnVBias,
+            TensorName::FfnGate, TensorName::FfnUp, TensorName::FfnDown,
+            TensorName::AttnNorm, TensorName::FfnNorm,
+            TensorName::TokenEmb, TensorName::LmHead, TensorName::OutputNorm,
+        ];
+        for name in all_names {
+            let result = registry.resolve(name, 0);
+            assert!(!result.is_empty(), "TensorName::{:?} should produce non-empty string", name);
+        }
+    }
+
+    #[test]
+    fn huggingface_scheme_maps_all_tensors() {
+        let registry = TensorNameRegistry::from_scheme(&TensorNamingScheme::HuggingFace);
+        let all_names = [
+            TensorName::AttnQ, TensorName::AttnK, TensorName::AttnV, TensorName::AttnOutput,
+            TensorName::AttnQBias, TensorName::AttnKBias, TensorName::AttnVBias,
+            TensorName::FfnGate, TensorName::FfnUp, TensorName::FfnDown,
+            TensorName::AttnNorm, TensorName::FfnNorm,
+            TensorName::TokenEmb, TensorName::LmHead, TensorName::OutputNorm,
+        ];
+        for name in all_names {
+            let result = registry.resolve(name, 0);
+            assert!(!result.is_empty(), "TensorName::{:?} should produce non-empty string", name);
+        }
+    }
+
+    #[test]
+    fn qwen2_uses_gguf_scheme() {
+        let traits = ModelTraits::for_arch("qwen2");
+        assert_eq!(traits.tensor_naming, TensorNamingScheme::Gguf);
+    }
+
+    #[test]
+    fn qwen3_uses_huggingface_scheme() {
+        let traits = ModelTraits::for_arch("qwen3");
+        assert_eq!(traits.tensor_naming, TensorNamingScheme::HuggingFace);
+    }
+
+    #[test]
+    fn unknown_arch_falls_back_to_gguf() {
+        let traits = ModelTraits::for_arch("unknown_future_arch");
+        assert_eq!(traits.tensor_naming, TensorNamingScheme::Gguf);
+    }
+
+    #[test]
+    fn optional_bias_resolution() {
+        let gguf = TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf);
+        assert!(gguf.resolve_optional(TensorName::AttnQBias, 0).is_some());
+    }
+
+    #[test]
+    fn layer_number_formatting() {
+        let registry = TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf);
+        assert!(registry.resolve(TensorName::FfnGate, 0).contains(".0."));
+        assert!(registry.resolve(TensorName::FfnGate, 99).contains(".99."));
+        assert!(registry.resolve(TensorName::FfnGate, 999).contains(".999."));
+    }
+
+    #[test]
+    fn non_layer_tensors_format_correctly() {
+        let gguf = TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf);
+        assert_eq!(gguf.resolve(TensorName::TokenEmb, 0), "token_embd.weight");
+        assert_eq!(gguf.resolve(TensorName::OutputNorm, 0), "output_norm.weight");
+
+        let hf = TensorNameRegistry::from_scheme(&TensorNamingScheme::HuggingFace);
+        assert_eq!(hf.resolve(TensorName::TokenEmb, 0), "model.embed_tokens.weight");
+        assert_eq!(hf.resolve(TensorName::OutputNorm, 0), "model.norm.weight");
+    }
 }
