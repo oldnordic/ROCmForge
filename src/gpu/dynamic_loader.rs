@@ -269,6 +269,30 @@ where
     kernel_getter(&registry)
 }
 
+/// Get information about the loaded kernel library.
+///
+/// Returns None if library not yet loaded.
+pub fn library_info() -> Option<LibraryInfo> {
+    let registry = KernelRegistry::get().ok()?;
+    let registry = registry.lock().ok()?;
+
+    let library = registry.library.as_ref()?;
+
+    Some(LibraryInfo {
+        path: library.library_path().clone(),
+        num_loaded_kernels: 2, // gpu_kv_write, gpu_kv_write_batched
+    })
+}
+
+/// Information about the loaded kernel library.
+#[derive(Debug, Clone)]
+pub struct LibraryInfo {
+    /// Full path to the loaded library
+    pub path: PathBuf,
+    /// Number of kernels loaded (cached function pointers)
+    pub num_loaded_kernels: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,5 +327,11 @@ mod registry_tests {
                 // Expected when HIP unavailable
             }
         }
+    }
+
+    #[test]
+    fn library_info_returns_none_before_load() {
+        let info = library_info();
+        assert!(info.is_none(), "library_info should be None before any kernel is loaded");
     }
 }

@@ -49,7 +49,7 @@ pub use device::GpuDevice;
 pub use weights::{WeightMeta, GpuBuffer, GpuLayerWeights, GpuModelWeights};
 pub use kernels::{kv_write, kv_write_batched};
 pub use cache::{GpuKvCache, GpuForwardScratch};
-pub use dynamic_loader::DynamicLibrary;
+pub use dynamic_loader::{DynamicLibrary, library_info, LibraryInfo};
 
 /// Detect AMD GPU capabilities (safe wrapper).
 ///
