@@ -363,6 +363,9 @@ pub struct ModelConfig {
 
     /// The raw architecture string from GGUF (e.g. "qwen2", "llama")
     pub architecture: String,
+
+    /// Tensor name registry for this model
+    pub tensor_registry: TensorNameRegistry,
 }
 
 impl ModelConfig {
@@ -413,6 +416,7 @@ impl ModelConfig {
             use_attention_bias: traits.use_attention_bias,
             attention_layout: traits.attention_layout,
             architecture: meta.architecture.clone(),
+            tensor_registry: TensorNameRegistry::from_scheme(&traits.tensor_naming),
         };
 
         config.validate()?;
