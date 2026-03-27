@@ -19,6 +19,22 @@ set_target_properties(quant_common PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
+# Q4_K quantization kernel
+add_library(q4_k_quantize STATIC
+    q4_k_quantize.hip
+)
+
+# Link common library to Q4_K kernel
+target_link_libraries(q4_k_quantize
+    quant_common
+)
+
+# Set output directory to match Cargo expectations
+set_target_properties(q4_k_quantize PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
 # Test kernel library (for Phase 1 verification)
 add_library(test_quant STATIC
     test_kernel.hip
