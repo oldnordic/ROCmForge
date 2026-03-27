@@ -7,7 +7,8 @@
 
 use super::error::{GpuError, GpuResult};
 use super::ffi;
-use crate::loader::{GgmlType, TensorDesc};
+use crate::config::ModelConfig;
+use crate::loader::{GgmlType, GgufFile, TensorDesc};
 use std::ptr::NonNull;
 
 // ── Weight Metadata ────────────────────────────────────────────────────────────
@@ -199,5 +200,153 @@ mod buffer_tests {
         let data = vec![1u8; 50]; // Wrong size
         let result = buf.copy_from_host(&data);
         assert!(result.is_err());
+    }
+}
+
+// ── GPU Layer Weights ─────────────────────────────────────────────────────────────
+
+/// Weights for a single transformer layer, stored in VRAM.
+///
+/// All weight tensors are stored in their native quantized format.
+/// GPU kernels dequantize during inference.
+pub struct GpuLayerWeights {
+    /// RMS norm weights for attention (always F32)
+    pub attn_norm: GpuBuffer,
+    /// Query projection weights (quantized)
+    pub attn_q: GpuBuffer,
+    pub attn_q_meta: WeightMeta,
+    /// Query bias (optional, always F32 if present)
+    pub attn_q_bias: Option<GpuBuffer>,
+    /// Key projection weights (quantized)
+    pub attn_k: GpuBuffer,
+    pub attn_k_meta: WeightMeta,
+    /// Key bias (optional)
+    pub attn_k_bias: Option<GpuBuffer>,
+    /// Value projection weights (quantized)
+    pub attn_v: GpuBuffer,
+    pub attn_v_meta: WeightMeta,
+    /// Value bias (optional)
+    pub attn_v_bias: Option<GpuBuffer>,
+    /// Attention output projection (quantized)
+    pub attn_o: GpuBuffer,
+    pub attn_o_meta: WeightMeta,
+    /// RMS norm weights for FFN (always F32)
+    pub ffn_norm: GpuBuffer,
+    /// FFN gate projection (SwiGLU gate) (quantized)
+    pub ffn_gate: GpuBuffer,
+    pub ffn_gate_meta: WeightMeta,
+    /// FFN up projection (quantized)
+    pub ffn_up: GpuBuffer,
+    pub ffn_up_meta: WeightMeta,
+    /// FFN down projection (quantized)
+    pub ffn_down: GpuBuffer,
+    pub ffn_down_meta: WeightMeta,
+}
+
+impl GpuLayerWeights {
+    /// Load a single layer's weights from GGUF file into GPU memory.
+    ///
+    /// Returns error if any allocation or transfer fails.
+    /// On error, all allocated memory is freed via Drop.
+    pub fn load(
+        file: &GgufFile,
+        layer: usize,
+        _config: &ModelConfig,
+    ) -> GpuResult<Self> {
+        let p = |s: &str| format!("blk.{}.{}", layer, s);
+
+        // Helper to load weight into GPU buffer with metadata
+        let load_weight = |name: &str| -> GpuResult<(GpuBuffer, WeightMeta)> {
+            let t = file.tensor(name)
+                .map_err(|e| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor lookup failed: {}", e),
+                })?
+                .ok_or_else(|| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor not found: {}", name),
+                })?;
+
+            let data = t.data;
+            let size = data.len();
+            let meta = WeightMeta {
+                wtype: t.ggml_type,
+                dims: t.dims.to_vec(),
+                needs_transpose: false, // Computed elsewhere for now
+            };
+
+            // Allocate GPU memory
+            let mut buf = GpuBuffer::alloc(size)?;
+            buf.copy_from_host(data)?;
+
+            Ok((buf, meta))
+        };
+
+        // Helper to load F32 weight
+        let load_f32 = |name: &str| -> GpuResult<GpuBuffer> {
+            let t = file.tensor(name)
+                .map_err(|e| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor lookup failed: {}", e),
+                })?
+                .ok_or_else(|| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor not found: {}", name),
+                })?;
+
+            let data = t.data;
+            let mut buf = GpuBuffer::alloc(data.len())?;
+            buf.copy_from_host(data)?;
+            Ok(buf)
+        };
+
+        // Helper to load optional F32 weight
+        let load_f32_opt = |name: &str| -> GpuResult<Option<GpuBuffer>> {
+            match file.tensor(name) {
+                Ok(Some(t)) => {
+                    let mut buf = GpuBuffer::alloc(t.data.len())?;
+                    buf.copy_from_host(t.data)?;
+                    Ok(Some(buf))
+                }
+                Ok(None) => Ok(None),
+                Err(_) => Ok(None), // Missing tensor is OK for optional weights
+            }
+        };
+
+        // Load all weights - if any fail, this entire struct is dropped (RAII cleanup)
+        let attn_norm = load_f32(&p("attn_norm.weight"))?;
+        let (attn_q, attn_q_meta) = load_weight(&p("attn_q.weight"))?;
+        let attn_q_bias = load_f32_opt(&p("attn_q.bias"))?;
+        let (attn_k, attn_k_meta) = load_weight(&p("attn_k.weight"))?;
+        let attn_k_bias = load_f32_opt(&p("attn_k.bias"))?;
+        let (attn_v, attn_v_meta) = load_weight(&p("attn_v.weight"))?;
+        let attn_v_bias = load_f32_opt(&p("attn_v.bias"))?;
+        let (attn_o, attn_o_meta) = load_weight(&p("attn_output.weight"))?;
+        let ffn_norm = load_f32(&p("ffn_norm.weight"))?;
+        let (ffn_gate, ffn_gate_meta) = load_weight(&p("ffn_gate.weight"))?;
+        let (ffn_up, ffn_up_meta) = load_weight(&p("ffn_up.weight"))?;
+        let (ffn_down, ffn_down_meta) = load_weight(&p("ffn_down.weight"))?;
+
+        Ok(Self {
+            attn_norm,
+            attn_q,
+            attn_q_meta,
+            attn_q_bias,
+            attn_k,
+            attn_k_meta,
+            attn_k_bias,
+            attn_v,
+            attn_v_meta,
+            attn_v_bias,
+            attn_o,
+            attn_o_meta,
+            ffn_norm,
+            ffn_gate,
+            ffn_gate_meta,
+            ffn_up,
+            ffn_up_meta,
+            ffn_down,
+            ffn_down_meta,
+        })
     }
 }
