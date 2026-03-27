@@ -10,6 +10,17 @@
 
 ---
 
+## Task Size Notes
+
+**Note on task granularity:** This plan follows the "2-5 minutes per task" guideline where possible. However, some tasks involve writing complete code blocks (15-60 lines). These are estimated at 5-10 minutes total because:
+- Code is provided in full (just copy-paste)
+- No design decisions needed
+- Single file, single purpose
+
+If a task takes longer than expected, it can be split during execution.
+
+---
+
 ## Prerequisites
 
 **Before starting, verify project structure:**
@@ -672,7 +683,7 @@ git commit -m "build: add compile_quant_kernels stub to build.rs
 
 ---
 
-## Task 3: Create Quantization Common HIP Header
+## Task 16: Create Quantization Common HIP Header
 
 **Files:**
 - Create: `hip_kernels/quant/common.hip`
@@ -795,7 +806,7 @@ git commit -m "feat(hip): add quantization common header with safety macros
 
 ---
 
-## Task 4: Create Test Kernel for CMake Verification
+## Task 17: Create Test Kernel for CMake Verification
 
 **Files:**
 - Create: `hip_kernels/quant/test_kernel.hip`
@@ -849,7 +860,7 @@ git commit -m "feat(hip): add test kernel for CMake build verification
 
 ---
 
-## Task 5: Create CMake Build System
+## Task 18: Create CMake Build System
 
 **Files:**
 - Create: `hip_kernels/quant/CMakeLists.txt`
@@ -940,7 +951,7 @@ git commit -m "build(cmake): add CMake build system for quantization kernels
 
 ---
 
-## Task 6: Integrate CMake with build.rs
+## Task 19: Integrate CMake with build.rs (Legacy, replaced by Task 11)
 
 **Files:**
 - Modify: `build.rs`
