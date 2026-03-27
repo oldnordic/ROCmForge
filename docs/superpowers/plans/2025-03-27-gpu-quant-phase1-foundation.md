@@ -19,6 +19,14 @@
 
 If a task takes longer than expected, it can be split during execution.
 
+**Task Execution Order:**
+- Tasks 1-14: Core Rust code (GpuArchitecture, detection, VRAM, tests)
+- Tasks 16-18: CMake/HIP infrastructure (headers, test kernel, CMakeLists.txt)
+- Task 11: CMake integration (requires Tasks 16-18 to be done first)
+- Task 19: SKIP (legacy, replaced by Task 11)
+
+**Recommended execution sequence:** 1-10 → 16-18 → 11 → 12-14 → 15
+
 ---
 
 ## Prerequisites
@@ -951,7 +959,13 @@ git commit -m "build(cmake): add CMake build system for quantization kernels
 
 ---
 
-## Task 19: Integrate CMake with build.rs (Legacy, replaced by Task 11)
+## Task 19: SKIP - Integrate CMake with build.rs (Legacy)
+
+⚠️ **DO NOT EXECUTE THIS TASK**
+
+This task is the old version of CMake integration. It has been replaced by Task 11.
+
+**Action:** Skip this task completely. Move to Task 20 (Final Verification).
 
 **Files:**
 - Modify: `build.rs`
@@ -1061,7 +1075,7 @@ git commit -m "build: integrate CMake with build.rs for quantization kernels
 
 ## Task 11: Implement CMake Invocation in compile_quant_kernels
 
-**Depends on:** Task 10, Task 5 (CMakeLists.txt exists)
+**Depends on:** Task 10, Task 18 (CMakeLists.txt must exist first - complete Tasks 16-18 before this)
 
 **Files:**
 - Modify: `build.rs`
