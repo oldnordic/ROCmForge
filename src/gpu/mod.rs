@@ -47,7 +47,7 @@ pub use error::{GpuError, GpuResult};
 pub use detect::GpuCapabilities;
 pub use device::GpuDevice;
 pub use weights::{WeightMeta, GpuBuffer, GpuLayerWeights, GpuModelWeights};
-pub use kernels::{kv_write, kv_write_batched, rms_norm, rms_norm_batched};
+pub use kernels::{kv_write, kv_write_batched, rms_norm, rms_norm_batched, rope, rope_batched};
 pub use cache::{GpuKvCache, GpuForwardScratch};
 pub use dynamic_loader::{DynamicLibrary, library_info, LibraryInfo};
 
