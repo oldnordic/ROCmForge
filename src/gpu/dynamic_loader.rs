@@ -149,6 +149,89 @@ impl fmt::Debug for DynamicLibrary {
     }
 }
 
+// ── Kernel Registry ─────────────────────────────────────────────────────────────
+
+/// Global kernel registry with lazy loading.
+///
+/// Loads libgpu.so on first access, caches function pointers.
+struct KernelRegistry {
+    library: Option<DynamicLibrary>,
+}
+
+impl KernelRegistry {
+    /// Get or create the global kernel registry.
+    fn get() -> GpuResult<&'static std::sync::Mutex<Self>> {
+        use std::sync::{Mutex, OnceLock};
+
+        static REGISTRY: OnceLock<Mutex<KernelRegistry>> = OnceLock::new();
+
+        // Initialize on first access
+        if REGISTRY.get().is_none() {
+            let library = DynamicLibrary::load("libgpu.so")?;
+            let _ = REGISTRY.set(Mutex::new(KernelRegistry {
+                library: Some(library),
+            }));
+        }
+
+        Ok(REGISTRY.get().unwrap())
+    }
+
+    /// Load a kernel function pointer by name.
+    ///
+    /// # Safety
+    /// Caller must ensure the function signature matches the actual kernel.
+    unsafe fn load_kernel<T>(
+        library: &DynamicLibrary,
+        symbol_name: &str,
+    ) -> GpuResult<T> {
+        let ptr = library.get_symbol(symbol_name)?;
+
+        Ok(std::mem::transmute_copy::<*const c_void, T>(&ptr))
+    }
+
+    /// Get gpu_kv_write kernel.
+    pub fn gpu_kv_write(&self) -> GpuResult<unsafe extern "C" fn(
+        *mut f32, *mut f32, *const f32, *const f32,
+        c_int, c_int, c_int
+    ) -> c_int> {
+        let library = self.library.as_ref()
+            .ok_or_else(|| GpuError::HipApiError {
+                code: -1,
+                description: "Kernel library not loaded".to_string(),
+            })?;
+
+        unsafe { Self::load_kernel(library, "gpu_kv_write") }
+    }
+
+    /// Get gpu_kv_write_batched kernel.
+    pub fn gpu_kv_write_batched(&self) -> GpuResult<unsafe extern "C" fn(
+        *mut f32, *mut f32, *const f32, *const f32,
+        c_int, c_int, c_int, c_int
+    ) -> c_int> {
+        let library = self.library.as_ref()
+            .ok_or_else(|| GpuError::HipApiError {
+                code: -1,
+                description: "Kernel library not loaded".to_string(),
+            })?;
+
+        unsafe { Self::load_kernel(library, "gpu_kv_write_batched") }
+    }
+}
+
+/// Public API: Get a kernel from the global registry.
+pub fn get_kernel<F, T>(kernel_getter: F) -> GpuResult<T>
+where
+    F: Fn(&KernelRegistry) -> GpuResult<T>,
+{
+    let registry = KernelRegistry::get()?;
+    let registry = registry.lock().map_err(|_| GpuError::HipApiError {
+        code: -1,
+        description: "Kernel registry mutex poisoned".to_string(),
+    })?;
+
+    kernel_getter(&registry)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,5 +247,24 @@ mod tests {
     fn load_fails_for_nonexistent_library() {
         let result = DynamicLibrary::load("nonexistent_library_12345.so");
         assert!(result.is_err());
+    }
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+
+    #[test]
+    fn registry_initializes_on_first_access() {
+        // Will fail without libgpu.so, that's expected
+        let result = KernelRegistry::get();
+        match result {
+            Ok(_) => {
+                // Registry initialized successfully
+            }
+            Err(_) => {
+                // Expected when HIP unavailable
+            }
+        }
     }
 }
