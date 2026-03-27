@@ -94,20 +94,14 @@ CPU f32 weights → GPU memory → Q8_0 quantization kernel → GPU quantized bl
 
 /// Quantize 32 f32 values to one Q8_0 block
 /// Each thread block processes one 32-element block
-__global__ void quantize_q8_0_kernel(
-    const float* input,     // Input: 32 f32 values per block
-    void* output,           // Output: Q8_0 block (34 bytes)
-    int num_blocks
-);
-
-/// C wrapper for Rust FFI
-extern "C" void quantize_q8_0_launch(
-    const float* input,
-    void* output,
-    int num_blocks,
-    hipStream_t stream
+extern "C" __global__ void quantize_q8_0_kernel(
+    const float* __restrict__ input,   // [n] f32 input data
+    void* __restrict__ output,         // [n/32 * 34] Q8_0 quantized output
+    int n                              // Total number of elements
 );
 ```
+
+**Note:** Stream management follows Q4_K pattern - kernels are launched with the default HIP stream, and synchronization is handled via `GpuDevice::synchronize()` in the safe wrapper layer.
 
 **File:** `hip_kernels/quant/q8_0_dequantize.hip`
 
@@ -116,20 +110,23 @@ extern "C" void quantize_q8_0_launch(
 
 /// Dequantize Q8_0 block to 32 f32 values
 /// Each thread block processes one 32-element block
-__global__ void dequantize_q8_0_kernel(
-    const void* input,     // Input: Q8_0 block (34 bytes)
-    float* output,         // Output: 32 f32 values
-    int num_blocks
+extern "C" __global__ void dequantize_q8_0_kernel(
+    const void* __restrict__ input,   // [n/32 * 34] Q8_0 quantized input
+    float* __restrict__ output,       // [n] f32 output data
+    int n                              // Total number of elements
 );
 
 /// Batched dequantization for parallel processing
-__global__ void dequantize_q8_0_batched_kernel(
-    const void* input,
-    float* output,
-    int n,
-    int batch_size
+/// Used for prefill-phase where multiple tensors need dequantization simultaneously
+extern "C" __global__ void dequantize_q8_0_batched_kernel(
+    const void* __restrict__ input,   // [batch_size][n/32 * 34] Q8_0 quantized input
+    float* __restrict__ output,       // [batch_size][n] f32 output data
+    int n,                             // Elements per batch
+    int batch_size                     // Number of batches
 );
 ```
+
+**Note:** Batched dequantize kernel follows the same pattern as Q4_K (`dequantize_q4_k_batched_kernel`) and is used during model prefill where multiple layers' weights need dequantization in parallel.
 
 **File:** `hip_kernels/quant/q8_0_verify.hip`
 
@@ -646,8 +643,36 @@ set_target_properties(q8_0_quantize PROPERTIES
 )
 
 # Q8_0 dequantization kernel
-add_library(q8_0_dequantize STATIC ...)
-# ... similar pattern for other kernels
+add_library(q8_0_dequantize STATIC
+    q8_0_dequantize.hip
+)
+
+# Link common library to Q8_0 dequantize kernel
+target_link_libraries(q8_0_dequantize
+    quant_common
+)
+
+# Set output directory to match Cargo expectations
+set_target_properties(q8_0_dequantize PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
+# Q8_0 verification kernel
+add_library(q8_0_verify STATIC
+    q8_0_verify.hip
+)
+
+# Link common library to Q8_0 verify kernel
+target_link_libraries(q8_0_verify
+    quant_common
+)
+
+# Set output directory to match Cargo expectations
+set_target_properties(q8_0_verify PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
 ```
 
 ### 8. Module Exports
@@ -657,13 +682,17 @@ add_library(q8_0_dequantize STATIC ...)
 Add Q8_0 types and kernel functions to the pub use statements:
 
 ```rust
-// Existing exports
-pub use kernels::{..., quantize_q4_k, dequantize_q4_k, dequantize_q4_k_batched, verify_q4_k_accuracy, finalize_q4_k_metrics};
+// Before (line 53):
+pub use kernels::{kv_write, kv_write_batched, rms_norm, rms_norm_batched, rope, rope_batched, add, mul, scale, gelu, silu, add_batched, mul_batched, zero_fill, flash_attn_decode, flash_attn_prefill, quantize_q4_k, dequantize_q4_k, dequantize_q4_k_batched, verify_q4_k_accuracy, finalize_q4_k_metrics};
+
+// After (add Q8_0 functions to end of list):
+pub use kernels::{kv_write, kv_write_batched, rms_norm, rms_norm_batched, rope, rope_batched, add, mul, scale, gelu, silu, add_batched, mul_batched, zero_fill, flash_attn_decode, flash_attn_prefill, quantize_q4_k, dequantize_q4_k, dequantize_q4_k_batched, verify_q4_k_accuracy, finalize_q4_k_metrics, quantize_q8_0, dequantize_q8_0, dequantize_q8_0_batched, verify_q8_0_accuracy, finalize_q8_0_metrics};
+
+// Before (line 57):
 pub use quant::{QK_K, K_SCALE_SIZE, Q4_K_BLOCK_SIZE, Q4KBlock};
 
-// New Q8_0 exports
-pub use kernels::{quantize_q8_0, dequantize_q8_0, dequantize_q8_0_batched, verify_q8_0_accuracy, finalize_q8_0_metrics};
-pub use quant::{QK8_0, Q8_0_BLOCK_SIZE, Q8_0_MAX, Q8_0Block};
+// After (add Q8_0 types):
+pub use quant::{QK_K, K_SCALE_SIZE, Q4_K_BLOCK_SIZE, Q4KBlock, QK8_0, Q8_0_BLOCK_SIZE, Q8_0_MAX, Q8_0Block};
 ```
 
 **File:** `src/gpu/kernels/mod.rs` (extend existing)
@@ -702,16 +731,107 @@ fn test_q8_0_block_default() {
 
 ### Integration Tests (tests/quant_integration.rs)
 
+Follow the Q4_K test pattern at `/tests/quant_integration.rs:26-157`:
+
 ```rust
+/// Q8_0 quantization integration test.
+///
+/// Verifies:
+/// 1. Allocate GPU buffers for input weights and output quantized blocks
+/// 2. Call Q8_0 quantization FFI function
+/// 3. Copy quantized blocks back to CPU
+/// 4. Verify dequantized values match original within tolerance
 #[test]
 #[serial]
 fn test_q8_0_quantization() {
-    // Allocate GPU buffers
+    use rocmforge::gpu::{detect, GpuDevice, GpuQuant, GpuBuffer, QK8_0, Q8_0_BLOCK_SIZE};
+
+    // Require GPU for this test
+    let caps = detect().expect("GPU required for quantization test");
+    println!("Testing Q8_0 quantization on: {}", caps.device_name);
+
+    // Initialize device
+    let device = GpuDevice::init(caps.device_id)
+        .expect("Failed to initialize GPU device");
+
+    // Initialize quantization context
+    let gpu_quant = GpuQuant::new(device)
+        .expect("Failed to initialize GpuQuant");
+
     // Prepare test data (256 elements = 8 Q8_0 blocks)
+    let n = 256;
+    let input_data: Vec<f32> = (0..n).map(|i| i as f32 * 0.01).collect();
+
+    // Allocate GPU buffers using GpuBuffer (RAII)
+    let d_input = GpuBuffer::alloc(n * std::mem::size_of::<f32>())
+        .expect("Failed to allocate input buffer");
+    let d_quantized = GpuBuffer::alloc((n / QK8_0) * Q8_0_BLOCK_SIZE)
+        .expect("Failed to allocate quantized buffer");
+    let d_output = GpuBuffer::alloc(n * std::mem::size_of::<f32>())
+        .expect("Failed to allocate output buffer");
+
+    // Copy input to GPU
+    let input_bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(
+            input_data.as_ptr() as *const u8,
+            n * std::mem::size_of::<f32>()
+        )
+    };
+    let mut d_input = d_input;
+    d_input.copy_from_host(input_bytes)
+        .expect("Failed to copy input to GPU");
+
     // Quantize on GPU
+    gpu_quant.quantize_q8_0(
+        d_input.as_ptr() as *const f32,
+        d_quantized.as_ptr(),
+        n
+    )
+        .expect("Failed to quantize on GPU");
+
     // Dequantize on GPU
+    gpu_quant.dequantize_q8_0(
+        d_quantized.as_ptr(),
+        d_output.as_ptr() as *mut f32,
+        n
+    )
+        .expect("Failed to dequantize on GPU");
+
+    // Copy output back to CPU
+    let mut output_bytes = vec![0u8; n * std::mem::size_of::<f32>()];
+    d_output.copy_to_host(&mut output_bytes)
+        .expect("Failed to copy output from GPU");
+
+    // Convert bytes back to f32
+    let output_data: Vec<f32> = unsafe {
+        std::slice::from_raw_parts(
+            output_bytes.as_ptr() as *const f32,
+            n
+        ).to_vec()
+    };
+
     // Verify accuracy (tolerance for 8-bit: 0.01)
+    for i in 0..n {
+        let error = (input_data[i] - output_data[i]).abs();
+        assert!(error < 0.01,
+            "Element {}: expected {}, got {}, error {}",
+            i, input_data[i], output_data[i], error);
+    }
+
     // Test verify_accuracy_q8_0
+    let (max_error, mse, rel_error) = gpu_quant.verify_accuracy_q8_0(
+        d_input.as_ptr() as *const f32,
+        d_quantized.as_ptr(),
+        n
+    ).expect("Failed to verify accuracy");
+
+    println!("Q8_0 accuracy: max_error={}, mse={}, rel_error={}", max_error, mse, rel_error);
+    assert!(max_error < 0.01, "Max error {} exceeds tolerance 0.01", max_error);
+
+    // Cleanup is automatic via GpuBuffer's Drop implementation
+    drop(d_input);
+    drop(d_quantized);
+    drop(d_output);
 }
 ```
 
