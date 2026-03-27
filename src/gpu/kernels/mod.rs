@@ -7,9 +7,11 @@
 
 pub mod norm;
 pub mod rope;
+pub mod elementwise;
 
 pub use norm::{rms_norm, rms_norm_batched};
 pub use rope::{rope, rope_batched};
+pub use elementwise::{add, mul, scale, gelu, silu, add_batched, mul_batched};
 
 // Re-export attention kernels from dynamic_loader
 // TODO: Replace with our own HIP kernels in Task 5
