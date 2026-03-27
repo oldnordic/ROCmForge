@@ -84,6 +84,11 @@ mod gpu_build {
         }
     }
 
+    pub fn compile_quant_kernels() {
+        println!("cargo:warning=Quantization kernel compilation: CMake not yet integrated");
+        // Placeholder for CMake integration
+    }
+
     fn find_rocm_path() -> Option<PathBuf> {
         if let Ok(hip_path) = env::var("HIP_PATH") {
             let path = PathBuf::from(&hip_path);
@@ -118,6 +123,9 @@ fn main() {
     if env::var("CARGO_FEATURE_GPU").is_ok() {
         // Compile HIP kernels
         gpu_build::compile_kernels();
+
+        // Compile quantization kernels via CMake
+        gpu_build::compile_quant_kernels();
 
         // Link HIP runtime
         let hip_path = env::var("HIP_PATH").ok()
