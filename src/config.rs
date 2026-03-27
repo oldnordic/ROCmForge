@@ -257,14 +257,15 @@ fn registry() -> &'static HashMap<&'static str, ModelTraits> {
             m.insert(*arch, qwen2.clone());
         }
 
-        // Qwen3 family - NeoX RoPE, QKV bias, split QKV, high rope theta, HuggingFace naming
+        // Qwen3 family - NeoX RoPE, QKV bias, split QKV, high rope theta, GGUF naming
+        // Note: Some qwen3 variants use non-standard tensor names (_exps suffix, attn_q_norm, etc.)
         let qwen3 = ModelTraits {
             rope_style: RopeStyle::NeoX,
             attention_layout: AttentionLayout::SplitQkv,
             use_attention_bias: true,
             default_rope_theta: 1_000_000.0,
             default_norm_eps: 1e-6,
-            tensor_naming: TensorNamingScheme::HuggingFace,
+            tensor_naming: TensorNamingScheme::Gguf,
         };
         for arch in &["qwen3", "qwen3moe"] {
             m.insert(*arch, qwen3.clone());
