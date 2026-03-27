@@ -85,8 +85,89 @@ mod gpu_build {
     }
 
     pub fn compile_quant_kernels() {
-        println!("cargo:warning=Quantization kernel compilation: CMake not yet integrated");
-        // Placeholder for CMake integration
+        use std::path::Path;
+        use std::process::Command;
+
+        // Find cmake executable
+        let cmake = find_cmake();
+        let cmake = cmake.as_deref().unwrap_or(Path::new("cmake"));
+
+        // Quantization kernel paths
+        let quant_src = Path::new("hip_kernels/quant");
+        let quant_build = Path::new("hip_kernels/quant/build");
+
+        let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set");
+        let lib_dest = Path::new(&out_dir);
+
+        // Create build directory if it doesn't exist
+        if !quant_build.exists() {
+            if let Err(e) = std::fs::create_dir_all(quant_build) {
+                println!("cargo:warning=Failed to create quant build directory: {}", e);
+                return;
+            }
+        }
+
+        println!("cargo:warning=Compiling quantization kernels with CMake");
+
+        // Configure with CMake
+        let config_status = Command::new(cmake)
+            .arg("-S")
+            .arg(quant_src)
+            .arg("-B")
+            .arg(quant_build)
+            .status();
+
+        match config_status {
+            Ok(s) if s.success() => {
+                // Build the project
+                let build_status = Command::new(cmake)
+                    .arg("--build")
+                    .arg(quant_build)
+                    .status();
+
+                match build_status {
+                    Ok(_) => {
+                        // Copy libraries to output directory for Cargo linking
+                        let src_lib = quant_build.join("lib/libtest_quant.a");
+                        let dst_lib = lib_dest.join("libtest_quant.a");
+
+                        if let Err(e) = std::fs::copy(&src_lib, &dst_lib) {
+                            println!("cargo:warning=Failed to copy libtest_quant.a: {}", e);
+                            return;
+                        }
+
+                        println!("cargo:rustc-link-lib=static=test_quant");
+                        println!("cargo:rustc-link-search=native={}", out_dir);
+                    }
+                    Err(e) => {
+                        println!("cargo:warning=Quantization CMake build failed: {:?}", e);
+                    }
+                }
+            }
+            Ok(s) => {
+                println!("cargo:warning=CMake configuration returned non-zero: {:?}", s.code());
+            }
+            Err(e) => {
+                println!("cargo:warning=CMake configuration failed: {:?}", e);
+            }
+        }
+    }
+
+    fn find_cmake() -> Option<PathBuf> {
+        // Try common CMake locations
+        let standard_paths = [
+            PathBuf::from("/usr/bin/cmake"),
+            PathBuf::from("/usr/local/bin/cmake"),
+            PathBuf::from("/opt/homebrew/bin/cmake"),
+        ];
+
+        for path in standard_paths.iter() {
+            if path.exists() {
+                return Some(path.clone());
+            }
+        }
+
+        None
     }
 
     fn find_rocm_path() -> Option<PathBuf> {
