@@ -876,9 +876,9 @@ quantize_q8_0_kernel<<<grid, block, 0, stream>>>(input, output, n);
 
 ```cpp
 __global__ void quantize_q8_0_kernel(
-    const float* input,
-    void* output,
-    int num_blocks
+    const float* __restrict__ input,
+    void* __restrict__ output,
+    int n
 ) {
     int block_idx = blockIdx.x;
     const float* x = &input[block_idx * QK8_0];
@@ -929,9 +929,9 @@ __global__ void quantize_q8_0_kernel(
 
 ```cpp
 __global__ void dequantize_q8_0_kernel(
-    const void* input,
-    float* output,
-    int num_blocks
+    const void* __restrict__ input,
+    float* __restrict__ output,
+    int n
 ) {
     int block_idx = blockIdx.x;
     const uint8_t* in = static_cast<const uint8_t*>(input) + block_idx * Q8_0_BLOCK_SIZE;
