@@ -154,13 +154,13 @@ impl fmt::Debug for DynamicLibrary {
 /// Global kernel registry with lazy loading.
 ///
 /// Loads libgpu.so on first access, caches function pointers.
-struct KernelRegistry {
+pub struct KernelRegistry {
     library: Option<DynamicLibrary>,
 }
 
 impl KernelRegistry {
     /// Get or create the global kernel registry.
-    fn get() -> GpuResult<&'static std::sync::Mutex<Self>> {
+    pub fn get() -> GpuResult<&'static std::sync::Mutex<Self>> {
         use std::sync::{Mutex, OnceLock};
 
         static REGISTRY: OnceLock<Mutex<KernelRegistry>> = OnceLock::new();

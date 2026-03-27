@@ -5,132 +5,13 @@
 //! - Never panic, always return GpuError
 //! - CHECK_HIP pattern from Memoria (libgpu.hip)
 //!
-//! Kernels are loaded dynamically from libgpu.so at runtime.
+//! Kernels are loaded dynamically from libgpu.so via KernelRegistry.
 
 use super::error::{GpuError, GpuResult};
-use std::os::raw::{c_int, c_void};
-use std::sync::Mutex;
+use super::dynamic_loader;
+use std::os::raw::c_int;
 
-// Dynamic function pointers loaded from libgpu.so
-struct KernelFunctions {
-    gpu_kv_write: unsafe extern "C" fn(
-        k_cache: *mut f32,
-        v_cache: *mut f32,
-        k: *const f32,
-        v: *const f32,
-        pos: c_int,
-        kv_size: c_int,
-        max_seq: c_int,
-    ) -> c_int,
-    gpu_kv_write_batched: unsafe extern "C" fn(
-        k_cache: *mut f32,
-        v_cache: *mut f32,
-        k: *const f32,
-        v: *const f32,
-        start_pos: c_int,
-        kv_size: c_int,
-        max_seq: c_int,
-        seq_len: c_int,
-    ) -> c_int,
-}
-
-static KERNEL_FUNCS: Mutex<Option<KernelFunctions>> = Mutex::new(None);
-
-/// Load kernel functions from libgpu.so
-///
-/// Searches for libgpu.so in:
-/// 1. /home/feanor/Projects/Memoria/gpu/libgpu.so (Memoria build)
-fn load_kernel_functions() -> Result<KernelFunctions, GpuError> {
-    const MEMORIA_LIBGPU: &str = "/home/feanor/Projects/Memoria/gpu/libgpu.so";
-
-    #[cfg(target_os = "linux")]
-    unsafe {
-        let handle = libc::dlopen(
-            MEMORIA_LIBGPU.as_ptr() as *const i8,
-            libc::RTLD_LAZY | libc::RTLD_LOCAL,
-        );
-
-        if handle.is_null() {
-            return Err(GpuError::HipNotAvailable);
-        }
-
-        let gpu_kv_write_ptr = libc::dlsym(
-            handle,
-            b"gpu_kv_write\0".as_ptr() as *const i8,
-        );
-
-        if gpu_kv_write_ptr.is_null() {
-            libc::dlclose(handle);
-            return Err(GpuError::HipApiError {
-                code: -1,
-                description: "gpu_kv_write symbol not found in libgpu.so".to_string(),
-            });
-        }
-
-        let gpu_kv_write: unsafe extern "C" fn(
-            *mut f32,
-            *mut f32,
-            *const f32,
-            *const f32,
-            c_int,
-            c_int,
-            c_int,
-        ) -> c_int = std::mem::transmute(gpu_kv_write_ptr);
-
-        let gpu_kv_write_batched_ptr = libc::dlsym(
-            handle,
-            b"gpu_kv_write_batched\0".as_ptr() as *const i8,
-        );
-
-        if gpu_kv_write_batched_ptr.is_null() {
-            libc::dlclose(handle);
-            return Err(GpuError::HipApiError {
-                code: -1,
-                description: "gpu_kv_write_batched symbol not found in libgpu.so".to_string(),
-            });
-        }
-
-        let gpu_kv_write_batched: unsafe extern "C" fn(
-            *mut f32,
-            *mut f32,
-            *const f32,
-            *const f32,
-            c_int,
-            c_int,
-            c_int,
-            c_int,
-        ) -> c_int = std::mem::transmute(gpu_kv_write_batched_ptr);
-
-        Ok(KernelFunctions {
-            gpu_kv_write,
-            gpu_kv_write_batched,
-        })
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        Err(GpuError::HipNotAvailable)
-    }
-}
-
-/// Get kernel functions, loading on first access
-fn get_kernel_funcs() -> Result<KernelFunctions, GpuError> {
-    let mut funcs = KERNEL_FUNCS.lock().unwrap();
-    if let Some(ref f) = *funcs {
-        // Clone function pointers - they're Copy
-        return Ok(KernelFunctions {
-            gpu_kv_write: f.gpu_kv_write,
-            gpu_kv_write_batched: f.gpu_kv_write_batched,
-        });
-    }
-
-    let loaded = load_kernel_functions()?;
-    *funcs = Some(KernelFunctions {
-        gpu_kv_write: loaded.gpu_kv_write,
-        gpu_kv_write_batched: loaded.gpu_kv_write_batched,
-    });
-    Ok(loaded)
-}
+// ── Public Kernel Wrapper Functions ────────────────────────────────────────────────
 
 /// Safe wrapper for KV cache write kernel.
 ///
@@ -165,11 +46,12 @@ pub fn kv_write(
         });
     }
 
-    let funcs = get_kernel_funcs()?;
+    // Get kernel from registry (loads on first use)
+    let kernel = dynamic_loader::get_kernel(|registry| registry.gpu_kv_write())?;
 
     // Launch kernel and check result (CHECK_HIP pattern)
     let result = unsafe {
-        (funcs.gpu_kv_write)(
+        kernel(
             k_cache,
             v_cache,
             k,
@@ -222,10 +104,10 @@ pub fn kv_write_batched(
         });
     }
 
-    let funcs = get_kernel_funcs()?;
+    let kernel = dynamic_loader::get_kernel(|registry| registry.gpu_kv_write_batched())?;
 
     let result = unsafe {
-        (funcs.gpu_kv_write_batched)(
+        kernel(
             k_cache,
             v_cache,
             k,
