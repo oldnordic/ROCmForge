@@ -31,6 +31,41 @@ pub enum AttentionLayout {
     FusedQkv,
 }
 
+/// Tensor naming convention used by GGUF file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TensorNamingScheme {
+    /// GGUF-style: `blk.N.ffn_gate.weight`
+    Gguf,
+    /// HuggingFace-style: `model.layers.N.mlp.gate_proj.weight`
+    HuggingFace,
+}
+
+/// Semantic tensor names that are resolved to actual tensor names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TensorName {
+    // Attention weights
+    AttnQ,
+    AttnK,
+    AttnV,
+    AttnOutput,
+    // Attention biases (optional)
+    AttnQBias,
+    AttnKBias,
+    AttnVBias,
+    // FFN weights
+    FfnGate,
+    FfnUp,
+    FfnDown,
+    // Normalization
+    AttnNorm,
+    FfnNorm,
+    // Embeddings
+    TokenEmb,
+    LmHead,
+    // Output norm
+    OutputNorm,
+}
+
 /// Hardcoded structural/behavioral differences between architecture families.
 /// All numeric *values* (sizes, epsilons) still come from GGUF metadata.
 #[derive(Debug, Clone)]
@@ -43,6 +78,133 @@ pub struct ModelTraits {
     pub default_rope_theta: f32,
     /// Fallback RMS norm epsilon if absent from GGUF
     pub default_norm_eps: f32,
+    /// Tensor naming convention used by this architecture
+    pub tensor_naming: TensorNamingScheme,
+}
+
+/// Registry for resolving semantic tensor names to actual tensor names
+/// based on the model's naming convention.
+#[derive(Debug, Clone)]
+pub struct TensorNameRegistry {
+    /// The naming scheme this registry uses
+    pub scheme: TensorNamingScheme,
+    /// Map of semantic names to format templates (use {} for layer number)
+    templates: HashMap<TensorName, String>,
+}
+
+impl TensorNameRegistry {
+    /// Create a registry for a specific naming scheme.
+    pub fn from_scheme(scheme: &TensorNamingScheme) -> Self {
+        match scheme {
+            TensorNamingScheme::Gguf => Self::gguf_format(),
+            TensorNamingScheme::HuggingFace => Self::huggingface_format(),
+        }
+    }
+
+    /// Resolve a semantic tensor name for a specific layer.
+    ///
+    /// # Panics
+    /// Panics if the tensor name is not in the registry (indicates bug).
+    pub fn resolve(&self, name: TensorName, layer: usize) -> String {
+        let template = self.templates.get(&name).expect("Tensor name should be in registry");
+        template.replace("{}", &layer.to_string())
+    }
+
+    /// Resolve an optional tensor name (for bias tensors that may not exist).
+    ///
+    /// Returns None if the naming scheme doesn't support this tensor.
+    pub fn resolve_optional(&self, name: TensorName, layer: usize) -> Option<String> {
+        self.templates.get(&name).cloned().map(|t| t.replace("{}", &layer.to_string()))
+    }
+
+    /// Create GGUF-format registry.
+    fn gguf_format() -> Self {
+        let mut templates = HashMap::new();
+
+        // Attention weights
+        templates.insert(TensorName::AttnQ, "blk.{}.attn_q.weight".to_string());
+        templates.insert(TensorName::AttnK, "blk.{}.attn_k.weight".to_string());
+        templates.insert(TensorName::AttnV, "blk.{}.attn_v.weight".to_string());
+        templates.insert(TensorName::AttnOutput, "blk.{}.attn_output.weight".to_string());
+
+        // Attention biases
+        templates.insert(TensorName::AttnQBias, "blk.{}.attn_q.bias".to_string());
+        templates.insert(TensorName::AttnKBias, "blk.{}.attn_k.bias".to_string());
+        templates.insert(TensorName::AttnVBias, "blk.{}.attn_v.bias".to_string());
+
+        // FFN weights
+        templates.insert(TensorName::FfnGate, "blk.{}.ffn_gate.weight".to_string());
+        templates.insert(TensorName::FfnUp, "blk.{}.ffn_up.weight".to_string());
+        templates.insert(TensorName::FfnDown, "blk.{}.ffn_down.weight".to_string());
+
+        // Normalization
+        templates.insert(TensorName::AttnNorm, "blk.{}.attn_norm.weight".to_string());
+        templates.insert(TensorName::FfnNorm, "blk.{}.ffn_norm.weight".to_string());
+
+        // Embeddings (no layer number)
+        templates.insert(TensorName::TokenEmb, "token_embd.weight".to_string());
+        templates.insert(TensorName::LmHead, "output.weight".to_string());
+        templates.insert(TensorName::OutputNorm, "output_norm.weight".to_string());
+
+        Self {
+            scheme: TensorNamingScheme::Gguf,
+            templates,
+        }
+    }
+
+    /// Create HuggingFace-format registry.
+    fn huggingface_format() -> Self {
+        let mut templates = HashMap::new();
+
+        // Attention weights
+        templates.insert(TensorName::AttnQ, "model.layers.{}.self_attn.q_proj.weight".to_string());
+        templates.insert(TensorName::AttnK, "model.layers.{}.self_attn.k_proj.weight".to_string());
+        templates.insert(TensorName::AttnV, "model.layers.{}.self_attn.v_proj.weight".to_string());
+        templates.insert(TensorName::AttnOutput, "model.layers.{}.self_attn.o_proj.weight".to_string());
+
+        // Attention biases
+        templates.insert(TensorName::AttnQBias, "model.layers.{}.self_attn.q_proj.bias".to_string());
+        templates.insert(TensorName::AttnKBias, "model.layers.{}.self_attn.k_proj.bias".to_string());
+        templates.insert(TensorName::AttnVBias, "model.layers.{}.self_attn.v_proj.bias".to_string());
+
+        // FFN weights
+        templates.insert(TensorName::FfnGate, "model.layers.{}.mlp.gate_proj.weight".to_string());
+        templates.insert(TensorName::FfnUp, "model.layers.{}.mlp.up_proj.weight".to_string());
+        templates.insert(TensorName::FfnDown, "model.layers.{}.mlp.down_proj.weight".to_string());
+
+        // Normalization
+        templates.insert(TensorName::AttnNorm, "model.layers.{}.input_layernorm.weight".to_string());
+        templates.insert(TensorName::FfnNorm, "model.layers.{}.post_attention_layernorm.weight".to_string());
+
+        // Embeddings (no layer number)
+        templates.insert(TensorName::TokenEmb, "model.embed_tokens.weight".to_string());
+        templates.insert(TensorName::LmHead, "lm_head.weight".to_string());
+        templates.insert(TensorName::OutputNorm, "model.norm.weight".to_string());
+
+        Self {
+            scheme: TensorNamingScheme::HuggingFace,
+            templates,
+        }
+    }
+
+    /// Get all expected tensor names for a layer (for debugging).
+    pub fn expected_tensors(&self, layer: usize) -> Vec<String> {
+        self.templates.keys()
+            .filter(|name| !matches!(*name, TensorName::TokenEmb | TensorName::LmHead | TensorName::OutputNorm))
+            .map(|name| self.resolve(*name, layer))
+            .collect()
+    }
+
+    /// List all supported tensor names (for debugging).
+    pub fn list_all_names(&self) -> Vec<&'static str> {
+        vec![
+            "AttnQ", "AttnK", "AttnV", "AttnOutput",
+            "AttnQBias", "AttnKBias", "AttnVBias",
+            "FfnGate", "FfnUp", "FfnDown",
+            "AttnNorm", "FfnNorm",
+            "TokenEmb", "LmHead", "OutputNorm",
+        ]
+    }
 }
 
 static REGISTRY: OnceLock<HashMap<&'static str, ModelTraits>> = OnceLock::new();
@@ -54,6 +216,7 @@ static DEFAULT_TRAITS: ModelTraits = ModelTraits {
     use_attention_bias: false,
     default_rope_theta: 10000.0,
     default_norm_eps: 1e-5,
+    tensor_naming: TensorNamingScheme::Gguf,
 };
 
 fn registry() -> &'static HashMap<&'static str, ModelTraits> {
@@ -67,6 +230,7 @@ fn registry() -> &'static HashMap<&'static str, ModelTraits> {
             use_attention_bias: false,
             default_rope_theta: 10000.0,
             default_norm_eps: 1e-5,
+            tensor_naming: TensorNamingScheme::Gguf,
         };
         for arch in &["llama", "mistral", "baichuan", "internlm2", "deepseek"] {
             m.insert(*arch, llama.clone());
@@ -80,16 +244,30 @@ fn registry() -> &'static HashMap<&'static str, ModelTraits> {
         );
         m.insert("mixtral", llama.clone()); // MoE variant, same behaviors
 
-        // Qwen2 family - NeoX RoPE, QKV bias, split QKV, high rope theta (per D-05, D-06)
+        // Qwen2 family - NeoX RoPE, QKV bias, split QKV, high rope theta, GGUF naming
         let qwen2 = ModelTraits {
             rope_style: RopeStyle::NeoX,
             attention_layout: AttentionLayout::SplitQkv,
             use_attention_bias: true,
             default_rope_theta: 1_000_000.0,
             default_norm_eps: 1e-6,
+            tensor_naming: TensorNamingScheme::Gguf,
         };
-        for arch in &["qwen2", "qwen3", "qwen2moe", "qwen3moe"] {
+        for arch in &["qwen2", "qwen2moe"] {
             m.insert(*arch, qwen2.clone());
+        }
+
+        // Qwen3 family - NeoX RoPE, QKV bias, split QKV, high rope theta, HuggingFace naming
+        let qwen3 = ModelTraits {
+            rope_style: RopeStyle::NeoX,
+            attention_layout: AttentionLayout::SplitQkv,
+            use_attention_bias: true,
+            default_rope_theta: 1_000_000.0,
+            default_norm_eps: 1e-6,
+            tensor_naming: TensorNamingScheme::HuggingFace,
+        };
+        for arch in &["qwen3", "qwen3moe"] {
+            m.insert(*arch, qwen3.clone());
         }
         // Legacy Qwen1: lower rope theta, no QK norm
         m.insert(
@@ -110,6 +288,7 @@ fn registry() -> &'static HashMap<&'static str, ModelTraits> {
                 use_attention_bias: false,
                 default_rope_theta: 10000.0,
                 default_norm_eps: 1e-5,
+                tensor_naming: TensorNamingScheme::Gguf,
             },
         );
         m.insert("phi2", llama.clone());
@@ -121,6 +300,7 @@ fn registry() -> &'static HashMap<&'static str, ModelTraits> {
             use_attention_bias: false,
             default_rope_theta: 10000.0,
             default_norm_eps: 1e-6,
+            tensor_naming: TensorNamingScheme::Gguf,
         };
         for arch in &["gemma", "gemma2", "gemma3"] {
             m.insert(*arch, gemma.clone());
@@ -135,6 +315,7 @@ fn registry() -> &'static HashMap<&'static str, ModelTraits> {
                 use_attention_bias: false,
                 default_rope_theta: 10000.0,
                 default_norm_eps: 1e-5,
+                tensor_naming: TensorNamingScheme::Gguf,
             },
         );
 
