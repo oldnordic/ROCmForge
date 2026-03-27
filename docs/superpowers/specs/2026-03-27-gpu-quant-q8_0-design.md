@@ -78,6 +78,10 @@ CPU f32 weights → GPU memory → Q8_0 quantization kernel → GPU quantized bl
 - **GPU self-verification:** No CPU round-trip during accuracy checks
 - **Safety-first:** Follow Phase 1's CHECK_HIP, CHECK_BOUNDS, CHECK_LAST patterns
 - **Extend, don't duplicate:** Add to existing GpuQuant rather than create new struct
+- **Format-specific methods:** Add `quantize_q8_0()`, `dequantize_q8_0()`, etc. to GpuQuant
+  - Note: This differs from existing `quantize()`/`dequantize()` pattern which only supports Q4_K
+  - Future refactoring could add format enum or trait abstraction
+  - For now, explicit format-specific methods are clearest
 
 ## Components
 
@@ -555,6 +559,9 @@ impl GpuQuant {
         }
 
         // Allocate GPU memory for error metrics
+        let num_blocks = (n + QK8_0 - 1) / QK8_0;
+
+        // Allocate temporary buffers for metrics
         let errors_gpu = unsafe {
             ffi::hip_malloc(4 * std::mem::size_of::<f32>())?
         };
@@ -647,18 +654,51 @@ add_library(q8_0_dequantize STATIC ...)
 
 **File:** `src/gpu/mod.rs` (extend existing)
 
+Add Q8_0 types and kernel functions to the pub use statements:
+
 ```rust
+// Existing exports
+pub use kernels::{..., quantize_q4_k, dequantize_q4_k, dequantize_q4_k_batched, verify_q4_k_accuracy, finalize_q4_k_metrics};
 pub use quant::{QK_K, K_SCALE_SIZE, Q4_K_BLOCK_SIZE, Q4KBlock};
+
+// New Q8_0 exports
+pub use kernels::{quantize_q8_0, dequantize_q8_0, dequantize_q8_0_batched, verify_q8_0_accuracy, finalize_q8_0_metrics};
 pub use quant::{QK8_0, Q8_0_BLOCK_SIZE, Q8_0_MAX, Q8_0Block};
+```
+
+**File:** `src/gpu/kernels/mod.rs` (extend existing)
+
+```rust
+// Re-export Q8_0 kernel functions from quant module
+pub use quant::{quantize_q8_0, dequantize_q8_0, dequantize_q8_0_batched, verify_q8_0_accuracy, finalize_q8_0_metrics};
 ```
 
 ## Testing
 
 ### Unit Tests (tests/quant_unit.rs)
 
-- `test_q8_0_constants`: Verify QK8_0=32, Q8_0_BLOCK_SIZE=34
-- `test_q8_0_block_struct_size`: Verify sizeof(Q8_0Block)=34
-- `test_q8_0_block_default`: Verify default array size
+```rust
+#[test]
+fn test_q8_0_constants() {
+    use rocmforge::gpu::quant::{QK8_0, Q8_0_BLOCK_SIZE, Q8_0_MAX};
+    assert_eq!(QK8_0, 32, "QK8_0 must be 32 for Q8_0 format");
+    assert_eq!(Q8_0_BLOCK_SIZE, 34, "Q8_0_BLOCK_SIZE must be 34 bytes");
+    assert_eq!(Q8_0_MAX, 127.0, "Q8_0_MAX must be 127.0");
+}
+
+#[test]
+fn test_q8_0_block_struct_size() {
+    use rocmforge::gpu::quant::Q8_0Block;
+    assert_eq!(std::mem::size_of::<Q8_0Block>(), 34, "Q8_0Block must be 34 bytes");
+}
+
+#[test]
+fn test_q8_0_block_default() {
+    use rocmforge::gpu::quant::Q8_0Block;
+    let block = Q8_0Block::default();
+    assert_eq!(block.qs.len(), 32, "Default qs array must have 32 elements");
+}
+```
 
 ### Integration Tests (tests/quant_integration.rs)
 
@@ -701,6 +741,16 @@ For typical random data in [-1, 1] range:
 - Warp reduction for max finding (single __shfl_down)
 
 This is simpler than Q4_K which requires 256 elements with complex striding.
+
+**Launch Configuration:**
+```cpp
+// Grid/Block setup for quantize_q8_0_kernel
+int num_blocks = (n + 31) / 32;
+dim3 grid(num_blocks);
+dim3 block(32);  // 32 threads = 1 wavefront
+
+quantize_q8_0_kernel<<<grid, block, 0, stream>>>(input, output, n);
+```
 
 ### Quantization Kernel
 
