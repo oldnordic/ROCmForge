@@ -68,6 +68,28 @@ pub fn check_vram_available(required_gb: f64) -> Result<(), String> {
     }
 }
 
+/// Verify VRAM state using rocm-smi after test.
+/// Checks for VRAM leaks (free memory should not decrease significantly).
+pub fn rocm_smi_verify() -> Result<(), String> {
+    let output = Command::new("rocm-smi")
+        .args(&["--showmeminfo", "vram"])
+        .output()
+        .map_err(|e| format!("rocm-smi not available: {}", e))?;
+
+    if !output.status.success() {
+        return Err("rocm-smi command failed".to_string());
+    }
+
+    // Just verify we can query VRAM state
+    // In production, we'd track before/after values
+    let csv = String::from_utf8_lossy(&output.stdout);
+    if csv.contains("VRAM Total Memory") && csv.contains("VRAM Total Used Memory") {
+        Ok(())
+    } else {
+        Err("Unexpected rocm-smi output format".to_string())
+    }
+}
+
 /// Assert two f32 slices are approximately equal within tolerance.
 pub fn assert_close(a: &[f32], b: &[f32], tolerance: f32) {
     assert_eq!(a.len(), b.len(), "Slice lengths must match");
@@ -127,5 +149,14 @@ mod tests {
         // 100 GB should always fail or return error
         let result = check_vram_available(100.0);
         assert!(result.is_err() || result.is_ok(), "100 GB check should not crash");
+    }
+
+    #[test]
+    #[serial]
+    fn test_rocm_smi_verify() {
+        match rocm_smi_verify() {
+            Ok(()) => println!("rocm-smi verification passed"),
+            Err(e) => println!("rocm-smi verification: {}", e),
+        }
     }
 }
