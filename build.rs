@@ -130,9 +130,18 @@ mod gpu_build {
                         // Copy libraries to output directory for Cargo linking
                         let libs_to_copy = vec![
                             ("libtest_quant.a", "test_quant"),
+                            // Q4_K libraries
                             ("libq4_k_quantize.a", "q4_k_quantize"),
                             ("libq4_k_dequantize.a", "q4_k_dequantize"),
                             ("libq4_k_verify.a", "q4_k_verify"),
+                            // Q8_0 libraries
+                            ("libq8_0_quantize.a", "q8_0_quantize"),
+                            ("libq8_0_dequantize.a", "q8_0_dequantize"),
+                            ("libq8_0_verify.a", "q8_0_verify"),
+                            // Q8_0 GEMV library
+                            ("libq8_0_gemv.a", "q8_0_gemv"),
+                            // Q4_K GEMV library
+                            ("libq4_k_gemv.a", "q4_k_gemv"),
                         ];
 
                         for (lib_name, link_name) in libs_to_copy {
