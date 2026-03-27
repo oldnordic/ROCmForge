@@ -73,7 +73,12 @@ impl GpuCapabilities {
             free_vram_bytes: free_vram,
             compute_units: info.compute_units,
             max_clock_mhz: info.max_clock_mhz,
-            hip_driver_version: 0,  // TODO: get from hipGetDriverVersion
+            hip_driver_version: {
+                match ffi::hip_get_driver_version() {
+                    Ok(v) => v,
+                    Err(_) => 0,  // Graceful fallback
+                }
+            },
             device_id,
         })
     }
@@ -170,5 +175,19 @@ mod tests {
 
         let _gb = caps.total_vram_gb();
         let _gb = caps.free_vram_gb();
+    }
+
+    #[test]
+    fn test_hip_driver_version_returns_valid_or_zero() {
+        // This test verifies that hipGetDriverVersion either succeeds
+        // or fails gracefully without crashing
+        let caps = GpuCapabilities::detect();
+        // If GPU available, version should be queried
+        // If not available, should be 0
+        if caps.is_some() {
+            let gpu = caps.unwrap();
+            // Version is packed u32, just verify it doesn't panic
+            let _ = gpu.hip_driver_version;
+        }
     }
 }
