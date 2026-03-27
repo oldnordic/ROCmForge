@@ -665,6 +665,7 @@ mod tests {
             use_attention_bias: true,
             attention_layout: AttentionLayout::SplitQkv,
             architecture: "qwen2".to_string(),
+            tensor_registry: TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf),
         };
         assert!(cfg.validate().is_err());
     }
@@ -687,6 +688,7 @@ mod tests {
             use_attention_bias: true,
             attention_layout: AttentionLayout::SplitQkv,
             architecture: "qwen2".to_string(),
+            tensor_registry: TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf),
         };
         assert!(cfg.validate().is_err());
     }

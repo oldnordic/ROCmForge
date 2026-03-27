@@ -82,6 +82,9 @@ mod tests {
             use_attention_bias: true,
             attention_layout: crate::config::AttentionLayout::SplitQkv,
             architecture: "qwen2".to_string(),
+            tensor_registry: crate::config::TensorNameRegistry::from_scheme(
+                &crate::config::TensorNamingScheme::Gguf
+            ),
         };
 
         let batch = derive_batch_config(&caps, &config);

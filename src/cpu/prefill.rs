@@ -717,6 +717,7 @@ pub fn cpu_prefill_forward_parallel(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{TensorNameRegistry, TensorNamingScheme};
 
     fn make_test_config() -> ModelConfig {
         ModelConfig {
@@ -734,6 +735,7 @@ mod tests {
             use_attention_bias: false,
             attention_layout: crate::config::AttentionLayout::SplitQkv,
             architecture: "qwen2".to_string(),
+            tensor_registry: TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf),
         }
     }
 

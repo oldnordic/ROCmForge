@@ -3,7 +3,7 @@
 //! Weights are stored in their native quantized format (Q4_0, Q4_1, Q8_0, etc.)
 //! and dequantized on-the-fly during inference.
 
-use crate::config::ModelConfig;
+use crate::config::{ModelConfig, TensorName};
 use crate::loader::{GgmlType, GgufFile, LoadError};
 use super::transpose::compute_transpose_flag;
 
@@ -162,8 +162,6 @@ pub struct CpuLayerWeights {
 
 impl CpuLayerWeights {
     fn load(file: &GgufFile, layer: usize, config: &ModelConfig) -> Result<Self, WeightError> {
-        let p = |s: &str| format!("blk.{}.{}", layer, s);
-
         // Helper to get tensor type
         let get_type = |name: &str| -> GgmlType {
             file.tensor(name)
@@ -182,30 +180,39 @@ impl CpuLayerWeights {
             copy_tensor_with_meta(file, name, needs_transpose)
         };
 
-        let (attn_q, attn_q_meta) = load_weight(&p("attn_q.weight"))?;
-        let (attn_k, attn_k_meta) = load_weight(&p("attn_k.weight"))?;
-        let (attn_v, attn_v_meta) = load_weight(&p("attn_v.weight"))?;
-        let (attn_o, attn_o_meta) = load_weight(&p("attn_output.weight"))?;
-        let (ffn_gate, ffn_gate_meta) = load_weight(&p("ffn_gate.weight"))?;
-        let (ffn_up, ffn_up_meta) = load_weight(&p("ffn_up.weight"))?;
-        let (ffn_down, ffn_down_meta) = load_weight(&p("ffn_down.weight"))?;
+        let (attn_q, attn_q_meta) = load_weight(&config.tensor_registry.resolve(TensorName::AttnQ, layer))?;
+        let (attn_k, attn_k_meta) = load_weight(&config.tensor_registry.resolve(TensorName::AttnK, layer))?;
+        let (attn_v, attn_v_meta) = load_weight(&config.tensor_registry.resolve(TensorName::AttnV, layer))?;
+        let (attn_o, attn_o_meta) = load_weight(&config.tensor_registry.resolve(TensorName::AttnOutput, layer))?;
+        let (ffn_gate, ffn_gate_meta) = load_weight(&config.tensor_registry.resolve(TensorName::FfnGate, layer))?;
+        let (ffn_up, ffn_up_meta) = load_weight(&config.tensor_registry.resolve(TensorName::FfnUp, layer))?;
+        let (ffn_down, ffn_down_meta) = load_weight(&config.tensor_registry.resolve(TensorName::FfnDown, layer))?;
 
         let weight_type = attn_q_meta.wtype; // Legacy: use attn_q type as general type
 
         Ok(Self {
-            attn_norm: copy_f32(file, &p("attn_norm.weight"))?,
+            attn_norm: copy_f32(file, &config.tensor_registry.resolve(TensorName::AttnNorm, layer))?,
             attn_q,
             attn_q_meta,
-            attn_q_bias: optional_f32(copy_tensor_optional(file, &p("attn_q.bias"))?),
+            attn_q_bias: match config.tensor_registry.resolve_optional(TensorName::AttnQBias, layer) {
+                Some(name) => optional_f32(copy_tensor_optional(file, &name)?),
+                None => None,
+            },
             attn_k,
             attn_k_meta,
-            attn_k_bias: optional_f32(copy_tensor_optional(file, &p("attn_k.bias"))?),
+            attn_k_bias: match config.tensor_registry.resolve_optional(TensorName::AttnKBias, layer) {
+                Some(name) => optional_f32(copy_tensor_optional(file, &name)?),
+                None => None,
+            },
             attn_v,
             attn_v_meta,
-            attn_v_bias: optional_f32(copy_tensor_optional(file, &p("attn_v.bias"))?),
+            attn_v_bias: match config.tensor_registry.resolve_optional(TensorName::AttnVBias, layer) {
+                Some(name) => optional_f32(copy_tensor_optional(file, &name)?),
+                None => None,
+            },
             attn_o,
             attn_o_meta,
-            ffn_norm: copy_f32(file, &p("ffn_norm.weight"))?,
+            ffn_norm: copy_f32(file, &config.tensor_registry.resolve(TensorName::FfnNorm, layer))?,
             ffn_gate,
             ffn_gate_meta,
             ffn_up,
@@ -248,19 +255,23 @@ impl CpuModelWeights {
         let n = config.num_layers;
 
         // Load embedding weights with metadata
-        let token_emb_desc = file.tensor("token_embd.weight")
+        let token_emb_name = config.tensor_registry.resolve(TensorName::TokenEmb, 0);
+        let token_emb_desc = file.tensor(&token_emb_name)
             .map_err(WeightError::Load)?
-            .ok_or_else(|| WeightError::TensorNotFound("token_embd.weight".to_string()))?;
-        let (token_emb, token_emb_meta) = copy_tensor_with_meta(file, "token_embd.weight", false)?;
-        let output_norm = copy_f32(file, "output_norm.weight")?;
+            .ok_or_else(|| WeightError::TensorNotFound(token_emb_name.clone()))?;
+        let (token_emb, token_emb_meta) = copy_tensor_with_meta(file, &token_emb_name, false)?;
 
-        // LM head: use output.weight if present, otherwise tie to embeddings
-        let (lm_head, lm_head_meta, lm_head_tied) = if file.has_tensor("output.weight") {
-            let lm_view = file.tensor("output.weight")
+        let output_norm_name = config.tensor_registry.resolve(TensorName::OutputNorm, 0);
+        let output_norm = copy_f32(file, &output_norm_name)?;
+
+        // LM head: use lm_head.weight if present, otherwise tie to embeddings
+        let lm_head_name = config.tensor_registry.resolve(TensorName::LmHead, 0);
+        let (lm_head, lm_head_meta, lm_head_tied) = if file.has_tensor(&lm_head_name) {
+            let lm_view = file.tensor(&lm_head_name)
                 .map_err(WeightError::Load)?
-                .ok_or_else(|| WeightError::TensorNotFound("output.weight".to_string()))?;
-            let needs_transpose = compute_transpose_flag("output.weight", &lm_view.dims, lm_view.ggml_type, config, true, false);
-            let data = copy_tensor(file, "output.weight")?;
+                .ok_or_else(|| WeightError::TensorNotFound(lm_head_name.clone()))?;
+            let needs_transpose = compute_transpose_flag(&lm_head_name, &lm_view.dims, lm_view.ggml_type, config, true, false);
+            let data = copy_tensor(file, &lm_head_name)?;
             let meta = WeightMeta {
                 wtype: lm_view.ggml_type,
                 dims: lm_view.dims.to_vec(),
