@@ -193,6 +193,9 @@ enum hipMemcpyKind {
     hipMemcpyDeviceToDevice = 3,
 }
 
+/// Opaque HIP stream type
+pub enum hipStream_t {}
+
 extern "C" {
     fn hipGetDeviceCount(count: *mut i32) -> hipError_t;
     fn hipGetDeviceProperties(props: *mut hipDeviceProp_t, device: i32) -> hipError_t;
@@ -207,6 +210,9 @@ extern "C" {
     fn hipGetErrorString(error: hipError_t) -> *const c_char;
     fn hipMemGetInfo(free: *mut usize, total: *mut usize) -> hipError_t;
     fn hipGetDriverVersion(driverVersion: *mut c_int) -> hipError_t;
+    fn hipStreamCreate(stream: *mut hipStream_t) -> hipError_t;
+    fn hipStreamDestroy(stream: hipStream_t) -> hipError_t;
+    fn hipStreamSynchronize(stream: hipStream_t) -> hipError_t;
 }
 
 // ── Public Types ───────────────────────────────────────────────────────────────────
