@@ -49,7 +49,7 @@ pub use error::{GpuError, GpuResult};
 pub use detect::GpuCapabilities;
 pub use device::GpuDevice;
 pub use weights::{WeightMeta, GpuBuffer, GpuLayerWeights, GpuModelWeights};
-pub use kernels::{kv_write, kv_write_batched, rms_norm, rms_norm_batched, rope, rope_batched, add, mul, scale, gelu, silu, add_batched, mul_batched, zero_fill, flash_attn_decode, flash_attn_prefill};
+pub use kernels::{kv_write, kv_write_batched, rms_norm, rms_norm_batched, rope, rope_batched, add, mul, scale, gelu, silu, add_batched, mul_batched, zero_fill, flash_attn_decode, flash_attn_prefill, quantize_q4_k, dequantize_q4_k, dequantize_q4_k_batched, verify_q4_k_accuracy, finalize_q4_k_metrics};
 pub use cache::{GpuKvCache, GpuForwardScratch};
 pub use dynamic_loader::{DynamicLibrary, library_info, LibraryInfo};
 pub use arch::GpuArchitecture;
