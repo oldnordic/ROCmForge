@@ -9,6 +9,16 @@ pub const K_SCALE_SIZE: usize = 12;
 /// Total bytes per Q4_K block
 pub const Q4_K_BLOCK_SIZE: usize = 128 + 12 + 4; // qs + scales + d/dmin
 
+// Q8_0 constants (from llama.cpp)
+/// Number of elements per Q8_0 block
+pub const QK8_0: usize = 32;
+
+/// Total bytes per Q8_0 block
+pub const Q8_0_BLOCK_SIZE: usize = 34; // 2 (scale) + 32 (data)
+
+/// Maximum quantized value for Q8_0
+pub const Q8_0_MAX: f32 = 127.0;
+
 /// Rust-owned Q4_K block
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(C)]
@@ -26,6 +36,23 @@ impl Default for Q4KBlock {
             dmin: half::f16::from_f32(0.0),
             scales: [0; 12],
             qs: [0; 128],
+        }
+    }
+}
+
+/// Rust-owned Q8_0 block
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
+pub struct Q8_0Block {
+    pub d: half::f16,        // scale (2 bytes)
+    pub qs: [i8; 32],       // quantized values (32 bytes)
+}
+
+impl Default for Q8_0Block {
+    fn default() -> Self {
+        Self {
+            d: half::f16::from_f32(1.0),
+            qs: [0; 32],
         }
     }
 }

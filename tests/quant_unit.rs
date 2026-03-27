@@ -372,3 +372,30 @@ fn test_q4_k_block_default() {
     assert_eq!(block.scales.len(), 12);
     assert_eq!(block.qs.len(), 128);
 }
+
+/// Test Q8_0 constants
+#[test]
+#[serial]
+fn test_q8_0_constants() {
+    use rocmforge::gpu::quant::{QK8_0, Q8_0_BLOCK_SIZE, Q8_0_MAX};
+    assert_eq!(QK8_0, 32, "QK8_0 must be 32 for Q8_0 format");
+    assert_eq!(Q8_0_BLOCK_SIZE, 34, "Q8_0_BLOCK_SIZE must be 34 bytes");
+    assert_eq!(Q8_0_MAX, 127.0, "Q8_0_MAX must be 127.0");
+}
+
+/// Test Q8_0Block struct size
+#[test]
+#[serial]
+fn test_q8_0_block_struct_size() {
+    use rocmforge::gpu::quant::Q8_0Block;
+    assert_eq!(std::mem::size_of::<Q8_0Block>(), 34, "Q8_0Block must be 34 bytes");
+}
+
+/// Test Q8_0Block default
+#[test]
+#[serial]
+fn test_q8_0_block_default() {
+    use rocmforge::gpu::quant::Q8_0Block;
+    let block = Q8_0Block::default();
+    assert_eq!(block.qs.len(), 32, "Default qs array must have 32 elements");
+}
