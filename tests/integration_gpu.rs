@@ -3,6 +3,7 @@
 //! GPU integration tests with safety infrastructure.
 
 mod common;
+mod gpu_test_utils;
 
 // Note: require_gpu! and require_vram! macros are exported at crate root
 // via #[macro_export] in common/mod.rs
