@@ -191,43 +191,212 @@ impl Default for Q8_0Block {
 
 ```rust
 /// Quantize f32 data to Q8_0 format
+///
+/// # Arguments
+/// * `input` - GPU pointer to f32 input data [n]
+/// * `output` - GPU pointer to Q8_0 output data [n/32 * 34]
+/// * `n` - Total number of elements
+///
+/// # Returns
+/// Ok(()) on success, Err if kernel launch fails
+///
+/// # Safety
+/// - All memory pointers must be valid GPU pointers
+/// - Bounds are validated on CPU before kernel launch
 pub fn quantize_q8_0(
     input: *const f32,
     output: *mut u8,
     n: usize,
-) -> GpuResult<()>;
+) -> GpuResult<()> {
+    if n == 0 {
+        return Ok(());
+    }
+
+    let num_blocks = (n + 31) / 32;
+    if num_blocks == 0 {
+        return Ok(());
+    }
+
+    let result = unsafe {
+        quantize_q8_0_kernel(input, output, n as c_int)
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("quantize_q8_0 kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
 
 /// Dequantize Q8_0 data to f32
+///
+/// # Arguments
+/// * `input` - GPU pointer to Q8_0 input data [n/32 * 34]
+/// * `output` - GPU pointer to f32 output data [n]
+/// * `n` - Total number of elements
+///
+/// # Returns
+/// Ok(()) on success, Err if kernel launch fails
+///
+/// # Safety
+/// - All memory pointers must be valid GPU pointers
+/// - Bounds are validated on CPU before kernel launch
 pub fn dequantize_q8_0(
     input: *const u8,
     output: *mut f32,
     n: usize,
-) -> GpuResult<()>;
+) -> GpuResult<()> {
+    if n == 0 {
+        return Ok(());
+    }
 
-/// Batched dequantize Q8_0 data
+    let num_blocks = (n + 31) / 32;
+    if num_blocks == 0 {
+        return Ok(());
+    }
+
+    let result = unsafe {
+        dequantize_q8_0_kernel(input, output, n as c_int)
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("dequantize_q8_0 kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+/// Batched dequantize Q8_0 data to f32
+///
+/// # Arguments
+/// * `input` - GPU pointer to Q8_0 input data [batch_size][n/32 * 34]
+/// * `output` - GPU pointer to f32 output data [batch_size][n]
+/// * `n` - Elements per batch
+/// * `batch_size` - Number of batches
+///
+/// # Returns
+/// Ok(()) on success, Err if kernel launch fails
+///
+/// # Safety
+/// - All memory pointers must be valid GPU pointers
+/// - Bounds are validated on CPU before kernel launch
 pub fn dequantize_q8_0_batched(
     input: *const u8,
     output: *mut f32,
     n: usize,
     batch_size: usize,
-) -> GpuResult<()>;
+) -> GpuResult<()> {
+    if n == 0 || batch_size == 0 {
+        return Ok(());
+    }
+
+    let num_blocks = (n + 31) / 32;
+    if num_blocks == 0 {
+        return Ok(());
+    }
+
+    let result = unsafe {
+        dequantize_q8_0_batched_kernel(input, output, n as c_int, batch_size as c_int)
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("dequantize_q8_0_batched kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
 
 /// Verify Q8_0 accuracy
+///
+/// # Arguments
+/// * `original` - GPU pointer to original f32 data [n]
+/// * `quantized` - GPU pointer to Q8_0 quantized data [n/32 * 34]
+/// * `errors` - GPU pointer to error metrics [4]
+/// * `n` - Total number of elements
+///
+/// # Returns
+/// Ok(()) on success, Err if kernel launch fails
+///
+/// # Safety
+/// - All memory pointers must be valid GPU pointers
+/// - Bounds are validated on CPU before kernel launch
 pub fn verify_q8_0_accuracy(
     original: *const f32,
     quantized: *const u8,
     errors: *mut f32,
     n: usize,
-) -> GpuResult<(f32, f32, f32)>;
+) -> GpuResult<()> {
+    if n == 0 {
+        return Ok(());
+    }
+
+    let num_blocks = (n + 31) / 32;
+    if num_blocks == 0 {
+        return Ok(());
+    }
+
+    let result = unsafe {
+        verify_q8_0_accuracy_kernel(original, quantized, errors, n as c_int)
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("verify_q8_0_accuracy kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
 
 /// Finalize Q8_0 accuracy metrics
+///
+/// # Arguments
+/// * `errors` - GPU pointer to intermediate error metrics [4]
+/// * `metrics` - GPU pointer to final metrics [3]
+/// * `n` - Total number of elements
+///
+/// # Returns
+/// Ok(()) on success, Err if kernel launch fails
+///
+/// # Safety
+/// - All memory pointers must be valid GPU pointers
+/// - Bounds are validated on CPU before kernel launch
 pub fn finalize_q8_0_metrics(
     errors: *const f32,
     metrics: *mut f32,
     n: usize,
-) -> GpuResult<()>;
+) -> GpuResult<()> {
+    if n == 0 {
+        return Ok(());
+    }
 
-// FFI declarations - complete signatures matching Q4_K pattern
+    let result = unsafe {
+        finalize_q8_0_metrics_kernel(errors, metrics, n as c_int)
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("finalize_q8_0_metrics kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+// ── FFI Declarations ─────────────────────────────────────────────────────────────
+
+/// FFI declarations - will be linked from compiled HIP kernels
 unsafe extern "C" {
     fn quantize_q8_0_kernel(
         input: *const f32,
@@ -429,7 +598,7 @@ impl GpuQuant {
 }
 ```
 
-### 5. Build System Integration
+### 6. Build System Integration
 
 **File:** `build.rs` (extend existing)
 
@@ -448,7 +617,7 @@ let libs_to_copy = vec![
 ];
 ```
 
-### 5. CMake Build Integration
+### 7. CMake Build Integration
 
 **File:** `hip_kernels/quant/CMakeLists.txt` (extend existing)
 
@@ -474,7 +643,7 @@ add_library(q8_0_dequantize STATIC ...)
 # ... similar pattern for other kernels
 ```
 
-### 6. Module Exports
+### 8. Module Exports
 
 **File:** `src/gpu/mod.rs` (extend existing)
 
@@ -510,8 +679,15 @@ fn test_q8_0_quantization() {
 
 Reuse Q4_K's 256-element test for consistency:
 - 256 f32 values → 8 Q8_0 blocks (8 × 34 = 272 bytes)
-- Same tolerance-based verification
-- Same error metrics computation
+- Tolerance: 0.01 max error for 8-bit (vs 0.5 for 4-bit Q4_K)
+- Same error metrics computation (max error, MSE, relative error)
+
+### Expected Test Results
+
+For typical random data in [-1, 1] range:
+- Max error: < 0.01 (8-bit precision)
+- MSE: < 0.0001
+- Relative error: < 1% for values > 0.01
 
 ## Kernel Implementation Details
 
@@ -546,7 +722,7 @@ __global__ void quantize_q8_0_kernel(
     float max_val = abs_val;
     #pragma unroll
     for (int offset = 16; offset > 0; offset >>= 1) {
-        max_val = fmaxf(max_val, __shfl_down_sync(0xFFFFFFFF, max_val, offset));
+        max_val = fmaxf(max_val, __shfl_down(max_val, offset));
     }
 
     // Compute scale (thread 0 only)
