@@ -20,5 +20,12 @@ pub use quant::{
     dequantize_q4_k,
     dequantize_q4_k_batched,
     verify_q4_k_accuracy,
-    finalize_q4_k_metrics
+    finalize_q4_k_metrics,
+    quantize_q8_0,
+    dequantize_q8_0,
+    dequantize_q8_0_batched,
+    verify_q8_0_accuracy,
+    finalize_q8_0_metrics,
+    gemv_q8_0_f32,
+    gemv_q4_k_f32,
 };
