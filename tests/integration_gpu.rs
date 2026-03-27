@@ -908,3 +908,70 @@ fn test_kv_write_batched_kernel_correctness() {
         assert_close(v_written, v_expected, 1e-5);
     }
 }
+
+// ============================================================================
+// Flash Attention Decode Correctness Test
+// ============================================================================
+
+#[test]
+#[serial]
+fn test_flash_attn_decode_kernel_correctness() {
+    require_gpu!();
+    require_vram!(4);
+
+    use rocmforge::gpu::{GpuBuffer, flash_attn_decode};
+    use gpu_test_utils::assert_close;
+
+    let seq_len = 16;  // Number of cached positions
+    let head_dim = 128;
+    let scale = (1.0 / (head_dim as f32).sqrt()) as f32;
+
+    // Query for single token
+    let q: Vec<f32> = (0..head_dim).map(|i| if i == 0 { 1.0 } else { 0.0 }).collect();
+
+    // Cached K/V (simple pattern: k[0] = 1, others = 0 for each position)
+    let mut k_cache = vec![0.0f32; seq_len * head_dim];
+    let mut v_cache = vec![0.0f32; seq_len * head_dim];
+    for pos in 0..seq_len {
+        k_cache[pos * head_dim] = 1.0;      // First dimension matches
+        v_cache[pos * head_dim] = pos as f32; // Value = position
+    }
+
+    // Expected output: attention-weighted sum of V
+    // With this pattern, score should be equal for all positions (q·k = 1)
+    // So weights should be uniform, output = average of positions
+    let mut expected = vec![0.0f32; head_dim];
+    expected[0] = (0..seq_len).map(|i| i as f32).sum::<f32>() / seq_len as f32;
+
+    let mut gpu_q = GpuBuffer::alloc(head_dim * 4).unwrap();
+    let mut gpu_k_cache = GpuBuffer::alloc(seq_len * head_dim * 4).unwrap();
+    let mut gpu_v_cache = GpuBuffer::alloc(seq_len * head_dim * 4).unwrap();
+    let mut gpu_out = GpuBuffer::alloc(head_dim * 4).unwrap();
+
+    gpu_q.copy_from_host(unsafe { std::slice::from_raw_parts(q.as_ptr() as *const u8, head_dim * 4) }).unwrap();
+    gpu_k_cache.copy_from_host(unsafe { std::slice::from_raw_parts(
+        k_cache.as_ptr() as *const u8, seq_len * head_dim * 4
+    ) }).unwrap();
+    gpu_v_cache.copy_from_host(unsafe { std::slice::from_raw_parts(
+        v_cache.as_ptr() as *const u8, seq_len * head_dim * 4
+    ) }).unwrap();
+
+    // Run flash attention decode (from hip_kernels/attention.hip:77)
+    flash_attn_decode(
+        gpu_out.as_ptr() as *mut f32,
+        gpu_q.as_ptr() as *const f32,
+        gpu_k_cache.as_ptr() as *const f32,
+        gpu_v_cache.as_ptr() as *const f32,
+        seq_len,
+        head_dim,
+        scale,
+    ).expect("GPU flash_attn_decode kernel should succeed");
+
+    let mut result = vec![0u8; head_dim * 4];
+    gpu_out.copy_to_host(&mut result).unwrap();
+    let gpu_out_f32: &[f32] = unsafe { std::slice::from_raw_parts(result.as_ptr() as *const f32, head_dim) };
+
+    // Flash attention uses online softmax which can have numerical differences
+    // Use higher tolerance for the complex reduction
+    assert_close(&expected, gpu_out_f32, 1e-2); // 1% tolerance
+}
