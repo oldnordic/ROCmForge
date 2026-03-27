@@ -47,6 +47,8 @@ impl GpuDevice {
             max_clock_mhz: info.max_clock_mhz,
             hip_driver_version: 0,
             device_id: self.device_id,
+            architecture: super::arch::GpuArchitecture::from_name(&info.arch_name)
+                .unwrap_or(super::arch::GpuArchitecture::Unknown(0)),
         })
     }
 
