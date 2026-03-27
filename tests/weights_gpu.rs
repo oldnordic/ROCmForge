@@ -9,6 +9,7 @@ use rocmforge::gpu::{GpuLayerWeights, GpuModelWeights, WeightMeta, GpuBuffer};
 use rocmforge::config::ModelConfig;
 
 fn make_test_config() -> ModelConfig {
+    use rocmforge::config::{TensorNamingScheme, TensorNameRegistry};
     ModelConfig {
         num_layers: 2,
         num_kv_heads: 4,
@@ -24,6 +25,7 @@ fn make_test_config() -> ModelConfig {
         use_attention_bias: false,
         attention_layout: rocmforge::config::AttentionLayout::SplitQkv,
         architecture: "test".to_string(),
+        tensor_registry: TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf),
     }
 }
 

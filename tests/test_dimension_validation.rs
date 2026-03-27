@@ -55,7 +55,7 @@ fn test_dispatch_gemv_rejects_misaligned_dimensions() {
         needs_transpose: false,
     };
 
-    let result = dispatch_gemv(&w, &meta, &x, &mut y, 100, 33);
+    let result = dispatch_gemv(&w, &meta, &x, &mut y, 100, 33, None);
     assert!(result.is_err());
     if let Err(e) = result {
         let error_msg = format!("{:?}", e);
@@ -98,6 +98,6 @@ fn test_dispatch_gemv_accepts_aligned_dimensions() {
     };
 
     // Should not panic
-    let result = dispatch_gemv(&w, &meta, &x, &mut y, 100, 32);
+    let result = dispatch_gemv(&w, &meta, &x, &mut y, 100, 32, None);
     assert!(result.is_ok());
 }
