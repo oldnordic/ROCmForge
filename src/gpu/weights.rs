@@ -350,3 +350,103 @@ impl GpuLayerWeights {
         })
     }
 }
+
+// ── GPU Model Weights ─────────────────────────────────────────────────────────────
+
+/// All weights for a transformer model, stored in VRAM.
+///
+/// Holds token embeddings, all layer weights, output norm, and LM head.
+pub struct GpuModelWeights {
+    /// Per-layer weights (all in VRAM)
+    pub layers: Vec<GpuLayerWeights>,
+    /// Token embedding matrix (quantized, in VRAM)
+    pub token_emb: GpuBuffer,
+    pub token_emb_meta: WeightMeta,
+    /// Final RMS norm weights (F32, in VRAM)
+    pub output_norm: GpuBuffer,
+    /// Language model head / output projection (quantized, in VRAM)
+    pub lm_head: GpuBuffer,
+    pub lm_head_meta: WeightMeta,
+    /// Whether LM head is tied to token embeddings
+    pub lm_head_tied: bool,
+}
+
+impl GpuModelWeights {
+    /// Load all weights from GGUF file into GPU memory.
+    ///
+    /// Returns error if any allocation or transfer fails.
+    /// On error, all allocated memory is freed via Drop.
+    pub fn load(file: &GgufFile, config: &ModelConfig) -> GpuResult<Self> {
+        let n = config.num_layers;
+
+        // Helper to load tensor into GPU buffer
+        let load_tensor = |name: &str| -> GpuResult<(GpuBuffer, WeightMeta)> {
+            let t = file.tensor(name)
+                .map_err(|e| GpuError::WeightTransferFailed { layer: 0 })?
+                .ok_or_else(|| GpuError::WeightTransferFailed { layer: 0 })?;
+
+            let data = t.data;
+            let size = data.len();
+            let meta = WeightMeta {
+                wtype: t.ggml_type,
+                dims: t.dims.to_vec(),
+                needs_transpose: false,
+            };
+
+            let mut buf = GpuBuffer::alloc(size)?;
+            buf.copy_from_host(data)?;
+
+            Ok((buf, meta))
+        };
+
+        // Load token embeddings
+        let (token_emb, token_emb_meta) = load_tensor("token_embd.weight")?;
+
+        // Load output norm
+        let output_norm_view = file.tensor("output_norm.weight")
+            .map_err(|_| GpuError::WeightTransferFailed { layer: 0 })?
+            .ok_or_else(|| GpuError::WeightTransferFailed { layer: 0 })?;
+
+        let mut output_norm = GpuBuffer::alloc(output_norm_view.data.len())?;
+        output_norm.copy_from_host(output_norm_view.data)?;
+
+        // LM head: use output.weight if present, otherwise tie to embeddings
+        let (lm_head, lm_head_meta, lm_head_tied) = if file.has_tensor("output.weight") {
+            let (buf, mut meta) = load_tensor("output.weight")?;
+            meta.needs_transpose = true; // LM head needs transpose
+            (buf, meta, false)
+        } else {
+            // Weight tying: share embedding weights
+            // For now, create empty buffer - actual sharing would need different design
+            let tied_meta = WeightMeta {
+                wtype: token_emb_meta.wtype,
+                dims: token_emb_meta.dims.clone(),
+                needs_transpose: true,
+            };
+            (GpuBuffer::empty(), tied_meta, true)
+        };
+
+        // Load all layers
+        let mut layers = Vec::with_capacity(n);
+        for i in 0..n {
+            eprintln!("[GPU weights] Loading layer {}/{}", i + 1, n);
+            let layer = GpuLayerWeights::load(file, i, config)?;
+            layers.push(layer);
+        }
+
+        Ok(Self {
+            layers,
+            token_emb,
+            token_emb_meta,
+            output_norm,
+            lm_head,
+            lm_head_meta,
+            lm_head_tied,
+        })
+    }
+
+    /// Get weights for a specific layer.
+    pub fn layer(&self, i: usize) -> &GpuLayerWeights {
+        &self.layers[i]
+    }
+}
