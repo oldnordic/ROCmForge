@@ -12,3 +12,9 @@ target/
 *.magellan.db
 *.magellan.db-shm
 *.magellan.db-wal
+
+# Planning and development documents
+PERFORMANCE.md
+PLAN.md
+docs/superpowers/
+DOCS/

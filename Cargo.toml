@@ -19,6 +19,8 @@ rayon = "1"
 sysinfo = "0.38"
 # FFI
 libc = "0.2"
+# Compile HIP kernels
+cc = "1.0"
 
 [features]
 default = []
