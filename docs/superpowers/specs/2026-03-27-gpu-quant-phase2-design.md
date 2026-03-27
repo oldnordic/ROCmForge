@@ -13,6 +13,40 @@ Implement GPU-accelerated Q4_K quantization with complete end-to-end pipeline:
 
 **Scope:** Focus on Q4_K first. Q8_0 will be added in a later phase after Q4_K is validated.
 
+## Q4_K Format Overview
+
+Q4_K is a 4-bit quantization format that stores 256 f32 values in 144 bytes (effective 4.5 bits per weight).
+
+**Block Structure (from llama.cpp):**
+```
+Total: 144 bytes for 256 f32 values
+├── d (f16): 2 bytes        - Global scale for all 256 elements
+├── dmin (f16): 2 bytes     - Global minimum scale
+├── scales[12]: 12 bytes    - Quantized scales for 8 sub-blocks (packed 6-bit)
+└── qs[128]: 128 bytes      - 4-bit quantized values (256 elements / 2 per byte)
+```
+
+**Super-block Organization:**
+- 256 elements divided into 8 sub-blocks of 32 elements each
+- `d` and `dmin` provide global scaling
+- `scales[12]` contains per-subblock scales and mins (quantized to 6 bits)
+- Each value in `qs` stores 2 elements (4 bits each)
+
+**Quantization Formula:**
+```
+For each element x in sub-block i:
+    scale_i = dequantize_scale(scales[i])  // 6-bit → float
+    q = round(x / (d * scale_i))
+    clamp q to [-8, 7]  // 4-bit signed range
+```
+
+**Dequantization Formula:**
+```
+For each quantized value q:
+    scale_i = dequantize_scale(scales[i])
+    x = q * d * scale_i
+```
+
 ## Architecture
 
 ### High-Level Data Flow
@@ -135,11 +169,10 @@ extern "C" hipError_t hip_verify_q4_k(
 // Q4_K block structure (matches HIP layout)
 #[repr(C)]
 pub struct GpuQ4KBlock {
-    pub d: f16,              // delta/scale
-    pub dmin: f16,           // minimum scale
-    pub scales: [u8; 12],    // quantized scales (K_SCALE_SIZE)
-    pub qs: [u8; 128],       // quants, low 4 bits (QK_K/2)
-    pub qh: [u8; 32],        // quants, high bit (QK_K/8)
+    pub d: f16,              // delta/scale (2 bytes)
+    pub dmin: f16,           // minimum scale (2 bytes)
+    pub scales: [u8; 12],    // quantized scales (K_SCALE_SIZE = 12 bytes)
+    pub qs: [u8; 128],       // quants, 4-bit values (QK_K/2 = 128 bytes)
 }
 
 // FFI declarations
@@ -225,17 +258,16 @@ use super::super::ffi::GpuQ4KBlock;
 // Quantization constants (from llama.cpp)
 pub const QK_K: usize = 256;           // Elements per block
 pub const K_SCALE_SIZE: usize = 12;    // Scales array size
-pub const Q4_K_BLOCK_SIZE: usize = 128 + 32 + 12 + 4; // Total bytes
+pub const Q4_K_BLOCK_SIZE: usize = 128 + 12 + 4; // Total bytes (qs + scales + d/dmin)
 
 /// Rust-owned Q4_K block (can be stored on CPU or GPU)
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct Q4KBlock {
-    pub d: f16,              // delta/scale
-    pub dmin: f16,           // minimum scale
-    pub scales: [u8; 12],    // quantized scales
-    pub qs: [u8; 128],       // quants, low 4 bits
-    pub qh: [u8; 32],        // quants, high bit
+    pub d: f16,              // delta/scale (2 bytes)
+    pub dmin: f16,           // minimum scale (2 bytes)
+    pub scales: [u8; 12],    // quantized scales (12 bytes)
+    pub qs: [u8; 128],       // quants, 4-bit values (128 bytes)
 }
 
 impl From<GpuQ4KBlock> for Q4KBlock {
@@ -351,7 +383,7 @@ pub fn quantize_q4_k(&self, weights: &[f32]) -> GpuResult<Vec<GpuQ4KBlock>> {
 fn test_q4_k_constants() {
     assert_eq!(QK_K, 256);
     assert_eq!(K_SCALE_SIZE, 12);
-    assert_eq!(Q4_K_BLOCK_SIZE, 176); // 128 + 32 + 12 + 4
+    assert_eq!(Q4_K_BLOCK_SIZE, 144); // 128 + 12 + 4
 }
 
 #[test]
@@ -428,6 +460,15 @@ fn test_q4_k_vram_no_leak() {
 
 **Modified files:**
 - `hip_kernels/quant/CMakeLists.txt` - Add new kernels to build
+  ```cmake
+  # Add Q4_K kernels to existing test_quant library
+  set(QUANT_SOURCES
+      test_kernel.hip
+      q4_k_quantize.hip    # NEW
+      q4_k_dequantize.hip  # NEW
+      q4_k_verify.hip      # NEW
+  )
+  ```
 - `src/gpu/ffi.rs` - Add FFI declarations and GpuQ4KBlock struct
 - `src/gpu/mod.rs` - Export `quant` module
 - `tests/quant_unit.rs` - Add Q4_K unit tests
@@ -436,7 +477,7 @@ fn test_q4_k_vram_no_leak() {
 **Constants:**
 - `QK_K = 256` (from llama.cpp)
 - `K_SCALE_SIZE = 12`
-- `Q4_K_BLOCK_SIZE = 176` bytes
+- `Q4_K_BLOCK_SIZE = 144` bytes
 
 ## Dependencies
 
