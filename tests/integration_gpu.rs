@@ -341,3 +341,185 @@ fn test_library_info_returns_none_before_load() {
     let info = rocmforge::gpu::library_info();
     assert!(info.is_none(), "library_info should be None before any kernel is loaded");
 }
+
+// ============================================================================
+// CPU Reference Implementations (for correctness testing)
+// ============================================================================
+
+fn cpu_add(x: &[f32], y: &[f32], out: &mut [f32]) {
+    for i in 0..x.len() {
+        out[i] = x[i] + y[i];
+    }
+}
+
+fn cpu_mul(x: &[f32], y: &[f32], out: &mut [f32]) {
+    for i in 0..x.len() {
+        out[i] = x[i] * y[i];
+    }
+}
+
+fn cpu_scale(x: &[f32], scale: f32, out: &mut [f32]) {
+    for i in 0..x.len() {
+        out[i] = x[i] * scale;
+    }
+}
+
+fn cpu_gelu(x: &[f32], out: &mut [f32]) {
+    // gelu(x) = 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
+    const SQRT_2_OVER_PI: f32 = 0.7978845608028654f32;
+    for i in 0..x.len() {
+        let val = x[i];
+        let cube = val * val * val;
+        let tanh_arg = SQRT_2_OVER_PI * (val + 0.044715 * cube);
+        out[i] = 0.5 * val * (1.0 + tanh_arg.tanh());
+    }
+}
+
+fn cpu_silu(x: &[f32], out: &mut [f32]) {
+    for i in 0..x.len() {
+        out[i] = x[i] / (1.0 + (-x[i]).exp());
+    }
+}
+
+// ============================================================================
+// Elementwise Kernel Correctness Tests
+// ============================================================================
+
+#[test]
+#[serial]
+fn test_add_kernel_correctness() {
+    require_gpu!();
+    require_vram!(4);
+
+    use rocmforge::gpu::{GpuBuffer, add};
+    use gpu_test_utils::{assert_close, linspace_1_to_n};
+
+    let n = 1024;
+
+    // Prepare test data
+    let x = linspace_1_to_n(n);
+    let y: Vec<f32> = (1..=n).map(|i| 10.0 * i as f32).collect();
+    let mut cpu_out = vec![0.0f32; n];
+
+    // Run CPU reference
+    cpu_add(&x, &y, &mut cpu_out);
+
+    // Allocate GPU buffers
+    let mut gpu_x = GpuBuffer::alloc(n * 4).unwrap();
+    let mut gpu_y = GpuBuffer::alloc(n * 4).unwrap();
+    let mut gpu_out = GpuBuffer::alloc(n * 4).unwrap();
+
+    // Copy to GPU
+    gpu_x.copy_from_host(unsafe { std::slice::from_raw_parts(x.as_ptr() as *const u8, n * 4) }).unwrap();
+    gpu_y.copy_from_host(unsafe { std::slice::from_raw_parts(y.as_ptr() as *const u8, n * 4) }).unwrap();
+
+    // Run GPU kernel
+    add(
+        gpu_x.as_ptr() as *const f32,
+        gpu_y.as_ptr() as *const f32,
+        gpu_out.as_ptr() as *mut f32,
+        n,
+    ).expect("GPU add kernel should succeed");
+
+    // Copy result back
+    let mut gpu_result = vec![0u8; n * 4];
+    gpu_out.copy_to_host(&mut gpu_result).unwrap();
+    let gpu_out_slice: &[f32] = unsafe { std::slice::from_raw_parts(gpu_result.as_ptr() as *const f32, n) };
+
+    // Compare
+    assert_close(&cpu_out, gpu_out_slice, gpu_test_utils::F32_TOLERANCE);
+}
+
+#[test]
+#[serial]
+fn test_mul_kernel_correctness() {
+    require_gpu!();
+    require_vram!(4);
+
+    use rocmforge::gpu::{GpuBuffer, mul};
+    use gpu_test_utils::assert_close;
+
+    let n = 1024;
+    let x: Vec<f32> = (1..=n).map(|i| i as f32).collect();
+    let y: Vec<f32> = (1..=n).map(|i| 0.5 * i as f32).collect();
+    let mut cpu_out = vec![0.0f32; n];
+
+    cpu_mul(&x, &y, &mut cpu_out);
+
+    let mut gpu_x = GpuBuffer::alloc(n * 4).unwrap();
+    let mut gpu_y = GpuBuffer::alloc(n * 4).unwrap();
+    let mut gpu_out = GpuBuffer::alloc(n * 4).unwrap();
+
+    gpu_x.copy_from_host(unsafe { std::slice::from_raw_parts(x.as_ptr() as *const u8, n * 4) }).unwrap();
+    gpu_y.copy_from_host(unsafe { std::slice::from_raw_parts(y.as_ptr() as *const u8, n * 4) }).unwrap();
+
+    mul(gpu_x.as_ptr() as *const f32, gpu_y.as_ptr() as *const f32, gpu_out.as_ptr() as *mut f32, n)
+        .expect("GPU mul kernel should succeed");
+
+    let mut gpu_result = vec![0u8; n * 4];
+    gpu_out.copy_to_host(&mut gpu_result).unwrap();
+    let gpu_out_f32: &[f32] = unsafe { std::slice::from_raw_parts(gpu_result.as_ptr() as *const f32, n) };
+
+    assert_close(&cpu_out, gpu_out_f32, gpu_test_utils::F32_TOLERANCE);
+}
+
+#[test]
+#[serial]
+fn test_gelu_kernel_correctness() {
+    require_gpu!();
+    require_vram!(4);
+
+    use rocmforge::gpu::{GpuBuffer, gelu};
+    use gpu_test_utils::assert_close;
+
+    let n = 1024;
+    // Test with various input values including negative, zero, positive
+    let x: Vec<f32> = (-5..=5).map(|i| i as f32 * 0.5).cycle().take(n).collect();
+    let mut cpu_out = vec![0.0f32; n];
+
+    cpu_gelu(&x, &mut cpu_out);
+
+    let mut gpu_x = GpuBuffer::alloc(n * 4).unwrap();
+    let mut gpu_out = GpuBuffer::alloc(n * 4).unwrap();
+
+    gpu_x.copy_from_host(unsafe { std::slice::from_raw_parts(x.as_ptr() as *const u8, n * 4) }).unwrap();
+
+    gelu(gpu_x.as_ptr() as *const f32, gpu_out.as_ptr() as *mut f32, n)
+        .expect("GPU gelu kernel should succeed");
+
+    let mut gpu_result = vec![0u8; n * 4];
+    gpu_out.copy_to_host(&mut gpu_result).unwrap();
+    let gpu_out_f32: &[f32] = unsafe { std::slice::from_raw_parts(gpu_result.as_ptr() as *const f32, n) };
+
+    assert_close(&cpu_out, gpu_out_f32, gpu_test_utils::F32_TOLERANCE);
+}
+
+#[test]
+#[serial]
+fn test_silu_kernel_correctness() {
+    require_gpu!();
+    require_vram!(4);
+
+    use rocmforge::gpu::{GpuBuffer, silu};
+    use gpu_test_utils::assert_close;
+
+    let n = 1024;
+    let x: Vec<f32> = (-5..=5).map(|i| i as f32 * 0.5).cycle().take(n).collect();
+    let mut cpu_out = vec![0.0f32; n];
+
+    cpu_silu(&x, &mut cpu_out);
+
+    let mut gpu_x = GpuBuffer::alloc(n * 4).unwrap();
+    let mut gpu_out = GpuBuffer::alloc(n * 4).unwrap();
+
+    gpu_x.copy_from_host(unsafe { std::slice::from_raw_parts(x.as_ptr() as *const u8, n * 4) }).unwrap();
+
+    silu(gpu_x.as_ptr() as *const f32, gpu_out.as_ptr() as *mut f32, n)
+        .expect("GPU silu kernel should succeed");
+
+    let mut gpu_result = vec![0u8; n * 4];
+    gpu_out.copy_to_host(&mut gpu_result).unwrap();
+    let gpu_out_f32: &[f32] = unsafe { std::slice::from_raw_parts(gpu_result.as_ptr() as *const f32, n) };
+
+    assert_close(&cpu_out, gpu_out_f32, gpu_test_utils::F32_TOLERANCE);
+}
