@@ -24,7 +24,7 @@
 
 // ── Main Kernel ─────────────────────────────────────────────────────────────────
 
-extern "C" __global__ void dequantize_q4_k(
+extern "C" __global__ void dequantize_q4_k_kernel(
     const void* __restrict__ input,   // [n/256 * 144] Q4_K quantized data
     float* __restrict__ output,       // [n] f32 output data
     int n                             // Total number of elements
@@ -87,7 +87,7 @@ extern "C" __global__ void dequantize_q4_k(
 //!
 //! Dequantizes multiple blocks in parallel.
 //! Each thread block handles one block.
-extern "C" __global__ void dequantize_q4_k_batched(
+extern "C" __global__ void dequantize_q4_k_batched_kernel(
     const void* __restrict__ input,   // [batch_size][n/256 * 144] Q4_K data
     float* __restrict__ output,       // [batch_size][n] f32 output
     int n,                            // Elements per batch

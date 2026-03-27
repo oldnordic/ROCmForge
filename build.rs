@@ -128,15 +128,28 @@ mod gpu_build {
                 match build_status {
                     Ok(_) => {
                         // Copy libraries to output directory for Cargo linking
-                        let src_lib = quant_build.join("lib/libtest_quant.a");
-                        let dst_lib = lib_dest.join("libtest_quant.a");
+                        let libs_to_copy = vec![
+                            ("libtest_quant.a", "test_quant"),
+                            ("libq4_k_quantize.a", "q4_k_quantize"),
+                            ("libq4_k_dequantize.a", "q4_k_dequantize"),
+                            ("libq4_k_verify.a", "q4_k_verify"),
+                        ];
 
-                        if let Err(e) = std::fs::copy(&src_lib, &dst_lib) {
-                            println!("cargo:warning=Failed to copy libtest_quant.a: {}", e);
-                            return;
+                        for (lib_name, link_name) in libs_to_copy {
+                            let src_lib = quant_build.join("lib").join(lib_name);
+                            let dst_lib = lib_dest.join(lib_name);
+
+                            if src_lib.exists() {
+                                if let Err(e) = std::fs::copy(&src_lib, &dst_lib) {
+                                    println!("cargo:warning=Failed to copy {}: {}", lib_name, e);
+                                    continue;
+                                }
+                                println!("cargo:rustc-link-lib=static={}", link_name);
+                            } else {
+                                println!("cargo:warning={} not found (skipping)", lib_name);
+                            }
                         }
 
-                        println!("cargo:rustc-link-lib=static=test_quant");
                         println!("cargo:rustc-link-search=native={}", out_dir);
                     }
                     Err(e) => {

@@ -3,7 +3,7 @@
 //! Weights are stored in their native quantized format (Q4_0, Q4_1, Q8_0, etc.)
 //! and dequantized on-the-fly during inference.
 
-use crate::config::{ModelConfig, TensorName};
+use crate::config::{ModelConfig, TensorName, TensorNamingScheme};
 use crate::loader::{GgmlType, GgufFile, LoadError};
 use super::transpose::compute_transpose_flag;
 
@@ -180,13 +180,47 @@ impl CpuLayerWeights {
             copy_tensor_with_meta(file, name, needs_transpose)
         };
 
+        // Helper to load weight with fallback names (for MoE models)
+        let load_weight_fallback = |names: &[&str]| -> Result<(Vec<u8>, WeightMeta), WeightError> {
+            for name in names {
+                if let Ok(Some(desc)) = file.tensor(name) {
+                    let needs_transpose = compute_transpose_flag(name, &desc.dims, desc.ggml_type, config, false, false);
+                    return copy_tensor_with_meta(file, name, needs_transpose);
+                }
+            }
+            Err(WeightError::TensorNotFound(format!("tried {:?}", names)))
+        };
+
         let (attn_q, attn_q_meta) = load_weight(&config.tensor_registry.resolve(TensorName::AttnQ, layer))?;
         let (attn_k, attn_k_meta) = load_weight(&config.tensor_registry.resolve(TensorName::AttnK, layer))?;
         let (attn_v, attn_v_meta) = load_weight(&config.tensor_registry.resolve(TensorName::AttnV, layer))?;
         let (attn_o, attn_o_meta) = load_weight(&config.tensor_registry.resolve(TensorName::AttnOutput, layer))?;
-        let (ffn_gate, ffn_gate_meta) = load_weight(&config.tensor_registry.resolve(TensorName::FfnGate, layer))?;
-        let (ffn_up, ffn_up_meta) = load_weight(&config.tensor_registry.resolve(TensorName::FfnUp, layer))?;
-        let (ffn_down, ffn_down_meta) = load_weight(&config.tensor_registry.resolve(TensorName::FfnDown, layer))?;
+
+        // For MoE models, try _exps tensors first, then fall back to standard names
+        let ffn_gate_name = config.tensor_registry.resolve(TensorName::FfnGate, layer);
+        let ffn_up_name = config.tensor_registry.resolve(TensorName::FfnUp, layer);
+        let ffn_down_name = config.tensor_registry.resolve(TensorName::FfnDown, layer);
+
+        let (ffn_gate, ffn_gate_meta) = if matches!(config.tensor_registry.scheme, TensorNamingScheme::GgufMoE) {
+            let ffn_gate_exps_name = config.tensor_registry.resolve(TensorName::FfnGateExps, layer);
+            load_weight_fallback(&[&ffn_gate_exps_name, &ffn_gate_name])?
+        } else {
+            load_weight(&ffn_gate_name)?
+        };
+
+        let (ffn_up, ffn_up_meta) = if matches!(config.tensor_registry.scheme, TensorNamingScheme::GgufMoE) {
+            let ffn_up_exps_name = config.tensor_registry.resolve(TensorName::FfnUpExps, layer);
+            load_weight_fallback(&[&ffn_up_exps_name, &ffn_up_name])?
+        } else {
+            load_weight(&ffn_up_name)?
+        };
+
+        let (ffn_down, ffn_down_meta) = if matches!(config.tensor_registry.scheme, TensorNamingScheme::GgufMoE) {
+            let ffn_down_exps_name = config.tensor_registry.resolve(TensorName::FfnDownExps, layer);
+            load_weight_fallback(&[&ffn_down_exps_name, &ffn_down_name])?
+        } else {
+            load_weight(&ffn_down_name)?
+        };
 
         let weight_type = attn_q_meta.wtype; // Legacy: use attn_q type as general type
 

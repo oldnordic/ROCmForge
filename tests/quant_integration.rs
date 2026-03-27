@@ -15,24 +15,145 @@
 
 use serial_test::serial;
 
-/// Placeholder: Test Q4_K quantization kernel
+/// Test Q4_K quantization kernel
 ///
-/// **To be implemented in Phase 2**:
+/// Verifies:
 /// 1. Allocate GPU buffers for input weights and output quantized blocks
 /// 2. Call Q4_K quantization FFI function
 /// 3. Copy quantized blocks back to CPU
 /// 4. Verify dequantized values match original within tolerance
 #[test]
 #[serial]
-#[ignore = "Q4_K kernel not implemented - Phase 2"]
 fn test_q4_k_quantization() {
-    // TODO: Implement in Phase 2
-    // Steps:
-    // - Prepare test weight data (e.g., random floats)
-    // - Call hip_q4_k_quantize() FFI function
-    // - Dequantize and verify accuracy
-    // - Compare with CPU Q4_K implementation
-    unimplemented!("Q4_K quantization kernel - Phase 2");
+    use rocmforge::gpu::{detect, GpuDevice, GpuQuant, GpuBuffer, QK_K, Q4_K_BLOCK_SIZE};
+
+    // Require GPU for this test
+    let caps = detect().expect("GPU required for quantization test");
+    println!("Testing Q4_K quantization on: {}", caps.device_name);
+
+    // Initialize device
+    let device = GpuDevice::init(caps.device_id)
+        .expect("Failed to initialize GPU device");
+
+    // Initialize quantization context
+    let gpu_quant = GpuQuant::new(device)
+        .expect("Failed to initialize GpuQuant");
+
+    // Prepare test data (256 elements = 1 Q4_K block)
+    let n = QK_K;
+    let input_data: Vec<f32> = (0..n).map(|i| i as f32 * 0.01).collect();
+
+    // Allocate GPU buffers using GpuBuffer (RAII)
+    let d_input = GpuBuffer::alloc(n * std::mem::size_of::<f32>())
+        .expect("Failed to allocate input buffer");
+    let d_quantized = GpuBuffer::alloc((n / QK_K) * Q4_K_BLOCK_SIZE)
+        .expect("Failed to allocate quantized buffer");
+    let d_output = GpuBuffer::alloc(n * std::mem::size_of::<f32>())
+        .expect("Failed to allocate output buffer");
+
+    // Copy input to GPU (cast to &[u8] for copy_from_host)
+    let input_bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(
+            input_data.as_ptr() as *const u8,
+            n * std::mem::size_of::<f32>()
+        )
+    };
+    // GpuBuffer::copy_from_host expects &mut self, so we need to make it mutable
+    let mut d_input = d_input;
+    d_input.copy_from_host(input_bytes)
+        .expect("Failed to copy input to GPU");
+
+    // Quantize on GPU (cast *mut u8 to *const f32 and *mut u8)
+    gpu_quant.quantize(
+        d_input.as_ptr() as *const f32,
+        d_quantized.as_ptr(),
+        n
+    )
+        .expect("Failed to quantize on GPU");
+
+    // Dequantize on GPU
+    gpu_quant.dequantize(
+        d_quantized.as_ptr(),
+        d_output.as_ptr() as *mut f32,
+        n
+    )
+        .expect("Failed to dequantize on GPU");
+
+    // Copy output back to CPU
+    let mut output_bytes = vec![0u8; n * std::mem::size_of::<f32>()];
+    d_output.copy_to_host(&mut output_bytes)
+        .expect("Failed to copy output from GPU");
+
+    // Convert bytes back to f32
+    let output_data: Vec<f32> = unsafe {
+        std::slice::from_raw_parts(
+            output_bytes.as_ptr() as *const f32,
+            n
+        ).to_vec()
+    };
+
+    // Cleanup is automatic via GpuBuffer's Drop implementation
+    drop(d_input);
+    drop(d_quantized);
+    drop(d_output);
+
+    // Verify accuracy - Q4_K has ~6-7 bits of precision
+    // Allow for larger error due to 4-bit quantization
+    let tolerance = 0.5; // Relaxed tolerance for 4-bit
+    let mut max_error = 0.0f32;
+    for (i, (orig, dequant)) in input_data.iter().zip(output_data.iter()).enumerate() {
+        let error = (orig - dequant).abs();
+        max_error = max_error.max(error);
+        if error > tolerance {
+            panic!(
+                "Large quantization error at index {}: orig={}, dequant={}, error={}",
+                i, orig, dequant, error
+            );
+        }
+    }
+
+    println!("Q4_K quantization max error: {}", max_error);
+    assert!(max_error < tolerance, "Max error {} exceeds tolerance {}", max_error, tolerance);
+
+    // Test verify_accuracy function
+    println!("Testing verify_accuracy function...");
+    let caps2 = detect().expect("GPU required");
+    let device2 = GpuDevice::init(caps2.device_id).expect("Failed to init device");
+    let gpu_quant2 = GpuQuant::new(device2).expect("Failed to init GpuQuant");
+
+    let d_input2 = GpuBuffer::alloc(n * std::mem::size_of::<f32>()).expect("Failed to allocate");
+    let d_quantized2 = GpuBuffer::alloc((n / QK_K) * Q4_K_BLOCK_SIZE).expect("Failed to allocate");
+
+    let input_bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(
+            input_data.as_ptr() as *const u8,
+            n * std::mem::size_of::<f32>()
+        )
+    };
+    let mut d_input2 = d_input2;
+    d_input2.copy_from_host(input_bytes).expect("Failed to copy input");
+
+    gpu_quant2.quantize(
+        d_input2.as_ptr() as *const f32,
+        d_quantized2.as_ptr(),
+        n
+    )
+        .expect("Failed to quantize");
+
+    let (max_err, mse, rel_err) = gpu_quant2.verify_accuracy(
+        d_input2.as_ptr() as *const f32,
+        d_quantized2.as_ptr(),
+        n
+    ).expect("Failed to verify accuracy");
+
+    println!("Verification: max_error={}, mse={}, relative_error={}", max_err, mse, rel_err);
+
+    // Cleanup is automatic via GpuBuffer's Drop implementation
+    drop(d_input2);
+    drop(d_quantized2);
+
+    // Verification should show reasonable accuracy
+    assert!(max_err < 1.0, "Max verification error {} too large", max_err);
 }
 
 /// Placeholder: Test Q8_0 quantization kernel

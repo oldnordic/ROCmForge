@@ -38,6 +38,8 @@ pub enum TensorNamingScheme {
     Gguf,
     /// HuggingFace-style: `model.layers.N.mlp.gate_proj.weight`
     HuggingFace,
+    /// GGUF MoE-style: `blk.N.ffn_gate_exps.weight` (Mixture-of-Experts)
+    GgufMoE,
 }
 
 /// Semantic tensor names that are resolved to actual tensor names.
@@ -56,6 +58,14 @@ pub enum TensorName {
     FfnGate,
     FfnUp,
     FfnDown,
+    // FFN MoE weights (Mixture-of-Experts)
+    FfnGateExps,
+    FfnUpExps,
+    FfnDownExps,
+    FfnGateInp,
+    // Attention normalization (optional, for some MoE models)
+    AttnQNorm,
+    AttnKNorm,
     // Normalization
     AttnNorm,
     FfnNorm,
@@ -98,6 +108,7 @@ impl TensorNameRegistry {
         match scheme {
             TensorNamingScheme::Gguf => Self::gguf_format(),
             TensorNamingScheme::HuggingFace => Self::huggingface_format(),
+            TensorNamingScheme::GgufMoE => Self::gguf_moe_format(),
         }
     }
 
@@ -187,6 +198,53 @@ impl TensorNameRegistry {
         }
     }
 
+    /// Create GGUF MoE-format registry for Mixture-of-Experts models.
+    ///
+    /// Uses `_exps` suffix for expert tensors and includes Q/K normalization.
+    fn gguf_moe_format() -> Self {
+        let mut templates = HashMap::new();
+
+        // Attention weights
+        templates.insert(TensorName::AttnQ, "blk.{}.attn_q.weight".to_string());
+        templates.insert(TensorName::AttnK, "blk.{}.attn_k.weight".to_string());
+        templates.insert(TensorName::AttnV, "blk.{}.attn_v.weight".to_string());
+        templates.insert(TensorName::AttnOutput, "blk.{}.attn_output.weight".to_string());
+
+        // Attention biases
+        templates.insert(TensorName::AttnQBias, "blk.{}.attn_q.bias".to_string());
+        templates.insert(TensorName::AttnKBias, "blk.{}.attn_k.bias".to_string());
+        templates.insert(TensorName::AttnVBias, "blk.{}.attn_v.bias".to_string());
+
+        // FFN weights - standard names (fallback, not used in qwen3moe)
+        templates.insert(TensorName::FfnGate, "blk.{}.ffn_gate.weight".to_string());
+        templates.insert(TensorName::FfnUp, "blk.{}.ffn_up.weight".to_string());
+        templates.insert(TensorName::FfnDown, "blk.{}.ffn_down.weight".to_string());
+
+        // FFN MoE weights - expert tensors with `_exps` suffix
+        templates.insert(TensorName::FfnGateExps, "blk.{}.ffn_gate_exps.weight".to_string());
+        templates.insert(TensorName::FfnUpExps, "blk.{}.ffn_up_exps.weight".to_string());
+        templates.insert(TensorName::FfnDownExps, "blk.{}.ffn_down_exps.weight".to_string());
+        templates.insert(TensorName::FfnGateInp, "blk.{}.ffn_gate_inp.weight".to_string());
+
+        // Attention normalization (optional, for MoE models)
+        templates.insert(TensorName::AttnQNorm, "blk.{}.attn_q_norm.weight".to_string());
+        templates.insert(TensorName::AttnKNorm, "blk.{}.attn_k_norm.weight".to_string());
+
+        // Normalization
+        templates.insert(TensorName::AttnNorm, "blk.{}.attn_norm.weight".to_string());
+        templates.insert(TensorName::FfnNorm, "blk.{}.ffn_norm.weight".to_string());
+
+        // Embeddings (no layer number)
+        templates.insert(TensorName::TokenEmb, "token_embd.weight".to_string());
+        templates.insert(TensorName::LmHead, "output.weight".to_string());
+        templates.insert(TensorName::OutputNorm, "output_norm.weight".to_string());
+
+        Self {
+            scheme: TensorNamingScheme::GgufMoE,
+            templates,
+        }
+    }
+
     /// Get all expected tensor names for a layer (for debugging).
     pub fn expected_tensors(&self, layer: usize) -> Vec<String> {
         self.templates.keys()
@@ -201,6 +259,8 @@ impl TensorNameRegistry {
             "AttnQ", "AttnK", "AttnV", "AttnOutput",
             "AttnQBias", "AttnKBias", "AttnVBias",
             "FfnGate", "FfnUp", "FfnDown",
+            "FfnGateExps", "FfnUpExps", "FfnDownExps", "FfnGateInp",
+            "AttnQNorm", "AttnKNorm",
             "AttnNorm", "FfnNorm",
             "TokenEmb", "LmHead", "OutputNorm",
         ]
@@ -257,15 +317,15 @@ fn registry() -> &'static HashMap<&'static str, ModelTraits> {
             m.insert(*arch, qwen2.clone());
         }
 
-        // Qwen3 family - NeoX RoPE, QKV bias, split QKV, high rope theta, GGUF naming
-        // Note: Some qwen3 variants use non-standard tensor names (_exps suffix, attn_q_norm, etc.)
+        // Qwen3 family - NeoX RoPE, QKV bias, split QKV, high rope theta, GGUF MoE naming
+        // Note: Qwen3 uses MoE architecture with _exps suffix for expert tensors
         let qwen3 = ModelTraits {
             rope_style: RopeStyle::NeoX,
             attention_layout: AttentionLayout::SplitQkv,
             use_attention_bias: true,
             default_rope_theta: 1_000_000.0,
             default_norm_eps: 1e-6,
-            tensor_naming: TensorNamingScheme::Gguf,
+            tensor_naming: TensorNamingScheme::GgufMoE,
         };
         for arch in &["qwen3", "qwen3moe"] {
             m.insert(*arch, qwen3.clone());
@@ -821,9 +881,26 @@ mod tests {
     }
 
     #[test]
-    fn qwen3_uses_huggingface_scheme() {
+    fn qwen3_uses_gguf_moe_scheme() {
         let traits = ModelTraits::for_arch("qwen3");
-        assert_eq!(traits.tensor_naming, TensorNamingScheme::HuggingFace);
+        assert_eq!(traits.tensor_naming, TensorNamingScheme::GgufMoE);
+    }
+
+    #[test]
+    fn qwen3moe_uses_gguf_moe_scheme() {
+        let traits = ModelTraits::for_arch("qwen3moe");
+        assert_eq!(traits.tensor_naming, TensorNamingScheme::GgufMoE);
+    }
+
+    #[test]
+    fn gguf_moe_maps_exp_tensors() {
+        let moe = TensorNameRegistry::from_scheme(&TensorNamingScheme::GgufMoE);
+        assert_eq!(moe.resolve(TensorName::FfnGateExps, 0), "blk.0.ffn_gate_exps.weight");
+        assert_eq!(moe.resolve(TensorName::FfnUpExps, 0), "blk.0.ffn_up_exps.weight");
+        assert_eq!(moe.resolve(TensorName::FfnDownExps, 0), "blk.0.ffn_down_exps.weight");
+        assert_eq!(moe.resolve(TensorName::FfnGateInp, 0), "blk.0.ffn_gate_inp.weight");
+        assert_eq!(moe.resolve(TensorName::AttnQNorm, 0), "blk.0.attn_q_norm.weight");
+        assert_eq!(moe.resolve(TensorName::AttnKNorm, 0), "blk.0.attn_k_norm.weight");
     }
 
     #[test]

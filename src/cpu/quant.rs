@@ -27,6 +27,32 @@ pub const Q4_K_BLOCK_BYTES: usize = 144;
 pub const Q5_0_BLOCK_ELEMS: usize = 32;
 pub const Q5_0_BLOCK_BYTES: usize = 22;
 
+/// Q3_K: 256 elements per block, 110 bytes (32 hmask + 64 qs + 12 scales + 2 d)
+///
+/// Q3_K block format:
+/// - d: f16 super-block scale (2 bytes)
+/// - scales[12]: 12 scales packed as 6-bit values
+/// - qs[64]: 2-bit quantized weights (4 elements per byte)
+/// - hmask[32]: high bit of 3-bit quantization (1 bit per element)
+///
+/// Each weight is 3 bits: low 2 bits from qs (with shift), high bit from hmask
+/// Total: 110 bytes for 256 values (~3.4 bits per weight)
+pub const Q3_K_BLOCK_ELEMS: usize = 256;
+pub const Q3_K_BLOCK_BYTES: usize = 110;
+
+/// Q5_K: 256 elements per block, 176 bytes (128 ql + 32 qh + 12 scales + 2 d)
+///
+/// Q5_K block format:
+/// - d: f16 super-block scale (2 bytes)
+/// - scales[12]: 12 scales packed as 6-bit values
+/// - ql[128]: low 4-bit quantized weights (2 elements per byte)
+/// - qh[32]: high bit of 5-bit quantization (1 bit per element)
+///
+/// Each weight is 5 bits: low 4 bits from ql, high bit from qh
+/// Total: 176 bytes for 256 values (~5.5 bits per weight)
+pub const Q5_K_BLOCK_ELEMS: usize = 256;
+pub const Q5_K_BLOCK_BYTES: usize = 176;
+
 /// Q6_K: 256 elements per block, 210 bytes (128 ql + 64 qh + 16 scales + 2 d)
 pub const Q6_K_BLOCK_ELEMS: usize = 256;
 pub const Q6_K_BLOCK_BYTES: usize = 210;
@@ -369,6 +395,172 @@ pub fn embed_q6_k_batch(ids: &[u32], emb: &[u8], out: &mut [f32], hidden_size: u
     for (s, &id) in ids.iter().enumerate() {
         let or = &mut out[s * hidden_size..(s + 1) * hidden_size];
         embed_q6_k(id as usize, emb, or, hidden_size);
+    }
+}
+
+/// Dequantize Q3_K embedding row: out = dequant(emb[token_id])
+///
+/// Q3_K block layout (from llama.cpp ggml-common.h):
+/// struct block_q3_K {
+///     uint8_t hmask[QK_K/8];   // 32 bytes - high bit mask
+///     uint8_t qs[QK_K/4];      // 64 bytes - low 2 bits
+///     uint8_t scales[12];      // 12 bytes - packed 6-bit scales
+///     ggml_half d;             // 2 bytes - super-block scale (AT THE END!)
+/// }
+/// Total: 110 bytes for 256 values
+pub fn embed_q3_k(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usize) {
+    let num_blocks = hidden_size / Q3_K_BLOCK_ELEMS;
+    let row_offset = token_id * num_blocks * Q3_K_BLOCK_BYTES;
+
+    for b in 0..num_blocks {
+        let block = &emb[row_offset + b * Q3_K_BLOCK_BYTES..row_offset + (b + 1) * Q3_K_BLOCK_BYTES];
+
+        // Q3_K block layout: hmask[0..32], qs[32..96], scales[96..108], d[108..110]
+        let hmask = &block[0..32];
+        let qs = &block[32..96];
+        let scales = &block[96..108];
+        let d = load_f16_scale(&block[108..110]);
+
+        // Unpack scales from packed 6-bit format (following llama.cpp)
+        let tmp = u32::from_le_bytes([scales[2], scales[3], scales[4], scales[5]]);
+        let mut unpacked_scales = [0i8; 12];
+        unpacked_scales[0] = (((scales[0] & 0x0F) as i8) << 2) | ((tmp & 0x03) as i8);
+        unpacked_scales[1] = ((scales[0] >> 4) & 0x0F) as i8;
+        unpacked_scales[2] = (((scales[1] & 0x0F) as i8) << 2) | ((tmp >> 2) & 0x03) as i8;
+        unpacked_scales[3] = ((scales[1] >> 4) & 0x0F) as i8;
+        unpacked_scales[4] = ((tmp >> 4) & 0x0F) as i8;
+        unpacked_scales[5] = (((scales[2] & 0x0F) as i8) << 2) | ((tmp >> 6) & 0x03) as i8;
+        unpacked_scales[6] = ((scales[2] >> 4) & 0x0F) as i8;
+        unpacked_scales[7] = ((tmp >> 8) & 0x0F) as i8;
+        unpacked_scales[8] = ((scales[0] >> 6) & 0x03) as i8;
+        unpacked_scales[9] = ((scales[1] >> 6) & 0x03) as i8;
+        unpacked_scales[10] = (((scales[2] >> 2) & 0x03) as i8) << 2;
+        unpacked_scales[11] = ((scales[2] >> 0) & 0x03) as i8;
+
+        let base = b * Q3_K_BLOCK_ELEMS;
+        let mut scale_idx = 0;
+
+        // Process 256 elements as two 128-element chunks
+        for chunk in 0..2 {
+            let q = &qs[chunk * 32..];
+            let hm = &hmask[chunk * 16..];
+
+            let mut m = 1u8;
+            let mut shift = 0i32;
+
+            // 4 groups of 32 elements each
+            for _group in 0..4 {
+                // First 16 elements of this group
+                let dl = d * (unpacked_scales[scale_idx] - 32) as f32;
+                scale_idx += 1;
+
+                for l in 0..16 {
+                    let ql = (q[l >> 2] >> shift) & 0x03;
+                    let hbit = if hm[l >> 3] & m != 0 { 0 } else { 4 };
+                    out[base + chunk * 64 + _group * 32 + l] = dl * (ql as i8 - hbit) as f32;
+                }
+
+                // Next 16 elements of this group
+                let dl = d * (unpacked_scales[scale_idx] - 32) as f32;
+                scale_idx += 1;
+
+                for l in 16..32 {
+                    let ql = (q[l >> 2] >> shift) & 0x03;
+                    let hbit = if hm[l >> 3] & m != 0 { 0 } else { 4 };
+                    out[base + chunk * 64 + _group * 32 + l] = dl * (ql as i8 - hbit) as f32;
+                }
+
+                shift += 2;
+                m <<= 1;
+            }
+        }
+    }
+}
+
+/// Batch embed from Q3_K
+pub fn embed_q3_k_batch(ids: &[u32], emb: &[u8], out: &mut [f32], hidden_size: usize) {
+    for (s, &id) in ids.iter().enumerate() {
+        let or = &mut out[s * hidden_size..(s + 1) * hidden_size];
+        embed_q3_k(id as usize, emb, or, hidden_size);
+    }
+}
+
+/// Dequantize Q5_K embedding row: out = dequant(emb[token_id])
+///
+/// Q5_K block layout (matches llama.cpp block_q5_K):
+/// - d[2]: f16 super-block scale
+/// - dmin[2]: f16 super-block min scale
+/// - scales[12]: scales and mins packed as 6-bit values
+/// - qh[32]: high bit of 5-bit quantization (1 bit per element)
+/// - ql[128]: low 4-bit quantized weights (2 elements per byte)
+/// Total: 176 bytes for 256 values
+pub fn embed_q5_k(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usize) {
+    let num_blocks = hidden_size / Q5_K_BLOCK_ELEMS;
+    let row_offset = token_id * num_blocks * Q5_K_BLOCK_BYTES;
+
+    for b in 0..num_blocks {
+        let block = &emb[row_offset + b * Q5_K_BLOCK_BYTES..row_offset + (b + 1) * Q5_K_BLOCK_BYTES];
+
+        // Q5_K block layout: d[0..2], dmin[2..4], scales[4..16], qh[16..48], ql[48..176]
+        let d = load_f16_scale(&block[0..2]);
+        let dmin = load_f16_scale(&block[2..4]);
+        let scales = &block[4..16];
+        let qh = &block[16..48];
+        let ql = &block[48..176];
+
+        // Unpack scales and mins from packed 6-bit format (get_scale_min_k4 pattern)
+        let mut unpacked_scales = [0i8; 8];
+        let mut unpacked_mins = [0i8; 8];
+        for j in 0..8 {
+            if j < 4 {
+                unpacked_scales[j] = (scales[j] & 63) as i8;
+                unpacked_mins[j] = (scales[j + 4] & 63) as i8;
+            } else {
+                unpacked_scales[j] = ((scales[j + 4] & 0xF) | ((scales[j - 4] >> 6) << 4)) as i8;
+                unpacked_mins[j] = ((scales[j + 4] >> 4) | ((scales[j] >> 6) << 4)) as i8;
+            }
+        }
+
+        let base = b * Q5_K_BLOCK_ELEMS;
+        let mut scale_idx = 0;
+
+        // Process 256 elements as 4 chunks of 64 elements each
+        for chunk in 0..4 {
+            let q = &ql[chunk * 32..];
+            let hm = &qh[chunk * 8..];
+            let u1 = 1u8.wrapping_shl(2 * chunk as u32);
+            let u2 = 1u8.wrapping_shl(2 * chunk as u32 + 1);
+
+            // First 32 elements: d1 * q - m1
+            let d1 = d * unpacked_scales[scale_idx] as f32;
+            let m1 = dmin * unpacked_mins[scale_idx] as f32;
+            scale_idx += 1;
+            for l in 0..32 {
+                let ql_bits = q[l] & 0x0F;
+                let hbit = if hm[l >> 3] & u1 != 0 { 16 } else { 0 };
+                let q_val = (ql_bits + hbit) as f32;
+                out[base + chunk * 64 + l] = d1 * q_val - m1;
+            }
+
+            // Next 32 elements: d2 * q - m2
+            let d2 = d * unpacked_scales[scale_idx] as f32;
+            let m2 = dmin * unpacked_mins[scale_idx] as f32;
+            scale_idx += 1;
+            for l in 0..32 {
+                let ql_bits = q[l] >> 4;
+                let hbit = if hm[l >> 3] & u2 != 0 { 16 } else { 0 };
+                let q_val = (ql_bits + hbit) as f32;
+                out[base + chunk * 64 + 32 + l] = d2 * q_val - m2;
+            }
+        }
+    }
+}
+
+/// Batch embed from Q5_K
+pub fn embed_q5_k_batch(ids: &[u32], emb: &[u8], out: &mut [f32], hidden_size: usize) {
+    for (s, &id) in ids.iter().enumerate() {
+        let or = &mut out[s * hidden_size..(s + 1) * hidden_size];
+        embed_q5_k(id as usize, emb, or, hidden_size);
     }
 }
 

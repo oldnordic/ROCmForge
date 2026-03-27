@@ -18,7 +18,7 @@
 
 // ── Main Kernel ─────────────────────────────────────────────────────────────────
 
-extern "C" __global__ void verify_q4_k_accuracy(
+extern "C" __global__ void verify_q4_k_accuracy_kernel(
     const float* __restrict__ original,  // [n] Original f32 data
     const void* __restrict__ quantized,   // [n/256 * 144] Q4_K quantized data
     float* __restrict__ errors,           // [3] Output: [max_error, mse, relative_error]
@@ -155,7 +155,7 @@ extern "C" __global__ void verify_q4_k_accuracy(
 //!
 //! Must be called after verify_q4_k_accuracy to compute final values.
 //! Output: [max_error, mse, relative_error]
-extern "C" __global__ void finalize_q4_k_metrics(
+extern "C" __global__ void finalize_q4_k_metrics_kernel(
     float* __restrict__ errors,     // [4] Input: [max_error, mse, sum_original, sum_error]
     float* __restrict__ metrics,    // [3] Output: [max_error, mse, relative_error]
     int n                           // Total number of elements (for MSE normalization)

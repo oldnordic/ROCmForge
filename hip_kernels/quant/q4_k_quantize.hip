@@ -83,7 +83,7 @@ static __device__ __inline__ int make_qk_quants(int offset, float min_val, float
 
 // ── Main Kernel ─────────────────────────────────────────────────────────────────
 
-extern "C" __global__ void quantize_q4_k(
+extern "C" __global__ void quantize_q4_k_kernel(
     const float* __restrict__ input,   // [n] f32 input data
     void* __restrict__ output,         // [n/256 * 144] Q4_K quantized output
     int n                              // Total number of elements

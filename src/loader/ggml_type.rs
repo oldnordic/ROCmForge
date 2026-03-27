@@ -42,13 +42,16 @@ impl GgmlType {
 
     /// Bytes required to store `n` elements of this type.
     ///
-    /// Block sizes verified against llama.cpp ggml.h:
+    /// Block sizes verified against llama.cpp ggml-common.h:
     ///   Q4_0: 32 elems / 18 bytes   Q4_1: 32 / 20
     ///   Q5_0: 32 / 22               Q5_1: 32 / 24
     ///   Q8_0: 32 / 34
-    ///   Q2_K: 256 / 256             Q3_K: 256 / 256
+    ///   Q2_K: 256 / 256             Q3_K: 256 / 110
     ///   Q4_K: 256 / 144             Q5_K: 256 / 176
     ///   Q6_K: 256 / 210
+    ///
+    /// Q3_K block size = sizeof(ggml_half) + QK_K/4 + QK_K/8 + 12
+    ///                 = 2 + 64 + 32 + 12 = 110 bytes per 256 elements
     pub fn bytes_for_elements(&self, n: usize) -> usize {
         match self {
             GgmlType::F32 => n * 4,
@@ -59,7 +62,7 @@ impl GgmlType {
             GgmlType::Q5_1 => n.div_ceil(32) * 24,
             GgmlType::Q8_0 => n.div_ceil(32) * 34,
             GgmlType::Q2_K => n.div_ceil(256) * 256,
-            GgmlType::Q3_K => n.div_ceil(256) * 256,
+            GgmlType::Q3_K => n.div_ceil(256) * 110,
             GgmlType::Q4_K => n.div_ceil(256) * 144,
             GgmlType::Q5_K => n.div_ceil(256) * 176,
             GgmlType::Q6_K => n.div_ceil(256) * 210,
@@ -134,5 +137,15 @@ mod tests {
     fn bytes_q4_k() {
         // 256 elements = 1 superblock = 144 bytes
         assert_eq!(GgmlType::Q4_K.bytes_for_elements(256), 144);
+    }
+
+    #[test]
+    fn bytes_q3_k() {
+        // 256 elements = 1 superblock = 110 bytes
+        assert_eq!(GgmlType::Q3_K.bytes_for_elements(256), 110);
+        // 512 elements = 2 superblocks = 220 bytes
+        assert_eq!(GgmlType::Q3_K.bytes_for_elements(512), 220);
+        // Verify: 201326592 elements / 256 * 110 = 86507520 bytes
+        assert_eq!(GgmlType::Q3_K.bytes_for_elements(201326592), 86507520);
     }
 }

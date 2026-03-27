@@ -550,6 +550,203 @@ pub fn gemm_q6_k_fallback(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in
     });
 }
 
+/// Q3_K GEMM fallback: dequantize blocks on the fly and compute matrix multiply.
+///
+/// For each output row:
+/// - Load Q3_K blocks from weight matrix
+/// - Dequantize each block to f32
+/// - Compute dot product with input row
+/// - Store result in output
+///
+/// Performance notes:
+/// - Dequantization is done inline during GEMM
+/// - Each iteration processes 256 output values (Q3_K block size)
+/// - Uses rayon for parallel processing across output rows
+pub fn gemm_q3_k_fallback(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    use super::quant::{Q3_K_BLOCK_BYTES, Q3_K_BLOCK_ELEMS};
+
+    let num_blocks = in_dim / Q3_K_BLOCK_ELEMS;
+    let row_bytes = num_blocks * Q3_K_BLOCK_BYTES;
+
+    y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
+        let x_row = &x[s * in_dim..(s + 1) * in_dim];
+        for o in 0..out_dim {
+            let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
+            let mut acc = 0.0f32;
+
+            for b in 0..num_blocks {
+                let block = &row_w[b * Q3_K_BLOCK_BYTES..(b + 1) * Q3_K_BLOCK_BYTES];
+
+                // Q3_K block layout:
+                // - hmask[32]: high bit mask
+                // - qs[64]: low 2 bits
+                // - scales[12]: packed 6-bit scales
+                // - d[2]: f16 super-block scale
+                let hmask = &block[0..32];
+                let qs = &block[32..96];
+                let scales = &block[96..108];
+                let d = super::quant::load_f16_scale(&block[108..110]);
+
+                // Unpack scales from packed 6-bit format
+                let tmp = u32::from_le_bytes([scales[2], scales[3], scales[4], scales[5]]);
+                let mut unpacked_scales = [0i8; 12];
+                unpacked_scales[0] = (((scales[0] & 0x0F) as i8) << 2) | ((tmp & 0x03) as i8);
+                unpacked_scales[1] = ((scales[0] >> 4) & 0x0F) as i8;
+                unpacked_scales[2] = (((scales[1] & 0x0F) as i8) << 2) | (((tmp >> 2) & 0x03)) as i8;
+                unpacked_scales[3] = ((scales[1] >> 4) & 0x0F) as i8;
+                unpacked_scales[4] = ((tmp >> 4) & 0x0F) as i8;
+                unpacked_scales[5] = (((scales[2] & 0x0F) as i8) << 2) | (((tmp >> 6) & 0x03)) as i8;
+                unpacked_scales[6] = ((scales[2] >> 4) & 0x0F) as i8;
+                unpacked_scales[7] = ((tmp >> 8) & 0x0F) as i8;
+                unpacked_scales[8] = ((scales[0] >> 6) & 0x03) as i8;
+                unpacked_scales[9] = ((scales[1] >> 6) & 0x03) as i8;
+                unpacked_scales[10] = (((scales[2] >> 2) & 0x03) as i8) << 2;
+                unpacked_scales[11] = ((scales[2] >> 0) & 0x03) as i8;
+
+                let mut scale_idx = 0;
+                let xb_base = b * Q3_K_BLOCK_ELEMS;
+
+                // Process 256 elements as two 128-element chunks
+                for chunk in 0..2 {
+                    let q = &qs[chunk * 32..];
+                    let hm = &hmask[chunk * 16..];
+
+                    let mut m = 1u8;
+                    let mut shift = 0i32;
+
+                    // Reset scale_idx for second chunk (second 128 elements use only 4 scales)
+                    if chunk == 1 {
+                        scale_idx = 8;
+                    }
+
+                    // First chunk: 4 groups (8 scales), second chunk: 2 groups (4 scales)
+                    let num_groups = if chunk == 0 { 4 } else { 2 };
+                    for _group in 0..num_groups {
+                        let dl = d * (unpacked_scales[scale_idx] - 32) as f32;
+                        scale_idx += 1;
+
+                        // First 16 elements
+                        for l in 0..16 {
+                            let ql = (q[l >> 2] >> shift) & 0x03;
+                            let hbit = if hm[l >> 3] & m != 0 { 0 } else { 4 };
+                            let q = (ql as i8 - hbit) as f32;
+                            acc += dl * q * x_row[xb_base + chunk * 64 + _group * 32 + l];
+                        }
+
+                        // Next 16 elements
+                        let dl = d * (unpacked_scales[scale_idx] - 32) as f32;
+                        scale_idx += 1;
+
+                        for l in 16..32 {
+                            let ql = (q[l >> 2] >> shift) & 0x03;
+                            let hbit = if hm[l >> 3] & m != 0 { 0 } else { 4 };
+                            let q = (ql as i8 - hbit) as f32;
+                            acc += dl * q * x_row[xb_base + chunk * 64 + _group * 32 + l];
+                        }
+
+                        shift += 2;
+                        m <<= 1;
+                    }
+                }
+            }
+            y_row[o] = acc;
+        }
+    });
+}
+
+/// Q5_K GEMM fallback: dequantize weights on the fly during matrix multiplication.
+///
+/// Computes Y = W * X where W is Q5_K quantized.
+///
+/// # Arguments
+/// * `w` - Quantized weight matrix (column-major, stored as [out_dim, in_dim] in Q5_K blocks)
+/// * `x` - Input matrix [batch_size, in_dim]
+/// * `y` - Output matrix [batch_size, out_dim]
+/// * `out_dim` - Output dimension (columns of W, rows of stored layout)
+/// * `in_dim` - Input dimension (rows of W, columns of stored layout)
+///
+/// Performance notes:
+/// - Dequantization is done inline during GEMM
+/// - Each iteration processes 256 output values (Q5_K block size)
+/// - Uses rayon for parallel processing across output rows
+pub fn gemm_q5_k_fallback(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    use super::quant::{Q5_K_BLOCK_BYTES, Q5_K_BLOCK_ELEMS};
+
+    let num_blocks = in_dim / Q5_K_BLOCK_ELEMS;
+    let row_bytes = num_blocks * Q5_K_BLOCK_BYTES;
+
+    y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
+        let x_row = &x[s * in_dim..(s + 1) * in_dim];
+        for o in 0..out_dim {
+            let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
+            let mut acc = 0.0f32;
+
+            for b in 0..num_blocks {
+                let block = &row_w[b * Q5_K_BLOCK_BYTES..(b + 1) * Q5_K_BLOCK_BYTES];
+
+                // Q5_K block layout (matches llama.cpp block_q5_K):
+                // - d[2]: f16 super-block scale
+                // - dmin[2]: f16 super-block min scale
+                // - scales[12]: scales and mins packed as 6-bit values
+                // - qh[32]: high bit of 5-bit quantization
+                // - ql[128]: low 4-bit quantized weights
+                let d = super::quant::load_f16_scale(&block[0..2]);
+                let dmin = super::quant::load_f16_scale(&block[2..4]);
+                let scales = &block[4..16];
+                let qh = &block[16..48];
+                let ql = &block[48..176];
+
+                // Unpack scales and mins from packed 6-bit format (get_scale_min_k4 pattern)
+                let mut unpacked_scales = [0i8; 8];
+                let mut unpacked_mins = [0i8; 8];
+                for j in 0..8 {
+                    if j < 4 {
+                        unpacked_scales[j] = (scales[j] & 63) as i8;
+                        unpacked_mins[j] = (scales[j + 4] & 63) as i8;
+                    } else {
+                        unpacked_scales[j] = ((scales[j + 4] & 0xF) | ((scales[j - 4] >> 6) << 4)) as i8;
+                        unpacked_mins[j] = ((scales[j + 4] >> 4) | ((scales[j] >> 6) << 4)) as i8;
+                    }
+                }
+
+                let mut scale_idx = 0;
+                let xb_base = b * Q5_K_BLOCK_ELEMS;
+
+                // Process 256 elements as 4 chunks of 64 elements each
+                for chunk in 0..4 {
+                    let q = &ql[chunk * 32..];
+                    let hm = &qh[chunk * 8..];
+                    let u1 = 1u8.wrapping_shl(2 * chunk as u32);
+                    let u2 = 1u8.wrapping_shl(2 * chunk as u32 + 1);
+
+                    // First 32 elements: d1 * q - m1
+                    let d1 = d * unpacked_scales[scale_idx] as f32;
+                    let m1 = dmin * unpacked_mins[scale_idx] as f32;
+                    scale_idx += 1;
+                    for l in 0..32 {
+                        let ql_bits = q[l] & 0x0F;
+                        let hbit = if hm[l >> 3] & u1 != 0 { 16 } else { 0 };
+                        let q_val = (ql_bits + hbit) as f32;
+                        acc += (d1 * q_val - m1) * x_row[xb_base + chunk * 64 + l];
+                    }
+
+                    // Next 32 elements: d2 * q - m2
+                    let d2 = d * unpacked_scales[scale_idx] as f32;
+                    let m2 = dmin * unpacked_mins[scale_idx] as f32;
+                    scale_idx += 1;
+                    for l in 0..32 {
+                        let ql_bits = q[l] >> 4;
+                        let hbit = if hm[l >> 3] & u2 != 0 { 16 } else { 0 };
+                        let q_val = (ql_bits + hbit) as f32;
+                        acc += (d2 * q_val - m2) * x_row[xb_base + chunk * 64 + 32 + l];
+                    }
+                }
+            }
+            y_row[o] = acc;
+        }
+    });
+}
+
 /// Dispatch GEMM by weight type with automatic transposition detection.
 ///
 /// Uses metadata to determine if weights need transposed access.
@@ -568,6 +765,8 @@ pub fn dispatch_gemm(
         GgmlType::Q4_0 | GgmlType::Q4_1 => super::quant::Q4_BLOCK_ELEMS,
         GgmlType::Q5_0 => super::quant::Q5_0_BLOCK_ELEMS,
         GgmlType::Q4_K | GgmlType::Q6_K => super::quant::Q4_K_BLOCK_ELEMS,
+        GgmlType::Q3_K => super::quant::Q3_K_BLOCK_ELEMS,
+        GgmlType::Q5_K => super::quant::Q5_K_BLOCK_ELEMS,
         _ => 1,
     };
 
@@ -630,6 +829,14 @@ pub fn dispatch_gemm(
             // For transposed weights, the fallback function handles it correctly
             gemm_q6_k_fallback(w, x, y, out_dim, in_dim);
         }
+        GgmlType::Q3_K => {
+            // Q3_K: dequantize to f32 on the fly (slower but works)
+            gemm_q3_k_fallback(w, x, y, out_dim, in_dim);
+        }
+        GgmlType::Q5_K => {
+            // Q5_K: dequantize to f32 on the fly (slower but works)
+            gemm_q5_k_fallback(w, x, y, out_dim, in_dim);
+        }
         other => return Err(super::CpuError::UnsupportedWeightType(other)),
     }
     Ok(())
@@ -683,6 +890,9 @@ pub fn dispatch_gemm_transposed(
         }
         GgmlType::Q6_K => {
             gemm_q6_k_fallback(w, x, y, out_dim, in_dim);
+        }
+        GgmlType::Q5_K => {
+            gemm_q5_k_fallback(w, x, y, out_dim, in_dim);
         }
         other => return Err(super::CpuError::UnsupportedWeightType(other)),
     }
@@ -1275,6 +1485,15 @@ pub fn gemv_q6_k(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
     gemm_q6_k_fallback(w, x, y, out_dim, in_dim);
 }
 
+/// Q5_K GEMV: dequantize weights on the fly during matrix-vector multiplication.
+///
+/// Computes y = W * x where W is Q5_K quantized.
+/// This is a wrapper around gemm_q5_k_fallback since GEMV is just GEMM with batch_size=1.
+pub fn gemv_q5_k(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    // GEMV is just GEMM with batch_size=1
+    gemm_q5_k_fallback(w, x, y, out_dim, in_dim);
+}
+
 /// Q4_K GEMV for transposed weights (tied embeddings).
 ///
 /// For transposed access (tied LM head), we compute y = W^T * x
@@ -1418,6 +1637,8 @@ pub fn dispatch_gemv(
         GgmlType::Q4_0 | GgmlType::Q4_1 => super::quant::Q4_BLOCK_ELEMS,
         GgmlType::Q5_0 => super::quant::Q5_0_BLOCK_ELEMS,
         GgmlType::Q4_K | GgmlType::Q6_K => super::quant::Q4_K_BLOCK_ELEMS,
+        GgmlType::Q3_K => super::quant::Q3_K_BLOCK_ELEMS,
+        GgmlType::Q5_K => super::quant::Q5_K_BLOCK_ELEMS,
         _ => 1,
     };
 
@@ -1474,6 +1695,9 @@ pub fn dispatch_gemv(
         }
         GgmlType::Q6_K => {
             gemv_q6_k(w, x, y, out_dim, in_dim);
+        }
+        GgmlType::Q5_K => {
+            gemv_q5_k(w, x, y, out_dim, in_dim);
         }
         other => return Err(super::CpuError::UnsupportedWeightType(other)),
     }
@@ -2039,6 +2263,9 @@ pub fn dispatch_gemv_transposed(
         }
         GgmlType::Q6_K => {
             gemv_q6_k(w, x, y, out_dim, in_dim);
+        }
+        GgmlType::Q5_K => {
+            gemv_q5_k(w, x, y, out_dim, in_dim);
         }
         other => return Err(super::CpuError::UnsupportedWeightType(other)),
     }
