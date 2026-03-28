@@ -24,7 +24,7 @@ use super::kernels::quant::{
     // Q4_0 GEMV kernel
     gemv_q4_0_f32,
 };
-use super::quant::{QK_K, Q4_K_BLOCK_SIZE, Q4KBlock, Q5_K_BLOCK_SIZE, Q5KBlock, QK8_0, Q8_0_BLOCK_SIZE, Q8_0_MAX, Q8_0Block, QK4_0, Q4_0_BLOCK_SIZE};
+use super::quant::{QK_K, Q4_K_BLOCK_SIZE, Q4KBlock, Q5_K_BLOCK_SIZE, Q5KBlock, QK8_0, Q8_0_BLOCK_SIZE, Q8_0_MAX, Q8_0Block, QK4_0, Q4_0_BLOCK_SIZE, QK4_1, Q4_1_BLOCK_SIZE};
 
 /// GPU quantization handle.
 ///
@@ -1295,5 +1295,15 @@ mod tests {
     #[test]
     fn qk4_0_is_32() {
         assert_eq!(QK4_0, 32, "QK4_0 must be 32");
+    }
+
+    #[test]
+    fn q4_1_block_size_is_20() {
+        assert_eq!(Q4_1_BLOCK_SIZE, 20, "Q4_1_BLOCK_SIZE must be 20 bytes");
+    }
+
+    #[test]
+    fn qk4_1_is_32() {
+        assert_eq!(QK4_1, 32, "QK4_1 must be 32");
     }
 }
