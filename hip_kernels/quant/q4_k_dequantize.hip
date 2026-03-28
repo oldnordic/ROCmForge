@@ -24,7 +24,7 @@
 
 // ── Main Kernel ─────────────────────────────────────────────────────────────────
 
-extern "C" __global__ void dequantize_q4_k_kernel(
+extern "C" __global__ void dequantize_q4_k_device(
     const void* __restrict__ input,   // [n/256 * 144] Q4_K quantized data
     float* __restrict__ output,       // [n] f32 output data
     int n                             // Total number of elements
@@ -87,7 +87,7 @@ extern "C" __global__ void dequantize_q4_k_kernel(
 //!
 //! Dequantizes multiple blocks in parallel.
 //! Each thread block handles one block.
-extern "C" __global__ void dequantize_q4_k_batched_kernel(
+extern "C" __global__ void dequantize_q4_k_batched_device(
     const void* __restrict__ input,   // [batch_size][n/256 * 144] Q4_K data
     float* __restrict__ output,       // [batch_size][n] f32 output
     int n,                            // Elements per batch
@@ -140,4 +140,53 @@ extern "C" __global__ void dequantize_q4_k_batched_kernel(
         float val = static_cast<float>(q4) / s_d + s_dmin;
         out_ptr[block_start + i] = val;
     }
+}
+
+// ── Dispatch Functions (Called from Rust) ───────────────────────────────────────
+
+extern "C" hipError_t dequantize_q4_k_kernel(
+    const void* input,
+    float* output,
+    int n
+) {
+    if (n <= 0) {
+        return hipErrorInvalidValue;
+    }
+
+    int num_blocks = (n + QK_K - 1) / QK_K;
+
+    // Launch with 32 threads per block
+    hipLaunchKernelGGL(
+        HIP_KERNEL_NAME(dequantize_q4_k_device),
+        dim3(num_blocks),
+        dim3(32),
+        0, 0,
+        input, output, n
+    );
+
+    return hipGetLastError();
+}
+
+extern "C" hipError_t dequantize_q4_k_batched_kernel(
+    const void* input,
+    float* output,
+    int n,
+    int batch_size
+) {
+    if (n <= 0 || batch_size <= 0) {
+        return hipErrorInvalidValue;
+    }
+
+    int blocks_per_batch = (n + QK_K - 1) / QK_K;
+    dim3 grid(blocks_per_batch, batch_size);
+
+    hipLaunchKernelGGL(
+        HIP_KERNEL_NAME(dequantize_q4_k_batched_device),
+        grid,
+        dim3(32),
+        0, 0,
+        input, output, n, batch_size
+    );
+
+    return hipGetLastError();
 }

@@ -18,7 +18,7 @@
 
 // ── Main Kernel ─────────────────────────────────────────────────────────────────
 
-extern "C" __global__ void verify_q4_k_accuracy_kernel(
+__global__ void verify_q4_k_accuracy_device(
     const float* __restrict__ original,  // [n] Original f32 data
     const void* __restrict__ quantized,   // [n/256 * 144] Q4_K quantized data
     float* __restrict__ errors,           // [3] Output: [max_error, mse, relative_error]
@@ -155,8 +155,8 @@ extern "C" __global__ void verify_q4_k_accuracy_kernel(
 //!
 //! Must be called after verify_q4_k_accuracy to compute final values.
 //! Output: [max_error, mse, relative_error]
-extern "C" __global__ void finalize_q4_k_metrics_kernel(
-    float* __restrict__ errors,     // [4] Input: [max_error, mse, sum_original, sum_error]
+__global__ void finalize_q4_k_metrics_device(
+    const float* __restrict__ errors,     // [4] Input: [max_error, mse, sum_original, sum_error]
     float* __restrict__ metrics,    // [3] Output: [max_error, mse, relative_error]
     int n                           // Total number of elements (for MSE normalization)
 ) {
@@ -169,4 +169,61 @@ extern "C" __global__ void finalize_q4_k_metrics_kernel(
         metrics[1] = mse;
         metrics[2] = relative_error;
     }
+}
+
+// ── Dispatch Functions (Called from Rust) ───────────────────────────────────────
+
+/// Verify Q4_K quantization accuracy (first pass)
+///
+/// Writes intermediate error values to the errors array.
+/// Must be followed by finalize_q4_k_metrics_kernel to compute final metrics.
+extern "C" hipError_t verify_q4_k_accuracy_kernel(
+    const float* original,
+    const void* quantized,
+    float* errors,  // [4] Output: [max_error, mse, sum_original, sum_error]
+    int n
+) {
+    if (n <= 0) {
+        return hipErrorInvalidValue;
+    }
+
+    int num_blocks = (n + QK_K - 1) / QK_K;
+
+    // Initialize errors array to zero
+    hipMemset(errors, 0, 4 * sizeof(float));
+
+    // Launch verification kernel
+    hipLaunchKernelGGL(
+        HIP_KERNEL_NAME(verify_q4_k_accuracy_device),
+        dim3(num_blocks),
+        dim3(32),
+        0, 0,
+        original, quantized, errors, n
+    );
+
+    return hipGetLastError();
+}
+
+/// Finalize Q4_K accuracy metrics (second pass)
+///
+/// Reads intermediate error values and computes final metrics.
+extern "C" hipError_t finalize_q4_k_metrics_kernel(
+    const float* errors,   // [4] Input: [max_error, mse, sum_original, sum_error]
+    float* metrics,        // [3] Output: [max_error, mse, relative_error]
+    int n
+) {
+    if (n <= 0) {
+        return hipErrorInvalidValue;
+    }
+
+    // Launch finalization kernel
+    hipLaunchKernelGGL(
+        HIP_KERNEL_NAME(finalize_q4_k_metrics_device),
+        dim3(1),
+        dim3(32),
+        0, 0,
+        errors, metrics, n
+    );
+
+    return hipGetLastError();
 }
