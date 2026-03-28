@@ -146,6 +146,7 @@ mod gpu_build {
                             ("libq5_k_quantize.a", "q5_k_quantize"),
                             ("libq5_k_dequantize.a", "q5_k_dequantize"),
                             ("libq5_k_verify.a", "q5_k_verify"),
+                            ("libq5_k_gemv.a", "q5_k_gemv"),
                         ];
 
                         for (lib_name, link_name) in libs_to_copy {
