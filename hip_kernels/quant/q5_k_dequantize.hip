@@ -69,7 +69,7 @@ __global__ void dequantize_q5_k_device(
         for (int l = threadIdx.x; l < 32 && (j + l) < (block_end - block_start); l += 32) {
             const uint8_t q4 = ql[l] & 0x0F;
             const uint8_t high_bit = (qh[l] & u1) ? 16 : 0;
-            const float val = d1 * (q4 + high_bit) - min1;
+            const float val = static_cast<float>(q4 + high_bit) / d1 + min1;
             output[block_start + j + l] = val;
         }
 
@@ -77,7 +77,7 @@ __global__ void dequantize_q5_k_device(
         for (int l = threadIdx.x; l < 32 && (j + 32 + l) < (block_end - block_start); l += 32) {
             const uint8_t q4 = (ql[l] >> 4) & 0x0F;
             const uint8_t high_bit = (qh[l] & u2) ? 16 : 0;
-            const float val = d2 * (q4 + high_bit) - min2;
+            const float val = static_cast<float>(q4 + high_bit) / d2 + min2;
             output[block_start + j + 32 + l] = val;
         }
 
@@ -133,13 +133,13 @@ __global__ void dequantize_q5_k_batched_device(
         for (int l = threadIdx.x; l < 32 && (j + l) < (block_end - block_start); l += 32) {
             const uint8_t q4 = ql[l] & 0x0F;
             const uint8_t high_bit = (qh[l] & u1) ? 16 : 0;
-            batch_output[block_start + j + l] = d1 * (q4 + high_bit) - min1;
+            batch_output[block_start + j + l] = static_cast<float>(q4 + high_bit) / d1 + min1;
         }
 
         for (int l = threadIdx.x; l < 32 && (j + 32 + l) < (block_end - block_start); l += 32) {
             const uint8_t q4 = (ql[l] >> 4) & 0x0F;
             const uint8_t high_bit = (qh[l] & u2) ? 16 : 0;
-            batch_output[block_start + j + 32 + l] = d2 * (q4 + high_bit) - min2;
+            batch_output[block_start + j + 32 + l] = static_cast<float>(q4 + high_bit) / d2 + min2;
         }
 
         ql += 32;

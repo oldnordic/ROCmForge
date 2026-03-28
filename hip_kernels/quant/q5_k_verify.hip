@@ -93,12 +93,12 @@ __global__ void verify_q5_k_accuracy_device(
                 // First sub-block
                 const uint8_t q4 = ql[l] & 0x0F;
                 const uint8_t high_bit = (qh[l] & u1) ? 16 : 0;
-                dequantized = d1 * (q4 + high_bit) - min1;
+                dequantized = static_cast<float>(q4 + high_bit) / d1 + min1;
             } else {
                 // Second sub-block
                 const uint8_t q4 = (ql[l - 32] >> 4) & 0x0F;
                 const uint8_t high_bit = (qh[l - 32] & u2) ? 16 : 0;
-                dequantized = d2 * (q4 + high_bit) - min2;
+                dequantized = static_cast<float>(q4 + high_bit) / d2 + min2;
             }
 
             // Compute error

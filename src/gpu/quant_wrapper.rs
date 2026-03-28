@@ -576,6 +576,92 @@ impl GpuQuant {
         Ok((metrics[0], metrics[1], metrics[2]))
     }
 
+    /// Q5_K verification: Compute accuracy metrics for Q5_K quantization
+    ///
+    /// Verifies quantization accuracy by computing error metrics:
+    /// - max_error: Maximum absolute error across all elements
+    /// - mse: Mean squared error
+    /// - relative_error: Total error / total magnitude
+    ///
+    /// # Arguments
+    /// * `original` - GPU pointer to original f32 data [n]
+    /// * `quantized` - GPU pointer to Q5_K quantized data [n/256 * 176]
+    /// * `n` - Total number of elements
+    ///
+    /// # Returns
+    /// (max_error, mse, relative_error) on success
+    ///
+    /// # Errors
+    /// - n is zero
+    /// - Kernel launch fails
+    pub fn verify_q5_k_accuracy(&self, original: *const f32, quantized: *const u8, n: usize) -> GpuResult<(f32, f32, f32)> {
+        if n == 0 {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "verify_q5_k_accuracy: n cannot be zero".to_string(),
+            });
+        }
+
+        // Validate pointers
+        if original.is_null() {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "verify_q5_k_accuracy: original pointer is null".to_string(),
+            });
+        }
+
+        if quantized.is_null() {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "verify_q5_k_accuracy: quantized pointer is null".to_string(),
+            });
+        }
+
+        // Allocate GPU memory for error metrics
+        let num_blocks = (n + QK_K - 1) / QK_K;
+
+        // Allocate temporary buffers for metrics
+        let errors_gpu = unsafe {
+            ffi::hip_malloc(4 * std::mem::size_of::<f32>())?
+        };
+        let metrics_gpu = unsafe {
+            ffi::hip_malloc(3 * std::mem::size_of::<f32>())?
+        };
+
+        // Initialize errors to zero
+        let zeros = vec![0.0f32; 4];
+        unsafe {
+            ffi::hip_memcpy_h2d(errors_gpu, zeros.as_ptr() as *const u8, 4 * std::mem::size_of::<f32>())?;
+        }
+
+        // Run verification kernel
+        verify_q5_k_accuracy(original, quantized, errors_gpu as *mut f32, n)?;
+
+        // Finalize metrics
+        finalize_q5_k_metrics(errors_gpu as *const f32, metrics_gpu as *mut f32, n)?;
+
+        // Synchronize to ensure kernels complete
+        self.device.synchronize()?;
+
+        // Copy metrics back to host
+        let mut metrics = [0.0f32; 3];
+        unsafe {
+            ffi::hip_memcpy_d2h(
+                metrics.as_mut_ptr() as *mut u8,
+                metrics_gpu as *const u8,
+                3 * std::mem::size_of::<f32>()
+            )?;
+        }
+
+        // Cleanup
+        unsafe {
+            ffi::hip_free(errors_gpu);
+            ffi::hip_free(metrics_gpu);
+        }
+
+        Ok((metrics[0], metrics[1], metrics[2]))
+    }
+
     /// Q8_0 × f32 GEMV: Compute output = weights @ input
     ///
     /// Computes matrix-vector multiplication with quantized weights:

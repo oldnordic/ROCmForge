@@ -142,6 +142,10 @@ mod gpu_build {
                             ("libq8_0_gemv.a", "q8_0_gemv"),
                             // Q4_K GEMV library
                             ("libq4_k_gemv.a", "q4_k_gemv"),
+                            // Q5_K libraries
+                            ("libq5_k_quantize.a", "q5_k_quantize"),
+                            ("libq5_k_dequantize.a", "q5_k_dequantize"),
+                            ("libq5_k_verify.a", "q5_k_verify"),
                         ];
 
                         for (lib_name, link_name) in libs_to_copy {

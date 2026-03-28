@@ -6,7 +6,7 @@
 //! - Correctness of quantization/dequantization
 //! - Performance vs CPU baseline
 //!
-//! Implemented: Q4_K, Q8_0 quantization
+//! Implemented: Q4_K, Q5_K, Q8_0 quantization
 //! TODO: Q4_K matmul, quantized GEMM, VRAM tracking, concurrent operations
 //!
 //! Run with: cargo test --test quant_integration --features gpu
@@ -295,6 +295,152 @@ fn test_q8_0_quantization() {
 
     // Verification should show excellent accuracy for 8-bit
     assert!(max_err < 0.1, "Max verification error {} too large for Q8_0", max_err);
+}
+
+/// Test Q5_K quantization kernel
+///
+/// Verifies:
+/// 1. Allocate GPU buffers for input weights and output quantized blocks
+/// 2. Call Q5_K quantization FFI function
+/// 3. Copy quantized blocks back to CPU
+/// 4. Verify dequantized values match original within tolerance
+///
+/// Q5_K uses non-uniform quantization with 8 sub-blocks, each with its own scale/min.
+/// Block size: 256 elements → 176 bytes (d + dmin + scales[12] + qh[32] + qs[128])
+#[test]
+#[serial]
+fn test_q5_k_quantization() {
+    use rocmforge::gpu::{detect, GpuDevice, GpuQuant, GpuBuffer, QK_K, Q5_K_BLOCK_SIZE};
+
+    // Require GPU for this test
+    let caps = detect().expect("GPU required for quantization test");
+    println!("Testing Q5_K quantization on: {}", caps.device_name);
+
+    // Initialize device
+    let device = GpuDevice::init(caps.device_id)
+        .expect("Failed to initialize GPU device");
+
+    // Initialize quantization context
+    let gpu_quant = GpuQuant::new(device)
+        .expect("Failed to initialize GpuQuant");
+
+    // Prepare test data (256 elements = 1 Q5_K block)
+    let n = QK_K;
+    let input_data: Vec<f32> = (0..n).map(|i| i as f32 * 0.01).collect();
+
+    // Allocate GPU buffers using GpuBuffer (RAII)
+    let d_input = GpuBuffer::alloc(n * std::mem::size_of::<f32>())
+        .expect("Failed to allocate input buffer");
+    let d_quantized = GpuBuffer::alloc((n / QK_K) * Q5_K_BLOCK_SIZE)
+        .expect("Failed to allocate quantized buffer");
+    let d_output = GpuBuffer::alloc(n * std::mem::size_of::<f32>())
+        .expect("Failed to allocate output buffer");
+
+    // Copy input to GPU (cast to &[u8] for copy_from_host)
+    let input_bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(
+            input_data.as_ptr() as *const u8,
+            n * std::mem::size_of::<f32>()
+        )
+    };
+    // GpuBuffer::copy_from_host expects &mut self, so we need to make it mutable
+    let mut d_input = d_input;
+    d_input.copy_from_host(input_bytes)
+        .expect("Failed to copy input to GPU");
+
+    // Quantize on GPU (cast *mut u8 to *const f32 and *mut u8)
+    gpu_quant.quantize_q5_k(
+        d_input.as_ptr() as *const f32,
+        d_quantized.as_ptr(),
+        n
+    )
+        .expect("Failed to quantize on GPU");
+
+    // Dequantize on GPU
+    gpu_quant.dequantize_q5_k(
+        d_quantized.as_ptr(),
+        d_output.as_ptr() as *mut f32,
+        n
+    )
+        .expect("Failed to dequantize on GPU");
+
+    // Copy output back to CPU
+    let mut output_bytes = vec![0u8; n * std::mem::size_of::<f32>()];
+    d_output.copy_to_host(&mut output_bytes)
+        .expect("Failed to copy output from GPU");
+
+    // Convert bytes back to f32
+    let output_data: Vec<f32> = unsafe {
+        std::slice::from_raw_parts(
+            output_bytes.as_ptr() as *const f32,
+            n
+        ).to_vec()
+    };
+
+    // Cleanup is automatic via GpuBuffer's Drop implementation
+    drop(d_input);
+    drop(d_quantized);
+    drop(d_output);
+
+    // Verify accuracy - Q5_K has ~5 bits of precision
+    // Non-uniform quantization with 8 sub-blocks provides better accuracy than Q4_K
+    // Expected accuracy: < 0.5% relative error per spec
+    let tolerance = 0.1; // Tighter tolerance than Q4_K, looser than Q8_0
+    let mut max_error = 0.0f32;
+    for (i, (orig, dequant)) in input_data.iter().zip(output_data.iter()).enumerate() {
+        let error = (orig - dequant).abs();
+        max_error = max_error.max(error);
+        if error > tolerance {
+            panic!(
+                "Large quantization error at index {}: orig={}, dequant={}, error={}",
+                i, orig, dequant, error
+            );
+        }
+    }
+
+    println!("Q5_K quantization max error: {}", max_error);
+    assert!(max_error < tolerance, "Max error {} exceeds tolerance {}", max_error, tolerance);
+
+    // Test verify_accuracy function
+    println!("Testing verify_q5_k_accuracy function...");
+    let caps2 = detect().expect("GPU required");
+    let device2 = GpuDevice::init(caps2.device_id).expect("Failed to init device");
+    let gpu_quant2 = GpuQuant::new(device2).expect("Failed to init GpuQuant");
+
+    let d_input2 = GpuBuffer::alloc(n * std::mem::size_of::<f32>()).expect("Failed to allocate");
+    let d_quantized2 = GpuBuffer::alloc((n / QK_K) * Q5_K_BLOCK_SIZE).expect("Failed to allocate");
+
+    let input_bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(
+            input_data.as_ptr() as *const u8,
+            n * std::mem::size_of::<f32>()
+        )
+    };
+    let mut d_input2 = d_input2;
+    d_input2.copy_from_host(input_bytes).expect("Failed to copy input");
+
+    gpu_quant2.quantize_q5_k(
+        d_input2.as_ptr() as *const f32,
+        d_quantized2.as_ptr(),
+        n
+    )
+        .expect("Failed to quantize");
+
+    let (max_err, mse, rel_err) = gpu_quant2.verify_q5_k_accuracy(
+        d_input2.as_ptr() as *const f32,
+        d_quantized2.as_ptr(),
+        n
+    ).expect("Failed to verify accuracy");
+
+    println!("Q5_K Verification: max_error={}, mse={}, relative_error={}", max_err, mse, rel_err);
+
+    // Cleanup is automatic via GpuBuffer's Drop implementation
+    drop(d_input2);
+    drop(d_quantized2);
+
+    // Verification should show good accuracy for Q5_K (better than Q4_K, worse than Q8_0)
+    assert!(max_err < 0.5, "Max verification error {} too large for Q5_K", max_err);
+    assert!(rel_err < 0.01, "Relative error {} exceeds 1% for Q5_K", rel_err);
 }
 
 /// Test Q8_0 × f32 GEMV kernel

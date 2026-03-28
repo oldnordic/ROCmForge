@@ -142,7 +142,7 @@ __global__ void quantize_q5_k_device(
 
         // Quantize 8 elements per thread
         for (int i = lane_idx * 8; i < (lane_idx + 1) * 8 && i < 32; i++) {
-            int l = (int)roundf((subblock_x[i] + dm) / d);
+            int l = (int)roundf(d * (subblock_x[i] - dm));
             l = (l < 0) ? 0 : (l > 31 ? 31 : l);
             s_L[subblock_start + i] = (uint8_t)l;
         }

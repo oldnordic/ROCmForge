@@ -1,6 +1,12 @@
 .planning/
 target/
 *.gguf
+
+# CMake build artifacts
+hip_kernels/quant/build/
+**/build/
+*.o
+*.a
 # Codegraph database and config
 .codegraph/
 *.codegraph.db
