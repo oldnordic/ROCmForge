@@ -1273,6 +1273,277 @@ fn test_q4_0_gemv() {
     assert!(max_relative_error < tolerance, "Max relative error {} exceeds tolerance {}", max_relative_error, tolerance);
 }
 
+/// Test Q4_1 quantization and dequantization roundtrip
+///
+/// Verifies:
+/// 1. Quantize f32 data to Q4_1 format on GPU
+/// 2. Dequantize back to f32
+/// 3. Verify accuracy < 0.35 absolute error
+/// 4. Test verify_q4_1_accuracy function
+#[test]
+#[serial]
+fn test_q4_1_quantization() {
+    use rocmforge::gpu::{detect, GpuDevice, GpuQuant, GpuBuffer, QK4_1, Q4_1_BLOCK_SIZE};
+
+    // Require GPU for this test
+    let caps = detect().expect("GPU required for Q4_1 quantization test");
+    println!("Testing Q4_1 quantization on: {}", caps.device_name);
+
+    // Initialize device
+    let device = GpuDevice::init(caps.device_id)
+        .expect("Failed to initialize GPU device");
+
+    // Initialize quantization context
+    let gpu_quant = GpuQuant::new(device)
+        .expect("Failed to initialize GpuQuant");
+
+    // Prepare test data (256 elements = 8 Q4_1 blocks)
+    let n = 8 * QK4_1; // 256 elements
+    // Use values in range [-1, 1] for better Q4_1 quantization accuracy
+    let input_data: Vec<f32> = (0..n).map(|i| (i as f32 * 0.01 - 1.0).cos()).collect();
+
+    // Allocate GPU buffers
+    let d_input = GpuBuffer::alloc(n * std::mem::size_of::<f32>())
+        .expect("Failed to allocate input buffer");
+    let d_quantized = GpuBuffer::alloc((n / QK4_1) * Q4_1_BLOCK_SIZE)
+        .expect("Failed to allocate quantized buffer");
+    let d_output = GpuBuffer::alloc(n * std::mem::size_of::<f32>())
+        .expect("Failed to allocate output buffer");
+
+    // Copy input to GPU
+    let input_bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(
+            input_data.as_ptr() as *const u8,
+            n * std::mem::size_of::<f32>()
+        )
+    };
+    let mut d_input = d_input;
+    d_input.copy_from_host(input_bytes)
+        .expect("Failed to copy input to GPU");
+
+    // Quantize to Q4_1
+    gpu_quant.quantize_q4_1(
+        d_input.as_ptr() as *const f32,
+        d_quantized.as_ptr(),
+        n
+    ).expect("Failed to quantize");
+
+    // Dequantize back to f32
+    gpu_quant.dequantize_q4_1(
+        d_quantized.as_ptr(),
+        d_output.as_ptr() as *mut f32,
+        n
+    ).expect("Failed to dequantize");
+
+    // Copy output back to CPU
+    let mut output_bytes = vec![0u8; n * std::mem::size_of::<f32>()];
+    d_output.copy_to_host(&mut output_bytes)
+        .expect("Failed to copy output from GPU");
+
+    // Convert bytes back to f32
+    let output_data: Vec<f32> = unsafe {
+        std::slice::from_raw_parts(
+            output_bytes.as_ptr() as *const f32,
+            n
+        ).to_vec()
+    };
+
+    // Verify accuracy - Q4_1 has ~4 bits of precision with scale+min per block
+    // Q4_1 should be similar or better than Q4_0 since it uses scale+min
+    // Use absolute tolerance
+    let tolerance = 0.35; // Relaxed tolerance for 4-bit quantization
+    let mut max_abs_error = 0.0f32;
+    for (i, (original, dequantized)) in input_data.iter().zip(output_data.iter()).enumerate() {
+        let abs_error = (original - dequantized).abs();
+        max_abs_error = max_abs_error.max(abs_error);
+
+        if abs_error > tolerance {
+            panic!(
+                "Large dequantization error at index {}: original={}, dequantized={}, abs_error={}",
+                i, original, dequantized, abs_error
+            );
+        }
+    }
+
+    println!("Q4_1 quantization test passed! max_abs_error={}", max_abs_error);
+
+    // Test verify_q4_1_accuracy function
+    let d_input_verify = GpuBuffer::alloc(n * std::mem::size_of::<f32>())
+        .expect("Failed to allocate input buffer for verification");
+    let mut d_input_verify = d_input_verify;
+    d_input_verify.copy_from_host(input_bytes)
+        .expect("Failed to copy input for verification");
+
+    let (max_error, mean_error, _std_dev) = gpu_quant.verify_q4_1_accuracy(
+        d_input_verify.as_ptr() as *const f32,
+        d_quantized.as_ptr(),
+        n
+    ).expect("Failed to verify accuracy");
+
+    drop(d_input_verify);
+
+    println!("Q4_1 accuracy verification: max_error={}, mean_error={}", max_error, mean_error);
+    assert!(max_error < tolerance, "Max error {} exceeds tolerance {}", max_error, tolerance);
+    assert!(mean_error < tolerance / 4.0, "Mean error {} exceeds tolerance {}", mean_error, tolerance / 4.0);
+
+    // Cleanup is automatic via GpuBuffer's Drop
+    drop(d_input);
+    drop(d_quantized);
+    drop(d_output);
+}
+
+/// Test Q4_1 × f32 GEMV kernel
+///
+/// Verifies:
+/// 1. Quantize weight matrix to Q4_1 format on GPU
+/// 2. Allocate GPU buffers for input vector and output
+/// 3. Call Q4_1 × f32 GEMV kernel
+/// 4. Verify output matches CPU reference with 10% relative error tolerance
+#[test]
+#[serial]
+fn test_q4_1_gemv() {
+    use rocmforge::gpu::{detect, GpuDevice, GpuQuant, GpuBuffer, QK4_1, Q4_1_BLOCK_SIZE};
+
+    // Require GPU for this test
+    let caps = detect().expect("GPU required for Q4_1 GEMV test");
+    println!("Testing Q4_1 GEMV on: {}", caps.device_name);
+
+    // Initialize device and quantization context
+    let device = GpuDevice::init(caps.device_id)
+        .expect("Failed to initialize GPU device");
+    let gpu_quant = GpuQuant::new(device)
+        .expect("Failed to initialize GpuQuant");
+
+    // Test parameters: 32×4 test matrix
+    let n_rows = 32;     // Input dimension (must be multiple of 32 for Q4_1)
+    let ncols_dst = 4;   // Output dimension
+
+    // Create a simple weight matrix (n_rows × ncols_dst)
+    // Use smaller values to ensure Q4_1 quantization accuracy
+    let mut weight_data: Vec<f32> = Vec::with_capacity(n_rows * ncols_dst);
+    for col in 0..ncols_dst {
+        for row in 0..n_rows {
+            // Use values in range [-1, 1] for better Q4_1 accuracy
+            weight_data.push(((col as f32) * 0.1 + (row as f32) * 0.01 - 0.5).cos());
+        }
+    }
+
+    // Create input vector
+    let input_data: Vec<f32> = (0..n_rows).map(|i| 1.0 + i as f32 * 0.1).collect();
+
+    // Compute CPU reference output
+    let mut expected_output = vec![0.0f32; ncols_dst];
+    for col in 0..ncols_dst {
+        for row in 0..n_rows {
+            expected_output[col] += weight_data[col * n_rows + row] * input_data[row];
+        }
+    }
+
+    // Allocate GPU buffers
+    let d_weights = GpuBuffer::alloc(n_rows * ncols_dst * std::mem::size_of::<f32>())
+        .expect("Failed to allocate weight buffer");
+    let d_input = GpuBuffer::alloc(n_rows * std::mem::size_of::<f32>())
+        .expect("Failed to allocate input buffer");
+    let d_quantized = GpuBuffer::alloc((n_rows / QK4_1) * ncols_dst * Q4_1_BLOCK_SIZE)
+        .expect("Failed to allocate quantized buffer");
+    let d_output = GpuBuffer::alloc(ncols_dst * std::mem::size_of::<f32>())
+        .expect("Failed to allocate output buffer");
+
+    // Copy weights and input to GPU
+    let weight_bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(
+            weight_data.as_ptr() as *const u8,
+            n_rows * ncols_dst * std::mem::size_of::<f32>()
+        )
+    };
+    let mut d_weights = d_weights;
+    d_weights.copy_from_host(weight_bytes)
+        .expect("Failed to copy weights to GPU");
+
+    let input_bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(
+            input_data.as_ptr() as *const u8,
+            n_rows * std::mem::size_of::<f32>()
+        )
+    };
+    let mut d_input = d_input;
+    d_input.copy_from_host(input_bytes)
+        .expect("Failed to copy input to GPU");
+
+    // Quantize each column separately to Q4_1
+    for col in 0..ncols_dst {
+        let col_weights_ptr = unsafe {
+            d_weights.as_ptr().add(col * n_rows * std::mem::size_of::<f32>())
+        };
+        let col_quantized_ptr = unsafe {
+            d_quantized.as_ptr().add(col * (n_rows / QK4_1) * Q4_1_BLOCK_SIZE)
+        };
+
+        // Quantize this column
+        gpu_quant.quantize_q4_1(
+            col_weights_ptr as *const f32,
+            col_quantized_ptr,
+            n_rows
+        ).expect("Failed to quantize column");
+    }
+
+    // Run GEMV kernel
+    gpu_quant.gemv_q4_1_f32(
+        d_quantized.as_ptr(),
+        d_input.as_ptr() as *const f32,
+        d_output.as_ptr() as *mut f32,
+        n_rows,
+        ncols_dst
+    ).expect("Failed to run GEMV kernel");
+
+    // Copy output back to CPU
+    let mut output_bytes = vec![0u8; ncols_dst * std::mem::size_of::<f32>()];
+    d_output.copy_to_host(&mut output_bytes)
+        .expect("Failed to copy output from GPU");
+
+    // Convert bytes back to f32
+    let output_data: Vec<f32> = unsafe {
+        std::slice::from_raw_parts(
+            output_bytes.as_ptr() as *const f32,
+            ncols_dst
+        ).to_vec()
+    };
+
+    // Cleanup is automatic via GpuBuffer's Drop
+    drop(d_weights);
+    drop(d_input);
+    drop(d_quantized);
+    drop(d_output);
+
+    // Verify output - allow for quantization error
+    // Q4_1 has ~4 bits of precision with scale+min, similar to Q4_0
+    // Use 10% relative error tolerance
+    let tolerance = 0.10; // 10% relative error
+    let mut max_relative_error = 0.0f32;
+    for (col, (expected, actual)) in expected_output.iter().zip(output_data.iter()).enumerate() {
+        let abs_error = (expected - actual).abs();
+        let relative_error = if expected.abs() > 1e-6 {
+            abs_error / expected.abs()
+        } else {
+            abs_error
+        };
+        max_relative_error = max_relative_error.max(relative_error);
+
+        println!("Column {}: expected={}, actual={}, abs_error={}, rel_error={}",
+                 col, expected, actual, abs_error, relative_error);
+
+        if relative_error > tolerance && abs_error > 0.1 {
+            panic!(
+                "Large GEMV error at column {}: expected={}, actual={}, rel_error={}",
+                col, expected, actual, relative_error
+            );
+        }
+    }
+
+    println!("Q4_1 GEMV test passed! max_relative_error={}", max_relative_error);
+    assert!(max_relative_error < tolerance, "Max relative error {} exceeds tolerance {}", max_relative_error, tolerance);
+}
+
 /// Placeholder: Test quantized GEMM (Q4_K × Q8_K)
 ///
 /// **To be implemented in Phase 3 or 4**:
