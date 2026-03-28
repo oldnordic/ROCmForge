@@ -19,23 +19,30 @@ __global__ void quantize_q4_0_device(
     float val = x[threadIdx.x];
     float abs_val = fabsf(val);
 
-    // Warp reduction to find max - track both abs and signed value
+    // Warp reduction to find max - track BOTH abs and signed value together
+    // Initialize with this thread's values
     float max_abs = abs_val;
-    float max_signed = val;  // Track signed value corresponding to abs max
+    float max_signed = val;
+
     #pragma unroll
     for (int offset = 16; offset > 0; offset >>= 1) {
+        // Get other thread's abs value
         float other_abs = __shfl_down(max_abs, offset);
+        // Get other thread's signed value (the one that corresponds to other_abs)
+        float other_signed = __shfl_down(max_signed, offset);
+
+        // If other thread has larger abs value, take BOTH their abs AND signed value
         if (other_abs > max_abs) {
             max_abs = other_abs;
-            max_signed = __shfl_down(val, offset);  // Get corresponding signed value
+            max_signed = other_signed;
         }
     }
 
-    // Thread 0 computes scale (d = max / -8 from llama.cpp)
+    // Thread 0 computes scale (d = max_signed / -8 from llama.cpp)
     __shared__ half s_d;
     if (threadIdx.x == 0) {
-        // Use signed max for scale calculation
-        float d = (max_abs != 0.0f) ? (max_signed / -8.0f) : -1.0f;
+        // Avoid division by zero - if all zeros, use -1.0 as default scale
+        float d = (max_abs > 0.0f) ? (max_signed / -8.0f) : -1.0f;
         s_d = __float2half(d);
     }
     __syncthreads();
