@@ -152,6 +152,11 @@ mod gpu_build {
                             ("libq4_0_dequantize.a", "q4_0_dequantize"),
                             ("libq4_0_verify.a", "q4_0_verify"),
                             ("libq4_0_gemv.a", "q4_0_gemv"),
+                            // Q4_1 libraries
+                            ("libq4_1_quantize.a", "q4_1_quantize"),
+                            ("libq4_1_dequantize.a", "q4_1_dequantize"),
+                            ("libq4_1_verify.a", "q4_1_verify"),
+                            ("libq4_1_gemv.a", "q4_1_gemv"),
                         ];
 
                         for (lib_name, link_name) in libs_to_copy {
