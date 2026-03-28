@@ -34,4 +34,10 @@ pub use quant::{
     gemv_q8_0_f32,
     gemv_q4_k_f32,
     gemv_q5_k_f32,
+    quantize_q4_0,
+    dequantize_q4_0,
+    dequantize_q4_0_batched,
+    verify_q4_0_accuracy,
+    finalize_q4_0_metrics,
+    gemv_q4_0_f32,
 };
