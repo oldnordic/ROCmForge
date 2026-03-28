@@ -235,6 +235,226 @@ pub fn finalize_q4_k_metrics(
     Ok(())
 }
 
+/// Quantize f32 data to Q5_K format.
+///
+/// # Arguments
+/// * `input` - GPU pointer to f32 input data [n]
+/// * `output` - GPU pointer to Q5_K output data [n/256 * 176]
+/// * `n` - Total number of elements
+///
+/// # Returns
+/// Ok(()) on success, Err if kernel launch fails
+///
+/// # Safety
+/// - All memory pointers must be valid GPU pointers
+/// - Bounds are validated on CPU before kernel launch
+pub fn quantize_q5_k(
+    input: *const f32,
+    output: *mut u8,
+    n: usize,
+) -> GpuResult<()> {
+    if n == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "quantize_q5_k: n cannot be zero".to_string(),
+        });
+    }
+
+    let num_blocks = (n + 255) / 256;
+    if num_blocks == 0 {
+        return Ok(());
+    }
+
+    let result = unsafe {
+        quantize_q5_k_kernel(input, output, n as c_int)
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("quantize_q5_k kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+/// Dequantize Q5_K data to f32.
+///
+/// # Arguments
+/// * `input` - GPU pointer to Q5_K input data [n/256 * 176]
+/// * `output` - GPU pointer to f32 output data [n]
+/// * `n` - Total number of elements
+///
+/// # Returns
+/// Ok(()) on success, Err if kernel launch fails
+///
+/// # Safety
+/// - All memory pointers must be valid GPU pointers
+/// - Bounds are validated on CPU before kernel launch
+pub fn dequantize_q5_k(
+    input: *const u8,
+    output: *mut f32,
+    n: usize,
+) -> GpuResult<()> {
+    if n == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "dequantize_q5_k: n cannot be zero".to_string(),
+        });
+    }
+
+    let num_blocks = (n + 255) / 256;
+    if num_blocks == 0 {
+        return Ok(());
+    }
+
+    let result = unsafe {
+        dequantize_q5_k_kernel(input, output, n as c_int)
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("dequantize_q5_k kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+/// Batched dequantize Q5_K data to f32.
+///
+/// # Arguments
+/// * `input` - GPU pointer to Q5_K input data [batch_size][n/256 * 176]
+/// * `output` - GPU pointer to f32 output data [batch_size][n]
+/// * `n` - Number of elements per batch
+/// * `batch_size` - Number of batches
+///
+/// # Returns
+/// Ok(()) on success, Err if kernel launch fails
+///
+/// # Safety
+/// - All memory pointers must be valid GPU pointers
+/// - Bounds are validated on CPU before kernel launch
+pub fn dequantize_q5_k_batched(
+    input: *const u8,
+    output: *mut f32,
+    n: usize,
+    batch_size: usize,
+) -> GpuResult<()> {
+    if n == 0 || batch_size == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "dequantize_q5_k_batched: n and batch_size cannot be zero".to_string(),
+        });
+    }
+
+    let num_blocks = (n + 255) / 256;
+    if num_blocks == 0 {
+        return Ok(());
+    }
+
+    let result = unsafe {
+        dequantize_q5_k_batched_kernel(input, output, n as c_int, batch_size as c_int)
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("dequantize_q5_k_batched kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+/// Verify Q5_K quantization accuracy.
+///
+/// Compares original f32 data with quantize-dequantize round-trip.
+///
+/// # Arguments
+/// * `original` - GPU pointer to original f32 data [n]
+/// * `quantized` - GPU pointer to Q5_K quantized data [n/256 * 176]
+/// * `errors` - GPU pointer to error array [4] (intermediate results)
+/// * `n` - Number of elements
+///
+/// Must be followed by `finalize_q5_k_metrics` to get final metrics.
+///
+/// # Returns
+/// Ok(()) on success, Err if kernel launch fails
+///
+/// # Safety
+/// - All memory pointers must be valid GPU pointers
+/// - Bounds are validated on CPU before kernel launch
+pub fn verify_q5_k_accuracy(
+    original: *const f32,
+    quantized: *const u8,
+    errors: *mut f32,
+    n: usize,
+) -> GpuResult<()> {
+    if n == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "verify_q5_k_accuracy: n cannot be zero".to_string(),
+        });
+    }
+
+    let result = unsafe {
+        verify_q5_k_accuracy_kernel(original, quantized, errors, n as c_int)
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("verify_q5_k_accuracy kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+/// Finalize Q5_K accuracy metrics.
+///
+/// Computes final metrics from intermediate error values.
+///
+/// # Arguments
+/// * `errors` - GPU pointer to intermediate error array [4]
+/// * `metrics` - GPU pointer to final metrics [3]: [max_error, mse, relative_error]
+/// * `n` - Number of elements (for MSE normalization)
+///
+/// # Returns
+/// Ok(()) on success, Err if kernel launch fails
+///
+/// # Safety
+/// - All memory pointers must be valid GPU pointers
+/// - Bounds are validated on CPU before kernel launch
+pub fn finalize_q5_k_metrics(
+    errors: *const f32,
+    metrics: *mut f32,
+    n: usize,
+) -> GpuResult<()> {
+    if n == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "finalize_q5_k_metrics: n cannot be zero".to_string(),
+        });
+    }
+
+    let result = unsafe {
+        finalize_q5_k_metrics_kernel(errors, metrics, n as c_int)
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("finalize_q5_k_metrics kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
 // ── FFI Declarations ─────────────────────────────────────────────────────────────
 
 /// FFI declarations - will be linked from compiled HIP kernels
@@ -266,6 +486,39 @@ unsafe extern "C" {
     ) -> hipError_t;
 
     fn finalize_q4_k_metrics_kernel(
+        errors: *const f32,
+        metrics: *mut f32,
+        n: c_int,
+    ) -> hipError_t;
+
+    // Q5_K kernels
+    fn quantize_q5_k_kernel(
+        input: *const f32,
+        output: *mut u8,
+        n: c_int,
+    ) -> hipError_t;
+
+    fn dequantize_q5_k_kernel(
+        input: *const u8,
+        output: *mut f32,
+        n: c_int,
+    ) -> hipError_t;
+
+    fn dequantize_q5_k_batched_kernel(
+        input: *const u8,
+        output: *mut f32,
+        n: c_int,
+        batch_size: c_int,
+    ) -> hipError_t;
+
+    fn verify_q5_k_accuracy_kernel(
+        original: *const f32,
+        quantized: *const u8,
+        errors: *mut f32,
+        n: c_int,
+    ) -> hipError_t;
+
+    fn finalize_q5_k_metrics_kernel(
         errors: *const f32,
         metrics: *mut f32,
         n: c_int,
