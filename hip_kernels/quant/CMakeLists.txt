@@ -205,6 +205,20 @@ set_target_properties(q5_k_verify PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
 
+# Q5_K GEMV kernel (Q5_K × f32 matrix-vector multiplication)
+add_library(q5_k_gemv STATIC
+    q5_k_gemv.hip
+)
+
+target_link_libraries(q5_k_gemv
+    quant_common
+)
+
+set_target_properties(q5_k_gemv PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
 # Print build info
 message(STATUS "ROCm GPU Quantization Build Configuration:")
 message(STATUS "  CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
