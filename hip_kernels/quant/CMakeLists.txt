@@ -145,6 +145,20 @@ set_target_properties(q4_0_dequantize PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
 
+# Q4_1 quantization kernel
+add_library(q4_1_quantize STATIC q4_1_quantize.hip)
+target_link_libraries(q4_1_quantize quant_common)
+set_target_properties(q4_1_quantize PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
+# Q4_1 dequantization kernel
+add_library(q4_1_dequantize STATIC q4_1_dequantize.hip)
+target_link_libraries(q4_1_dequantize quant_common)
+set_target_properties(q4_1_dequantize PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
 # Q4_0 verification kernel
 add_library(q4_0_verify STATIC q4_0_verify.hip)
 target_link_libraries(q4_0_verify quant_common)
@@ -164,6 +178,22 @@ target_link_libraries(q4_0_gemv
 
 # Set output directory to match Cargo expectations
 set_target_properties(q4_0_gemv PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
+# Q4_1 GEMV kernel (Q4_1 × f32 matrix-vector multiplication)
+add_library(q4_1_gemv STATIC
+    q4_1_gemv.hip
+)
+
+# Link common library to Q4_1 GEMV kernel
+target_link_libraries(q4_1_gemv
+    quant_common
+)
+
+# Set output directory to match Cargo expectations
+set_target_properties(q4_1_gemv PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
