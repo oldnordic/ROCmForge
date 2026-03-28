@@ -9,4 +9,6 @@ pub use types::{
     Q5_K_BLOCK_SIZE, Q5KBlock,
     // Q8_0 types
     QK8_0, Q8_0_BLOCK_SIZE, Q8_0_MAX, Q8_0Block,
+    // Q4_0 types
+    QK4_0, Q4_0_BLOCK_SIZE, Q4_0Block,
 };
