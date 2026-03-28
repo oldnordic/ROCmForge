@@ -863,3 +863,91 @@ mod q8_0_tests {
         assert!(result.is_err());
     }
 }
+
+// ── Q4_K Unit Tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod q4_k_tests {
+    use super::*;
+
+    #[test]
+    fn gemv_q4_k_f32_rejects_zero_n_rows() {
+        let result = gemv_q4_k_f32(
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            0,
+            4,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot be zero"));
+    }
+
+    #[test]
+    fn gemv_q4_k_f32_rejects_zero_ncols() {
+        let result = gemv_q4_k_f32(
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            256,
+            0,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn gemv_q4_k_f32_rejects_misaligned_n_rows() {
+        let result = gemv_q4_k_f32(
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            255,  // Not multiple of 256
+            4,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("multiple of 256"));
+    }
+
+    #[test]
+    fn gemv_q4_k_f32_rejects_null_weights() {
+        let result = gemv_q4_k_f32(
+            std::ptr::null(),  // null weights
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            256,
+            4,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("weights_q4_k pointer is null"));
+    }
+
+    #[test]
+    fn gemv_q4_k_f32_rejects_null_input() {
+        let dummy_u8 = 0u8;
+        let result = gemv_q4_k_f32(
+            &dummy_u8 as *const u8,
+            std::ptr::null(),  // null input
+            std::ptr::null_mut(),
+            256,
+            4,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("input pointer is null"));
+    }
+
+    #[test]
+    fn gemv_q4_k_f32_rejects_null_output() {
+        let dummy_u8 = 0u8;
+        let dummy_f32 = 0.0f32;
+        let result = gemv_q4_k_f32(
+            &dummy_u8 as *const u8,
+            &dummy_f32 as *const f32,
+            std::ptr::null_mut(),  // null output
+            256,
+            4,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("output pointer is null"));
+    }
+}
+

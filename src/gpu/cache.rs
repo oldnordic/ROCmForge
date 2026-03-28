@@ -7,7 +7,8 @@
 
 use super::error::{GpuError, GpuResult};
 use super::weights::GpuBuffer;
-use super::kernels::{kv_write, kv_write_batched};
+use super::kernels::{kv_write, kv_write_batched, zero_fill};
+use super::device::GpuDevice;
 use crate::config::ModelConfig;
 
 // ── KV Cache ─────────────────────────────────────────────────────────────────────
@@ -161,10 +162,22 @@ impl GpuKvCache {
 
     /// Clear all cached values (zero out via kernel).
     ///
-    /// TODO: Add zero-fill kernel in future phase
-    pub fn clear(&mut self) -> GpuResult<()> {
-        // For now, just return Ok - actual zero-fill needs kernel
-        // Will be implemented with GPU kernels phase
+    /// Requires device reference for kernel synchronization.
+    pub fn clear(&mut self, device: &GpuDevice) -> GpuResult<()> {
+        let elements_per_layer = self.max_seq_len * self.kv_size;
+
+        // Zero out K cache for each layer
+        for layer in 0..self.num_layers {
+            let k_ptr = self.k[layer].as_ptr() as *mut f32;
+            zero_fill(k_ptr, elements_per_layer, device)?;
+        }
+
+        // Zero out V cache for each layer
+        for layer in 0..self.num_layers {
+            let v_ptr = self.v[layer].as_ptr() as *mut f32;
+            zero_fill(v_ptr, elements_per_layer, device)?;
+        }
+
         Ok(())
     }
 

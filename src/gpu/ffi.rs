@@ -159,12 +159,15 @@ pub fn hip_get_mem_info(device_id: i32) -> GpuResult<(usize, usize)> {
 /// Query HIP driver version.
 ///
 /// Returns packed version number (e.g., 0x05060000 for 5.6.0).
-/// Note: hipGetDriverVersion may not be available in all HIP versions.
-/// Returns 0 if unavailable or on error.
+/// Get HIP driver version.
+///
+/// Note: hipGetDriverVersion availability varies by HIP/ROCm version.
+/// Returns 0 if function is unavailable - this is a safe default
+/// rather than failing the entire program.
 pub fn hip_get_driver_version() -> GpuResult<u32> {
-    // The hipGetDriverVersion function is not always available in HIP
-    // For now, return 0 to match the TODO's original behavior
-    // A full implementation would dynamically load the symbol
+    // hipGetDriverVersion may not be available in all HIP versions
+    // A full implementation would dynamically load the symbol via dlsym
+    // For now, return 0 as a safe default
     Ok(0)
 }
 

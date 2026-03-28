@@ -25,50 +25,32 @@
 
 // ── Device Functions ─────────────────────────────────────────────────────────────
 
-//! Find min/max in array (reduction across threads)
-static __device__ void find_min_max(const float* x, int n, float& min_val, float& max_val) {
-    min_val = 1e38f;
-    max_val = -1e38f;
-
-    for (int i = threadIdx.x; i < n; i += blockDim.x) {
-        float val = x[i];
-        min_val = fminf(min_val, val);
-        max_val = fmaxf(max_val, val);
-    }
-
-    // Warp reduction
-    for (int offset = 16; offset > 0; offset >>= 1) {
-        float other_min = __shfl_down(min_val, offset);
-        float other_max = __shfl_down(max_val, offset);
-        min_val = fminf(min_val, other_min);
-        max_val = fmaxf(max_val, other_max);
-    }
-
-    // Final reduction across warps (only first thread in warp)
-    __shared__ float shared_min[32];
-    __shared__ float shared_max[32];
-    int lane_id = threadIdx.x % 32;
-    int warp_id = threadIdx.x / 32;
-
-    if (lane_id == 0) {
-        shared_min[warp_id] = min_val;
-        shared_max[warp_id] = max_val;
-    }
-    __syncthreads();
-
+//! Find min/max in array - sequential scan by thread 0
+static __device__ void find_min_max(
+    const float* x,
+    int n,
+    float& min_val,
+    float& max_val,
+    float& shared_min,
+    float& shared_max
+) {
+    // Only thread 0 does the work (simple but safe)
     if (threadIdx.x == 0) {
-        min_val = shared_min[0];
-        max_val = shared_max[0];
-        for (int i = 1; i < blockDim.x / 32; i++) {
-            min_val = fminf(min_val, shared_min[i]);
-            max_val = fmaxf(max_val, shared_max[i]);
+        min_val = 1e38f;
+        max_val = -1e38f;
+        for (int i = 0; i < n; i++) {
+            float val = x[i];
+            min_val = fminf(min_val, val);
+            max_val = fmaxf(max_val, val);
         }
+        shared_min = min_val;
+        shared_max = max_val;
     }
     __syncthreads();
 
     // Broadcast result to all threads
-    min_val = __shfl(min_val, 0);
-    max_val = __shfl(max_val, 0);
+    min_val = shared_min;
+    max_val = shared_max;
 }
 
 //! Quantize value to 4-bit using non-uniform scales
@@ -83,10 +65,10 @@ static __device__ __inline__ int make_qk_quants(int offset, float min_val, float
 
 // ── Main Kernel ─────────────────────────────────────────────────────────────────
 
-extern "C" __global__ void quantize_q4_k_kernel(
-    const float* __restrict__ input,   // [n] f32 input data
-    void* __restrict__ output,         // [n/256 * 144] Q4_K quantized output
-    int n                              // Total number of elements
+extern "C" __global__ void quantize_q4_k_device(
+    const float* input,   // [n] f32 input data
+    void* output,         // [n/256 * 144] Q4_K quantized output
+    int n                 // Total number of elements
 ) {
     // Each thread block processes one 256-element block
     const int block_idx = blockIdx.x;
@@ -104,13 +86,7 @@ extern "C" __global__ void quantize_q4_k_kernel(
 
     // Step 1: Find min/max
     float min_val, max_val;
-    find_min_max(x, QK_K, min_val, max_val);
-
-    if (threadIdx.x == 0) {
-        s_min = min_val;
-        s_max = max_val;
-    }
-    __syncthreads();
+    find_min_max(x, QK_K, min_val, max_val, s_min, s_max);
 
     // Step 2: Compute scale and dmin
     if (threadIdx.x == 0) {
@@ -170,4 +146,34 @@ extern "C" __global__ void quantize_q4_k_kernel(
             out[4 + K_SCALE_SIZE + i] = s_qs[i];
         }
     }
+}
+
+// ── Dispatch Function (Called from Rust) ───────────────────────────────────────────
+
+extern "C" hipError_t quantize_q4_k_kernel(
+    const float* input,
+    void* output,
+    int n
+) {
+    // Validate dimensions
+    if (n <= 0) {
+        return hipErrorInvalidValue;
+    }
+
+    // Calculate number of blocks
+    int num_blocks = (n + QK_K - 1) / QK_K;
+
+    // Launch kernel with 256 threads per block (QK_K)
+    hipLaunchKernelGGL(
+        HIP_KERNEL_NAME(quantize_q4_k_device),
+        dim3(num_blocks),
+        dim3(QK_K),
+        0,  // shared memory
+        0,  // stream
+        input,
+        output,
+        n
+    );
+
+    return hipGetLastError();
 }
