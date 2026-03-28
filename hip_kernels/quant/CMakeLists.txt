@@ -131,6 +131,13 @@ set_target_properties(q8_0_gemv PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
 
+# Q4_0 quantization kernel
+add_library(q4_0_quantize STATIC q4_0_quantize.hip)
+target_link_libraries(q4_0_quantize quant_common)
+set_target_properties(q4_0_quantize PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
 # Test kernel library (for Phase 1 verification)
 add_library(test_quant STATIC
     test_kernel.hip
