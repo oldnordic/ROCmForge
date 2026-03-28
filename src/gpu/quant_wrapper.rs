@@ -9,6 +9,8 @@ use super::device::GpuDevice;
 use super::kernels::quant::{
     // Q4_K kernels
     quantize_q4_k, dequantize_q4_k, dequantize_q4_k_batched, verify_q4_k_accuracy, finalize_q4_k_metrics,
+    // Q5_K kernels
+    quantize_q5_k, dequantize_q5_k, dequantize_q5_k_batched, verify_q5_k_accuracy, finalize_q5_k_metrics,
     // Q8_0 kernels
     quantize_q8_0, dequantize_q8_0, dequantize_q8_0_batched, verify_q8_0_accuracy, finalize_q8_0_metrics,
     // Q8_0 GEMV kernel
@@ -16,7 +18,7 @@ use super::kernels::quant::{
     // Q4_K GEMV kernel
     gemv_q4_k_f32,
 };
-use super::quant::{QK_K, Q4_K_BLOCK_SIZE, Q4KBlock, QK8_0, Q8_0_BLOCK_SIZE, Q8_0_MAX, Q8_0Block};
+use super::quant::{QK_K, Q4_K_BLOCK_SIZE, Q4KBlock, Q5_K_BLOCK_SIZE, Q5KBlock, QK8_0, Q8_0_BLOCK_SIZE, Q8_0_MAX, Q8_0Block};
 
 /// GPU quantization handle.
 ///
@@ -259,6 +261,98 @@ impl GpuQuant {
         }
 
         Ok((metrics[0], metrics[1], metrics[2]))
+    }
+
+    // ── Q5_K Methods ─────────────────────────────────────────────────────────────────────
+
+    /// Quantize f32 data to Q5_K format.
+    ///
+    /// # Arguments
+    /// * `input` - GPU pointer to f32 input data [n]
+    /// * `output` - GPU pointer to Q5_K output data [n/256 * 176]
+    /// * `n` - Total number of elements
+    ///
+    /// # Returns
+    /// Ok(()) on success
+    ///
+    /// # Errors
+    /// - n is zero
+    /// - Kernel launch fails
+    pub fn quantize_q5_k(&self, input: *const f32, output: *mut u8, n: usize) -> GpuResult<()> {
+        if n == 0 {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "quantize_q5_k: n cannot be zero".to_string(),
+            });
+        }
+
+        // Validate pointers
+        if input.is_null() {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "quantize_q5_k: input pointer is null".to_string(),
+            });
+        }
+
+        if output.is_null() {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "quantize_q5_k: output pointer is null".to_string(),
+            });
+        }
+
+        // Call kernel
+        quantize_q5_k(input, output, n)?;
+
+        // Synchronize to ensure kernel completes
+        self.device.synchronize()?;
+
+        Ok(())
+    }
+
+    /// Dequantize Q5_K data to f32.
+    ///
+    /// # Arguments
+    /// * `input` - GPU pointer to Q5_K input data [n/256 * 176]
+    /// * `output` - GPU pointer to f32 output data [n]
+    /// * `n` - Total number of elements
+    ///
+    /// # Returns
+    /// Ok(()) on success
+    ///
+    /// # Errors
+    /// - n is zero
+    /// - Kernel launch fails
+    pub fn dequantize_q5_k(&self, input: *const u8, output: *mut f32, n: usize) -> GpuResult<()> {
+        if n == 0 {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "dequantize_q5_k: n cannot be zero".to_string(),
+            });
+        }
+
+        // Validate pointers
+        if input.is_null() {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "dequantize_q5_k: input pointer is null".to_string(),
+            });
+        }
+
+        if output.is_null() {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "dequantize_q5_k: output pointer is null".to_string(),
+            });
+        }
+
+        // Call kernel
+        dequantize_q5_k(input, output, n)?;
+
+        // Synchronize to ensure kernel completes
+        self.device.synchronize()?;
+
+        Ok(())
     }
 
     // ── Q8_0 Methods ─────────────────────────────────────────────────────────────────────
