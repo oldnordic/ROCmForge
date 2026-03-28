@@ -1749,3 +1749,53 @@ mod q4_k_tests {
     }
 }
 
+// ── Q4_0 Unit Tests ───────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod q4_0_tests {
+    use super::*;
+
+    #[test]
+    fn quantize_q4_0_rejects_zero_n() {
+        let result = quantize_q4_0(std::ptr::null(), std::ptr::null_mut(), 0);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot be zero"));
+    }
+
+    #[test]
+    fn dequantize_q4_0_rejects_zero_n() {
+        let result = dequantize_q4_0(std::ptr::null(), std::ptr::null_mut(), 0);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot be zero"));
+    }
+
+    #[test]
+    fn dequantize_q4_0_batched_rejects_zero_batch() {
+        let result = dequantize_q4_0_batched(std::ptr::null(), std::ptr::null_mut(), 32, 0);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot be zero"));
+    }
+
+    #[test]
+    fn verify_q4_0_accuracy_rejects_zero_n() {
+        let result = verify_q4_0_accuracy(std::ptr::null(), std::ptr::null(), std::ptr::null_mut(), 0);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot be zero"));
+    }
+
+    #[test]
+    fn finalize_q4_0_metrics_rejects_zero_n() {
+        let result = finalize_q4_0_metrics(std::ptr::null(), std::ptr::null_mut(), 0);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot be zero"));
+    }
+
+    #[test]
+    fn gemv_q4_0_f32_rejects_invalid_dimensions() {
+        // n_rows must be multiple of QK4_0 (32)
+        let result = gemv_q4_0_f32(std::ptr::null(), std::ptr::null(), std::ptr::null_mut(), 33, 1);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("must be multiple of"));
+    }
+}
+
