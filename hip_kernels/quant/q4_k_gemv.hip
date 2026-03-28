@@ -16,53 +16,58 @@ struct Q4_K_block {
 
 // ── Device Functions ───────────────────────────────────────────────────────────────
 
-/// Extract scale and min from Q4_K scales array (llama.cpp pattern)
-/// Source: llama.cpp ggml/src/ggml-cuda/convert.cu:182-189
-__device__ inline void get_scale_min_k4(int j, const uint8_t* q, uint8_t& d, uint8_t& m) {
-    if (j < 4) {
-        d = q[j] & 63;
-        m = q[j + 4] & 63;
-    } else {
-        d = (q[j+4] & 0xF) | ((q[j-4] >> 6) << 4);
-        m = (q[j+4] >>  4) | ((q[j-0] >> 6) << 4);
-    }
-}
-
-/// Vector dot product: Q4_K block × f32 vector segment
-/// Thread layout matches llama.cpp dequantize_block_q4_k (32 threads)
-__device__ inline float vec_dot_q4_k(const Q4_K_block* block, const float* vec, int offset) {
-    // Thread layout (llama.cpp pattern)
+/// Vector dot product: Q4_K block × f32 vector segment (uniform quantization)
+///
+/// Uses uniform dequantization: val = q4 / d + dmin
+/// Thread layout: 32 threads, each processes 8 elements
+__device__ inline float vec_dot_q4_k(const void* block_ptr, const float* vec, int offset) {
     const int tid = threadIdx.x;
-    const int il  = tid / 8;    // 0-3: which group of 8 threads
-    const int ir  = tid % 8;    // 0-7: which thread within group
-    const int is  = 2 * il;     // 0, 2, 4, 6: scale index
-    const int n   = 4;          // values per iteration
 
-    // Load global scales
-    const float dall = __half2float(block->d);
-    const float dmin = __half2float(block->dmin);
+    // Access block as raw bytes to avoid struct padding issues
+    const uint8_t* block_bytes = static_cast<const uint8_t*>(block_ptr);
 
-    // Get local scales (2 different scales per thread)
-    uint8_t sc, m;
-    get_scale_min_k4(is + 0, block->scales, sc, m);
-    const float d1 = dall * sc;
-    const float m1 = dmin * m;
+    // Load d (bytes 0-1)
+    half d_half;
+    memcpy(&d_half, block_bytes, sizeof(half));
+    const float d = __half2float(d_half);
 
-    get_scale_min_k4(is + 1, block->scales, sc, m);
-    const float d2 = dall * sc;
-    const float m2 = dmin * m;
+    // Load dmin (bytes 2-3)
+    half dmin_half;
+    memcpy(&dmin_half, block_bytes + 2, sizeof(half));
+    const float dmin = __half2float(dmin_half);
 
-    // Load quantized values
-    const uint8_t* q = block->qs + 32 * il + n * ir;
+    // qs array starts at byte 16 (after d, dmin, and scales[12])
+    const uint8_t* qs = block_bytes + 16;
 
-    // Dequantize and accumulate dot product
+    // Handle edge case where d is near zero
+    if (fabsf(d) < 1e-7f) {
+        return 0.0f;
+    }
+
     float sum = 0.0f;
-    #pragma unroll
-    for (int l = 0; l < n; ++l) {
-        const float v0 = d1 * (q[l] & 0xF) - m1;           // Lower 4 bits
-        const float v1 = d2 * (q[l] >>  4) - m2;           // Upper 4 bits
-        sum += v0 * vec[offset + 64*il + l];              // Accounts for il offset (llama.cpp pattern)
-        sum += v1 * vec[offset + 64*il + l + 32];
+
+    // Each thread processes 8 elements (256 / 32 = 8)
+    for (int l = 0; l < 8; ++l) {
+        const int i = tid * 8 + l;  // Global element index in block
+        const int byte_idx = i / 2;  // Which byte in qs array
+
+        // Read packed 4-bit value
+        const uint8_t packed = qs[byte_idx];
+        uint8_t q4;
+
+        if (i % 2 == 0) {
+            // Lower 4 bits
+            q4 = packed & 0x0F;
+        } else {
+            // Upper 4 bits
+            q4 = (packed >> 4) & 0x0F;
+        }
+
+        // Dequantize: val = q4 / d + dmin (uniform quantization)
+        const float val = static_cast<float>(q4) / d + dmin;
+
+        // Accumulate dot product
+        sum += val * vec[offset + i];
     }
 
     return sum;
@@ -86,17 +91,16 @@ __global__ void gemv_q4_k_f32_kernel(
     // Bounds check
     if (col >= ncols_dst) return;
 
-    // Calculate column pointer (interleaved layout)
-    const Q4_K_block* w_col = reinterpret_cast<const Q4_K_block*>(
-        static_cast<const uint8_t*>(weights_q4_k) + col * (n_rows / QK_K) * Q4_K_BLOCK_SIZE
-    );
+    // Calculate column base pointer (interleaved layout)
+    const uint8_t* col_base = static_cast<const uint8_t*>(weights_q4_k) + col * (n_rows / QK_K) * Q4_K_BLOCK_SIZE;
 
     const int n_blocks = n_rows / QK_K;
     float sum = 0.0f;
 
-    // Stride across blocks with threads
-    for (int block_idx = tid; block_idx < n_blocks; block_idx += blockDim.x) {
-        sum += vec_dot_q4_k(&w_col[block_idx], input, block_idx * QK_K);
+    // Process each block - all threads collaborate on each block
+    for (int block_idx = 0; block_idx < n_blocks; ++block_idx) {
+        const void* block_ptr = col_base + block_idx * Q4_K_BLOCK_SIZE;
+        sum += vec_dot_q4_k(block_ptr, input, block_idx * QK_K);
     }
 
     // Warp reduction (RDNA: 32 threads = 1 wavefront)
@@ -127,17 +131,18 @@ __global__ void gemv_q4_k_f32_generic_kernel(
 
     if (col >= ncols_dst) return;
 
-    const Q4_K_block* w_col = reinterpret_cast<const Q4_K_block*>(
-        static_cast<const uint8_t*>(weights_q4_k) + col * (n_rows / QK_K) * Q4_K_BLOCK_SIZE
-    );
+    const uint8_t* col_base = static_cast<const uint8_t*>(weights_q4_k) + col * (n_rows / QK_K) * Q4_K_BLOCK_SIZE;
 
     const int n_blocks = n_rows / QK_K;
     float sum = 0.0f;
 
-    for (int block_idx = tid; block_idx < n_blocks; block_idx += blockDim.x) {
-        sum += vec_dot_q4_k(&w_col[block_idx], input, block_idx * QK_K);
+    // Process each block - all threads collaborate on each block
+    for (int block_idx = 0; block_idx < n_blocks; ++block_idx) {
+        const void* block_ptr = col_base + block_idx * Q4_K_BLOCK_SIZE;
+        sum += vec_dot_q4_k(block_ptr, input, block_idx * QK_K);
     }
 
+    // Warp reduction (RDNA: 32 threads = 1 wavefront)
     #pragma unroll
     for (int offset = 16; offset > 0; offset >>= 1) {
         sum += __shfl_down(sum, offset);

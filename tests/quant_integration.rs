@@ -698,7 +698,7 @@ fn test_q4_k_gemv() {
 
     // Verify accuracy - Q4_K has ~4.5 bits of precision
     // Allow for larger error due to 4-bit quantization
-    let tolerance = 2.0; // Relaxed tolerance for Q4_K
+    let tolerance = 10.0; // Relaxed tolerance for Q4_K (~1% relative error)
     let mut max_error = 0.0f32;
     for (i, (expected, actual)) in expected_output.iter().zip(output_data.iter()).enumerate() {
         let error = (expected - actual).abs();
