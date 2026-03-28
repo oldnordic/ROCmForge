@@ -52,12 +52,17 @@ __global__ void quantize_q4_0_device(
     int q = (int)roundf(val / d + 8.5f);
     q = (q < 0) ? 0 : (q > 15) ? 15 : q;
 
-    // Pack pairwise into shared memory (2 threads per byte)
-    __shared__ uint8_t s_qs[QK4_0 / 2];
-    if (threadIdx.x % 2 == 0) {
-        s_qs[threadIdx.x / 2] = (uint8_t)q;  // Low 4 bits
-    } else {
-        s_qs[threadIdx.x / 2] |= ((uint8_t)q) << 4;  // High 4 bits
+    // Two-phase packing: each thread writes to its own slot, thread 0 combines
+    __shared__ uint8_t s_q[QK4_0];        // 32 slots (one per thread)
+    __shared__ uint8_t s_qs[QK4_0 / 2];   // 16 packed bytes
+    s_q[threadIdx.x] = (uint8_t)q;
+    __syncthreads();
+
+    // Thread 0 combines sequential: qs[i] = low nibble from q[i] + high nibble from q[i+16]
+    if (threadIdx.x == 0) {
+        for (int i = 0; i < QK4_0 / 2; ++i) {
+            s_qs[i] = s_q[i] | (s_q[i + 16] << 4);
+        }
     }
     __syncthreads();
 
@@ -92,7 +97,7 @@ extern "C" hipError_t quantize_q4_0_kernel(
         HIP_KERNEL_NAME(quantize_q4_0_device),
         dim3(num_blocks),
         dim3(QK4_0),
-        18,  // shared memory (2 bytes half + 16 bytes qs)
+        48,  // shared memory (2 bytes half + 32 bytes q + 16 bytes qs)
         0,  // stream
         input,
         output,

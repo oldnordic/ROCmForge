@@ -63,11 +63,12 @@ __global__ void dequantize_q4_1_batched_device(
     const uint8_t* qs = in + 4;
     float* out = &output[global_block_idx * QK4_1];
 
+    // Sequential unpacking: qs[i] low nibble → element i, high nibble → element i + 16
     for (int i = 0; i < QK4_1 / 2; ++i) {
         uint8_t q0 = qs[i] & 0x0F;
         uint8_t q1 = qs[i] >> 4;
-        out[i * 2]     = (float)q0 * d + m;
-        out[i * 2 + 1] = (float)q1 * d + m;
+        out[i]                = (float)q0 * d + m;  // First half (elements 0..15)
+        out[i + QK4_1 / 2]   = (float)q1 * d + m;  // Second half (elements 16..31)
     }
 }
 

@@ -21,15 +21,15 @@ __device__ inline float vec_dot_q4_0(const Q4_0_block* block, const float* vec, 
     float d = __half2float(block->d);
 
     // Unpack 4-bit values and compute dot product
-    // Each byte contains two 4-bit values: low nibble (qs[2*i]) and high nibble (qs[2*i+1])
+    // Sequential layout (matches llama.cpp): qs[i] low nibble → element i, high → element i+16
     float sum = 0.0f;
     #pragma unroll
     for (int i = 0; i < 16; ++i) {
         const uint8_t q = static_cast<uint8_t>(block->qs[i]);
-        const int32_t q0 = q & 0x0F;          // Low 4 bits
-        const int32_t q1 = (q >> 4) & 0x0F;   // High 4 bits
-        sum += (static_cast<float>(q0) - 8.0f) * vec[offset + 2 * i];
-        sum += (static_cast<float>(q1) - 8.0f) * vec[offset + 2 * i + 1];
+        const int32_t q0 = q & 0x0F;          // Low 4 bits → element i
+        const int32_t q1 = (q >> 4) & 0x0F;   // High 4 bits → element i + 16
+        sum += (static_cast<float>(q0) - 8.0f) * vec[offset + i];
+        sum += (static_cast<float>(q1) - 8.0f) * vec[offset + i + 16];
     }
 
     return d * sum;

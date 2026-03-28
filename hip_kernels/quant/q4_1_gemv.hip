@@ -23,16 +23,15 @@ __device__ inline float vec_dot_q4_1(const Q4_1_block* block, const float* vec, 
     float d = __half2float(block->d);
     float m = __half2float(block->m);
 
-    // Unpack 4-bit values and compute dot product
-    // Each byte contains two 4-bit values: low nibble and high nibble
+    // Sequential unpacking: qs[i] low nibble → element i, high nibble → element i + 16
     float sum = 0.0f;
     #pragma unroll
     for (int i = 0; i < 16; ++i) {
         const uint8_t packed = block->qs[i];
-        const float q0 = static_cast<float>(packed & 0x0F);          // Low 4 bits
-        const float q1 = static_cast<float>(packed >> 4);            // High 4 bits
-        sum += (q0 * d + m) * vec[offset + 2 * i];
-        sum += (q1 * d + m) * vec[offset + 2 * i + 1];
+        const float q0 = static_cast<float>(packed & 0x0F);          // Low 4 bits → element i
+        const float q1 = static_cast<float>(packed >> 4);            // High 4 bits → element i + 16
+        sum += (q0 * d + m) * vec[offset + i];
+        sum += (q1 * d + m) * vec[offset + i + 16];
     }
 
     return sum;
