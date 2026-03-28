@@ -399,3 +399,36 @@ fn test_q8_0_block_default() {
     let block = Q8_0Block::default();
     assert_eq!(block.qs.len(), 32, "Default qs array must have 32 elements");
 }
+
+/// Test Q5_K constants match llama.cpp
+#[test]
+#[serial]
+fn test_q5_k_constants() {
+    use rocmforge::gpu::{QK_K, K_SCALE_SIZE, Q5_K_BLOCK_SIZE};
+
+    assert_eq!(QK_K, 256, "QK_K must be 256 elements per block");
+    assert_eq!(K_SCALE_SIZE, 12, "K_SCALE_SIZE must be 12");
+    assert_eq!(Q5_K_BLOCK_SIZE, 176);  // 2+2+12+32+128
+}
+
+/// Test Q5KBlock size
+#[test]
+#[serial]
+fn test_q5_k_block_struct_size() {
+    use rocmforge::gpu::Q5KBlock;
+
+    let block = Q5KBlock::default();
+    assert_eq!(std::mem::size_of::<Q5KBlock>(), 176);  // 2+2+12+32+128
+}
+
+/// Test Q5KBlock default values
+#[test]
+#[serial]
+fn test_q5_k_block_default() {
+    use rocmforge::gpu::Q5KBlock;
+
+    let block = Q5KBlock::default();
+    assert_eq!(block.scales.len(), 12);
+    assert_eq!(block.qh.len(), 32);
+    assert_eq!(block.qs.len(), 128);
+}
