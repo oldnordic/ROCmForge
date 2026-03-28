@@ -138,6 +138,13 @@ set_target_properties(q4_0_quantize PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
 
+# Q4_0 dequantization kernel
+add_library(q4_0_dequantize STATIC q4_0_dequantize.hip)
+target_link_libraries(q4_0_dequantize quant_common)
+set_target_properties(q4_0_dequantize PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
 # Test kernel library (for Phase 1 verification)
 add_library(test_quant STATIC
     test_kernel.hip
