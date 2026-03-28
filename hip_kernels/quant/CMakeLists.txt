@@ -163,6 +163,20 @@ set_target_properties(q4_k_gemv PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
 
+# Q5_K quantization kernel
+add_library(q5_k_quantize STATIC
+    q5_k_quantize.hip
+)
+
+target_link_libraries(q5_k_quantize
+    quant_common
+)
+
+set_target_properties(q5_k_quantize PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
 # Print build info
 message(STATUS "ROCm GPU Quantization Build Configuration:")
 message(STATUS "  CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
