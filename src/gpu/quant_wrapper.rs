@@ -17,6 +17,8 @@ use super::kernels::quant::{
     gemv_q8_0_f32,
     // Q4_K GEMV kernel
     gemv_q4_k_f32,
+    // Q5_K GEMV kernel
+    gemv_q5_k_f32,
 };
 use super::quant::{QK_K, Q4_K_BLOCK_SIZE, Q4KBlock, Q5_K_BLOCK_SIZE, Q5KBlock, QK8_0, Q8_0_BLOCK_SIZE, Q8_0_MAX, Q8_0Block};
 
@@ -828,6 +830,98 @@ impl GpuQuant {
 
         // Call kernel
         gemv_q4_k_f32(weights_q4_k, input, output, n_rows, ncols_dst)?;
+
+        // Synchronize to ensure kernel completes
+        self.device.synchronize()?;
+
+        Ok(())
+    }
+
+    /// Q5_K × f32 GEMV: Compute output = weights @ input
+    ///
+    /// Computes matrix-vector multiplication with Q5_K quantized weights:
+    /// ```
+    /// output[col] = sum over rows of (dequantize_q5_k(weight[row, col]) * input[row])
+    /// ```
+    ///
+    /// # Arguments
+    /// * `weights_q5_k` - GPU pointer to Q5_K quantized weights [n_rows/256 * ncols_dst * 176]
+    /// * `input` - GPU pointer to f32 input vector [n_rows]
+    /// * `output` - GPU pointer to f32 output vector [ncols_dst] (will be written)
+    /// * `n_rows` - Number of rows (input dimension, must be multiple of 256)
+    /// * `ncols_dst` - Number of columns (output dimension)
+    ///
+    /// # Returns
+    /// Ok(()) on success
+    ///
+    /// # Errors
+    /// - n_rows or ncols_dst is zero
+    /// - n_rows is not a multiple of 256
+    /// - ncols_dst exceeds 1024
+    /// - Any pointer is null
+    /// - Kernel launch fails
+    ///
+    /// # Notes
+    /// - Follows llama.cpp pattern with non-uniform sub-block scaling
+    /// - Uses get_scale_min_k4() for per-32-element scale extraction
+    /// - Template specialization for ncols_dst in {1, 2, 4, 5, 6, 7, 8}
+    /// - Generic fallback for larger sizes
+    pub fn gemv_q5_k_f32(
+        &self,
+        weights_q5_k: *const u8,
+        input: *const f32,
+        output: *mut f32,
+        n_rows: usize,
+        ncols_dst: usize,
+    ) -> GpuResult<()> {
+        // Validate dimensions
+        if n_rows == 0 || ncols_dst == 0 {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: format!("gemv_q5_k_f32: invalid dimensions n_rows={} ncols_dst={}", n_rows, ncols_dst),
+            });
+        }
+
+        // n_rows must be aligned to QK_K (256)
+        if n_rows % QK_K != 0 {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: format!("gemv_q5_k_f32: n_rows must be multiple of {}, got {}", QK_K, n_rows),
+            });
+        }
+
+        // ncols_dst must not exceed kernel limit
+        if ncols_dst > 1024 {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: format!("gemv_q5_k_f32: ncols_dst must be <= 1024, got {}", ncols_dst),
+            });
+        }
+
+        // Validate pointers
+        if weights_q5_k.is_null() {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "gemv_q5_k_f32: weights_q5_k pointer is null".to_string(),
+            });
+        }
+
+        if input.is_null() {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "gemv_q5_k_f32: input pointer is null".to_string(),
+            });
+        }
+
+        if output.is_null() {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "gemv_q5_k_f32: output pointer is null".to_string(),
+            });
+        }
+
+        // Call kernel
+        gemv_q5_k_f32(weights_q5_k, input, output, n_rows, ncols_dst)?;
 
         // Synchronize to ensure kernel completes
         self.device.synchronize()?;
