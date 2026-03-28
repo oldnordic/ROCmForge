@@ -40,6 +40,32 @@ impl Default for Q4KBlock {
     }
 }
 
+/// Total bytes per Q5_K block (176 bytes, not 196 - llama.cpp static_assert confirms)
+pub const Q5_K_BLOCK_SIZE: usize = 2 + 2 + 12 + 32 + 128; // d + dmin + scales + qh + qs
+
+/// Rust-owned Q5_K block
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
+pub struct Q5KBlock {
+    pub d: half::f16,              // delta/scale (2 bytes)
+    pub dmin: half::f16,           // minimum scale (2 bytes)
+    pub scales: [u8; 12],          // quantized scales (12 bytes)
+    pub qh: [u8; 32],              // quants, high bit (32 bytes)
+    pub qs: [u8; 128],             // quants, low 4 bits (128 bytes)
+}
+
+impl Default for Q5KBlock {
+    fn default() -> Self {
+        Self {
+            d: half::f16::from_f32(1.0),
+            dmin: half::f16::from_f32(0.0),
+            scales: [0; 12],
+            qh: [0; 32],
+            qs: [0; 128],
+        }
+    }
+}
+
 /// Rust-owned Q8_0 block
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(C)]
