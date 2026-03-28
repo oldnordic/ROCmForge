@@ -54,7 +54,7 @@ pub use kernels::{kv_write, kv_write_batched, rms_norm, rms_norm_batched, rope, 
 pub use cache::{GpuKvCache, GpuForwardScratch};
 pub use dynamic_loader::{DynamicLibrary, library_info, LibraryInfo};
 pub use arch::GpuArchitecture;
-pub use quant::{QK_K, K_SCALE_SIZE, Q4_K_BLOCK_SIZE, Q4KBlock, Q5_K_BLOCK_SIZE, Q5KBlock, QK8_0, Q8_0_BLOCK_SIZE, Q8_0_MAX, Q8_0Block};
+pub use quant::{QK_K, K_SCALE_SIZE, Q4_K_BLOCK_SIZE, Q4KBlock, Q5_K_BLOCK_SIZE, Q5KBlock, QK8_0, Q8_0_BLOCK_SIZE, Q8_0_MAX, Q8_0Block, QK4_0, Q4_0_BLOCK_SIZE, Q4_0Block};
 pub use quant_wrapper::GpuQuant;
 
 /// Detect AMD GPU capabilities (safe wrapper).
