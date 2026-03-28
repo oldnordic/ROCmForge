@@ -106,3 +106,29 @@ impl Default for Q4_0Block {
         }
     }
 }
+
+// Q4_1 constants (from llama.cpp)
+/// Number of elements per Q4_1 block
+pub const QK4_1: usize = 32;
+
+/// Total bytes per Q4_1 block
+pub const Q4_1_BLOCK_SIZE: usize = 20; // 2 (scale) + 2 (min) + 16 (data)
+
+/// Rust-owned Q4_1 block (llama.cpp format: d + m + qs)
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
+pub struct Q4_1Block {
+    pub d: half::f16,        // scale (2 bytes)
+    pub m: half::f16,        // min offset (2 bytes)
+    pub qs: [u8; 16],        // 4-bit values packed (16 bytes)
+}
+
+impl Default for Q4_1Block {
+    fn default() -> Self {
+        Self {
+            d: half::f16::from_f32(1.0),
+            m: half::f16::from_f32(0.0),
+            qs: [0; 16],
+        }
+    }
+}
