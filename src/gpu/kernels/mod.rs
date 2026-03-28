@@ -40,4 +40,10 @@ pub use quant::{
     verify_q4_0_accuracy,
     finalize_q4_0_metrics,
     gemv_q4_0_f32,
+    quantize_q4_1,
+    dequantize_q4_1,
+    dequantize_q4_1_batched,
+    verify_q4_1_accuracy,
+    finalize_q4_1_metrics,
+    gemv_q4_1_f32,
 };

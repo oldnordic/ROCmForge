@@ -23,6 +23,10 @@ use super::kernels::quant::{
     gemv_q5_k_f32,
     // Q4_0 GEMV kernel
     gemv_q4_0_f32,
+    // Q4_1 kernels
+    quantize_q4_1, dequantize_q4_1, dequantize_q4_1_batched, verify_q4_1_accuracy, finalize_q4_1_metrics,
+    // Q4_1 GEMV kernel
+    gemv_q4_1_f32,
 };
 use super::quant::{QK_K, Q4_K_BLOCK_SIZE, Q4KBlock, Q5_K_BLOCK_SIZE, Q5KBlock, QK8_0, Q8_0_BLOCK_SIZE, Q8_0_MAX, Q8_0Block, QK4_0, Q4_0_BLOCK_SIZE, QK4_1, Q4_1_BLOCK_SIZE};
 
