@@ -166,6 +166,13 @@ set_target_properties(q4_0_verify PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
 
+# Q4_1 verification kernel
+add_library(q4_1_verify STATIC q4_1_verify.hip)
+target_link_libraries(q4_1_verify quant_common)
+set_target_properties(q4_1_verify PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
 # Q4_0 GEMV kernel (Q4_0 × f32 matrix-vector multiplication)
 add_library(q4_0_gemv STATIC
     q4_0_gemv.hip
