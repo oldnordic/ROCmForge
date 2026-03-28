@@ -19,21 +19,23 @@ __global__ void quantize_q4_0_device(
     float val = x[threadIdx.x];
     float abs_val = fabsf(val);
 
-    // Warp reduction to find max (RDNA warp = 32 threads)
-    float max_val = abs_val;
+    // Warp reduction to find max - track both abs and signed value
+    float max_abs = abs_val;
+    float max_signed = val;  // Track signed value corresponding to abs max
     #pragma unroll
     for (int offset = 16; offset > 0; offset >>= 1) {
-        float other_max = __shfl_down(max_val, offset);
-        if (other_max > max_val) {
-            max_val = other_max;
+        float other_abs = __shfl_down(max_abs, offset);
+        if (other_abs > max_abs) {
+            max_abs = other_abs;
+            max_signed = __shfl_down(val, offset);  // Get corresponding signed value
         }
     }
 
     // Thread 0 computes scale (d = max / -8 from llama.cpp)
     __shared__ half s_d;
     if (threadIdx.x == 0) {
-        // Avoid division by zero
-        float d = (max_val != 0.0f) ? (max_val / -8.0f) : -1.0f;
+        // Use signed max for scale calculation
+        float d = (max_abs != 0.0f) ? (max_signed / -8.0f) : -1.0f;
         s_d = __float2half(d);
     }
     __syncthreads();
@@ -71,6 +73,9 @@ extern "C" hipError_t quantize_q4_0_kernel(
     if (n <= 0) {
         return hipErrorInvalidValue;
     }
+    if (n % QK4_0 != 0) {
+        return hipErrorInvalidValue;
+    }
 
     // Calculate number of blocks
     int num_blocks = (n + QK4_0 - 1) / QK4_0;
@@ -80,7 +85,7 @@ extern "C" hipError_t quantize_q4_0_kernel(
         HIP_KERNEL_NAME(quantize_q4_0_device),
         dim3(num_blocks),
         dim3(QK4_0),
-        0,  // shared memory
+        18,  // shared memory (2 bytes half + 16 bytes qs)
         0,  // stream
         input,
         output,
