@@ -33,4 +33,5 @@ pub use quant::{
     finalize_q8_0_metrics,
     gemv_q8_0_f32,
     gemv_q4_k_f32,
+    gemv_q5_k_f32,
 };

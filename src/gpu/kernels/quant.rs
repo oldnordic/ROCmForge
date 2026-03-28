@@ -971,6 +971,21 @@ unsafe extern "C" {
     ) -> hipError_t;
 }
 
+// ── Q5_K GEMV FFI Declaration ───────────────────────────────────────────────────────────
+
+/// FFI declaration for Q5_K GEMV kernel launch
+/// Uses hipStream_t for stream parameter (opaque pointer)
+unsafe extern "C" {
+    fn gemv_q5_k_f32_launch(
+        weights_q5_k: *const u8,
+        input: *const f32,
+        output: *mut f32,
+        n_rows: c_int,
+        ncols_dst: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+}
+
 /// Q4_K × f32 GEMV: quantized matrix-vector multiplication
 ///
 /// Computes output = weights_q4_k × input where:
@@ -1052,6 +1067,101 @@ pub fn gemv_q4_k_f32(
         return Err(GpuError::HipApiError {
             code: result as i32,
             description: format!("gemv_q4_k_f32 kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+// ── Q5_K GEMV (Matrix-Vector Multiplication) ─────────────────────────────────────────────
+
+/// Q5_K × f32 GEMV: Compute output = weights @ input
+///
+/// Computes matrix-vector multiplication with Q5_K quantized weights:
+/// ```
+/// output[col] = sum over rows of (dequantize_q5_k(weight[row, col]) * input[row])
+/// ```
+///
+/// # Arguments
+/// * `weights_q5_k` - GPU pointer to Q5_K quantized weights [n_rows/256 * ncols_dst * 176]
+/// * `input` - GPU pointer to f32 input vector [n_rows]
+/// * `output` - GPU pointer to f32 output vector [ncols_dst] (will be written)
+/// * `n_rows` - Number of rows (input dimension, must be multiple of 256)
+/// * `ncols_dst` - Number of columns (output dimension)
+///
+/// # Returns
+/// Ok(()) on success
+///
+/// # Errors
+/// - n_rows or ncols_dst is zero
+/// - n_rows is not a multiple of 256
+/// - Any pointer is null
+/// - Kernel launch fails
+///
+/// # Safety
+/// - All memory pointers must be valid GPU pointers
+/// - n_rows must be aligned to QK_K (256)
+/// - Bounds are validated on CPU before kernel launch
+pub fn gemv_q5_k_f32(
+    weights_q5_k: *const u8,
+    input: *const f32,
+    output: *mut f32,
+    n_rows: usize,
+    ncols_dst: usize,
+) -> GpuResult<()> {
+    if n_rows == 0 || ncols_dst == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "gemv_q5_k_f32: n_rows and ncols_dst cannot be zero".to_string(),
+        });
+    }
+
+    // n_rows must be aligned to QK_K
+    if n_rows % 256 != 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!("gemv_q5_k_f32: n_rows must be multiple of 256, got {}", n_rows),
+        });
+    }
+
+    // Validate pointers
+    if weights_q5_k.is_null() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "gemv_q5_k_f32: weights_q5_k pointer is null".to_string(),
+        });
+    }
+
+    if input.is_null() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "gemv_q5_k_f32: input pointer is null".to_string(),
+        });
+    }
+
+    if output.is_null() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "gemv_q5_k_f32: output pointer is null".to_string(),
+        });
+    }
+
+    // Call kernel launch function
+    let result = unsafe {
+        gemv_q5_k_f32_launch(
+            weights_q5_k,
+            input,
+            output,
+            n_rows as c_int,
+            ncols_dst as c_int,
+            std::ptr::null_mut(), // default stream
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("gemv_q5_k_f32 kernel failed: {:?}", result),
         });
     }
 
