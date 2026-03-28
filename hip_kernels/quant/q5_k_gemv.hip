@@ -20,7 +20,7 @@ __device__ inline void get_scale_min_k4(int j, const uint8_t* q, uint8_t* d, uin
 }
 
 /// Vector dot product: Q5_K block × f32 vector segment
-/// Thread layout: 32 threads, each processes 8 elements using 2 different scales
+/// Thread layout: 32 threads, each processes 1 element per sub-block (8 total)
 __device__ inline float vec_dot_q5_k(const void* block_ptr, const float* vec, int offset) {
     const int tid = threadIdx.x;
 
@@ -41,8 +41,8 @@ __device__ inline float vec_dot_q5_k(const void* block_ptr, const float* vec, in
 
     float sum = 0.0f;
 
-    // Process 64 elements at a time (2 sub-blocks)
-    // Each thread processes 8 elements per iteration
+    // Process 64 elements at a time (2 sub-blocks of 32 each)
+    // Each thread processes 1 element from each sub-block (2 per iteration)
     int is = 0;
     uint8_t u1 = 1, u2 = 2;
 
@@ -59,25 +59,18 @@ __device__ inline float vec_dot_q5_k(const void* block_ptr, const float* vec, in
         const float d2 = d * sc2;
         const float min2 = dmin * m2;
 
-        // Each thread processes 8 elements (4 from each sub-block)
-        for (int l = 0; l < 8; ++l) {
-            const int i = tid * 8 + l;  // Global element index
+        // Process element from first sub-block (each thread processes 1 element)
+        const int l = tid;  // 0-31
+        const uint8_t q4 = ql[l] & 0x0F;
+        const uint8_t high_bit = (qh[l] & u1) ? 16 : 0;
+        const float val1 = static_cast<float>(q4 + high_bit) / d1 + min1;
+        sum += val1 * vec[offset + j + l];
 
-            if (i < 32 && (j + i) < QK_K) {
-                // First sub-block
-                const uint8_t q4 = ql[i] & 0x0F;
-                const uint8_t high_bit = (qh[i] & u1) ? 16 : 0;
-                const float val = static_cast<float>(q4 + high_bit) / d1 + min1;
-                sum += val * vec[offset + j + i];
-            } else if (i >= 32 && (j + i) < QK_K) {
-                // Second sub-block
-                const int i2 = i - 32;
-                const uint8_t q4 = (ql[i2] >> 4) & 0x0F;
-                const uint8_t high_bit = (qh[i2] & u2) ? 16 : 0;
-                const float val = static_cast<float>(q4 + high_bit) / d2 + min2;
-                sum += val * vec[offset + j + i];
-            }
-        }
+        // Process element from second sub-block (each thread processes 1 element)
+        const uint8_t q4_2 = (ql[l] >> 4) & 0x0F;
+        const uint8_t high_bit_2 = (qh[l] & u2) ? 16 : 0;
+        const float val2 = static_cast<float>(q4_2 + high_bit_2) / d2 + min2;
+        sum += val2 * vec[offset + j + 32 + l];
 
         ql += 32;
         is += 2;

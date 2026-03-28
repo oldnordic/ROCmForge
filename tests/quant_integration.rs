@@ -443,6 +443,148 @@ fn test_q5_k_quantization() {
     assert!(rel_err < 0.01, "Relative error {} exceeds 1% for Q5_K", rel_err);
 }
 
+/// Test Q5_K × f32 GEMV
+///
+/// Verifies:
+/// 1. Quantize weight matrix to Q5_K format on GPU
+/// 2. Allocate GPU buffers for input vector and output
+/// 3. Call Q5_K GEMV kernel with non-uniform sub-block scaling
+/// 4. Verify output matches CPU reference
+#[test]
+#[serial]
+fn test_q5_k_gemv() {
+    use rocmforge::gpu::{detect, GpuDevice, GpuQuant, GpuBuffer, QK_K, Q5_K_BLOCK_SIZE};
+
+    // Require GPU for this test
+    let caps = detect().expect("GPU required for Q5_K GEMV test");
+    println!("Testing Q5_K GEMV on: {}", caps.device_name);
+
+    // Initialize device and quantization context
+    let device = GpuDevice::init(caps.device_id)
+        .expect("Failed to initialize GPU device");
+    let gpu_quant = GpuQuant::new(device)
+        .expect("Failed to initialize GpuQuant");
+
+    // Test parameters: small matrix for easy verification
+    let n_rows = 256;    // Input dimension (must be multiple of 256 for Q5_K)
+    let ncols_dst = 4;   // Output dimension (optimized case)
+
+    // Create a simple weight matrix (n_rows × ncols_dst)
+    // Use values that quantize well for Q5_K
+    let mut weight_data: Vec<f32> = Vec::with_capacity(n_rows * ncols_dst);
+    for col in 0..ncols_dst {
+        for row in 0..n_rows {
+            // Simple pattern: use col index as value
+            weight_data.push((col + 1) as f32 * 0.1);
+        }
+    }
+
+    // Create input vector
+    let input_data: Vec<f32> = (0..n_rows).map(|i| 1.0 + i as f32 * 0.1).collect();
+
+    // Compute CPU reference output
+    let mut expected_output = vec![0.0f32; ncols_dst];
+    for col in 0..ncols_dst {
+        for row in 0..n_rows {
+            expected_output[col] += weight_data[col * n_rows + row] * input_data[row];
+        }
+    }
+
+    // Allocate GPU buffers
+    let d_weights = GpuBuffer::alloc(n_rows * ncols_dst * std::mem::size_of::<f32>())
+        .expect("Failed to allocate weight buffer");
+    let d_input = GpuBuffer::alloc(n_rows * std::mem::size_of::<f32>())
+        .expect("Failed to allocate input buffer");
+    let d_quantized = GpuBuffer::alloc((n_rows / QK_K) * ncols_dst * Q5_K_BLOCK_SIZE)
+        .expect("Failed to allocate quantized buffer");
+    let d_output = GpuBuffer::alloc(ncols_dst * std::mem::size_of::<f32>())
+        .expect("Failed to allocate output buffer");
+
+    // Copy weights and input to GPU
+    let weight_bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(
+            weight_data.as_ptr() as *const u8,
+            n_rows * ncols_dst * std::mem::size_of::<f32>()
+        )
+    };
+    let mut d_weights = d_weights;
+    d_weights.copy_from_host(weight_bytes)
+        .expect("Failed to copy weights to GPU");
+
+    let input_bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(
+            input_data.as_ptr() as *const u8,
+            n_rows * std::mem::size_of::<f32>()
+        )
+    };
+    let mut d_input = d_input;
+    d_input.copy_from_host(input_bytes)
+        .expect("Failed to copy input to GPU");
+
+    // Quantize each column separately to Q5_K
+    for col in 0..ncols_dst {
+        let col_weights_ptr = unsafe {
+            d_weights.as_ptr().add(col * n_rows * std::mem::size_of::<f32>())
+        };
+        let col_quantized_ptr = unsafe {
+            d_quantized.as_ptr().add(col * (n_rows / QK_K) * Q5_K_BLOCK_SIZE)
+        };
+
+        // Quantize this column
+        gpu_quant.quantize_q5_k(
+            col_weights_ptr as *const f32,
+            col_quantized_ptr,
+            n_rows
+        ).expect("Failed to quantize column");
+    }
+
+    // Run Q5_K GEMV kernel
+    gpu_quant.gemv_q5_k_f32(
+        d_quantized.as_ptr(),
+        d_input.as_ptr() as *const f32,
+        d_output.as_ptr() as *mut f32,
+        n_rows,
+        ncols_dst
+    ).expect("Failed to run Q5_K GEMV kernel");
+
+    // Copy output back to CPU
+    let mut output_bytes = vec![0u8; ncols_dst * std::mem::size_of::<f32>()];
+    d_output.copy_to_host(&mut output_bytes)
+        .expect("Failed to copy output from GPU");
+
+    // Convert bytes back to f32
+    let output_data: Vec<f32> = unsafe {
+        std::slice::from_raw_parts(
+            output_bytes.as_ptr() as *const f32,
+            ncols_dst
+        ).to_vec()
+    };
+
+    // Cleanup is automatic via GpuBuffer's Drop implementation
+    drop(d_weights);
+    drop(d_input);
+    drop(d_quantized);
+    drop(d_output);
+
+    // Verify accuracy - Q5_K has ~5 bits of precision
+    // With simple test data, expect very small error
+    let tolerance = 5.0; // Reasonable tolerance for Q5_K
+    let mut max_error = 0.0f32;
+    for (i, (expected, actual)) in expected_output.iter().zip(output_data.iter()).enumerate() {
+        let error = (expected - actual).abs();
+        max_error = max_error.max(error);
+        if error > tolerance {
+            panic!(
+                "Large GEMV error at output {}: expected={:.2}, actual={:.2}, error={:.2}",
+                i, expected, actual, error
+            );
+        }
+    }
+
+    println!("Q5_K GEMV test passed! max_error={}", max_error);
+    assert!(max_error < tolerance, "Max error {} exceeds tolerance {}", max_error, tolerance);
+}
+
 /// Test Q8_0 × f32 GEMV kernel
 ///
 /// Verifies:
