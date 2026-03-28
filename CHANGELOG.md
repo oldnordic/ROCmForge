@@ -48,6 +48,34 @@ All 11 planned tasks completed:
 
 Phase 3 COMPLETE ✅
 
+**feat(gpu): Add Q4_0 quantization with uniform scaling**
+
+- **Issue:** Q4_0 format not implemented, limiting model format support
+- **Root Cause:** No Q4_0 quantization/dequantization/verification/GEMV kernels or Rust FFI bindings
+- **Fix:**
+  - Implemented Q4_0 quantization kernel with uniform scaling (llama.cpp formula: d = max / -8)
+  - Added dequantization kernel with on-the-fly value reconstruction
+  - Implemented verification and metrics finalization kernels
+  - Created Q4_0 GEMV kernel with template specialization for ncols_dst optimization
+  - Added Rust FFI bindings and GpuQuant wrapper methods
+  - Added Q4_0 type definitions (Q4_0Block, QK4_0, Q4_0_BLOCK_SIZE constants)
+  - Added integration and unit tests
+  - Fixed quantization formula: q = round(x/d + 8.5), dequantization: y = (q - 8) * d
+- **Impact:** Q4_0 provides 4-bit uniform quantization (18-byte blocks for 32 f32 values), achieving < 1% relative error
+- **Files Changed:** `hip_kernels/quant/q4_0_quantize.hip`, `hip_kernels/quant/q4_0_dequantize.hip`, `hip_kernels/quant/q4_0_verify.hip`, `hip_kernels/quant/q4_0_gemv.hip`, `src/gpu/kernels/quant.rs`, `src/gpu/quant_wrapper.rs`, `src/gpu/quant/types.rs`, `src/gpu/mod.rs`, `src/gpu/quant/mod.rs`, `tests/quant_integration.rs`, `build.rs`, `CHANGELOG.md`
+
+**Implementation Status (Q4_0 Phase 1):**
+
+All 18 planned tasks completed:
+- ✅ Types, exports, kernels (quantize/dequantize/verify/gemv)
+- ✅ FFI bindings and GpuQuant wrappers
+- ✅ Unit tests (6 tests) and integration tests (2 tests)
+- ✅ Test results: 13/13 passed
+- ✅ Q4_0 GEMV kernel with template specialization (1-8 columns + generic)
+- ✅ Build system integration (CMake + build.rs)
+
+Phase 1 COMPLETE ✅
+
 **feat(gpu): Add Q4_K quantization kernel with two-phase 4-bit packing**
 
 - **Issue:** Q4_K quantization kernel had race condition in shared memory when packing 4-bit values
