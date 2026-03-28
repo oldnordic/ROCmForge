@@ -848,6 +848,48 @@ unsafe extern "C" {
         metrics: *mut f32,
         n: c_int,
     ) -> hipError_t;
+
+    // Q4_0 kernels - will be linked from compiled HIP kernels
+    fn quantize_q4_0_kernel(
+        input: *const f32,
+        output: *mut u8,
+        n: c_int,
+    ) -> hipError_t;
+
+    fn dequantize_q4_0_kernel(
+        input: *const u8,
+        output: *mut f32,
+        n: c_int,
+    ) -> hipError_t;
+
+    fn dequantize_q4_0_batched_kernel(
+        input: *const u8,
+        output: *mut f32,
+        n: c_int,
+        batch_size: c_int,
+    ) -> hipError_t;
+
+    fn verify_q4_0_accuracy_kernel(
+        original: *const f32,
+        quantized: *const u8,
+        errors: *mut f32,
+        n: c_int,
+    ) -> hipError_t;
+
+    fn finalize_q4_0_metrics_kernel(
+        errors: *const f32,
+        metrics: *mut f32,
+        n: c_int,
+    ) -> hipError_t;
+
+    fn gemv_q4_0_f32_launch(
+        weights_q4_0: *const u8,
+        input: *const f32,
+        output: *mut f32,
+        n_rows: c_int,
+        ncols_dst: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
 }
 
 // ── Q8_0 GEMV (Matrix-Vector Multiplication) ─────────────────────────────────────────────
