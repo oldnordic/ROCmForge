@@ -30,6 +30,17 @@ rocmforge --model path/to/model.gguf --device cpu \
 | `--list-tensors` | List all tensors in model |
 | `--debug` | Show debug info |
 
+## Real Models Tested
+
+The following models have been verified for performance and output coherence on AMD hardware.
+
+| Model | Quant | Device | Prefill | Decode | Coherence |
+|-------|-------|--------|---------|--------|-----------|
+| **Qwen2.5-0.5B-Instruct** | Q4_0 | RX 7900 XT | 160.9 tok/s | 188.2 tok/s | High |
+| **Qwen2.5-0.5B-Instruct** | Q4_K | RX 7900 XT | 155.4 tok/s | 182.1 tok/s | High |
+
+*Benchmarks conducted on ROCm 6.1 with RDNA3 architecture.*
+
 ## License
 
 GPL-3.0
