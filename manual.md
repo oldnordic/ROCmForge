@@ -59,10 +59,10 @@ To run inference on the GPU, use the `--gpu` (or `--device gpu`) flag:
 ## 4. Performance Tuning
 
 ### Batch Prefill
-The GPU implementation uses batched GEMM for prompt processing. Larger prompts benefit significantly from GPU acceleration, reaching over 160 tok/s on RX 7900 XT.
+The GPU implementation uses batched GEMM for prompt processing. Larger prompts and models benefit significantly from GPU acceleration. Prefill throughput stays high (~40+ tok/s) even for 7B models on RX 7900 XT.
 
 ### Optimized Decode
-Generation uses wavefront-parallel Multi-Column GEMV kernels. These are specifically tuned to minimize activation reloads by caching the input vector in LDS (Shared Memory), allowing the GPU to approach theoretical memory bandwidth limits.
+Generation uses wavefront-parallel Multi-Column GEMV kernels. These are specifically tuned to minimize activation reloads by caching the input vector in LDS (Shared Memory). The implementation automatically handles large models (like 7B) by using chunked LDS loading to stay within hardware limits.
 
 ## 5. Troubleshooting
 

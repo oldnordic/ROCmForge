@@ -37,6 +37,7 @@ The following models have been verified for performance and output coherence on 
 | Model | Quant | Device | Prefill | Decode | Coherence |
 |-------|-------|--------|---------|--------|-----------|
 | **Qwen2.5-0.5B-Instruct** | Q4_0 | RX 7900 XT | 160.9 tok/s | 188.2 tok/s | High |
+| **Qwen2.5-7B-Instruct** | Q4_0 | RX 7900 XT | 41.2 tok/s | 18.8 tok/s | High |
 | **Qwen2.5-0.5B-Instruct** | Q4_K | RX 7900 XT | 155.4 tok/s | 182.1 tok/s | High |
 
 *Benchmarks conducted on ROCm 6.1 with RDNA3 architecture.*
