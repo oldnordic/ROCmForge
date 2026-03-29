@@ -15,8 +15,8 @@ fn main() {
 }
 
 fn bench_gemv() {
-    const OUT_DIM: usize = 896;  // Typical hidden size
-    const IN_DIM: usize = 896;    // Must be multiple of 256
+    const OUT_DIM: usize = 896; // Typical hidden size
+    const IN_DIM: usize = 896; // Must be multiple of 256
 
     // Create dummy weights
     let num_blocks = IN_DIM / 256;
@@ -47,9 +47,9 @@ fn bench_gemv() {
 }
 
 fn bench_gemm() {
-    const M: usize = 16;  // Batch size
-    const N: usize = 896;  // Hidden size
-    const K: usize = 896;  // Must be multiple of 256
+    const M: usize = 16; // Batch size
+    const N: usize = 896; // Hidden size
+    const K: usize = 896; // Must be multiple of 256
 
     let num_blocks_k = K / 256;
     let w = vec![0u8; N * num_blocks_k * BlockQ4K::SIZE];

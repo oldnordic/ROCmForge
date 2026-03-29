@@ -5,7 +5,7 @@
 use clap::Parser;
 use std::path::PathBuf;
 
-use rocmforge::bench::reporter::{generate_report, export_csv};
+use rocmforge::bench::reporter::{export_csv, generate_report};
 
 /// Generate performance comparison report from benchmark results.
 #[derive(Parser, Debug)]
@@ -36,8 +36,10 @@ fn main() {
 
     // Default output path
     let output_path = args.output.unwrap_or_else(|| {
-        format!("docs/benchmarks/PERFORMANCE_REPORT_{}.md",
-                chrono::Utc::now().format("%Y-%m-%d"))
+        format!(
+            "docs/benchmarks/PERFORMANCE_REPORT_{}.md",
+            chrono::Utc::now().format("%Y-%m-%d")
+        )
     });
 
     eprintln!("Generating report...");

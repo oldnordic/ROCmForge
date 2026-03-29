@@ -33,15 +33,15 @@
 //!   - `ggml/src/ggml-quants.c` - Dequantization functions
 //!   - `ggml/src/ggml-cpu/arch/x86/quants.c` - AVX2 kernels
 
+pub mod gemm_q4k_q8;
+pub mod gemm_q4k_q8_avx512;
+pub mod gemm_q4k_q8_scalar;
+pub mod gemm_q5_0_q8;
 pub mod q3;
 pub mod q4;
 pub mod q5;
 pub mod q8;
 pub mod q8_scalar;
-pub mod gemm_q4k_q8_scalar;
-pub mod gemm_q4k_q8;
-pub mod gemm_q4k_q8_avx512;
-pub mod gemm_q5_0_q8;
 
 pub use q3::BlockQ3K;
 pub use q4::BlockQ4K;

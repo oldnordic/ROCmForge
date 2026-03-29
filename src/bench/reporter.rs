@@ -3,9 +3,9 @@
 //! Aggregates Criterion benchmark results and real model benchmarks
 //! into publication-ready markdown reports.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::collections::HashMap;
 
 /// Generate performance comparison report.
 ///
@@ -24,7 +24,10 @@ pub fn generate_report(
 
     // Header
     markdown.push_str("# Performance Comparison Report\n\n");
-    markdown.push_str(&format!("**Generated:** {}\n\n", chrono::Utc::now().format("%Y-%m-%d %H:%M")));
+    markdown.push_str(&format!(
+        "**Generated:** {}\n\n",
+        chrono::Utc::now().format("%Y-%m-%d %H:%M")
+    ));
     markdown.push_str(&format!("**Git Commit:** {}\n\n", get_git_commit()));
 
     // Executive Summary
@@ -64,8 +67,7 @@ pub fn generate_report(
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create dir: {}", e))?;
     }
 
-    fs::write(output_path, markdown)
-        .map_err(|e| format!("Failed to write report: {}", e))?;
+    fs::write(output_path, markdown).map_err(|e| format!("Failed to write report: {}", e))?;
 
     Ok(())
 }
@@ -77,18 +79,19 @@ struct CriterionData {
     speedup: f64,
 }
 
-fn parse_criterion_json(criterion_dir: &Path, benchmark_name: &str) -> Result<Vec<CriterionData>, String> {
+fn parse_criterion_json(
+    criterion_dir: &Path,
+    benchmark_name: &str,
+) -> Result<Vec<CriterionData>, String> {
     // NOTE: This is a simplified implementation that returns placeholder data.
     // A complete implementation would parse target/criterion/<benchmark_name>/<variant>/estimates.json
     // For initial implementation, this verifies the report generation pipeline works.
     // Future enhancement: Implement full JSON parsing.
-    Ok(vec![
-        CriterionData {
-            avx2_mean: 0.045,
-            scalar_mean: 0.131,
-            speedup: 2.91,
-        },
-    ])
+    Ok(vec![CriterionData {
+        avx2_mean: 0.045,
+        scalar_mean: 0.131,
+        speedup: 2.91,
+    }])
 }
 
 fn render_kernel_comparison(markdown: &mut String, data: &[CriterionData], include_graphs: bool) {
@@ -116,15 +119,13 @@ struct RealModelResult {
 fn parse_real_model_results(dir: &Path) -> Result<Vec<RealModelResult>, String> {
     // Parse markdown files for key-value pairs
     // This is a simplified version
-    Ok(vec![
-        RealModelResult {
-            model: "qwen2.5-0.5b-q4_k_m.gguf".to_string(),
-            quantization: "Q4_K".to_string(),
-            prefill_ms: 981.5,
-            decode_ms: 1135.5,
-            tok_per_sec: 4.4,
-        },
-    ])
+    Ok(vec![RealModelResult {
+        model: "qwen2.5-0.5b-q4_k_m.gguf".to_string(),
+        quantization: "Q4_K".to_string(),
+        prefill_ms: 981.5,
+        decode_ms: 1135.5,
+        tok_per_sec: 4.4,
+    }])
 }
 
 fn get_git_commit() -> String {
@@ -160,8 +161,7 @@ pub fn export_csv(criterion_dir: &Path, output_path: &Path) -> Result<(), String
         now, commit
     ));
 
-    fs::write(output_path, csv)
-        .map_err(|e| format!("Failed to write CSV: {}", e))?;
+    fs::write(output_path, csv).map_err(|e| format!("Failed to write CSV: {}", e))?;
 
     Ok(())
 }

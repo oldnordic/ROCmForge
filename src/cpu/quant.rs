@@ -72,7 +72,10 @@ pub fn validate_block_size(dim: usize, block_elems: usize, name: &str) -> Result
     if dim % block_elems != 0 {
         Err(format!(
             "{} dimension {} is not a multiple of block size {} (remainder: {})",
-            name, dim, block_elems, dim % block_elems
+            name,
+            dim,
+            block_elems,
+            dim % block_elems
         ))
     } else {
         Ok(())
@@ -165,7 +168,8 @@ pub fn embed_q4_1(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usi
     let row_offset = token_id * num_blocks * Q4_1_BLOCK_BYTES;
 
     for b in 0..num_blocks {
-        let block = &emb[row_offset + b * Q4_1_BLOCK_BYTES..row_offset + (b + 1) * Q4_1_BLOCK_BYTES];
+        let block =
+            &emb[row_offset + b * Q4_1_BLOCK_BYTES..row_offset + (b + 1) * Q4_1_BLOCK_BYTES];
         let scale = load_f16_scale(&block[0..2]);
         let min = load_f16_scale(&block[2..4]);
         let qs = &block[4..20];
@@ -199,7 +203,8 @@ pub fn embed_q5_0(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usi
     let row_offset = token_id * num_blocks * Q5_0_BLOCK_BYTES;
 
     for b in 0..num_blocks {
-        let block = &emb[row_offset + b * Q5_0_BLOCK_BYTES..row_offset + (b + 1) * Q5_0_BLOCK_BYTES];
+        let block =
+            &emb[row_offset + b * Q5_0_BLOCK_BYTES..row_offset + (b + 1) * Q5_0_BLOCK_BYTES];
         let d = load_f16_scale(&block[0..2]);
         let qh = &block[2..6]; // 4 bytes, 32 bits (high bit of each 5-bit value)
         let qs = &block[6..22]; // 16 bytes, 32 nibbles (low 4 bits)
@@ -209,7 +214,7 @@ pub fn embed_q5_0(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usi
             // Get high bit from qh
             let high_bit = ((qh[i / 8] >> (i % 8)) & 1) << 4;
             // Get low 4 bits from qs
-            let low_bits = qs[i / 2] >> (((i % 2) * 4)) & 0x0F;
+            let low_bits = qs[i / 2] >> ((i % 2) * 4) & 0x0F;
             // Combine to get 5-bit value (0-31), then shift to signed range (-16 to 15)
             let q = ((high_bit | low_bits) as i32) - 16;
             out[base + i] = d * (q as f32);
@@ -234,7 +239,8 @@ pub fn embed_q4_k(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usi
     let row_offset = token_id * num_blocks * Q4_K_BLOCK_BYTES;
 
     for b in 0..num_blocks {
-        let block = &emb[row_offset + b * Q4_K_BLOCK_BYTES..row_offset + (b + 1) * Q4_K_BLOCK_BYTES];
+        let block =
+            &emb[row_offset + b * Q4_K_BLOCK_BYTES..row_offset + (b + 1) * Q4_K_BLOCK_BYTES];
         let d = load_f16_scale(&block[0..2]);
         let dmin = load_f16_scale(&block[2..4]);
         let scales = &block[4..16]; // 12 bytes of packed 6-bit scales + mins
@@ -248,8 +254,10 @@ pub fn embed_q4_k(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usi
                 let m = ((scales[j + 4] & 63) as i8).wrapping_sub(32);
                 (sc, m)
             } else {
-                let sc = ((scales[j + 4] & 0xF) as i8 | (((scales[j - 4] >> 6) as i8) << 4)).wrapping_sub(32);
-                let m = ((scales[j + 4] >> 4) as i8 | (((scales[j] >> 6) as i8) << 4)).wrapping_sub(32);
+                let sc = ((scales[j + 4] & 0xF) as i8 | (((scales[j - 4] >> 6) as i8) << 4))
+                    .wrapping_sub(32);
+                let m =
+                    ((scales[j + 4] >> 4) as i8 | (((scales[j] >> 6) as i8) << 4)).wrapping_sub(32);
                 (sc, m)
             }
         };
@@ -293,14 +301,14 @@ pub fn embed_q6_k(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usi
     let row_offset = token_id * num_blocks * Q6_K_BLOCK_BYTES;
 
     for b in 0..num_blocks {
-        let block = &emb[row_offset + b * Q6_K_BLOCK_BYTES..row_offset + (b + 1) * Q6_K_BLOCK_BYTES];
+        let block =
+            &emb[row_offset + b * Q6_K_BLOCK_BYTES..row_offset + (b + 1) * Q6_K_BLOCK_BYTES];
 
         // Q6_K block layout: ql[0..128], qh[128..192], scales[192..208], d[208..210]
         let mut ql = &block[0..128];
         let mut qh = &block[128..192];
-        let mut sc: &[i8] = unsafe {
-            std::slice::from_raw_parts(block[192..208].as_ptr() as *const i8, 16)
-        };
+        let mut sc: &[i8] =
+            unsafe { std::slice::from_raw_parts(block[192..208].as_ptr() as *const i8, 16) };
         let d = load_f16_scale(&block[208..210]);
 
         let base = b * Q6_K_BLOCK_ELEMS;
@@ -413,7 +421,8 @@ pub fn embed_q3_k(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usi
     let row_offset = token_id * num_blocks * Q3_K_BLOCK_BYTES;
 
     for b in 0..num_blocks {
-        let block = &emb[row_offset + b * Q3_K_BLOCK_BYTES..row_offset + (b + 1) * Q3_K_BLOCK_BYTES];
+        let block =
+            &emb[row_offset + b * Q3_K_BLOCK_BYTES..row_offset + (b + 1) * Q3_K_BLOCK_BYTES];
 
         // Q3_K block layout: hmask[0..32], qs[32..96], scales[96..108], d[108..110]
         let hmask = &block[0..32];
@@ -499,7 +508,8 @@ pub fn embed_q5_k(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usi
     let row_offset = token_id * num_blocks * Q5_K_BLOCK_BYTES;
 
     for b in 0..num_blocks {
-        let block = &emb[row_offset + b * Q5_K_BLOCK_BYTES..row_offset + (b + 1) * Q5_K_BLOCK_BYTES];
+        let block =
+            &emb[row_offset + b * Q5_K_BLOCK_BYTES..row_offset + (b + 1) * Q5_K_BLOCK_BYTES];
 
         // Q5_K block layout: d[0..2], dmin[2..4], scales[4..16], qh[16..48], ql[48..176]
         let d = load_f16_scale(&block[0..2]);
@@ -569,7 +579,10 @@ pub fn embed_q5_k_batch(ids: &[u32], emb: &[u8], out: &mut [f32], hidden_size: u
 /// Dequantize one Q4_0 block to f32.
 pub fn dequant_q4_0_block(block: &[u8], out: &mut [f32]) {
     debug_assert!(block.len() >= Q4_BLOCK_BYTES, "block too small for Q4_0");
-    debug_assert!(out.len() >= Q4_BLOCK_ELEMS, "output too small for Q4_0 block");
+    debug_assert!(
+        out.len() >= Q4_BLOCK_ELEMS,
+        "output too small for Q4_0 block"
+    );
 
     let scale = load_f16_scale(&block[0..2]);
     let qs = &block[2..18];
@@ -585,7 +598,10 @@ pub fn dequant_q4_0_block(block: &[u8], out: &mut [f32]) {
 /// Dequantize one Q8_0 block to f32.
 pub fn dequant_q8_0_block(block: &[u8], out: &mut [f32]) {
     debug_assert!(block.len() >= Q8_BLOCK_BYTES, "block too small for Q8_0");
-    debug_assert!(out.len() >= Q8_BLOCK_ELEMS, "output too small for Q8_0 block");
+    debug_assert!(
+        out.len() >= Q8_BLOCK_ELEMS,
+        "output too small for Q8_0 block"
+    );
 
     let scale = load_f16_scale(&block[0..2]);
     let qs = &block[2..34];
@@ -605,7 +621,11 @@ pub fn quantize_f32_to_q8_0(src: &[f32], dst: &mut [u8]) -> f32 {
 
     // Find max absolute value to determine scale
     let max_val = src.iter().map(|&x| x.abs()).fold(0.0f32, f32::max);
-    let scale = if max_val > 0.0 { max_val / Q8_0_MAX } else { 1.0 };
+    let scale = if max_val > 0.0 {
+        max_val / Q8_0_MAX
+    } else {
+        1.0
+    };
     let inv_scale = if scale > 0.0 { Q8_0_MAX / max_val } else { 0.0 };
 
     // Quantize: round to nearest, clamp to [-127, 127]
@@ -628,7 +648,11 @@ mod tests {
             let bytes = store_f16_scale(v);
             let loaded = load_f16_scale(&bytes);
             // f16 has ~3 decimal digits of precision
-            assert!((v - loaded).abs() < v.abs() * 0.001 + 0.001, "f16 roundtrip failed for {}", v);
+            assert!(
+                (v - loaded).abs() < v.abs() * 0.001 + 0.001,
+                "f16 roundtrip failed for {}",
+                v
+            );
         }
     }
 
@@ -665,8 +689,20 @@ mod tests {
         for i in 0..16 {
             let expected_lo = ((i as i32) - 8) as f32 * 2.0;
             let expected_hi = (((15 - i) as i32) - 8) as f32 * 2.0;
-            assert!((out[i] - expected_lo).abs() < 0.01, "lo mismatch at {}: got {} expected {}", i, out[i], expected_lo);
-            assert!((out[i + 16] - expected_hi).abs() < 0.01, "hi mismatch at {}: got {} expected {}", i, out[i + 16], expected_hi);
+            assert!(
+                (out[i] - expected_lo).abs() < 0.01,
+                "lo mismatch at {}: got {} expected {}",
+                i,
+                out[i],
+                expected_lo
+            );
+            assert!(
+                (out[i + 16] - expected_hi).abs() < 0.01,
+                "hi mismatch at {}: got {} expected {}",
+                i,
+                out[i + 16],
+                expected_hi
+            );
         }
     }
 
@@ -696,7 +732,7 @@ mod tests {
 
         for i in 0..32 {
             let high_bit = ((qh[i / 8] >> (i % 8)) & 1) << 4;
-            let low_bits = qs[i / 2] >> (((i % 2) * 4)) & 0x0F;
+            let low_bits = qs[i / 2] >> ((i % 2) * 4) & 0x0F;
             let q = ((high_bit | low_bits) as i32) - 16;
             out[i] = d * (q as f32);
         }

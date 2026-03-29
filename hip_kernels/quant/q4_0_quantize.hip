@@ -52,17 +52,15 @@ __global__ void quantize_q4_0_device(
     int q = (int)roundf(val / d + 8.5f);
     q = (q < 0) ? 0 : (q > 15) ? 15 : q;
 
-    // Two-phase packing: each thread writes to its own slot, thread 0 combines
+    // Pack into shared memory: each thread writes its slot, then threads 0-15 each pack one byte
     __shared__ uint8_t s_q[QK4_0];        // 32 slots (one per thread)
     __shared__ uint8_t s_qs[QK4_0 / 2];   // 16 packed bytes
     s_q[threadIdx.x] = (uint8_t)q;
     __syncthreads();
 
-    // Thread 0 combines sequential: qs[i] = low nibble from q[i] + high nibble from q[i+16]
-    if (threadIdx.x == 0) {
-        for (int i = 0; i < QK4_0 / 2; ++i) {
-            s_qs[i] = s_q[i] | (s_q[i + 16] << 4);
-        }
+    // Each of the first 16 threads packs one byte: low nibble from q[i], high from q[i+16]
+    if (threadIdx.x < QK4_0 / 2) {
+        s_qs[threadIdx.x] = s_q[threadIdx.x] | (s_q[threadIdx.x + 16] << 4);
     }
     __syncthreads();
 

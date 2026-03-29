@@ -133,13 +133,7 @@ pub unsafe fn dot_q5_0_q8_0_block_avx2(
 /// # Safety
 /// Caller must ensure AVX2 and FMA are available.
 #[cfg(target_arch = "x86_64")]
-pub fn gemv_q5_0_q8_0_avx2(
-    w: &[u8],
-    x: &[f32],
-    y: &mut [f32],
-    out_dim: usize,
-    in_dim: usize,
-) {
+pub fn gemv_q5_0_q8_0_avx2(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
     assert!(in_dim % 32 == 0, "in_dim must be multiple of 32 for Q5_0");
     assert!(is_x86_feature_detected!("avx2"), "AVX2 required");
 
@@ -159,7 +153,8 @@ pub fn gemv_q5_0_q8_0_avx2(
             let mut acc = 0.0f32;
 
             for b in 0..num_blocks {
-                let w_ptr = w.as_ptr().add(row * row_bytes + b * BlockQ5_0::SIZE) as *const BlockQ5_0;
+                let w_ptr =
+                    w.as_ptr().add(row * row_bytes + b * BlockQ5_0::SIZE) as *const BlockQ5_0;
                 let q5_block = &*w_ptr;
 
                 let x_q8_ptr = x_q8.as_ptr().add(b * Q8_BLOCK_BYTES);
@@ -174,13 +169,7 @@ pub fn gemv_q5_0_q8_0_avx2(
 }
 
 /// Dispatch Q5_0 × Q8_0 GEMV with SIMD if available.
-pub fn gemv_q5_0_q8_0_dispatch(
-    w: &[u8],
-    x: &[f32],
-    y: &mut [f32],
-    out_dim: usize,
-    in_dim: usize,
-) {
+pub fn gemv_q5_0_q8_0_dispatch(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
@@ -194,13 +183,7 @@ pub fn gemv_q5_0_q8_0_dispatch(
 }
 
 /// Scalar fallback for Q5_0 × Q8_0 GEMV.
-fn gemv_q5_0_q8_0_scalar(
-    w: &[u8],
-    x: &[f32],
-    y: &mut [f32],
-    out_dim: usize,
-    in_dim: usize,
-) {
+fn gemv_q5_0_q8_0_scalar(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
     let num_blocks = in_dim / 32;
     let row_bytes = num_blocks * BlockQ5_0::SIZE;
 
@@ -208,7 +191,8 @@ fn gemv_q5_0_q8_0_scalar(
         let mut acc = 0.0f32;
 
         for b in 0..num_blocks {
-            let block = &w[o * row_bytes + b * BlockQ5_0::SIZE..o * row_bytes + (b + 1) * BlockQ5_0::SIZE];
+            let block =
+                &w[o * row_bytes + b * BlockQ5_0::SIZE..o * row_bytes + (b + 1) * BlockQ5_0::SIZE];
             let d = f16::from_le_bytes([block[0], block[1]]).to_f32();
             let qh = &block[2..6];
             let qs = &block[6..22];

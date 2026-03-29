@@ -101,12 +101,12 @@ mod tests {
         // 1 head, head_dim=4, 2 cached positions
         let q = vec![1.0, 0.0, 0.0, 0.0];
         let k_cache = vec![
-            1.0, 0.0, 0.0, 0.0,  // pos 0
-            0.0, 1.0, 0.0, 0.0,  // pos 1
+            1.0, 0.0, 0.0, 0.0, // pos 0
+            0.0, 1.0, 0.0, 0.0, // pos 1
         ];
         let v_cache = vec![
-            1.0, 1.0, 1.0, 1.0,  // pos 0
-            2.0, 2.0, 2.0, 2.0,  // pos 1
+            1.0, 1.0, 1.0, 1.0, // pos 0
+            2.0, 2.0, 2.0, 2.0, // pos 1
         ];
         let mut out = vec![0.0; 4];
 
@@ -115,7 +115,11 @@ mod tests {
         // q·k[0] = 1, q·k[1] = 0
         // softmax scores: exp(1)/(exp(1)+exp(0)) ≈ 0.731, exp(0)/(exp(1)+exp(0)) ≈ 0.269
         // output = 0.731 * v[0] + 0.269 * v[1] ≈ 0.731*1 + 0.269*2 ≈ 1.269
-        assert!(out[0] > 1.0 && out[0] < 1.5, "out[0] = {}, expected ~1.27", out[0]);
+        assert!(
+            out[0] > 1.0 && out[0] < 1.5,
+            "out[0] = {}, expected ~1.27",
+            out[0]
+        );
     }
 
     #[test]
@@ -142,12 +146,10 @@ mod tests {
             0x00, 0x3C, // f16 1.0
             // nibbles: each byte packs lo+hi nibbles, value = nibble - 8
             // Let's use simple values: lo=8 (→0), hi=8 (→0) for all
-            0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88,
-            0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88,
-            // Block 1 (row 1): same
-            0x00, 0x3C,
-            0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88,
-            0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88,
+            0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88,
+            0x88, 0x88, // Block 1 (row 1): same
+            0x00, 0x3C, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88,
+            0x88, 0x88, 0x88, 0x88,
         ];
 
         // Input: 32 zeros
@@ -165,14 +167,11 @@ mod tests {
         // But nibbles are packed: byte 0x99 means lo=9, hi=9
         let mut w_q4_ones = vec![
             // Block 0: scale=1.0
-            0x00, 0x3C,
-            // All nibbles = 9 → dequant = 1.0
-            0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99,
-            0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99,
-            // Block 1: scale=1.0
-            0x00, 0x3C,
-            0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99,
-            0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99,
+            0x00, 0x3C, // All nibbles = 9 → dequant = 1.0
+            0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99,
+            0x99, 0x99, // Block 1: scale=1.0
+            0x00, 0x3C, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99,
+            0x99, 0x99, 0x99, 0x99,
         ];
 
         // Input: all 1.0
@@ -183,8 +182,16 @@ mod tests {
 
         // Each row: sum of 32 values, each = 1.0 * 1.0 = 1.0
         // So output should be 32.0
-        assert!((y2[0] - 32.0_f32).abs() < 1e-3, "y2[0] = {}, expected 32.0", y2[0]);
-        assert!((y2[1] - 32.0_f32).abs() < 1e-3, "y2[1] = {}, expected 32.0", y2[1]);
+        assert!(
+            (y2[0] - 32.0_f32).abs() < 1e-3,
+            "y2[0] = {}, expected 32.0",
+            y2[0]
+        );
+        assert!(
+            (y2[1] - 32.0_f32).abs() < 1e-3,
+            "y2[1] = {}, expected 32.0",
+            y2[1]
+        );
     }
 
     #[test]
@@ -355,13 +362,13 @@ mod tests {
         let w_col0 = &mut w[0..col_bytes];
         w_col0[0] = 0x00;
         w_col0[1] = 0x3C; // scale = 1.0 in f16
-        // qh bytes (high bits): for all 32 values, high_bit = 1
-        // Each qh byte contains 8 high bits (one per pair of values)
+                          // qh bytes (high bits): for all 32 values, high_bit = 1
+                          // Each qh byte contains 8 high bits (one per pair of values)
         w_col0[2] = 0xFF; // bits 0-7: all 1s
         w_col0[3] = 0xFF; // bits 8-15: all 1s
         w_col0[4] = 0xFF; // bits 16-23: all 1s
         w_col0[5] = 0xFF; // bits 24-31: all 1s
-        // qs bytes (low bits): for all 32 values, low_bits = 1
+                          // qs bytes (low bits): for all 32 values, low_bits = 1
         for i in 0..16 {
             w_col0[6 + i] = 0x11; // each nibble = 1
         }
@@ -382,7 +389,9 @@ mod tests {
         }
 
         // Input: all 1.0, but we'll scale col1 input by 0.5
-        let x: Vec<f32> = (0..in_dim).map(|i| if i < 16 { 1.0 } else { 0.5 }).collect();
+        let x: Vec<f32> = (0..in_dim)
+            .map(|i| if i < 16 { 1.0 } else { 0.5 })
+            .collect();
         let mut y = vec![0.0f32; out_dim];
 
         // Run transposed GEMM

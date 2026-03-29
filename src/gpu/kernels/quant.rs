@@ -19,11 +19,7 @@ use std::os::raw::c_int;
 /// # Safety
 /// - All memory pointers must be valid GPU pointers
 /// - Bounds are validated on CPU before kernel launch
-pub fn quantize_q4_k(
-    input: *const f32,
-    output: *mut u8,
-    n: usize,
-) -> GpuResult<()> {
+pub fn quantize_q4_k(input: *const f32, output: *mut u8, n: usize) -> GpuResult<()> {
     if n == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
@@ -38,9 +34,7 @@ pub fn quantize_q4_k(
     }
 
     // Load and call kernel
-    let result = unsafe {
-        quantize_q4_k_kernel(input, output, n as c_int)
-    };
+    let result = unsafe { quantize_q4_k_kernel(input, output, n as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -65,11 +59,7 @@ pub fn quantize_q4_k(
 /// # Safety
 /// - All memory pointers must be valid GPU pointers
 /// - Bounds are validated on CPU before kernel launch
-pub fn dequantize_q4_k(
-    input: *const u8,
-    output: *mut f32,
-    n: usize,
-) -> GpuResult<()> {
+pub fn dequantize_q4_k(input: *const u8, output: *mut f32, n: usize) -> GpuResult<()> {
     if n == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
@@ -82,9 +72,7 @@ pub fn dequantize_q4_k(
         return Ok(());
     }
 
-    let result = unsafe {
-        dequantize_q4_k_kernel(input, output, n as c_int)
-    };
+    let result = unsafe { dequantize_q4_k_kernel(input, output, n as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -128,9 +116,8 @@ pub fn dequantize_q4_k_batched(
         return Ok(());
     }
 
-    let result = unsafe {
-        dequantize_q4_k_batched_kernel(input, output, n as c_int, batch_size as c_int)
-    };
+    let result =
+        unsafe { dequantize_q4_k_batched_kernel(input, output, n as c_int, batch_size as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -178,9 +165,7 @@ pub fn verify_q4_k_accuracy(
         return Ok(());
     }
 
-    let result = unsafe {
-        verify_q4_k_accuracy_kernel(original, quantized, errors, n as c_int)
-    };
+    let result = unsafe { verify_q4_k_accuracy_kernel(original, quantized, errors, n as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -209,11 +194,7 @@ pub fn verify_q4_k_accuracy(
 ///
 /// # Safety
 /// - All memory pointers must be valid GPU pointers
-pub fn finalize_q4_k_metrics(
-    errors: *const f32,
-    metrics: *mut f32,
-    n: usize,
-) -> GpuResult<()> {
+pub fn finalize_q4_k_metrics(errors: *const f32, metrics: *mut f32, n: usize) -> GpuResult<()> {
     if n == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
@@ -221,9 +202,7 @@ pub fn finalize_q4_k_metrics(
         });
     }
 
-    let result = unsafe {
-        finalize_q4_k_metrics_kernel(errors, metrics, n as c_int)
-    };
+    let result = unsafe { finalize_q4_k_metrics_kernel(errors, metrics, n as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -248,11 +227,7 @@ pub fn finalize_q4_k_metrics(
 /// # Safety
 /// - All memory pointers must be valid GPU pointers
 /// - Bounds are validated on CPU before kernel launch
-pub fn quantize_q5_k(
-    input: *const f32,
-    output: *mut u8,
-    n: usize,
-) -> GpuResult<()> {
+pub fn quantize_q5_k(input: *const f32, output: *mut u8, n: usize) -> GpuResult<()> {
     if n == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
@@ -265,9 +240,7 @@ pub fn quantize_q5_k(
         return Ok(());
     }
 
-    let result = unsafe {
-        quantize_q5_k_kernel(input, output, n as c_int)
-    };
+    let result = unsafe { quantize_q5_k_kernel(input, output, n as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -292,11 +265,7 @@ pub fn quantize_q5_k(
 /// # Safety
 /// - All memory pointers must be valid GPU pointers
 /// - Bounds are validated on CPU before kernel launch
-pub fn dequantize_q5_k(
-    input: *const u8,
-    output: *mut f32,
-    n: usize,
-) -> GpuResult<()> {
+pub fn dequantize_q5_k(input: *const u8, output: *mut f32, n: usize) -> GpuResult<()> {
     if n == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
@@ -309,9 +278,7 @@ pub fn dequantize_q5_k(
         return Ok(());
     }
 
-    let result = unsafe {
-        dequantize_q5_k_kernel(input, output, n as c_int)
-    };
+    let result = unsafe { dequantize_q5_k_kernel(input, output, n as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -355,9 +322,8 @@ pub fn dequantize_q5_k_batched(
         return Ok(());
     }
 
-    let result = unsafe {
-        dequantize_q5_k_batched_kernel(input, output, n as c_int, batch_size as c_int)
-    };
+    let result =
+        unsafe { dequantize_q5_k_batched_kernel(input, output, n as c_int, batch_size as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -400,9 +366,7 @@ pub fn verify_q5_k_accuracy(
         });
     }
 
-    let result = unsafe {
-        verify_q5_k_accuracy_kernel(original, quantized, errors, n as c_int)
-    };
+    let result = unsafe { verify_q5_k_accuracy_kernel(original, quantized, errors, n as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -429,11 +393,7 @@ pub fn verify_q5_k_accuracy(
 /// # Safety
 /// - All memory pointers must be valid GPU pointers
 /// - Bounds are validated on CPU before kernel launch
-pub fn finalize_q5_k_metrics(
-    errors: *const f32,
-    metrics: *mut f32,
-    n: usize,
-) -> GpuResult<()> {
+pub fn finalize_q5_k_metrics(errors: *const f32, metrics: *mut f32, n: usize) -> GpuResult<()> {
     if n == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
@@ -441,9 +401,7 @@ pub fn finalize_q5_k_metrics(
         });
     }
 
-    let result = unsafe {
-        finalize_q5_k_metrics_kernel(errors, metrics, n as c_int)
-    };
+    let result = unsafe { finalize_q5_k_metrics_kernel(errors, metrics, n as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -459,17 +417,9 @@ pub fn finalize_q5_k_metrics(
 
 /// FFI declarations - will be linked from compiled HIP kernels
 unsafe extern "C" {
-    fn quantize_q4_k_kernel(
-        input: *const f32,
-        output: *mut u8,
-        n: c_int,
-    ) -> hipError_t;
+    fn quantize_q4_k_kernel(input: *const f32, output: *mut u8, n: c_int) -> hipError_t;
 
-    fn dequantize_q4_k_kernel(
-        input: *const u8,
-        output: *mut f32,
-        n: c_int,
-    ) -> hipError_t;
+    fn dequantize_q4_k_kernel(input: *const u8, output: *mut f32, n: c_int) -> hipError_t;
 
     fn dequantize_q4_k_batched_kernel(
         input: *const u8,
@@ -485,24 +435,12 @@ unsafe extern "C" {
         n: c_int,
     ) -> hipError_t;
 
-    fn finalize_q4_k_metrics_kernel(
-        errors: *const f32,
-        metrics: *mut f32,
-        n: c_int,
-    ) -> hipError_t;
+    fn finalize_q4_k_metrics_kernel(errors: *const f32, metrics: *mut f32, n: c_int) -> hipError_t;
 
     // Q5_K kernels
-    fn quantize_q5_k_kernel(
-        input: *const f32,
-        output: *mut u8,
-        n: c_int,
-    ) -> hipError_t;
+    fn quantize_q5_k_kernel(input: *const f32, output: *mut u8, n: c_int) -> hipError_t;
 
-    fn dequantize_q5_k_kernel(
-        input: *const u8,
-        output: *mut f32,
-        n: c_int,
-    ) -> hipError_t;
+    fn dequantize_q5_k_kernel(input: *const u8, output: *mut f32, n: c_int) -> hipError_t;
 
     fn dequantize_q5_k_batched_kernel(
         input: *const u8,
@@ -518,11 +456,7 @@ unsafe extern "C" {
         n: c_int,
     ) -> hipError_t;
 
-    fn finalize_q5_k_metrics_kernel(
-        errors: *const f32,
-        metrics: *mut f32,
-        n: c_int,
-    ) -> hipError_t;
+    fn finalize_q5_k_metrics_kernel(errors: *const f32, metrics: *mut f32, n: c_int) -> hipError_t;
 }
 
 #[cfg(test)]
@@ -531,53 +465,32 @@ mod tests {
 
     #[test]
     fn quantize_q4_k_rejects_zero_n() {
-        let result = quantize_q4_k(
-            std::ptr::null(),
-            std::ptr::null_mut(),
-            0,
-        );
+        let result = quantize_q4_k(std::ptr::null(), std::ptr::null_mut(), 0);
         assert!(result.is_err());
     }
 
     #[test]
     fn dequantize_q4_k_rejects_zero_n() {
-        let result = dequantize_q4_k(
-            std::ptr::null(),
-            std::ptr::null_mut(),
-            0,
-        );
+        let result = dequantize_q4_k(std::ptr::null(), std::ptr::null_mut(), 0);
         assert!(result.is_err());
     }
 
     #[test]
     fn dequantize_q4_k_batched_rejects_zero_batch() {
-        let result = dequantize_q4_k_batched(
-            std::ptr::null(),
-            std::ptr::null_mut(),
-            256,
-            0,
-        );
+        let result = dequantize_q4_k_batched(std::ptr::null(), std::ptr::null_mut(), 256, 0);
         assert!(result.is_err());
     }
 
     #[test]
     fn verify_q4_k_accuracy_rejects_zero_n() {
-        let result = verify_q4_k_accuracy(
-            std::ptr::null(),
-            std::ptr::null(),
-            std::ptr::null_mut(),
-            0,
-        );
+        let result =
+            verify_q4_k_accuracy(std::ptr::null(), std::ptr::null(), std::ptr::null_mut(), 0);
         assert!(result.is_err());
     }
 
     #[test]
     fn finalize_q4_k_metrics_rejects_zero_n() {
-        let result = finalize_q4_k_metrics(
-            std::ptr::null(),
-            std::ptr::null_mut(),
-            0,
-        );
+        let result = finalize_q4_k_metrics(std::ptr::null(), std::ptr::null_mut(), 0);
         assert!(result.is_err());
     }
 }
@@ -597,11 +510,7 @@ mod tests {
 /// # Safety
 /// - All memory pointers must be valid GPU pointers
 /// - Bounds are validated on CPU before kernel launch
-pub fn quantize_q8_0(
-    input: *const f32,
-    output: *mut u8,
-    n: usize,
-) -> GpuResult<()> {
+pub fn quantize_q8_0(input: *const f32, output: *mut u8, n: usize) -> GpuResult<()> {
     if n == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
@@ -616,9 +525,7 @@ pub fn quantize_q8_0(
     }
 
     // Load and call kernel
-    let result = unsafe {
-        quantize_q8_0_kernel(input, output, n as c_int)
-    };
+    let result = unsafe { quantize_q8_0_kernel(input, output, n as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -643,11 +550,7 @@ pub fn quantize_q8_0(
 /// # Safety
 /// - All memory pointers must be valid GPU pointers
 /// - Bounds are validated on CPU before kernel launch
-pub fn dequantize_q8_0(
-    input: *const u8,
-    output: *mut f32,
-    n: usize,
-) -> GpuResult<()> {
+pub fn dequantize_q8_0(input: *const u8, output: *mut f32, n: usize) -> GpuResult<()> {
     if n == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
@@ -660,9 +563,7 @@ pub fn dequantize_q8_0(
         return Ok(());
     }
 
-    let result = unsafe {
-        dequantize_q8_0_kernel(input, output, n as c_int)
-    };
+    let result = unsafe { dequantize_q8_0_kernel(input, output, n as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -706,9 +607,8 @@ pub fn dequantize_q8_0_batched(
         return Ok(());
     }
 
-    let result = unsafe {
-        dequantize_q8_0_batched_kernel(input, output, n as c_int, batch_size as c_int)
-    };
+    let result =
+        unsafe { dequantize_q8_0_batched_kernel(input, output, n as c_int, batch_size as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -756,9 +656,7 @@ pub fn verify_q8_0_accuracy(
         return Ok(());
     }
 
-    let result = unsafe {
-        verify_q8_0_accuracy_kernel(original, quantized, errors, n as c_int)
-    };
+    let result = unsafe { verify_q8_0_accuracy_kernel(original, quantized, errors, n as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -787,11 +685,7 @@ pub fn verify_q8_0_accuracy(
 ///
 /// # Safety
 /// - All memory pointers must be valid GPU pointers
-pub fn finalize_q8_0_metrics(
-    errors: *const f32,
-    metrics: *mut f32,
-    n: usize,
-) -> GpuResult<()> {
+pub fn finalize_q8_0_metrics(errors: *const f32, metrics: *mut f32, n: usize) -> GpuResult<()> {
     if n == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
@@ -799,9 +693,7 @@ pub fn finalize_q8_0_metrics(
         });
     }
 
-    let result = unsafe {
-        finalize_q8_0_metrics_kernel(errors, metrics, n as c_int)
-    };
+    let result = unsafe { finalize_q8_0_metrics_kernel(errors, metrics, n as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -828,11 +720,7 @@ pub fn finalize_q8_0_metrics(
 /// # Safety
 /// - All memory pointers must be valid GPU pointers
 /// - Bounds are validated on CPU before kernel launch
-pub fn quantize_q4_0(
-    input: *const f32,
-    output: *mut u8,
-    n: usize,
-) -> GpuResult<()> {
+pub fn quantize_q4_0(input: *const f32, output: *mut u8, n: usize) -> GpuResult<()> {
     if n == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
@@ -859,9 +747,7 @@ pub fn quantize_q4_0(
         return Ok(());
     }
 
-    let result = unsafe {
-        quantize_q4_0_kernel(input, output, n as c_int)
-    };
+    let result = unsafe { quantize_q4_0_kernel(input, output, n as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -886,11 +772,7 @@ pub fn quantize_q4_0(
 /// # Safety
 /// - All memory pointers must be valid GPU pointers
 /// - Bounds are validated on CPU before kernel launch
-pub fn dequantize_q4_0(
-    input: *const u8,
-    output: *mut f32,
-    n: usize,
-) -> GpuResult<()> {
+pub fn dequantize_q4_0(input: *const u8, output: *mut f32, n: usize) -> GpuResult<()> {
     if n == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
@@ -917,9 +799,7 @@ pub fn dequantize_q4_0(
         return Ok(());
     }
 
-    let result = unsafe {
-        dequantize_q4_0_kernel(input, output, n as c_int)
-    };
+    let result = unsafe { dequantize_q4_0_kernel(input, output, n as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -977,9 +857,8 @@ pub fn dequantize_q4_0_batched(
         return Ok(());
     }
 
-    let result = unsafe {
-        dequantize_q4_0_batched_kernel(input, output, n as c_int, batch_size as c_int)
-    };
+    let result =
+        unsafe { dequantize_q4_0_batched_kernel(input, output, n as c_int, batch_size as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -1048,9 +927,7 @@ pub fn verify_q4_0_accuracy(
         return Ok(());
     }
 
-    let result = unsafe {
-        verify_q4_0_accuracy_kernel(original, quantized, errors, n as c_int)
-    };
+    let result = unsafe { verify_q4_0_accuracy_kernel(original, quantized, errors, n as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -1079,11 +956,7 @@ pub fn verify_q4_0_accuracy(
 ///
 /// # Safety
 /// - All memory pointers must be valid GPU pointers
-pub fn finalize_q4_0_metrics(
-    errors: *const f32,
-    metrics: *mut f32,
-    n: usize,
-) -> GpuResult<()> {
+pub fn finalize_q4_0_metrics(errors: *const f32, metrics: *mut f32, n: usize) -> GpuResult<()> {
     if n == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
@@ -1105,9 +978,7 @@ pub fn finalize_q4_0_metrics(
         });
     }
 
-    let result = unsafe {
-        finalize_q4_0_metrics_kernel(errors, metrics, n as c_int)
-    };
+    let result = unsafe { finalize_q4_0_metrics_kernel(errors, metrics, n as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -1158,7 +1029,10 @@ pub fn gemv_q4_0_f32(
     if n_rows % 32 != 0 {
         return Err(GpuError::HipApiError {
             code: -1,
-            description: format!("gemv_q4_0_f32: n_rows must be multiple of 32, got {}", n_rows),
+            description: format!(
+                "gemv_q4_0_f32: n_rows must be multiple of 32, got {}",
+                n_rows
+            ),
         });
     }
 
@@ -1221,11 +1095,7 @@ pub fn gemv_q4_0_f32(
 /// # Safety
 /// - All memory pointers must be valid GPU pointers
 /// - Bounds are validated on CPU before kernel launch
-pub fn quantize_q4_1(
-    input: *const f32,
-    output: *mut u8,
-    n: usize,
-) -> GpuResult<()> {
+pub fn quantize_q4_1(input: *const f32, output: *mut u8, n: usize) -> GpuResult<()> {
     if n == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
@@ -1252,9 +1122,7 @@ pub fn quantize_q4_1(
         return Ok(());
     }
 
-    let result = unsafe {
-        quantize_q4_1_kernel(input, output, n as c_int)
-    };
+    let result = unsafe { quantize_q4_1_kernel(input, output, n as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -1279,11 +1147,7 @@ pub fn quantize_q4_1(
 /// # Safety
 /// - All memory pointers must be valid GPU pointers
 /// - Bounds are validated on CPU before kernel launch
-pub fn dequantize_q4_1(
-    input: *const u8,
-    output: *mut f32,
-    n: usize,
-) -> GpuResult<()> {
+pub fn dequantize_q4_1(input: *const u8, output: *mut f32, n: usize) -> GpuResult<()> {
     if n == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
@@ -1310,9 +1174,7 @@ pub fn dequantize_q4_1(
         return Ok(());
     }
 
-    let result = unsafe {
-        dequantize_q4_1_kernel(input, output, n as c_int)
-    };
+    let result = unsafe { dequantize_q4_1_kernel(input, output, n as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -1370,9 +1232,8 @@ pub fn dequantize_q4_1_batched(
         return Ok(());
     }
 
-    let result = unsafe {
-        dequantize_q4_1_batched_kernel(input, output, n as c_int, batch_size as c_int)
-    };
+    let result =
+        unsafe { dequantize_q4_1_batched_kernel(input, output, n as c_int, batch_size as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -1441,9 +1302,7 @@ pub fn verify_q4_1_accuracy(
         return Ok(());
     }
 
-    let result = unsafe {
-        verify_q4_1_accuracy_kernel(original, quantized, errors, n as c_int)
-    };
+    let result = unsafe { verify_q4_1_accuracy_kernel(original, quantized, errors, n as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -1472,11 +1331,7 @@ pub fn verify_q4_1_accuracy(
 ///
 /// # Safety
 /// - All memory pointers must be valid GPU pointers
-pub fn finalize_q4_1_metrics(
-    errors: *const f32,
-    metrics: *mut f32,
-    n: usize,
-) -> GpuResult<()> {
+pub fn finalize_q4_1_metrics(errors: *const f32, metrics: *mut f32, n: usize) -> GpuResult<()> {
     if n == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
@@ -1498,9 +1353,7 @@ pub fn finalize_q4_1_metrics(
         });
     }
 
-    let result = unsafe {
-        finalize_q4_1_metrics_kernel(errors, metrics, n as c_int)
-    };
+    let result = unsafe { finalize_q4_1_metrics_kernel(errors, metrics, n as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -1551,7 +1404,10 @@ pub fn gemv_q4_1_f32(
     if n_rows % 32 != 0 {
         return Err(GpuError::HipApiError {
             code: -1,
-            description: format!("gemv_q4_1_f32: n_rows must be multiple of 32, got {}", n_rows),
+            description: format!(
+                "gemv_q4_1_f32: n_rows must be multiple of 32, got {}",
+                n_rows
+            ),
         });
     }
 
@@ -1603,17 +1459,9 @@ pub fn gemv_q4_1_f32(
 
 /// FFI declarations for Q8_0 kernels - will be linked from compiled HIP kernels
 unsafe extern "C" {
-    fn quantize_q8_0_kernel(
-        input: *const f32,
-        output: *mut u8,
-        n: c_int,
-    ) -> hipError_t;
+    fn quantize_q8_0_kernel(input: *const f32, output: *mut u8, n: c_int) -> hipError_t;
 
-    fn dequantize_q8_0_kernel(
-        input: *const u8,
-        output: *mut f32,
-        n: c_int,
-    ) -> hipError_t;
+    fn dequantize_q8_0_kernel(input: *const u8, output: *mut f32, n: c_int) -> hipError_t;
 
     fn dequantize_q8_0_batched_kernel(
         input: *const u8,
@@ -1629,24 +1477,12 @@ unsafe extern "C" {
         n: c_int,
     ) -> hipError_t;
 
-    fn finalize_q8_0_metrics_kernel(
-        errors: *const f32,
-        metrics: *mut f32,
-        n: c_int,
-    ) -> hipError_t;
+    fn finalize_q8_0_metrics_kernel(errors: *const f32, metrics: *mut f32, n: c_int) -> hipError_t;
 
     // Q4_0 kernels - will be linked from compiled HIP kernels
-    fn quantize_q4_0_kernel(
-        input: *const f32,
-        output: *mut u8,
-        n: c_int,
-    ) -> hipError_t;
+    fn quantize_q4_0_kernel(input: *const f32, output: *mut u8, n: c_int) -> hipError_t;
 
-    fn dequantize_q4_0_kernel(
-        input: *const u8,
-        output: *mut f32,
-        n: c_int,
-    ) -> hipError_t;
+    fn dequantize_q4_0_kernel(input: *const u8, output: *mut f32, n: c_int) -> hipError_t;
 
     fn dequantize_q4_0_batched_kernel(
         input: *const u8,
@@ -1662,11 +1498,7 @@ unsafe extern "C" {
         n: c_int,
     ) -> hipError_t;
 
-    fn finalize_q4_0_metrics_kernel(
-        errors: *const f32,
-        metrics: *mut f32,
-        n: c_int,
-    ) -> hipError_t;
+    fn finalize_q4_0_metrics_kernel(errors: *const f32, metrics: *mut f32, n: c_int) -> hipError_t;
 
     fn gemv_q4_0_f32_launch(
         weights_q4_0: *const u8,
@@ -1678,17 +1510,9 @@ unsafe extern "C" {
     ) -> hipError_t;
 
     // Q4_1 kernels
-    fn quantize_q4_1_kernel(
-        input: *const f32,
-        output: *mut u8,
-        n: c_int,
-    ) -> hipError_t;
+    fn quantize_q4_1_kernel(input: *const f32, output: *mut u8, n: c_int) -> hipError_t;
 
-    fn dequantize_q4_1_kernel(
-        input: *const u8,
-        output: *mut f32,
-        n: c_int,
-    ) -> hipError_t;
+    fn dequantize_q4_1_kernel(input: *const u8, output: *mut f32, n: c_int) -> hipError_t;
 
     fn dequantize_q4_1_batched_kernel(
         input: *const u8,
@@ -1704,11 +1528,7 @@ unsafe extern "C" {
         n: c_int,
     ) -> hipError_t;
 
-    fn finalize_q4_1_metrics_kernel(
-        errors: *const f32,
-        metrics: *mut f32,
-        n: c_int,
-    ) -> hipError_t;
+    fn finalize_q4_1_metrics_kernel(errors: *const f32, metrics: *mut f32, n: c_int) -> hipError_t;
 
     fn gemv_q4_1_f32_launch(
         weights_q4_1: *const u8,
@@ -1761,7 +1581,10 @@ pub fn gemv_q8_0_f32(
     if n_rows % 32 != 0 {
         return Err(GpuError::HipApiError {
             code: -1,
-            description: format!("gemv_q8_0_f32: n_rows must be multiple of 32, got {}", n_rows),
+            description: format!(
+                "gemv_q8_0_f32: n_rows must be multiple of 32, got {}",
+                n_rows
+            ),
         });
     }
 
@@ -1854,6 +1677,353 @@ unsafe extern "C" {
         ncols_dst: c_int,
         stream: hipStream_t,
     ) -> hipError_t;
+
+    // GEMM kernels
+    fn gemm_q4_0_f32_launch(
+        weights_q4_0: *const u8,
+        input: *const f32,
+        output: *mut f32,
+        n_rows: c_int,
+        ncols_dst: c_int,
+        batch_size: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
+    fn gemm_q4_1_f32_launch(
+        weights_q4_1: *const u8,
+        input: *const f32,
+        output: *mut f32,
+        n_rows: c_int,
+        ncols_dst: c_int,
+        batch_size: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
+    fn gemm_q8_0_f32_launch(
+        weights_q8_0: *const u8,
+        input: *const f32,
+        output: *mut f32,
+        n_rows: c_int,
+        ncols_dst: c_int,
+        batch_size: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
+    fn gemm_q4_k_f32_launch(
+        weights_q4_k: *const u8,
+        input: *const f32,
+        output: *mut f32,
+        n_rows: c_int,
+        ncols_dst: c_int,
+        batch_size: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
+    fn gemm_q5_k_f32_launch(
+        weights_q5_k: *const u8,
+        input: *const f32,
+        output: *mut f32,
+        n_rows: c_int,
+        ncols_dst: c_int,
+        batch_size: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
+    // Fused kernels
+    fn gemv_qkv_q4_0_f32_launch(
+        w_q: *const u8,
+        w_k: *const u8,
+        w_v: *const u8,
+        input: *const f32,
+        out_q: *mut f32,
+        out_k: *mut f32,
+        out_v: *mut f32,
+        n_rows: c_int,
+        n_q: c_int,
+        n_kv: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
+    fn gemv_gate_up_swiglu_q4_0_f32_launch(
+        w_gate: *const u8,
+        w_up: *const u8,
+        input: *const f32,
+        out_swiglu: *mut f32,
+        n_rows: c_int,
+        n_ff: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+}
+
+/// Fused QKV GEMV for Q4_0 quantized weights.
+pub fn gemv_qkv_q4_0_f32(
+    w_q: *const u8,
+    w_k: *const u8,
+    w_v: *const u8,
+    input: *const f32,
+    out_q: *mut f32,
+    out_k: *mut f32,
+    out_v: *mut f32,
+    n_rows: usize,
+    n_q: usize,
+    n_kv: usize,
+) -> GpuResult<()> {
+    let result = unsafe {
+        gemv_qkv_q4_0_f32_launch(
+            w_q,
+            w_k,
+            w_v,
+            input,
+            out_q,
+            out_k,
+            out_v,
+            n_rows as c_int,
+            n_q as c_int,
+            n_kv as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("gemv_qkv_q4_0_f32 kernel failed: {:?}", result),
+        });
+    }
+    Ok(())
+}
+
+/// Fused Gate/Up + SwiGLU for Q4_0 quantized weights.
+pub fn gemv_gate_up_swiglu_q4_0_f32(
+    w_gate: *const u8,
+    w_up: *const u8,
+    input: *const f32,
+    out_swiglu: *mut f32,
+    n_rows: usize,
+    n_ff: usize,
+) -> GpuResult<()> {
+    let result = unsafe {
+        gemv_gate_up_swiglu_q4_0_f32_launch(
+            w_gate,
+            w_up,
+            input,
+            out_swiglu,
+            n_rows as c_int,
+            n_ff as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("gemv_gate_up_swiglu_q4_0_f32 kernel failed: {:?}", result),
+        });
+    }
+    Ok(())
+}
+
+/// Batched GEMM for Q4_0 quantized weights.
+pub fn gemm_q4_0_f32(
+    weights_q4_0: *const u8,
+    input: *const f32,
+    output: *mut f32,
+    n_rows: usize,
+    ncols_dst: usize,
+    batch_size: usize,
+) -> GpuResult<()> {
+    if n_rows == 0 || ncols_dst == 0 || batch_size == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "gemm_q4_0_f32: dimensions cannot be zero".to_string(),
+        });
+    }
+    if n_rows % 32 != 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!("gemm_q4_0_f32: n_rows must be multiple of 32, got {}", n_rows),
+        });
+    }
+    let result = unsafe {
+        gemm_q4_0_f32_launch(
+            weights_q4_0,
+            input,
+            output,
+            n_rows as c_int,
+            ncols_dst as c_int,
+            batch_size as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("gemm_q4_0_f32 kernel failed: {:?}", result),
+        });
+    }
+    Ok(())
+}
+
+/// Batched GEMM for Q4_1 quantized weights.
+pub fn gemm_q4_1_f32(
+    weights_q4_1: *const u8,
+    input: *const f32,
+    output: *mut f32,
+    n_rows: usize,
+    ncols_dst: usize,
+    batch_size: usize,
+) -> GpuResult<()> {
+    if n_rows == 0 || ncols_dst == 0 || batch_size == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "gemm_q4_1_f32: dimensions cannot be zero".to_string(),
+        });
+    }
+    if n_rows % 32 != 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!("gemm_q4_1_f32: n_rows must be multiple of 32, got {}", n_rows),
+        });
+    }
+    let result = unsafe {
+        gemm_q4_1_f32_launch(
+            weights_q4_1,
+            input,
+            output,
+            n_rows as c_int,
+            ncols_dst as c_int,
+            batch_size as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("gemm_q4_1_f32 kernel failed: {:?}", result),
+        });
+    }
+    Ok(())
+}
+
+/// Batched GEMM for Q8_0 quantized weights.
+pub fn gemm_q8_0_f32(
+    weights_q8_0: *const u8,
+    input: *const f32,
+    output: *mut f32,
+    n_rows: usize,
+    ncols_dst: usize,
+    batch_size: usize,
+) -> GpuResult<()> {
+    if n_rows == 0 || ncols_dst == 0 || batch_size == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "gemm_q8_0_f32: dimensions cannot be zero".to_string(),
+        });
+    }
+    if n_rows % 32 != 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!("gemm_q8_0_f32: n_rows must be multiple of 32, got {}", n_rows),
+        });
+    }
+    let result = unsafe {
+        gemm_q8_0_f32_launch(
+            weights_q8_0,
+            input,
+            output,
+            n_rows as c_int,
+            ncols_dst as c_int,
+            batch_size as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("gemm_q8_0_f32 kernel failed: {:?}", result),
+        });
+    }
+    Ok(())
+}
+
+/// Batched GEMM for Q4_K quantized weights.
+pub fn gemm_q4_k_f32(
+    weights_q4_k: *const u8,
+    input: *const f32,
+    output: *mut f32,
+    n_rows: usize,
+    ncols_dst: usize,
+    batch_size: usize,
+) -> GpuResult<()> {
+    if n_rows == 0 || ncols_dst == 0 || batch_size == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "gemm_q4_k_f32: dimensions cannot be zero".to_string(),
+        });
+    }
+    if n_rows % 256 != 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!("gemm_q4_k_f32: n_rows must be multiple of 256, got {}", n_rows),
+        });
+    }
+    let result = unsafe {
+        gemm_q4_k_f32_launch(
+            weights_q4_k,
+            input,
+            output,
+            n_rows as c_int,
+            ncols_dst as c_int,
+            batch_size as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("gemm_q4_k_f32 kernel failed: {:?}", result),
+        });
+    }
+    Ok(())
+}
+
+/// Batched GEMM for Q5_K quantized weights.
+pub fn gemm_q5_k_f32(
+    weights_q5_k: *const u8,
+    input: *const f32,
+    output: *mut f32,
+    n_rows: usize,
+    ncols_dst: usize,
+    batch_size: usize,
+) -> GpuResult<()> {
+    if n_rows == 0 || ncols_dst == 0 || batch_size == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "gemm_q5_k_f32: dimensions cannot be zero".to_string(),
+        });
+    }
+    if n_rows % 256 != 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!("gemm_q5_k_f32: n_rows must be multiple of 256, got {}", n_rows),
+        });
+    }
+    let result = unsafe {
+        gemm_q5_k_f32_launch(
+            weights_q5_k,
+            input,
+            output,
+            n_rows as c_int,
+            ncols_dst as c_int,
+            batch_size as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("gemm_q5_k_f32 kernel failed: {:?}", result),
+        });
+    }
+    Ok(())
 }
 
 /// Q4_K × f32 GEMV: quantized matrix-vector multiplication
@@ -1895,7 +2065,10 @@ pub fn gemv_q4_k_f32(
     if n_rows % 256 != 0 {
         return Err(GpuError::HipApiError {
             code: -1,
-            description: format!("gemv_q4_k_f32: n_rows must be multiple of 256, got {}", n_rows),
+            description: format!(
+                "gemv_q4_k_f32: n_rows must be multiple of 256, got {}",
+                n_rows
+            ),
         });
     }
 
@@ -1990,7 +2163,10 @@ pub fn gemv_q5_k_f32(
     if n_rows % 256 != 0 {
         return Err(GpuError::HipApiError {
             code: -1,
-            description: format!("gemv_q5_k_f32: n_rows must be multiple of 256, got {}", n_rows),
+            description: format!(
+                "gemv_q5_k_f32: n_rows must be multiple of 256, got {}",
+                n_rows
+            ),
         });
     }
 
@@ -2046,53 +2222,32 @@ mod q8_0_tests {
 
     #[test]
     fn quantize_q8_0_rejects_zero_n() {
-        let result = quantize_q8_0(
-            std::ptr::null(),
-            std::ptr::null_mut(),
-            0,
-        );
+        let result = quantize_q8_0(std::ptr::null(), std::ptr::null_mut(), 0);
         assert!(result.is_err());
     }
 
     #[test]
     fn dequantize_q8_0_rejects_zero_n() {
-        let result = dequantize_q8_0(
-            std::ptr::null(),
-            std::ptr::null_mut(),
-            0,
-        );
+        let result = dequantize_q8_0(std::ptr::null(), std::ptr::null_mut(), 0);
         assert!(result.is_err());
     }
 
     #[test]
     fn dequantize_q8_0_batched_rejects_zero_batch() {
-        let result = dequantize_q8_0_batched(
-            std::ptr::null(),
-            std::ptr::null_mut(),
-            32,
-            0,
-        );
+        let result = dequantize_q8_0_batched(std::ptr::null(), std::ptr::null_mut(), 32, 0);
         assert!(result.is_err());
     }
 
     #[test]
     fn verify_q8_0_accuracy_rejects_zero_n() {
-        let result = verify_q8_0_accuracy(
-            std::ptr::null(),
-            std::ptr::null(),
-            std::ptr::null_mut(),
-            0,
-        );
+        let result =
+            verify_q8_0_accuracy(std::ptr::null(), std::ptr::null(), std::ptr::null_mut(), 0);
         assert!(result.is_err());
     }
 
     #[test]
     fn finalize_q8_0_metrics_rejects_zero_n() {
-        let result = finalize_q8_0_metrics(
-            std::ptr::null(),
-            std::ptr::null_mut(),
-            0,
-        );
+        let result = finalize_q8_0_metrics(std::ptr::null(), std::ptr::null_mut(), 0);
         assert!(result.is_err());
     }
 }
@@ -2134,7 +2289,7 @@ mod q4_k_tests {
             std::ptr::null(),
             std::ptr::null(),
             std::ptr::null_mut(),
-            255,  // Not multiple of 256
+            255, // Not multiple of 256
             4,
         );
         assert!(result.is_err());
@@ -2144,14 +2299,17 @@ mod q4_k_tests {
     #[test]
     fn gemv_q4_k_f32_rejects_null_weights() {
         let result = gemv_q4_k_f32(
-            std::ptr::null(),  // null weights
+            std::ptr::null(), // null weights
             std::ptr::null(),
             std::ptr::null_mut(),
             256,
             4,
         );
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("weights_q4_k pointer is null"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("weights_q4_k pointer is null"));
     }
 
     #[test]
@@ -2159,13 +2317,16 @@ mod q4_k_tests {
         let dummy_u8 = 0u8;
         let result = gemv_q4_k_f32(
             &dummy_u8 as *const u8,
-            std::ptr::null(),  // null input
+            std::ptr::null(), // null input
             std::ptr::null_mut(),
             256,
             4,
         );
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("input pointer is null"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("input pointer is null"));
     }
 
     #[test]
@@ -2175,12 +2336,15 @@ mod q4_k_tests {
         let result = gemv_q4_k_f32(
             &dummy_u8 as *const u8,
             &dummy_f32 as *const f32,
-            std::ptr::null_mut(),  // null output
+            std::ptr::null_mut(), // null output
             256,
             4,
         );
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("output pointer is null"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("output pointer is null"));
     }
 }
 
@@ -2213,7 +2377,8 @@ mod q4_0_tests {
 
     #[test]
     fn verify_q4_0_accuracy_rejects_zero_n() {
-        let result = verify_q4_0_accuracy(std::ptr::null(), std::ptr::null(), std::ptr::null_mut(), 0);
+        let result =
+            verify_q4_0_accuracy(std::ptr::null(), std::ptr::null(), std::ptr::null_mut(), 0);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("cannot be zero"));
     }
@@ -2228,9 +2393,18 @@ mod q4_0_tests {
     #[test]
     fn gemv_q4_0_f32_rejects_invalid_dimensions() {
         // n_rows must be multiple of QK4_0 (32)
-        let result = gemv_q4_0_f32(std::ptr::null(), std::ptr::null(), std::ptr::null_mut(), 33, 1);
+        let result = gemv_q4_0_f32(
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            33,
+            1,
+        );
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("must be multiple of"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("must be multiple of"));
     }
 }
 
@@ -2263,7 +2437,8 @@ mod q4_1_tests {
 
     #[test]
     fn verify_q4_1_accuracy_rejects_zero_n() {
-        let result = verify_q4_1_accuracy(std::ptr::null(), std::ptr::null(), std::ptr::null_mut(), 0);
+        let result =
+            verify_q4_1_accuracy(std::ptr::null(), std::ptr::null(), std::ptr::null_mut(), 0);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("cannot be zero"));
     }
@@ -2277,9 +2452,17 @@ mod q4_1_tests {
 
     #[test]
     fn gemv_q4_1_f32_rejects_invalid_dimensions() {
-        let result = gemv_q4_1_f32(std::ptr::null(), std::ptr::null(), std::ptr::null_mut(), 33, 1);
+        let result = gemv_q4_1_f32(
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            33,
+            1,
+        );
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("must be multiple of"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("must be multiple of"));
     }
 }
-

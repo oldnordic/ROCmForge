@@ -72,8 +72,8 @@ impl GpuCapabilities {
         let (free_vram, _) = ffi::hip_get_mem_info(device_id).ok()?;
 
         // Parse architecture from device info (currently returns Unknown since FFI uses placeholder)
-        let architecture = GpuArchitecture::from_name(&info.arch_name)
-            .unwrap_or(GpuArchitecture::Unknown(0));
+        let architecture =
+            GpuArchitecture::from_name(&info.arch_name).unwrap_or(GpuArchitecture::Unknown(0));
 
         Some(Self {
             device_name: info.name.clone(),
@@ -84,7 +84,7 @@ impl GpuCapabilities {
             hip_driver_version: {
                 match ffi::hip_get_driver_version() {
                     Ok(v) => v,
-                    Err(_) => 0,  // Graceful fallback
+                    Err(_) => 0, // Graceful fallback
                 }
             },
             device_id,

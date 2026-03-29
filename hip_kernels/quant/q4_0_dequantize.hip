@@ -23,13 +23,7 @@ __global__ void dequantize_q4_0_device(
     const uint8_t* qs = in + 2;
     float* out = &output[block_idx * QK4_0];
 
-    // Sequential unpacking: threads 0-15 read low nibble, threads 16-31 read high nibble
-    uint8_t q;
-    if (threadIdx.x < 16) {
-        q = qs[threadIdx.x] & 0x0F;       // Low nibble
-    } else {
-        q = qs[threadIdx.x - 16] >> 4;    // High nibble
-    }
+    uint8_t q = unpack_nibble_sequential(qs, threadIdx.x);
 
     // Apply offset and scale (llama.cpp: y = (q - 8) * d)
     out[threadIdx.x] = (float(q) - 8.0f) * d;
@@ -60,14 +54,12 @@ __global__ void dequantize_q4_0_batched_device(
     const uint8_t* qs = in + 2;
     float* out = &output[global_block_idx * QK4_0];
 
-    // Sequential unpacking: low nibble → element i, high nibble → element i + 16
     for (int i = 0; i < QK4_0 / 2; ++i) {
-        uint8_t packed = qs[i];
-        uint8_t q0 = (packed & 0x0F);
-        uint8_t q1 = (packed >> 4);
+        uint8_t q0 = qs[i] & 0x0F;
+        uint8_t q1 = qs[i] >> 4;
 
-        out[i] = (float(q0) - 8.0f) * d;           // First half (elements 0..15)
-        out[i + QK4_0 / 2] = (float(q1) - 8.0f) * d;  // Second half (elements 16..31)
+        out[i] = (float(q0) - 8.0f) * d;
+        out[i + QK4_0 / 2] = (float(q1) - 8.0f) * d;
     }
 }
 

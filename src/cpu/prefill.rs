@@ -7,16 +7,21 @@
 //! For multi-core systems, batches are distributed across physical cores.
 
 use super::cache::{CpuForwardScratch, CpuKvCache};
-use super::ops::{add_bias_batched, dispatch_gemm, dispatch_gemv, flash_attn_prefill, rms_norm, silu_fuse};
-use super::quant::{embed_f32_batch, embed_q3_k_batch, embed_q4_0_batch, embed_q4_1_batch, embed_q4_k_batch, embed_q5_0_batch, embed_q5_k_batch, embed_q6_k_batch, embed_q8_0_batch};
+use super::ops::{
+    add_bias_batched, dispatch_gemm, dispatch_gemv, flash_attn_prefill, rms_norm, silu_fuse,
+};
+use super::quant::{
+    embed_f32_batch, embed_q3_k_batch, embed_q4_0_batch, embed_q4_1_batch, embed_q4_k_batch,
+    embed_q5_0_batch, embed_q5_k_batch, embed_q6_k_batch, embed_q8_0_batch,
+};
 use super::weights::{CpuLayerWeights, CpuModelWeights};
 use super::CpuError;
 use crate::config::ModelConfig;
-use crate::loader::GgmlType;
 use crate::hardware::BatchConfig;
+use crate::loader::GgmlType;
 use rayon::prelude::*;
-use std::sync::{Arc, Mutex};
 use std::marker::PhantomData;
+use std::sync::{Arc, Mutex};
 
 // Wrapper for Send-unsafe raw pointers
 #[repr(C)]
@@ -64,8 +69,8 @@ impl CpuPrefillScratch {
         let ff = config.intermediate_size;
 
         // Q8_0 scratch buffer
-        use super::quant::Q8_BLOCK_ELEMS;
         use super::quant::Q8_BLOCK_BYTES;
+        use super::quant::Q8_BLOCK_ELEMS;
         let num_blocks = h / Q8_BLOCK_ELEMS;
         let q8_scratch = vec![0u8; num_blocks * Q8_BLOCK_BYTES];
 
@@ -128,8 +133,8 @@ impl CpuParallelPrefillScratch {
         let n = sub_batch_len;
 
         // Q8_0 scratch buffer size
-        use super::quant::Q8_BLOCK_ELEMS;
         use super::quant::Q8_BLOCK_BYTES;
+        use super::quant::Q8_BLOCK_ELEMS;
         let num_blocks = h / Q8_BLOCK_ELEMS;
         let q8_scratch_size = num_blocks * Q8_BLOCK_BYTES;
 
@@ -143,7 +148,9 @@ impl CpuParallelPrefillScratch {
             per_thread_layer_out: (0..num_threads).map(|_| vec![0.0; n * h]).collect(),
             per_thread_gate: (0..num_threads).map(|_| vec![0.0; n * ff]).collect(),
             per_thread_swiglu: (0..num_threads).map(|_| vec![0.0; n * ff]).collect(),
-            per_thread_q8_scratch: (0..num_threads).map(|_| vec![0u8; q8_scratch_size]).collect(),
+            per_thread_q8_scratch: (0..num_threads)
+                .map(|_| vec![0u8; q8_scratch_size])
+                .collect(),
             num_threads,
         }
     }
@@ -156,8 +163,8 @@ impl CpuParallelPrefillScratch {
         let ff = config.intermediate_size;
 
         // Q8_0 scratch buffer size (doesn't depend on batch_len)
-        use super::quant::Q8_BLOCK_ELEMS;
         use super::quant::Q8_BLOCK_BYTES;
+        use super::quant::Q8_BLOCK_ELEMS;
         let num_blocks = h / Q8_BLOCK_ELEMS;
         let q8_scratch_size = num_blocks * Q8_BLOCK_BYTES;
 
@@ -339,7 +346,7 @@ fn prefill_layer_forward(
         &ps.swiglu,
         &mut ps.layer_out,
         h,  // out_dim (hidden_size)
-        ff,  // in_dim (intermediate_size)
+        ff, // in_dim (intermediate_size)
     )?;
 
     // 13. Residual: hidden += layer_out
@@ -466,8 +473,8 @@ pub fn cpu_prefill_forward(
                 &weights.lm_head_meta,
                 &scratch.normed,
                 &mut scratch.logits,
-                v,  // vocab_size (out_dim)
-                h,  // hidden_size (in_dim)
+                v, // vocab_size (out_dim)
+                h, // hidden_size (in_dim)
                 Some(&mut scratch.q8_scratch),
             )?;
         }
@@ -514,7 +521,10 @@ pub fn cpu_prefill_forward_parallel(
     batch_config: &BatchConfig,
 ) -> Result<(), CpuError> {
     let seq_len = tokens.len();
-    assert!(seq_len > 0, "cpu_prefill_forward_parallel: empty token list");
+    assert!(
+        seq_len > 0,
+        "cpu_prefill_forward_parallel: empty token list"
+    );
     assert!(
         start_pos + seq_len <= kv.max_seq_len,
         "prompt longer than KV cache"
@@ -530,7 +540,15 @@ pub fn cpu_prefill_forward_parallel(
     // For short sequences (< 2 batches), sequential is faster (less threading overhead)
     if batch_starts.len() < 2 {
         // Fall back to sequential processing for better performance
-        return cpu_prefill_forward(tokens, weights, kv, scratch, start_pos, config, batch_config);
+        return cpu_prefill_forward(
+            tokens,
+            weights,
+            kv,
+            scratch,
+            start_pos,
+            config,
+            batch_config,
+        );
     }
 
     // Wrap KV cache pointer in Arc<Mutex<SendPtr<CpuKvCache>>> for shared access
@@ -553,93 +571,131 @@ pub fn cpu_prefill_forward_parallel(
     let results: Vec<Result<(Vec<f32>, usize), String>> = batch_starts
         .par_iter()
         .enumerate()
-        .map(|(batch_idx, &batch_start)| -> Result<(Vec<f32>, usize), String> {
-            let batch_end = (batch_start + batch_size).min(seq_len);
-            let batch_tokens = &tokens[batch_start..batch_end];
-            let batch_len = batch_tokens.len();
-            let batch_pos = start_pos + batch_start;
+        .map(
+            |(batch_idx, &batch_start)| -> Result<(Vec<f32>, usize), String> {
+                let batch_end = (batch_start + batch_size).min(seq_len);
+                let batch_tokens = &tokens[batch_start..batch_end];
+                let batch_len = batch_tokens.len();
+                let batch_pos = start_pos + batch_start;
 
-            // Create scratch for this batch
-            let mut ps = CpuPrefillScratch::new(&config_shared, batch_len);
+                // Create scratch for this batch
+                let mut ps = CpuPrefillScratch::new(&config_shared, batch_len);
 
-            // 1. Gather embeddings for this batch
-            match weights_shared.token_emb_meta.wtype {
-                GgmlType::F32 => {
-                    let wf: &[f32] = unsafe {
-                        std::slice::from_raw_parts(
-                            weights_shared.token_emb.as_ptr() as *const f32,
-                            weights_shared.token_emb.len() / 4,
-                        )
-                    };
-                    embed_f32_batch(batch_tokens, wf, &mut ps.hidden, h);
+                // 1. Gather embeddings for this batch
+                match weights_shared.token_emb_meta.wtype {
+                    GgmlType::F32 => {
+                        let wf: &[f32] = unsafe {
+                            std::slice::from_raw_parts(
+                                weights_shared.token_emb.as_ptr() as *const f32,
+                                weights_shared.token_emb.len() / 4,
+                            )
+                        };
+                        embed_f32_batch(batch_tokens, wf, &mut ps.hidden, h);
+                    }
+                    GgmlType::Q4_0 => {
+                        embed_q4_0_batch(
+                            batch_tokens,
+                            &weights_shared.token_emb,
+                            &mut ps.hidden,
+                            h,
+                        );
+                    }
+                    GgmlType::Q4_K => {
+                        embed_q4_k_batch(
+                            batch_tokens,
+                            &weights_shared.token_emb,
+                            &mut ps.hidden,
+                            h,
+                        );
+                    }
+                    GgmlType::Q5_0 => {
+                        embed_q5_0_batch(
+                            batch_tokens,
+                            &weights_shared.token_emb,
+                            &mut ps.hidden,
+                            h,
+                        );
+                    }
+                    GgmlType::Q6_K => {
+                        embed_q6_k_batch(
+                            batch_tokens,
+                            &weights_shared.token_emb,
+                            &mut ps.hidden,
+                            h,
+                        );
+                    }
+                    GgmlType::Q3_K => {
+                        embed_q3_k_batch(
+                            batch_tokens,
+                            &weights_shared.token_emb,
+                            &mut ps.hidden,
+                            h,
+                        );
+                    }
+                    GgmlType::Q8_0 => {
+                        embed_q8_0_batch(
+                            batch_tokens,
+                            &weights_shared.token_emb,
+                            &mut ps.hidden,
+                            h,
+                        );
+                    }
+                    other => {
+                        return Err(format!("Unsupported weight type: {:?}", other));
+                    }
                 }
-                GgmlType::Q4_0 => {
-                    embed_q4_0_batch(batch_tokens, &weights_shared.token_emb, &mut ps.hidden, h);
-                }
-                GgmlType::Q4_K => {
-                    embed_q4_k_batch(batch_tokens, &weights_shared.token_emb, &mut ps.hidden, h);
-                }
-                GgmlType::Q5_0 => {
-                    embed_q5_0_batch(batch_tokens, &weights_shared.token_emb, &mut ps.hidden, h);
-                }
-                GgmlType::Q6_K => {
-                    embed_q6_k_batch(batch_tokens, &weights_shared.token_emb, &mut ps.hidden, h);
-                }
-                GgmlType::Q3_K => {
-                    embed_q3_k_batch(batch_tokens, &weights_shared.token_emb, &mut ps.hidden, h);
-                }
-                GgmlType::Q8_0 => {
-                    embed_q8_0_batch(batch_tokens, &weights_shared.token_emb, &mut ps.hidden, h);
-                }
-                other => {
-                    return Err(format!("Unsupported weight type: {:?}", other));
-                }
-            }
 
-            // 2. All layers for this batch
-            // SAFETY: Each batch writes to disjoint KV positions: [layer, pos_start..pos_end]
-            // Lock KV cache briefly for writes (disjoint positions, minimal contention)
-            for layer_idx in 0..config_shared.num_layers {
-                let mut kv_guard = kv_shared.lock()
-                    .map_err(|e| format!("KV cache lock failed: {}", e))?;
-                // SAFETY: Get mutable reference from UnsafeCell
-                // Safe because we hold the lock
-                // SAFETY: Dereference raw pointer to get &mut CpuKvCache
-                // Safe because we hold the mutex lock and only this thread accesses
-                let kv_ref: &mut CpuKvCache = unsafe { &mut *kv_guard.ptr };
-                prefill_layer_forward(
-                    &mut ps,
-                    weights_shared.layer(layer_idx),
-                    kv_ref,
-                    layer_idx,
-                    batch_pos,
-                    &config_shared,
-                    batch_len,
-                ).map_err(|e| format!("Layer {} failed: {}", layer_idx, e))?;
-            }
+                // 2. All layers for this batch
+                // SAFETY: Each batch writes to disjoint KV positions: [layer, pos_start..pos_end]
+                // Lock KV cache briefly for writes (disjoint positions, minimal contention)
+                for layer_idx in 0..config_shared.num_layers {
+                    let mut kv_guard = kv_shared
+                        .lock()
+                        .map_err(|e| format!("KV cache lock failed: {}", e))?;
+                    // SAFETY: Get mutable reference from UnsafeCell
+                    // Safe because we hold the lock
+                    // SAFETY: Dereference raw pointer to get &mut CpuKvCache
+                    // Safe because we hold the mutex lock and only this thread accesses
+                    let kv_ref: &mut CpuKvCache = unsafe { &mut *kv_guard.ptr };
+                    prefill_layer_forward(
+                        &mut ps,
+                        weights_shared.layer(layer_idx),
+                        kv_ref,
+                        layer_idx,
+                        batch_pos,
+                        &config_shared,
+                        batch_len,
+                    )
+                    .map_err(|e| format!("Layer {} failed: {}", layer_idx, e))?;
+                }
 
-            // 3. Extract hidden state if this is the last batch
-            let hidden_state = if batch_end == seq_len {
-                let last_row_start = (batch_len - 1) * h;
-                let last_row_end = batch_len * h;
-                ps.hidden[last_row_start..last_row_end].to_vec()
-            } else {
-                Vec::new() // Not last batch, no need to keep hidden state
-            };
+                // 3. Extract hidden state if this is the last batch
+                let hidden_state = if batch_end == seq_len {
+                    let last_row_start = (batch_len - 1) * h;
+                    let last_row_end = batch_len * h;
+                    ps.hidden[last_row_start..last_row_end].to_vec()
+                } else {
+                    Vec::new() // Not last batch, no need to keep hidden state
+                };
 
-            Ok((hidden_state, batch_idx))
-        })
+                Ok((hidden_state, batch_idx))
+            },
+        )
         .collect();
 
     // Check for errors
     for result in &results {
         if let Err(e) = result {
-            return Err(CpuError::InvalidOperation(format!("Parallel batch failed: {}", e)));
+            return Err(CpuError::InvalidOperation(format!(
+                "Parallel batch failed: {}",
+                e
+            )));
         }
     }
 
     // Find the last batch (highest batch_idx) and extract its logits
-    let last_batch_idx = results.iter()
+    let last_batch_idx = results
+        .iter()
         .filter_map(|r| r.as_ref().ok())
         .map(|(_, idx)| *idx)
         .max()
@@ -670,7 +726,12 @@ pub fn cpu_prefill_forward_parallel(
             embed_q4_0_batch(batch_tokens, &weights.token_emb, &mut ps_last.hidden, h);
         }
         GgmlType::Q4_1 => {
-            super::quant::embed_q4_1_batch(batch_tokens, &weights.token_emb, &mut ps_last.hidden, h);
+            super::quant::embed_q4_1_batch(
+                batch_tokens,
+                &weights.token_emb,
+                &mut ps_last.hidden,
+                h,
+            );
         }
         GgmlType::Q4_K => {
             embed_q4_k_batch(batch_tokens, &weights.token_emb, &mut ps_last.hidden, h);

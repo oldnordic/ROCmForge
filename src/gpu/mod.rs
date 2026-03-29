@@ -4,74 +4,54 @@
 //! - All HIP API calls wrapped with error handling
 //! - Never panic, always return GpuError
 //! - CPU fallback when GPU unavailable
-//!
-//! ## Usage
-//!
-//! ```no_run
-//! use rocmforge::gpu::{detect, GpuDevice};
-//!
-//! // Detect GPU
-//! let caps = match detect() {
-//!     Some(gpu) => {
-//!         println!("Found: {} ({} GB VRAM)", gpu.device_name, gpu.total_vram_gb());
-//!         gpu
-//!     }
-//!     None => {
-//!         println!("No GPU, using CPU");
-//!         return;
-//!     }
-//! };
-//!
-//! // Check if model fits
-//! if !caps.can_fit_model(model_size) {
-//!     println!("Model too large for GPU, using CPU");
-//!     return;
-//! }
-//!
-//! // Initialize device
-//! let device = GpuDevice::init(caps.device_id)?;
-//! // ... run inference ...
-//! # Ok::<(), rocmforge::gpu::GpuError>(())
-//! ```
 
-mod error;
-mod ffi;
-mod detect;
-mod device;
-mod weights;
-mod kernels;
-mod cache;
-mod dynamic_loader;
-mod arch;
+pub mod arch;
+pub mod cache;
+pub mod detect;
+pub mod device;
+pub mod dynamic_loader;
+pub mod error;
+pub mod ffi;
+pub mod forward;
+pub mod kernels;
+pub mod ops;
 pub mod quant;
-mod quant_wrapper;
+pub mod quant_wrapper;
+pub mod weights;
 
-pub use error::{GpuError, GpuResult};
+pub use arch::GpuArchitecture;
+pub use cache::{GpuForwardScratch, GpuKvCache, GpuPrefillScratch};
 pub use detect::GpuCapabilities;
 pub use device::GpuDevice;
-pub use weights::{WeightMeta, GpuBuffer, GpuLayerWeights, GpuModelWeights};
-pub use kernels::{kv_write, kv_write_batched, rms_norm, rms_norm_batched, rope, rope_batched, add, mul, scale, gelu, silu, add_batched, mul_batched, zero_fill, flash_attn_decode, flash_attn_prefill, quantize_q4_k, dequantize_q4_k, dequantize_q4_k_batched, verify_q4_k_accuracy, finalize_q4_k_metrics, quantize_q4_0, dequantize_q4_0, dequantize_q4_0_batched, verify_q4_0_accuracy, finalize_q4_0_metrics, gemv_q4_0_f32, quantize_q4_1, dequantize_q4_1, dequantize_q4_1_batched, verify_q4_1_accuracy, finalize_q4_1_metrics, gemv_q4_1_f32};
-pub use cache::{GpuKvCache, GpuForwardScratch};
-pub use dynamic_loader::{DynamicLibrary, library_info, LibraryInfo};
-pub use arch::GpuArchitecture;
-pub use quant::{QK_K, K_SCALE_SIZE, Q4_K_BLOCK_SIZE, Q4KBlock, Q5_K_BLOCK_SIZE, Q5KBlock, QK8_0, Q8_0_BLOCK_SIZE, Q8_0_MAX, Q8_0Block, QK4_0, Q4_0_BLOCK_SIZE, Q4_0Block, QK4_1, Q4_1_BLOCK_SIZE, Q4_1Block};
+pub use error::{GpuError, GpuResult};
+pub use forward::{
+    gpu_embed_token_hybrid, gpu_full_forward_hybrid, gpu_layer_forward_hybrid,
+    gpu_prefill_forward_hybrid, gpu_prefill_layer_forward_hybrid, GpuLogitsMode,
+};
+pub use kernels::{
+    add, add_batched, argmax_f32, dequantize_q4_0, dequantize_q4_0_batched, dequantize_q4_1,
+    dequantize_q4_1_batched, dequantize_q4_k, dequantize_q4_k_batched, dequantize_q5_k,
+    dequantize_q5_k_batched, dequantize_q8_0, dequantize_q8_0_batched, embed_q8_0_batch,
+    embed_q8_0_token, finalize_q4_0_metrics, finalize_q4_1_metrics, finalize_q4_k_metrics,
+    finalize_q5_k_metrics, finalize_q8_0_metrics, flash_attn_decode_strided_multi_head,
+    flash_attn_prefill_strided, gelu, gemm_q4_0_f32, gemm_q4_1_f32,
+    gemm_q4_k_f32, gemm_q5_k_f32, gemm_q8_0_f32, gemv_gate_up_swiglu_q4_0_f32, gemv_q4_0_f32,
+    gemv_q4_1_f32, gemv_q4_k_f32, gemv_q5_k_f32, gemv_q8_0_f32, gemv_qkv_q4_0_f32, kv_write,
+    kv_write_batched, mul, mul_batched, quantize_q4_0, quantize_q4_1, quantize_q4_k, quantize_q5_k,
+    quantize_q8_0, rms_norm, rms_norm_batched, rope, rope_batched, rope_heads, rope_heads_batched,
+    scale, silu, verify_q4_0_accuracy, verify_q4_1_accuracy, verify_q4_k_accuracy,
+    verify_q5_k_accuracy, verify_q8_0_accuracy, zero_fill,
+};
+pub use ops::{gpu_dispatch_fused_gate_up, gpu_dispatch_fused_qkv, gpu_dispatch_gemm, gpu_dispatch_gemv};
+pub use quant::{
+    Q4KBlock, Q4_0Block, Q4_1Block, Q5KBlock, Q8_0Block, K_SCALE_SIZE, Q4_0_BLOCK_SIZE,
+    Q4_1_BLOCK_SIZE, Q4_K_BLOCK_SIZE, Q5_K_BLOCK_SIZE, Q8_0_BLOCK_SIZE, Q8_0_MAX, QK4_0, QK4_1,
+    QK8_0, QK_K,
+};
 pub use quant_wrapper::GpuQuant;
+pub use weights::{GpuBuffer, GpuLayerWeights, GpuModelWeights, WeightMeta};
 
 /// Detect AMD GPU capabilities (safe wrapper).
-///
-/// Returns None if HIP unavailable or no GPU found.
-/// Never panics.
-///
-/// # Example
-///
-/// ```no_run
-/// use rocmforge::gpu::detect;
-///
-/// match detect() {
-///     Some(gpu) => println!("Found: {}", gpu.device_name),
-///     None => println!("No GPU detected"),
-/// }
-/// ```
 pub fn detect() -> Option<GpuCapabilities> {
     GpuCapabilities::detect()
 }

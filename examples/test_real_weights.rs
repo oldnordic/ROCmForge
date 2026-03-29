@@ -1,7 +1,9 @@
 // examples/test_real_weights.rs
 // Test Q4_K × Q8_K kernels with real model weights
 
-use rocmforge::cpu::kernels::{gemm_q4k_q8::gemv_q4_k_q8_k_dispatch, q4::BlockQ4K, q8::quantize_q8_k};
+use rocmforge::cpu::kernels::{
+    gemm_q4k_q8::gemv_q4_k_q8_k_dispatch, q4::BlockQ4K, q8::quantize_q8_k,
+};
 use std::time::Instant;
 
 fn main() {
@@ -25,7 +27,7 @@ fn main() {
 
     // Simulate a real Q4_K weight matrix (1024 x 1024 for testing)
     const OUT_DIM: usize = 1024;
-    const IN_DIM: usize = 1024;  // Must be multiple of 256 for current impl
+    const IN_DIM: usize = 1024; // Must be multiple of 256 for current impl
     const NUM_BLOCKS: usize = IN_DIM / 256;
 
     println!("Testing with dimensions: {} x {}", OUT_DIM, IN_DIM);
@@ -40,17 +42,21 @@ fn main() {
     }
 
     // Create input with pattern (simulating activation values)
-    let x: Vec<f32> = (0..IN_DIM).map(|i| {
-        // Simulate activations with some variation
-        let angle = i as f32 * 0.1;
-        angle.sin() * 0.5 + angle.cos() * 0.3
-    }).collect();
+    let x: Vec<f32> = (0..IN_DIM)
+        .map(|i| {
+            // Simulate activations with some variation
+            let angle = i as f32 * 0.1;
+            angle.sin() * 0.5 + angle.cos() * 0.3
+        })
+        .collect();
 
     let mut y = vec![0.0f32; OUT_DIM];
 
-    println!("Input range: {:.3} to {:.3}",
+    println!(
+        "Input range: {:.3} to {:.3}",
         x.iter().cloned().fold(f32::INFINITY, f32::min),
-        x.iter().cloned().fold(f32::NEG_INFINITY, f32::max));
+        x.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
+    );
 
     // Warmup
     gemv_q4_k_q8_k_dispatch(&w, &x, &mut y, OUT_DIM, IN_DIM);

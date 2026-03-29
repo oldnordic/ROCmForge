@@ -80,13 +80,7 @@ __global__ void verify_q4_1_accuracy_device(
     if (threadIdx.x < (block_end - block_start)) {
         int idx = block_start + threadIdx.x;
 
-        // Sequential unpacking: threads 0-15 read low nibble, threads 16-31 read high nibble
-        uint8_t q;
-        if (threadIdx.x < 16) {
-            q = qs[threadIdx.x] & 0x0F;       // Low nibble
-        } else {
-            q = qs[threadIdx.x - 16] >> 4;    // High nibble
-        }
+        uint8_t q = unpack_nibble_sequential(qs, threadIdx.x);
         float dequantized = float(q) * s_d + s_m;
 
         float original_val = original[idx];

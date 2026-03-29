@@ -4,8 +4,8 @@
 //! No raw HIP API exposed outside gpu module.
 
 use super::error::{GpuError, GpuResult};
-use std::os::raw::{c_int, c_char, c_void};
 use std::ffi::CStr;
+use std::os::raw::{c_char, c_int, c_void};
 
 // ── HIP Error Codes ───────────────────────────────────────────────────────────────
 
@@ -20,9 +20,7 @@ fn hip_check(code: hipError_t) -> GpuResult<()> {
         if ptr.is_null() {
             "unknown error".to_string()
         } else {
-            CStr::from_ptr(ptr)
-                .to_string_lossy()
-                .into_owned()
+            CStr::from_ptr(ptr).to_string_lossy().into_owned()
         }
     };
 
@@ -31,12 +29,10 @@ fn hip_check(code: hipError_t) -> GpuResult<()> {
             GpuError::HipNotAvailable
         }
         hipError_t::hipErrorOutOfMemory => GpuError::OutOfMemory {
-            requested: 0,  // Call site should fill this
+            requested: 0, // Call site should fill this
             available: 0,
         },
-        hipError_t::hipErrorInvalidDevice => {
-            GpuError::InvalidDevice { device_id: -1 }
-        }
+        hipError_t::hipErrorInvalidDevice => GpuError::InvalidDevice { device_id: -1 },
         _ => GpuError::HipApiError {
             code: code as i32,
             description,
@@ -87,7 +83,7 @@ pub fn hip_get_device_info(device_id: i32) -> GpuResult<DeviceInfo> {
             name,
             total_vram_bytes: props.totalGlobalMem as usize,
             compute_units: props.multiProcessorCount as usize,
-            max_clock_mhz: props.clockRate as usize / 1000,  // kHz to MHz
+            max_clock_mhz: props.clockRate as usize / 1000, // kHz to MHz
             device_id,
             arch_name: String::from("unknown"), // Placeholder - will query from HIP in next task
         })
@@ -179,7 +175,9 @@ pub fn hip_stream_create() -> GpuResult<hipStream_t> {
         let mut stream_ptr: *mut c_void = std::ptr::null_mut();
         let code = hipStreamCreate(&mut stream_ptr);
         hip_check(code)?;
-        Ok(hipStream_t { _private: stream_ptr })
+        Ok(hipStream_t {
+            _private: stream_ptr,
+        })
     }
 }
 
@@ -218,7 +216,8 @@ struct hipDeviceProp_t {
     memoryClockRate: i32,
     memoryBusWidth: i32,
     multiProcessorCount: i32,
-    // ... more fields we don't need yet
+    // AMD GPUs have many more fields. We add a large padding to be safe.
+    _padding: [u8; 4096],
 }
 
 #[repr(C)]
@@ -236,6 +235,14 @@ enum hipMemcpyKind {
 #[derive(Debug, Copy, Clone)]
 pub struct hipStream_t {
     _private: *mut c_void,
+}
+
+impl hipStream_t {
+    pub fn null() -> Self {
+        Self {
+            _private: std::ptr::null_mut(),
+        }
+    }
 }
 
 extern "C" {
@@ -276,10 +283,10 @@ pub struct DeviceInfo {
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct GpuQ4KBlock {
-    pub d: half::f16,        // delta/scale (2 bytes)
-    pub dmin: half::f16,     // minimum scale (2 bytes)
-    pub scales: [u8; 12],    // quantized scales (12 bytes)
-    pub qs: [u8; 128],       // quants, 4-bit values (128 bytes)
+    pub d: half::f16,     // delta/scale (2 bytes)
+    pub dmin: half::f16,  // minimum scale (2 bytes)
+    pub scales: [u8; 12], // quantized scales (12 bytes)
+    pub qs: [u8; 128],    // quants, 4-bit values (128 bytes)
 }
 
 impl Default for GpuQ4KBlock {

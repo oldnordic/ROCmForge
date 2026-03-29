@@ -76,10 +76,7 @@ unsafe fn hsum_float_8_avx512(v: __m256) -> f32 {
 /// Caller must ensure AVX2 and FMA are available.
 #[cfg(target_arch = "x86_64")]
 #[inline]
-pub unsafe fn dot_q4_k_q8_k_block_avx512(
-    q4_block: &BlockQ4K,
-    q8_block: &BlockQ8K,
-) -> f32 {
+pub unsafe fn dot_q4_k_q8_k_block_avx512(q4_block: &BlockQ4K, q8_block: &BlockQ8K) -> f32 {
     const QK_K: usize = 256;
     const KMASK1: u32 = 0x3f3f3f3f;
     const KMASK2: u32 = 0x0f0f0f0f;
@@ -91,11 +88,7 @@ pub unsafe fn dot_q4_k_q8_k_block_avx512(
 
     // Unpack Q4_K scales
     let mut utmp = [0u32; 4];
-    std::ptr::copy_nonoverlapping(
-        q4_block.scales.as_ptr(),
-        utmp.as_mut_ptr() as *mut u8,
-        12,
-    );
+    std::ptr::copy_nonoverlapping(q4_block.scales.as_ptr(), utmp.as_mut_ptr() as *mut u8, 12);
 
     // Scale unpacking from llama.cpp
     utmp[3] = ((utmp[2] >> 4) & KMASK2) | (((utmp[1] >> 6) & KMASK3) << 4);
@@ -110,13 +103,18 @@ pub unsafe fn dot_q4_k_q8_k_block_avx512(
     for i in 0..16 {
         let raw_byte: i8 = unsafe { *(&utmp as *const [u32; 4] as *const i8).add(i) };
         // Only bias the first 8 bytes (scales), not the last 8 (mins)
-        biased_bytes[i] = if i < 8 { raw_byte.wrapping_sub(32) } else { raw_byte };
+        biased_bytes[i] = if i < 8 {
+            raw_byte.wrapping_sub(32)
+        } else {
+            raw_byte
+        };
     }
 
     // Convert biased scales to 16-bit integers using SIGN-extension
     // This treats 224 (0xE0) as -32, which is what we want
     let biased_ptr = biased_bytes.as_ptr() as *const i8;
-    let mins_and_scales = unsafe { _mm256_cvtepi8_epi16(_mm_loadu_si128(biased_ptr as *const __m128i)) };
+    let mins_and_scales =
+        unsafe { _mm256_cvtepi8_epi16(_mm_loadu_si128(biased_ptr as *const __m128i)) };
 
     // Extract mins and scales (mins are in high 128, scales in low 128)
     let scales_128 = _mm256_extracti128_si256(mins_and_scales, 0);
@@ -173,8 +171,10 @@ pub unsafe fn dot_q4_k_q8_k_block_avx512(
         let p32h = _mm256_dpbusd_epi32(_mm256_setzero_si256(), q4h, q8h);
 
         // Get scale vectors for this group
-        let scale_l = _mm256_shuffle_epi8(scales, super::gemm_q4k_q8::get_scale_shuffle_k4(2 * j + 0));
-        let scale_h = _mm256_shuffle_epi8(scales, super::gemm_q4k_q8::get_scale_shuffle_k4(2 * j + 1));
+        let scale_l =
+            _mm256_shuffle_epi8(scales, super::gemm_q4k_q8::get_scale_shuffle_k4(2 * j + 0));
+        let scale_h =
+            _mm256_shuffle_epi8(scales, super::gemm_q4k_q8::get_scale_shuffle_k4(2 * j + 1));
 
         // The key insight: dpbusd produces stride-4, but we need stride-8
         // The AVX2 code uses madd_epi16 which does: result[i] = products[2i]*scales[2i] + products[2i+1]*scales[2i+1]
@@ -224,43 +224,36 @@ pub unsafe fn dot_q4_k_q8_k_block_avx512(
 /// # Safety
 /// Caller must ensure AVX-512 VNNI is available.
 #[cfg(target_arch = "x86_64")]
-pub fn gemv_q4_k_q8_k_avx512(
-    w: &[u8],
-    x: &[f32],
-    y: &mut [f32],
-    out_dim: usize,
-    in_dim: usize,
-) {
+pub fn gemv_q4_k_q8_k_avx512(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
     let seq_len = x.len() / in_dim;
 
-    y.par_chunks_mut(out_dim).enumerate().for_each(|(row, y_row)| {
-        let x_row = &x[row * in_dim..(row + 1) * in_dim];
+    y.par_chunks_mut(out_dim)
+        .enumerate()
+        .for_each(|(row, y_row)| {
+            let x_row = &x[row * in_dim..(row + 1) * in_dim];
 
-        for col in 0..out_dim {
-            let mut acc = 0.0f32;
+            for col in 0..out_dim {
+                let mut acc = 0.0f32;
 
-            for block in 0..(in_dim / 256) {
-                let q4_block = unsafe {
-                    &*(w.as_ptr()
-                        .add(col * in_dim / 256 * crate::cpu::quant::Q4_K_BLOCK_BYTES
-                            + block * crate::cpu::quant::Q4_K_BLOCK_BYTES)
-                        as *const BlockQ4K)
-                };
+                for block in 0..(in_dim / 256) {
+                    let q4_block = unsafe {
+                        &*(w.as_ptr().add(
+                            col * in_dim / 256 * crate::cpu::quant::Q4_K_BLOCK_BYTES
+                                + block * crate::cpu::quant::Q4_K_BLOCK_BYTES,
+                        ) as *const BlockQ4K)
+                    };
 
-                let q8_block = unsafe {
-                    &*(x_row.as_ptr()
-                        .add(block * 256)
-                        as *const BlockQ8K)
-                };
+                    let q8_block =
+                        unsafe { &*(x_row.as_ptr().add(block * 256) as *const BlockQ8K) };
 
-                unsafe {
-                    acc += dot_q4_k_q8_k_block_avx512(q4_block, q8_block);
+                    unsafe {
+                        acc += dot_q4_k_q8_k_block_avx512(q4_block, q8_block);
+                    }
                 }
-            }
 
-            y_row[col] = acc;
-        }
-    });
+                y_row[col] = acc;
+            }
+        });
 }
 
 #[cfg(test)]
@@ -310,7 +303,8 @@ mod tests {
         q8_block.d = 1.0f32;
 
         // Scalar result
-        let scalar_result = unsafe { gemm_q4k_q8_scalar::dot_q4_k_q8_k_block_scalar(&q4_block, &q8_block) };
+        let scalar_result =
+            unsafe { gemm_q4k_q8_scalar::dot_q4_k_q8_k_block_scalar(&q4_block, &q8_block) };
         eprintln!("Scalar result: {}", scalar_result);
 
         // Now trace through manually
@@ -346,7 +340,15 @@ mod tests {
                 let q8_val = q8_block.qs[i];
                 sum += q4_val as i32 * q8_val as i32;
             }
-            eprintln!("dpbusd_low[{}] = sum(q4[{}..{}] * q8[{}..{}]) = {}", group, group*4, group*4+4, group*4, group*4+4, sum);
+            eprintln!(
+                "dpbusd_low[{}] = sum(q4[{}..{}] * q8[{}..{}]) = {}",
+                group,
+                group * 4,
+                group * 4 + 4,
+                group * 4,
+                group * 4 + 4,
+                sum
+            );
         }
 
         eprintln!("=== dpbusd_epi32 simulation (high nibbles) ===");
@@ -358,7 +360,15 @@ mod tests {
                 let q8_val = q8_block.qs[i];
                 sum += q4_val as i32 * q8_val as i32;
             }
-            eprintln!("dpbusd_high[{}] = sum(q4[{}..{}] * q8[{}..{}]) = {}", group, group*4, group*4+4, group*4, group*4+4, sum);
+            eprintln!(
+                "dpbusd_high[{}] = sum(q4[{}..{}] * q8[{}..{}]) = {}",
+                group,
+                group * 4,
+                group * 4 + 4,
+                group * 4,
+                group * 4 + 4,
+                sum
+            );
         }
 
         eprintln!("=== Scalar stride-8 grouping ===");

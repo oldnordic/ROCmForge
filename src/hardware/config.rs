@@ -1,7 +1,7 @@
 //! Prefill batch configuration derived from CPU capabilities.
 
-use crate::config::ModelConfig;
 use super::caps::CpuCapabilities;
+use crate::config::ModelConfig;
 
 /// Derived prefill batching configuration.
 ///
@@ -26,10 +26,7 @@ impl BatchConfig {
     ///
     /// Uses L3 cache size to determine maximum tokens per batch
     /// and physical core count for parallelism.
-    pub fn from_capabilities(
-        caps: &CpuCapabilities,
-        config: &ModelConfig,
-    ) -> Self {
+    pub fn from_capabilities(caps: &CpuCapabilities, config: &ModelConfig) -> Self {
         let mem_per_tok = memory_per_token(config);
 
         // Determine max tokens per batch based on L3 cache
@@ -199,7 +196,7 @@ mod tests {
     fn batch_config_uses_physical_cores() {
         let mut caps = make_test_caps();
         caps.logical_cpus = 32; // 16 hyperthreads per core
-        caps.physical_cores = 2;  // Only 2 actual cores
+        caps.physical_cores = 2; // Only 2 actual cores
 
         let config = make_test_config();
         let batch = BatchConfig::from_capabilities(&caps, &config);

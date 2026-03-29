@@ -3,16 +3,13 @@
 //! Comprehensive benchmark comparing all quantization types.
 //! Tests GEMV (decode) and GEMM (prefill) performance with realistic model dimensions.
 
-use rocmforge::cpu::ops::{dispatch_gemv, dispatch_gemm};
+use rocmforge::cpu::ops::{dispatch_gemm, dispatch_gemv};
 use rocmforge::cpu::quant::{
-    Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS,
-    Q4_1_BLOCK_BYTES, Q4_1_BLOCK_ELEMS,
-    Q8_BLOCK_BYTES, Q8_BLOCK_ELEMS,
-    Q6_K_BLOCK_BYTES, Q6_K_BLOCK_ELEMS,
-    Q5_0_BLOCK_BYTES, Q5_0_BLOCK_ELEMS,
+    Q4_1_BLOCK_BYTES, Q4_1_BLOCK_ELEMS, Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS, Q5_0_BLOCK_BYTES,
+    Q5_0_BLOCK_ELEMS, Q6_K_BLOCK_BYTES, Q6_K_BLOCK_ELEMS, Q8_BLOCK_BYTES, Q8_BLOCK_ELEMS,
 };
-use rocmforge::loader::GgmlType;
 use rocmforge::cpu::weights::WeightMeta;
+use rocmforge::loader::GgmlType;
 use std::time::Instant;
 
 fn main() {
@@ -52,12 +49,42 @@ struct QuantType {
 }
 
 const QUANT_TYPES: &[QuantType] = &[
-    QuantType { name: "F32", ggml_type: GgmlType::F32, block_bytes: 4, block_elems: 1 },
-    QuantType { name: "Q8_0", ggml_type: GgmlType::Q8_0, block_bytes: Q8_BLOCK_BYTES, block_elems: Q8_BLOCK_ELEMS },
-    QuantType { name: "Q6_K", ggml_type: GgmlType::Q6_K, block_bytes: Q6_K_BLOCK_BYTES, block_elems: Q6_K_BLOCK_ELEMS },
-    QuantType { name: "Q5_0", ggml_type: GgmlType::Q5_0, block_bytes: Q5_0_BLOCK_BYTES, block_elems: Q5_0_BLOCK_ELEMS },
-    QuantType { name: "Q4_1", ggml_type: GgmlType::Q4_1, block_bytes: Q4_1_BLOCK_BYTES, block_elems: Q4_1_BLOCK_ELEMS },
-    QuantType { name: "Q4_0", ggml_type: GgmlType::Q4_0, block_bytes: Q4_BLOCK_BYTES, block_elems: Q4_BLOCK_ELEMS },
+    QuantType {
+        name: "F32",
+        ggml_type: GgmlType::F32,
+        block_bytes: 4,
+        block_elems: 1,
+    },
+    QuantType {
+        name: "Q8_0",
+        ggml_type: GgmlType::Q8_0,
+        block_bytes: Q8_BLOCK_BYTES,
+        block_elems: Q8_BLOCK_ELEMS,
+    },
+    QuantType {
+        name: "Q6_K",
+        ggml_type: GgmlType::Q6_K,
+        block_bytes: Q6_K_BLOCK_BYTES,
+        block_elems: Q6_K_BLOCK_ELEMS,
+    },
+    QuantType {
+        name: "Q5_0",
+        ggml_type: GgmlType::Q5_0,
+        block_bytes: Q5_0_BLOCK_BYTES,
+        block_elems: Q5_0_BLOCK_ELEMS,
+    },
+    QuantType {
+        name: "Q4_1",
+        ggml_type: GgmlType::Q4_1,
+        block_bytes: Q4_1_BLOCK_BYTES,
+        block_elems: Q4_1_BLOCK_ELEMS,
+    },
+    QuantType {
+        name: "Q4_0",
+        ggml_type: GgmlType::Q4_0,
+        block_bytes: Q4_BLOCK_BYTES,
+        block_elems: Q4_BLOCK_ELEMS,
+    },
 ];
 
 fn bench_all_types(hidden: usize, intermediate: usize) {
@@ -68,8 +95,12 @@ fn bench_all_types(hidden: usize, intermediate: usize) {
 
         // Check if dimensions are compatible
         if hidden % qt.block_elems != 0 || intermediate % qt.block_elems != 0 {
-            println!("    SKIP (incompatible dimensions: {} % {} = {})",
-                     hidden, qt.block_elems, hidden % qt.block_elems);
+            println!(
+                "    SKIP (incompatible dimensions: {} % {} = {})",
+                hidden,
+                qt.block_elems,
+                hidden % qt.block_elems
+            );
             println!();
             continue;
         }
@@ -83,16 +114,34 @@ fn bench_all_types(hidden: usize, intermediate: usize) {
         let gemm_tps = 1000.0 / gemm_ms;
 
         // Memory footprint
-        let weight_size_mb = (hidden * intermediate * qt.block_bytes / qt.block_elems) as f64 / (1024.0 * 1024.0);
+        let weight_size_mb =
+            (hidden * intermediate * qt.block_bytes / qt.block_elems) as f64 / (1024.0 * 1024.0);
         let fp32_size_mb = (hidden * intermediate * 4) as f64 / (1024.0 * 1024.0);
         let compression = (weight_size_mb / fp32_size_mb) * 100.0;
 
-        println!("    GEMV (decode):      {:.3} ms/token ({:.1} tok/s)", gemv_ms, gemv_tps);
-        println!("    GEMM (prefill):    {:.3} ms/batch ({:.1} tok/s)", gemm_ms, gemm_tps);
-        println!("    Memory:            {:.2} MB/layer ({:.1}% of FP32)", weight_size_mb, compression);
+        println!(
+            "    GEMV (decode):      {:.3} ms/token ({:.1} tok/s)",
+            gemv_ms, gemv_tps
+        );
+        println!(
+            "    GEMM (prefill):    {:.3} ms/batch ({:.1} tok/s)",
+            gemm_ms, gemm_tps
+        );
+        println!(
+            "    Memory:            {:.2} MB/layer ({:.1}% of FP32)",
+            weight_size_mb, compression
+        );
         println!();
 
-        results.push((qt.name, gemv_ms, gemm_tps, gemm_ms, gemm_tps, weight_size_mb, compression));
+        results.push((
+            qt.name,
+            gemv_ms,
+            gemm_tps,
+            gemm_ms,
+            gemm_tps,
+            weight_size_mb,
+            compression,
+        ));
     }
 
     // Store results for summary (could use global or return value)
@@ -122,7 +171,11 @@ fn bench_gemv(hidden: usize, intermediate: usize, qt: &QuantType) -> f64 {
     let _ = dispatch_gemv(&w, &meta, &x, &mut y, out_dim, in_dim);
 
     // Benchmark
-    let iterations = if qt.ggml_type == GgmlType::F32 { 100 } else { 500 };
+    let iterations = if qt.ggml_type == GgmlType::F32 {
+        100
+    } else {
+        500
+    };
     let start = Instant::now();
     for _ in 0..iterations {
         let _ = dispatch_gemv(&w, &meta, &x, &mut y, out_dim, in_dim);
@@ -133,7 +186,7 @@ fn bench_gemv(hidden: usize, intermediate: usize, qt: &QuantType) -> f64 {
 }
 
 fn bench_gemm(hidden: usize, intermediate: usize, qt: &QuantType) -> f64 {
-    let m = 8;  // Batch size for prefill
+    let m = 8; // Batch size for prefill
     let n = hidden;
     let k = intermediate;
 
@@ -154,7 +207,11 @@ fn bench_gemm(hidden: usize, intermediate: usize, qt: &QuantType) -> f64 {
     let _ = dispatch_gemm(&w, &meta, &x, &mut y, n, k);
 
     // Benchmark
-    let iterations = if qt.ggml_type == GgmlType::F32 { 20 } else { 100 };
+    let iterations = if qt.ggml_type == GgmlType::F32 {
+        20
+    } else {
+        100
+    };
     let start = Instant::now();
     for _ in 0..iterations {
         let _ = dispatch_gemm(&w, &meta, &x, &mut y, n, k);

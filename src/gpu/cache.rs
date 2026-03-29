@@ -5,10 +5,10 @@
 //! - Bounds checked before kernel launches
 //! - Never panic, always return GpuError
 
-use super::error::{GpuError, GpuResult};
-use super::weights::GpuBuffer;
-use super::kernels::{kv_write, kv_write_batched, zero_fill};
 use super::device::GpuDevice;
+use super::error::{GpuError, GpuResult};
+use super::kernels::{kv_write, kv_write_batched, zero_fill};
+use super::weights::GpuBuffer;
 use crate::config::ModelConfig;
 
 // ── KV Cache ─────────────────────────────────────────────────────────────────────
@@ -58,11 +58,10 @@ impl GpuKvCache {
         // Allocate V cache per layer
         let mut v = Vec::with_capacity(config.num_layers);
         for layer in 0..config.num_layers {
-            let buf = GpuBuffer::alloc(layer_bytes).map_err(|e| {
-                GpuError::CacheAllocationFailed {
+            let buf =
+                GpuBuffer::alloc(layer_bytes).map_err(|e| GpuError::CacheAllocationFailed {
                     reason: format!("V cache layer {} allocation failed: {}", layer, e),
-                }
-            })?;
+                })?;
             v.push(buf);
         }
 
@@ -210,7 +209,7 @@ mod tests {
             attention_layout: crate::config::AttentionLayout::SplitQkv,
             architecture: "test".to_string(),
             tensor_registry: crate::config::TensorNameRegistry::from_scheme(
-                &crate::config::TensorNamingScheme::Gguf
+                &crate::config::TensorNamingScheme::Gguf,
             ),
         }
     }
@@ -254,7 +253,13 @@ mod tests {
 ///
 /// Allocated once and reused across all layers to avoid repeated allocations.
 /// All buffers are GPU-resident.
+const GPU_ARGMAX_BLOCK_SIZE: usize = 256;
+const GPU_ARGMAX_ITEMS_PER_THREAD: usize = 4;
+const GPU_ARGMAX_ITEMS_PER_BLOCK: usize = GPU_ARGMAX_BLOCK_SIZE * GPU_ARGMAX_ITEMS_PER_THREAD;
+
 pub struct GpuForwardScratch {
+    /// Current hidden state [hidden_size]
+    pub hidden: GpuBuffer,
     /// Normalized hidden state [hidden_size]
     pub normed: GpuBuffer,
     /// Query vector [num_heads * head_dim]
@@ -273,6 +278,12 @@ pub struct GpuForwardScratch {
     pub swiglu: GpuBuffer,
     /// Final logits [vocab_size]
     pub logits: GpuBuffer,
+    /// Partial argmax values for greedy decode [ceil(vocab_size / 1024)]
+    pub argmax_partial_values: GpuBuffer,
+    /// Partial argmax indices for greedy decode [ceil(vocab_size / 1024)]
+    pub argmax_partial_indices: GpuBuffer,
+    /// Final greedy token index [1]
+    pub argmax_result_index: GpuBuffer,
 }
 
 impl GpuForwardScratch {
@@ -289,8 +300,15 @@ impl GpuForwardScratch {
         let kv = config.num_kv_heads * config.head_dim;
         let ff = config.intermediate_size;
         let v = config.vocab_size;
+        let argmax_partials = v.div_ceil(GPU_ARGMAX_ITEMS_PER_BLOCK);
 
         // Allocate all buffers - if any fail, all are freed via RAII
+        let hidden = GpuBuffer::alloc(h * std::mem::size_of::<f32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("hidden buffer allocation failed: {}", e),
+            }
+        })?;
+
         let normed = GpuBuffer::alloc(h * std::mem::size_of::<f32>()).map_err(|e| {
             GpuError::CacheAllocationFailed {
                 reason: format!("normed buffer allocation failed: {}", e),
@@ -345,7 +363,24 @@ impl GpuForwardScratch {
             }
         })?;
 
+        let argmax_partial_values = GpuBuffer::alloc(argmax_partials * std::mem::size_of::<f32>())
+            .map_err(|e| GpuError::CacheAllocationFailed {
+                reason: format!("argmax partial values allocation failed: {}", e),
+            })?;
+
+        let argmax_partial_indices = GpuBuffer::alloc(argmax_partials * std::mem::size_of::<i32>())
+            .map_err(|e| GpuError::CacheAllocationFailed {
+                reason: format!("argmax partial indices allocation failed: {}", e),
+            })?;
+
+        let argmax_result_index = GpuBuffer::alloc(std::mem::size_of::<i32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("argmax result allocation failed: {}", e),
+            }
+        })?;
+
         Ok(Self {
+            hidden,
             normed,
             q: q_buf,
             k: k_buf,
@@ -355,7 +390,20 @@ impl GpuForwardScratch {
             gate,
             swiglu,
             logits,
+            argmax_partial_values,
+            argmax_partial_indices,
+            argmax_result_index,
         })
+    }
+
+    /// Get GPU pointer to current hidden state.
+    pub fn hidden_ptr(&self) -> *const f32 {
+        self.hidden.as_ptr() as *const f32
+    }
+
+    /// Get mutable GPU pointer to current hidden state.
+    pub fn hidden_mut_ptr(&mut self) -> *mut f32 {
+        self.hidden.as_ptr() as *mut f32
     }
 
     /// Get GPU pointer to normalized hidden state
@@ -363,9 +411,19 @@ impl GpuForwardScratch {
         self.normed.as_ptr() as *const f32
     }
 
+    /// Get mutable GPU pointer to normalized hidden state.
+    pub fn normed_mut_ptr(&mut self) -> *mut f32 {
+        self.normed.as_ptr() as *mut f32
+    }
+
     /// Get GPU pointer to query vector
     pub fn q_ptr(&self) -> *const f32 {
         self.q.as_ptr() as *const f32
+    }
+
+    /// Get mutable GPU pointer to query vector.
+    pub fn q_mut_ptr(&mut self) -> *mut f32 {
+        self.q.as_ptr() as *mut f32
     }
 
     /// Get GPU pointer to key vector
@@ -373,24 +431,232 @@ impl GpuForwardScratch {
         self.k.as_ptr() as *const f32
     }
 
+    /// Get mutable GPU pointer to key vector.
+    pub fn k_mut_ptr(&mut self) -> *mut f32 {
+        self.k.as_ptr() as *mut f32
+    }
+
     /// Get GPU pointer to value vector
     pub fn v_ptr(&self) -> *const f32 {
         self.v.as_ptr() as *const f32
     }
 
-    /// Get mutable GPU pointer to attention output
-    pub fn attn_out_ptr(&mut self) -> *mut f32 {
+    /// Get mutable GPU pointer to value vector.
+    pub fn v_mut_ptr(&mut self) -> *mut f32 {
+        self.v.as_ptr() as *mut f32
+    }
+
+    /// Get GPU pointer to attention output.
+    pub fn attn_out_ptr(&self) -> *const f32 {
+        self.attn_out.as_ptr() as *const f32
+    }
+
+    /// Get mutable GPU pointer to attention output.
+    pub fn attn_out_mut_ptr(&mut self) -> *mut f32 {
         self.attn_out.as_ptr() as *mut f32
     }
 
-    /// Get mutable GPU pointer to layer output
-    pub fn layer_out_ptr(&mut self) -> *mut f32 {
+    /// Get GPU pointer to layer output.
+    pub fn layer_out_ptr(&self) -> *const f32 {
+        self.layer_out.as_ptr() as *const f32
+    }
+
+    /// Get mutable GPU pointer to layer output.
+    pub fn layer_out_mut_ptr(&mut self) -> *mut f32 {
         self.layer_out.as_ptr() as *mut f32
     }
 
-    /// Get mutable GPU pointer to logits
-    pub fn logits_ptr(&mut self) -> *mut f32 {
+    /// Get GPU pointer to FFN gate activations.
+    pub fn gate_ptr(&self) -> *const f32 {
+        self.gate.as_ptr() as *const f32
+    }
+
+    /// Get mutable GPU pointer to FFN gate activations.
+    pub fn gate_mut_ptr(&mut self) -> *mut f32 {
+        self.gate.as_ptr() as *mut f32
+    }
+
+    /// Get GPU pointer to SwiGLU activations.
+    pub fn swiglu_ptr(&self) -> *const f32 {
+        self.swiglu.as_ptr() as *const f32
+    }
+
+    /// Get mutable GPU pointer to SwiGLU activations.
+    pub fn swiglu_mut_ptr(&mut self) -> *mut f32 {
+        self.swiglu.as_ptr() as *mut f32
+    }
+
+    /// Get GPU pointer to logits.
+    pub fn logits_ptr(&self) -> *const f32 {
+        self.logits.as_ptr() as *const f32
+    }
+
+    /// Get mutable GPU pointer to logits.
+    pub fn logits_mut_ptr(&mut self) -> *mut f32 {
         self.logits.as_ptr() as *mut f32
+    }
+
+    /// Get GPU pointer to argmax partial values.
+    pub fn argmax_partial_values_mut_ptr(&mut self) -> *mut f32 {
+        self.argmax_partial_values.as_ptr() as *mut f32
+    }
+
+    /// Get GPU pointer to argmax partial indices.
+    pub fn argmax_partial_indices_mut_ptr(&mut self) -> *mut i32 {
+        self.argmax_partial_indices.as_ptr() as *mut i32
+    }
+
+    /// Get GPU pointer to final argmax index.
+    pub fn argmax_result_index_mut_ptr(&mut self) -> *mut i32 {
+        self.argmax_result_index.as_ptr() as *mut i32
+    }
+}
+
+/// Reusable scratch buffers in GPU VRAM for batched prompt prefill.
+///
+/// Layout is row-major `[seq_len, dim]` for all activation buffers.
+pub struct GpuPrefillScratch {
+    pub seq_len: usize,
+    pub hidden: GpuBuffer,
+    pub normed: GpuBuffer,
+    pub q: GpuBuffer,
+    pub k: GpuBuffer,
+    pub v: GpuBuffer,
+    pub attn_out: GpuBuffer,
+    pub layer_out: GpuBuffer,
+    pub gate: GpuBuffer,
+    pub swiglu: GpuBuffer,
+    pub token_ids: GpuBuffer,
+}
+
+impl GpuPrefillScratch {
+    pub fn new(config: &ModelConfig, seq_len: usize) -> GpuResult<Self> {
+        if seq_len == 0 {
+            return Err(GpuError::CacheAllocationFailed {
+                reason: "prefill seq_len cannot be zero".to_string(),
+            });
+        }
+
+        let h = config.hidden_size;
+        let q = config.num_heads * config.head_dim;
+        let kv = config.num_kv_heads * config.head_dim;
+        let ff = config.intermediate_size;
+
+        let hidden = GpuBuffer::alloc(seq_len * h * std::mem::size_of::<f32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("prefill hidden allocation failed: {}", e),
+            }
+        })?;
+        let normed = GpuBuffer::alloc(seq_len * h * std::mem::size_of::<f32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("prefill normed allocation failed: {}", e),
+            }
+        })?;
+        let q_buf = GpuBuffer::alloc(seq_len * q * std::mem::size_of::<f32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("prefill q allocation failed: {}", e),
+            }
+        })?;
+        let k_buf = GpuBuffer::alloc(seq_len * kv * std::mem::size_of::<f32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("prefill k allocation failed: {}", e),
+            }
+        })?;
+        let v_buf = GpuBuffer::alloc(seq_len * kv * std::mem::size_of::<f32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("prefill v allocation failed: {}", e),
+            }
+        })?;
+        let attn_out = GpuBuffer::alloc(seq_len * q * std::mem::size_of::<f32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("prefill attn_out allocation failed: {}", e),
+            }
+        })?;
+        let layer_out =
+            GpuBuffer::alloc(seq_len * h * std::mem::size_of::<f32>()).map_err(|e| {
+                GpuError::CacheAllocationFailed {
+                    reason: format!("prefill layer_out allocation failed: {}", e),
+                }
+            })?;
+        let gate = GpuBuffer::alloc(seq_len * ff * std::mem::size_of::<f32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("prefill gate allocation failed: {}", e),
+            }
+        })?;
+        let swiglu = GpuBuffer::alloc(seq_len * ff * std::mem::size_of::<f32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("prefill swiglu allocation failed: {}", e),
+            }
+        })?;
+        let token_ids = GpuBuffer::alloc(seq_len * std::mem::size_of::<i32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("prefill token_ids allocation failed: {}", e),
+            }
+        })?;
+
+        Ok(Self {
+            seq_len,
+            hidden,
+            normed,
+            q: q_buf,
+            k: k_buf,
+            v: v_buf,
+            attn_out,
+            layer_out,
+            gate,
+            swiglu,
+            token_ids,
+        })
+    }
+
+    pub fn hidden_row_ptr(&self, row: usize, hidden_size: usize) -> *const f32 {
+        debug_assert!(row < self.seq_len);
+        unsafe { (self.hidden.as_ptr() as *const f32).add(row * hidden_size) }
+    }
+
+    pub fn normed_row_ptr(&self, row: usize, hidden_size: usize) -> *const f32 {
+        debug_assert!(row < self.seq_len);
+        unsafe { (self.normed.as_ptr() as *const f32).add(row * hidden_size) }
+    }
+
+    pub fn normed_row_mut_ptr(&mut self, row: usize, hidden_size: usize) -> *mut f32 {
+        debug_assert!(row < self.seq_len);
+        unsafe { (self.normed.as_ptr() as *mut f32).add(row * hidden_size) }
+    }
+
+    pub fn q_row_mut_ptr(&mut self, row: usize, q_size: usize) -> *mut f32 {
+        debug_assert!(row < self.seq_len);
+        unsafe { (self.q.as_ptr() as *mut f32).add(row * q_size) }
+    }
+
+    pub fn k_row_mut_ptr(&mut self, row: usize, kv_size: usize) -> *mut f32 {
+        debug_assert!(row < self.seq_len);
+        unsafe { (self.k.as_ptr() as *mut f32).add(row * kv_size) }
+    }
+
+    pub fn v_row_mut_ptr(&mut self, row: usize, kv_size: usize) -> *mut f32 {
+        debug_assert!(row < self.seq_len);
+        unsafe { (self.v.as_ptr() as *mut f32).add(row * kv_size) }
+    }
+
+    pub fn attn_out_row_mut_ptr(&mut self, row: usize, q_size: usize) -> *mut f32 {
+        debug_assert!(row < self.seq_len);
+        unsafe { (self.attn_out.as_ptr() as *mut f32).add(row * q_size) }
+    }
+
+    pub fn layer_out_row_mut_ptr(&mut self, row: usize, hidden_size: usize) -> *mut f32 {
+        debug_assert!(row < self.seq_len);
+        unsafe { (self.layer_out.as_ptr() as *mut f32).add(row * hidden_size) }
+    }
+
+    pub fn gate_row_mut_ptr(&mut self, row: usize, ff_size: usize) -> *mut f32 {
+        debug_assert!(row < self.seq_len);
+        unsafe { (self.gate.as_ptr() as *mut f32).add(row * ff_size) }
+    }
+
+    pub fn swiglu_row_mut_ptr(&mut self, row: usize, ff_size: usize) -> *mut f32 {
+        debug_assert!(row < self.seq_len);
+        unsafe { (self.swiglu.as_ptr() as *mut f32).add(row * ff_size) }
     }
 }
 
@@ -415,7 +681,7 @@ mod scratch_tests {
             attention_layout: crate::config::AttentionLayout::SplitQkv,
             architecture: "test".to_string(),
             tensor_registry: crate::config::TensorNameRegistry::from_scheme(
-                &crate::config::TensorNamingScheme::Gguf
+                &crate::config::TensorNamingScheme::Gguf,
             ),
         }
     }
@@ -430,10 +696,18 @@ mod scratch_tests {
             Ok(s) => {
                 // Verify pointers are valid (or empty)
                 assert!(!s.q.as_ptr().is_null() || s.q.is_empty());
+                assert!(!s.hidden.as_ptr().is_null() || s.hidden.is_empty());
             }
             Err(_) => {
                 // Expected when HIP unavailable
             }
         }
+    }
+
+    #[test]
+    fn prefill_scratch_rejects_zero_seq_len() {
+        let config = make_test_config();
+        let scratch = GpuPrefillScratch::new(&config, 0);
+        assert!(scratch.is_err());
     }
 }

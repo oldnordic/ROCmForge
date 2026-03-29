@@ -19,13 +19,13 @@
 //! println!("Max tokens/batch: {}", batch_config.max_tokens_per_batch);
 //! ```
 
-mod error;
 mod caps;
 mod config;
+mod error;
 
-pub use error::HardwareError;
 pub use caps::{CpuCapabilities, SimdFeatures};
-pub use config::{BatchConfig, memory_per_token};
+pub use config::{memory_per_token, BatchConfig};
+pub use error::HardwareError;
 
 /// Detect CPU hardware capabilities.
 ///
@@ -83,7 +83,7 @@ mod tests {
             attention_layout: crate::config::AttentionLayout::SplitQkv,
             architecture: "qwen2".to_string(),
             tensor_registry: crate::config::TensorNameRegistry::from_scheme(
-                &crate::config::TensorNamingScheme::Gguf
+                &crate::config::TensorNamingScheme::Gguf,
             ),
         };
 

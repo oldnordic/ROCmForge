@@ -45,16 +45,30 @@ fn main() {
     println!("Scale indexing for first 128 elements:");
     for l in 0..32 {
         let is = l / 16;
-        println!("  l={:2}: is={} -> sc[{}], sc[{}], sc[{}], sc[{}]",
-                 l, is, is+0, is+2, is+4, is+6);
+        println!(
+            "  l={:2}: is={} -> sc[{}], sc[{}], sc[{}], sc[{}]",
+            l,
+            is,
+            is + 0,
+            is + 2,
+            is + 4,
+            is + 6
+        );
     }
 
     println!();
     println!("Scale indexing for second 128 elements:");
     for l in 0..32 {
         let is = l / 16;
-        println!("  l={:2}: is={} -> sc[{}+8], sc[{}+8], sc[{}+8], sc[{}+8]",
-                 l, is, is, is+2, is+4, is+6);
+        println!(
+            "  l={:2}: is={} -> sc[{}+8], sc[{}+8], sc[{}+8], sc[{}+8]",
+            l,
+            is,
+            is,
+            is + 2,
+            is + 4,
+            is + 6
+        );
     }
 
     println!();

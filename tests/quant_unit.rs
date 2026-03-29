@@ -82,14 +82,32 @@ fn test_shared_mem_per_block() {
 #[serial]
 fn test_architecture_from_name() {
     // Valid architecture names
-    assert_eq!(GpuArchitecture::from_name("gfx1100"), Some(GpuArchitecture::Gfx1100));
-    assert_eq!(GpuArchitecture::from_name("gfx1030"), Some(GpuArchitecture::Gfx1030));
-    assert_eq!(GpuArchitecture::from_name("gfx90a"), Some(GpuArchitecture::Gfx90a));
-    assert_eq!(GpuArchitecture::from_name("gfx908"), Some(GpuArchitecture::Gfx908));
-    assert_eq!(GpuArchitecture::from_name("gfx900"), Some(GpuArchitecture::Gfx900));
+    assert_eq!(
+        GpuArchitecture::from_name("gfx1100"),
+        Some(GpuArchitecture::Gfx1100)
+    );
+    assert_eq!(
+        GpuArchitecture::from_name("gfx1030"),
+        Some(GpuArchitecture::Gfx1030)
+    );
+    assert_eq!(
+        GpuArchitecture::from_name("gfx90a"),
+        Some(GpuArchitecture::Gfx90a)
+    );
+    assert_eq!(
+        GpuArchitecture::from_name("gfx908"),
+        Some(GpuArchitecture::Gfx908)
+    );
+    assert_eq!(
+        GpuArchitecture::from_name("gfx900"),
+        Some(GpuArchitecture::Gfx900)
+    );
 
     // Unknown architecture names (valid hex but not a known architecture)
-    assert_eq!(GpuArchitecture::from_name("gfx9999"), Some(GpuArchitecture::Unknown(0x9999)));
+    assert_eq!(
+        GpuArchitecture::from_name("gfx9999"),
+        Some(GpuArchitecture::Unknown(0x9999))
+    );
 
     // Invalid names (can't parse as hex)
     assert_eq!(GpuArchitecture::from_name("invalid"), None);
@@ -104,18 +122,21 @@ fn test_block_size_distribution() {
 
     // Test various array sizes
     let test_cases = vec![
-        (256, 1),    // Exact multiple
-        (512, 2),    // 2 blocks
-        (1000, 4),   // 3.9 blocks → 4
-        (1024, 4),   // 4 blocks
-        (2048, 8),   // 8 blocks
-        (3000, 12),  // 11.7 blocks → 12
+        (256, 1),   // Exact multiple
+        (512, 2),   // 2 blocks
+        (1000, 4),  // 3.9 blocks → 4
+        (1024, 4),  // 4 blocks
+        (2048, 8),  // 8 blocks
+        (3000, 12), // 11.7 blocks → 12
     ];
 
     for (n, expected_blocks) in test_cases {
         let grid_size = (n + block_size - 1) / block_size;
-        assert_eq!(grid_size, expected_blocks,
-                   "Block count mismatch for n={}", n);
+        assert_eq!(
+            grid_size, expected_blocks,
+            "Block count mismatch for n={}",
+            n
+        );
     }
 }
 
@@ -131,11 +152,17 @@ fn test_vram_check_rejects_invalid() {
 
     // Values exceeding MAX should always fail
     assert!(MAX_TEST_VRAM_GB > 0.0, "MAX_TEST_VRAM_GB must be positive");
-    assert!(MAX_TEST_VRAM_GB <= 100.0, "MAX_TEST_VRAM_GB must be reasonable");
+    assert!(
+        MAX_TEST_VRAM_GB <= 100.0,
+        "MAX_TEST_VRAM_GB must be reasonable"
+    );
 
     // Test arithmetic for block calculation
     let required_gb = 15.0;
-    assert!(required_gb > MAX_TEST_VRAM_GB, "Test should use value exceeding max");
+    assert!(
+        required_gb > MAX_TEST_VRAM_GB,
+        "Test should use value exceeding max"
+    );
 }
 
 /// Test tolerance allows reasonable floating point differences
@@ -212,7 +239,10 @@ fn test_block_size_constant() {
     assert_eq!(BLOCK_SIZE, QK_K, "BLOCK_SIZE should match QK_K");
 
     // BLOCK_SIZE should be power of 2
-    assert!(BLOCK_SIZE.is_power_of_two(), "BLOCK_SIZE must be power of 2");
+    assert!(
+        BLOCK_SIZE.is_power_of_two(),
+        "BLOCK_SIZE must be power of 2"
+    );
 }
 
 /// Test WARP_SIZE matches architecture expectations
@@ -260,8 +290,10 @@ fn test_architecture_consistency() {
         assert!(shared_mem <= 1048576, "shared_mem must be <= 1MB");
 
         // max_threads should be multiple of warp_size
-        assert!(max_threads % warp_size == 0,
-                "max_threads should be multiple of warp_size");
+        assert!(
+            max_threads % warp_size == 0,
+            "max_threads should be multiple of warp_size"
+        );
     }
 }
 
@@ -280,7 +312,11 @@ fn test_cmake_find_logic() {
 
     // All paths should end with "cmake"
     for path in &standard_paths {
-        assert!(path.ends_with("cmake"), "Path should end with cmake: {}", path);
+        assert!(
+            path.ends_with("cmake"),
+            "Path should end with cmake: {}",
+            path
+        );
     }
 
     // Paths should be absolute
@@ -330,14 +366,21 @@ fn test_block_alignment() {
     const WARP_SIZE: usize = 32;
 
     // BLOCK_SIZE should be multiple of WARP_SIZE for efficient GPU execution
-    assert_eq!(BLOCK_SIZE % WARP_SIZE, 0,
-               "BLOCK_SIZE should be multiple of WARP_SIZE");
+    assert_eq!(
+        BLOCK_SIZE % WARP_SIZE,
+        0,
+        "BLOCK_SIZE should be multiple of WARP_SIZE"
+    );
 
     // Common thread counts should divide BLOCK_SIZE evenly
     let thread_counts = vec![32, 64, 128, 256];
     for threads in thread_counts {
-        assert_eq!(BLOCK_SIZE % threads, 0,
-                   "BLOCK_SIZE should be divisible by {}", threads);
+        assert_eq!(
+            BLOCK_SIZE % threads,
+            0,
+            "BLOCK_SIZE should be divisible by {}",
+            threads
+        );
     }
 }
 
@@ -345,7 +388,7 @@ fn test_block_alignment() {
 #[test]
 #[serial]
 fn test_q4_k_constants() {
-    use rocmforge::gpu::{QK_K, K_SCALE_SIZE, Q4_K_BLOCK_SIZE};
+    use rocmforge::gpu::{K_SCALE_SIZE, Q4_K_BLOCK_SIZE, QK_K};
 
     assert_eq!(QK_K, 256, "QK_K must be 256 elements per block");
     assert_eq!(K_SCALE_SIZE, 12, "K_SCALE_SIZE must be 12");
@@ -377,7 +420,7 @@ fn test_q4_k_block_default() {
 #[test]
 #[serial]
 fn test_q8_0_constants() {
-    use rocmforge::gpu::quant::{QK8_0, Q8_0_BLOCK_SIZE, Q8_0_MAX};
+    use rocmforge::gpu::quant::{Q8_0_BLOCK_SIZE, Q8_0_MAX, QK8_0};
     assert_eq!(QK8_0, 32, "QK8_0 must be 32 for Q8_0 format");
     assert_eq!(Q8_0_BLOCK_SIZE, 34, "Q8_0_BLOCK_SIZE must be 34 bytes");
     assert_eq!(Q8_0_MAX, 127.0, "Q8_0_MAX must be 127.0");
@@ -388,7 +431,11 @@ fn test_q8_0_constants() {
 #[serial]
 fn test_q8_0_block_struct_size() {
     use rocmforge::gpu::quant::Q8_0Block;
-    assert_eq!(std::mem::size_of::<Q8_0Block>(), 34, "Q8_0Block must be 34 bytes");
+    assert_eq!(
+        std::mem::size_of::<Q8_0Block>(),
+        34,
+        "Q8_0Block must be 34 bytes"
+    );
 }
 
 /// Test Q8_0Block default
@@ -404,11 +451,11 @@ fn test_q8_0_block_default() {
 #[test]
 #[serial]
 fn test_q5_k_constants() {
-    use rocmforge::gpu::{QK_K, K_SCALE_SIZE, Q5_K_BLOCK_SIZE};
+    use rocmforge::gpu::{K_SCALE_SIZE, Q5_K_BLOCK_SIZE, QK_K};
 
     assert_eq!(QK_K, 256, "QK_K must be 256 elements per block");
     assert_eq!(K_SCALE_SIZE, 12, "K_SCALE_SIZE must be 12");
-    assert_eq!(Q5_K_BLOCK_SIZE, 176);  // 2+2+12+32+128
+    assert_eq!(Q5_K_BLOCK_SIZE, 176); // 2+2+12+32+128
 }
 
 /// Test Q5KBlock size
@@ -418,7 +465,7 @@ fn test_q5_k_block_struct_size() {
     use rocmforge::gpu::Q5KBlock;
 
     let block = Q5KBlock::default();
-    assert_eq!(std::mem::size_of::<Q5KBlock>(), 176);  // 2+2+12+32+128
+    assert_eq!(std::mem::size_of::<Q5KBlock>(), 176); // 2+2+12+32+128
 }
 
 /// Test Q5KBlock default values

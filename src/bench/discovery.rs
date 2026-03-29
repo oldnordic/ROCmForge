@@ -3,14 +3,11 @@
 //! Finds GGUF model files in known locations with support for
 //! environment variables and command-line overrides.
 
-use std::path::{Path, PathBuf};
 use std::env;
+use std::path::{Path, PathBuf};
 
 /// Default model search locations in priority order.
-const DEFAULT_MODEL_PATHS: &[&str] = &[
-    "/home/feanor/Projects/Memoria/models",
-    "./models",
-];
+const DEFAULT_MODEL_PATHS: &[&str] = &["/home/feanor/Projects/Memoria/models", "./models"];
 
 /// Discover GGUF model files from search paths.
 ///

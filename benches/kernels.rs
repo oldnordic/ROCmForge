@@ -2,9 +2,9 @@
 //!
 //! Microbenchmarks for GEMV and GEMM kernels with statistical analysis.
 
-use criterion::{black_box, BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use rocmforge::cpu::kernels::{
-    gemm_q4k_q8::{gemv_q4_k_q8_k_dispatch, gemm_q4_k_q8_k_dispatch_gemm},
+    gemm_q4k_q8::{gemm_q4_k_q8_k_dispatch_gemm, gemv_q4_k_q8_k_dispatch},
     gemm_q4k_q8_scalar::gemv_q4_k_q8_k as gemv_q4_k_q8_k_scalar,
     q4::BlockQ4K,
 };
@@ -24,7 +24,13 @@ fn bench_gemv_q4k_q8(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("gemv", size), size, |b, &_size| {
             b.iter(|| {
-                gemv_q4_k_q8_k_dispatch(black_box(&w), black_box(&x), black_box(&mut y), out_dim, in_dim);
+                gemv_q4_k_q8_k_dispatch(
+                    black_box(&w),
+                    black_box(&x),
+                    black_box(&mut y),
+                    out_dim,
+                    in_dim,
+                );
                 black_box(&y);
             });
         });
@@ -48,14 +54,26 @@ fn bench_gemv_scalar_comparison(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("dispatch", size), size, |b, &_size| {
             b.iter(|| {
-                gemv_q4_k_q8_k_dispatch(black_box(&w), black_box(&x), black_box(&mut y_dispatch), out_dim, in_dim);
+                gemv_q4_k_q8_k_dispatch(
+                    black_box(&w),
+                    black_box(&x),
+                    black_box(&mut y_dispatch),
+                    out_dim,
+                    in_dim,
+                );
                 black_box(&y_dispatch);
             });
         });
 
         group.bench_with_input(BenchmarkId::new("scalar", size), size, |b, &_size| {
             b.iter(|| {
-                gemv_q4_k_q8_k_scalar(black_box(&w), black_box(&x), black_box(&mut y_scalar), out_dim, in_dim);
+                gemv_q4_k_q8_k_scalar(
+                    black_box(&w),
+                    black_box(&x),
+                    black_box(&mut y_scalar),
+                    out_dim,
+                    in_dim,
+                );
                 black_box(&y_scalar);
             });
         });
@@ -79,7 +97,14 @@ fn bench_gemm_q4k_q8(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("gemv", size), size, |b, &_size| {
             b.iter(|| {
-                gemm_q4_k_q8_k_dispatch_gemm(black_box(&w), black_box(&x), black_box(&mut y), m, n, k);
+                gemm_q4_k_q8_k_dispatch_gemm(
+                    black_box(&w),
+                    black_box(&x),
+                    black_box(&mut y),
+                    m,
+                    n,
+                    k,
+                );
                 black_box(&y);
             });
         });
@@ -88,5 +113,10 @@ fn bench_gemm_q4k_q8(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(kernels, bench_gemv_q4k_q8, bench_gemv_scalar_comparison, bench_gemm_q4k_q8);
+criterion_group!(
+    kernels,
+    bench_gemv_q4k_q8,
+    bench_gemv_scalar_comparison,
+    bench_gemm_q4k_q8
+);
 criterion_main!(kernels);

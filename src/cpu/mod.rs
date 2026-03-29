@@ -14,28 +14,28 @@
 //! - Metadata-driven: all shapes from ModelConfig, no model-specific code
 //! - Explicit device selection: CPU path has no GPU fallback
 
-pub mod features;
-pub mod simd;
-pub mod kernels;
+pub mod cache;
 pub mod error;
+pub mod features;
+pub mod forward;
+pub mod kernels;
+pub mod ops;
+pub mod prefill;
+pub mod quant;
+pub mod sampler;
+pub mod simd;
 pub mod transpose;
 pub mod weights;
-pub mod cache;
-pub mod ops;
-pub mod quant;
-pub mod forward;
-pub mod prefill;
-pub mod sampler;
 
 // Re-export hardware for convenience
-pub use crate::hardware::{CpuCapabilities, BatchConfig, detect, derive_batch_config};
+pub use crate::hardware::{derive_batch_config, detect, BatchConfig, CpuCapabilities};
 
 // Re-export CPU features
 pub use self::features::{CpuFeatures, KernelPreference};
 // Re-export SIMD kernel system
-pub use self::simd::{SimdKernels, SimdActivations};
+pub use self::simd::{SimdActivations, SimdKernels};
 // Re-export Q4_K kernels
-pub use self::kernels::gemm_q4k_q8::{gemv_q4_k_q8_k_dispatch, gemm_q4_k_q8_k_dispatch_gemm};
+pub use self::kernels::gemm_q4k_q8::{gemm_q4_k_q8_k_dispatch_gemm, gemv_q4_k_q8_k_dispatch};
 
 #[cfg(test)]
 mod ops_tests;

@@ -1,6 +1,6 @@
 // Test dimension validation for edge cases
 
-use rocmforge::cpu::ops::{dispatch_gemv, dispatch_gemm};
+use rocmforge::cpu::ops::{dispatch_gemm, dispatch_gemv};
 use rocmforge::cpu::weights::WeightMeta;
 use rocmforge::loader::GgmlType;
 
@@ -29,7 +29,7 @@ fn test_block_remainder() {
 
     // Non-multiple
     let (blocks, remainder) = block_remainder(100, Q4_BLOCK_ELEMS);
-    assert_eq!(blocks, 3);  // 96 elements
+    assert_eq!(blocks, 3); // 96 elements
     assert_eq!(remainder, 4); // 4 extra elements
 }
 
@@ -46,7 +46,7 @@ fn test_padded_dim() {
 fn test_dispatch_gemv_rejects_misaligned_dimensions() {
     // Q4_0 requires dimensions to be multiples of 32
     let w = vec![0u8; 100 * 18]; // out_dim=100, but we'll use smaller
-    let x: Vec<f32> = vec![0.0; 33];  // 33 is NOT a multiple of 32
+    let x: Vec<f32> = vec![0.0; 33]; // 33 is NOT a multiple of 32
     let mut y = vec![0.0f32; 100];
 
     let meta = WeightMeta {
@@ -67,7 +67,7 @@ fn test_dispatch_gemv_rejects_misaligned_dimensions() {
 fn test_dispatch_gemm_rejects_misaligned_dimensions() {
     // Q6_K requires dimensions to be multiples of 256
     let w = vec![0u8; 100 * 210];
-    let x: Vec<f32> = vec![0.0; 300];  // 300 is NOT a multiple of 256
+    let x: Vec<f32> = vec![0.0; 300]; // 300 is NOT a multiple of 256
     let mut y = vec![0.0f32; 100 * 300];
 
     let meta = WeightMeta {
@@ -88,7 +88,7 @@ fn test_dispatch_gemm_rejects_misaligned_dimensions() {
 fn test_dispatch_gemv_accepts_aligned_dimensions() {
     // Q4_0 with aligned dimensions should work
     let w = vec![0u8; 100 * 32]; // out_dim=100, in_dim=32
-    let x: Vec<f32> = vec![0.0; 32];   // 32 IS a multiple of 32
+    let x: Vec<f32> = vec![0.0; 32]; // 32 IS a multiple of 32
     let mut y = vec![0.0f32; 100];
 
     let meta = WeightMeta {

@@ -4,10 +4,9 @@
 
 mod common;
 
-use serial_test::serial;
-use rocmforge::gpu::{GpuKvCache, GpuBuffer};
 use rocmforge::config::ModelConfig;
-
+use rocmforge::gpu::{GpuBuffer, GpuKvCache};
+use serial_test::serial;
 
 fn make_test_config() -> ModelConfig {
     ModelConfig {

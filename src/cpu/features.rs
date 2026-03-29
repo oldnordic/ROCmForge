@@ -161,11 +161,18 @@ impl CpuFeatures {
         let has_avx512dq = cpuid_avx2.ebx & (1 << 17) != 0;
 
         // AVX-512 VNNI requires AVX-512F + VNNI (ECX bit 3)
-        let has_avx512 = has_avx512f && has_avx512cd && has_avx512bw && has_avx512vl && has_avx512dq;
+        let has_avx512 =
+            has_avx512f && has_avx512cd && has_avx512bw && has_avx512vl && has_avx512dq;
         let has_avx512_vnni = has_avx512 && (cpuid_avx2.ecx & (1 << 3) != 0);
 
         let kernel = Self::select_kernel_x86(
-            has_sse2, has_ssse3, has_avx, has_avx2, has_avx512, has_avx2_vnni, has_avx512_vnni,
+            has_sse2,
+            has_ssse3,
+            has_avx,
+            has_avx2,
+            has_avx512,
+            has_avx2_vnni,
+            has_avx512_vnni,
         );
 
         Self {

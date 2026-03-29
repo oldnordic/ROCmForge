@@ -24,36 +24,36 @@ pub unsafe fn get_scale_shuffle_k4(j: usize) -> __m256i {
     // Reference: llama.cpp ggml/src/ggml-cpu/arch/x86/quants.c:2230
     match j {
         0 => _mm256_setr_epi8(
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-            16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+            24, 25, 26, 27, 28, 29, 30, 31,
         ),
         1 => _mm256_setr_epi8(
-            4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
-            20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
+            4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
+            27, 28, 29, 30, 31, 32, 33, 34, 35,
         ),
         2 => _mm256_setr_epi8(
-            8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-            24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+            8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+            30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
         ),
         3 => _mm256_setr_epi8(
-            12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
-            28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
+            12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33,
+            34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
         ),
         4 => _mm256_setr_epi8(
-            16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
-            32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+            16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
+            38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
         ),
         5 => _mm256_setr_epi8(
-            20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
-            36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
+            20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41,
+            42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
         ),
         6 => _mm256_setr_epi8(
-            24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-            40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
+            24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
+            46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
         ),
         7 => _mm256_setr_epi8(
-            28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
-            44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
+            28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
+            50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
         ),
         _ => _mm256_setzero_si256(),
     }
@@ -87,10 +87,7 @@ unsafe fn hsum_float_8(v: __m256) -> f32 {
 /// Caller must ensure AVX2 and FMA are available.
 #[cfg(target_arch = "x86_64")]
 #[inline]
-pub unsafe fn dot_q4_k_q8_k_block_avx2(
-    q4_block: &BlockQ4K,
-    q8_block: &BlockQ8K,
-) -> f32 {
+pub unsafe fn dot_q4_k_q8_k_block_avx2(q4_block: &BlockQ4K, q8_block: &BlockQ8K) -> f32 {
     const QK_K: usize = 256;
     const KMASK1: u32 = 0x3f3f3f3f;
     const KMASK2: u32 = 0x0f0f0f0f;
@@ -102,11 +99,7 @@ pub unsafe fn dot_q4_k_q8_k_block_avx2(
 
     // Unpack Q4_K scales
     let mut utmp = [0u32; 4];
-    std::ptr::copy_nonoverlapping(
-        q4_block.scales.as_ptr(),
-        utmp.as_mut_ptr() as *mut u8,
-        12,
-    );
+    std::ptr::copy_nonoverlapping(q4_block.scales.as_ptr(), utmp.as_mut_ptr() as *mut u8, 12);
 
     // Scale unpacking from llama.cpp
     utmp[3] = ((utmp[2] >> 4) & KMASK2) | (((utmp[1] >> 6) & KMASK3) << 4);
@@ -117,7 +110,10 @@ pub unsafe fn dot_q4_k_q8_k_block_avx2(
 
     // Convert scales to 16-bit integers
     let mins_and_scales = _mm256_cvtepu8_epi16(_mm_set_epi32(
-        utmp[3] as i32, utmp[2] as i32, utmp[1] as i32, utmp[0] as i32,
+        utmp[3] as i32,
+        utmp[2] as i32,
+        utmp[1] as i32,
+        utmp[0] as i32,
     ));
 
     // Copy bsums to local array to avoid packed struct reference issues
@@ -198,13 +194,7 @@ pub unsafe fn dot_q4_k_q8_k_block_avx2(
 /// # Safety
 /// Caller must ensure AVX2 and FMA are available.
 #[cfg(target_arch = "x86_64")]
-pub fn gemv_q4_k_q8_k_avx2(
-    w: &[u8],
-    x: &[f32],
-    y: &mut [f32],
-    out_dim: usize,
-    in_dim: usize,
-) {
+pub fn gemv_q4_k_q8_k_avx2(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
     assert!(in_dim % 256 == 0, "in_dim must be multiple of QK_K=256");
     assert_eq!(x.len(), in_dim);
     assert_eq!(y.len(), out_dim);
@@ -250,53 +240,42 @@ pub fn gemv_q4_k_q8_k_avx2(
 /// # Safety
 /// Caller must ensure AVX2 and FMA are available.
 #[cfg(target_arch = "x86_64")]
-pub fn gemm_q4_k_q8_k_avx2(
-    w: &[u8],
-    x: &[f32],
-    y: &mut [f32],
-    m: usize,
-    n: usize,
-    k: usize,
-) {
+pub fn gemm_q4_k_q8_k_avx2(w: &[u8], x: &[f32], y: &mut [f32], m: usize, n: usize, k: usize) {
     assert!(k % 256 == 0, "k must be multiple of QK_K=256");
 
     let num_blocks_k = k / 256;
 
     // For GEMM, process each batch row
-    y.par_chunks_mut(n).enumerate().for_each(|(batch_idx, y_row)| {
-        let x_row = &x[batch_idx * k..(batch_idx + 1) * k];
+    y.par_chunks_mut(n)
+        .enumerate()
+        .for_each(|(batch_idx, y_row)| {
+            let x_row = &x[batch_idx * k..(batch_idx + 1) * k];
 
-        // Quantize this row to Q8_K blocks
-        let mut x_q8 = vec![BlockQ8K::zero(); num_blocks_k];
-        for b in 0..num_blocks_k {
-            x_q8[b] = crate::cpu::kernels::q8::quantize_q8_k(&x_row[b * 256..(b + 1) * 256]);
-        }
-
-        // Compute dot products for each output column
-        for out_col in 0..n {
-            let mut acc = 0.0f32;
-
+            // Quantize this row to Q8_K blocks
+            let mut x_q8 = vec![BlockQ8K::zero(); num_blocks_k];
             for b in 0..num_blocks_k {
-                let w_offset = out_col * num_blocks_k * BlockQ4K::SIZE + b * BlockQ4K::SIZE;
-                let q4_block = unsafe { &*(w.as_ptr().add(w_offset) as *const BlockQ4K) };
-                let q8_block = &x_q8[b];
-
-                acc += unsafe { dot_q4_k_q8_k_block_avx2(q4_block, q8_block) };
+                x_q8[b] = crate::cpu::kernels::q8::quantize_q8_k(&x_row[b * 256..(b + 1) * 256]);
             }
 
-            y_row[out_col] = acc;
-        }
-    });
+            // Compute dot products for each output column
+            for out_col in 0..n {
+                let mut acc = 0.0f32;
+
+                for b in 0..num_blocks_k {
+                    let w_offset = out_col * num_blocks_k * BlockQ4K::SIZE + b * BlockQ4K::SIZE;
+                    let q4_block = unsafe { &*(w.as_ptr().add(w_offset) as *const BlockQ4K) };
+                    let q8_block = &x_q8[b];
+
+                    acc += unsafe { dot_q4_k_q8_k_block_avx2(q4_block, q8_block) };
+                }
+
+                y_row[out_col] = acc;
+            }
+        });
 }
 
 /// Dispatch to AVX2 or scalar GEMV based on CPU features.
-pub fn gemv_q4_k_q8_k_dispatch(
-    w: &[u8],
-    x: &[f32],
-    y: &mut [f32],
-    out_dim: usize,
-    in_dim: usize,
-) {
+pub fn gemv_q4_k_q8_k_dispatch(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {

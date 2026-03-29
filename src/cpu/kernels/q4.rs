@@ -169,7 +169,11 @@ impl BlockQ4K {
     ///
     /// * `output` - Output array of 256 f32 values
     pub fn dequantize(&self, output: &mut [f32]) {
-        assert_eq!(output.len(), Self::N_WEIGHTS, "output must have 256 elements");
+        assert_eq!(
+            output.len(),
+            Self::N_WEIGHTS,
+            "output must have 256 elements"
+        );
 
         const SUBBLOCK_SIZE: usize = 32;
         const NUM_SUBBLOCKS: usize = 8;
@@ -321,19 +325,31 @@ impl Half16 {
             } else {
                 // Subnormal
                 let value = mantissa as f32 * (2.0_f32.powi(-14 - 10));
-                if sign != 0 { -value } else { value }
+                if sign != 0 {
+                    -value
+                } else {
+                    value
+                }
             }
         } else if exponent == 31 {
             // Infinity or NaN
             if mantissa == 0 {
-                if sign != 0 { f32::NEG_INFINITY } else { f32::INFINITY }
+                if sign != 0 {
+                    f32::NEG_INFINITY
+                } else {
+                    f32::INFINITY
+                }
             } else {
                 f32::NAN
             }
         } else {
             // Normal
             let value = (1 << 10 | mantissa) as f32 * (2.0_f32.powi(exponent - 15 - 10));
-            if sign != 0 { -value } else { value }
+            if sign != 0 {
+                -value
+            } else {
+                value
+            }
         }
     }
 
@@ -343,7 +359,11 @@ impl Half16 {
             return Self(0x7C00);
         }
         if val.is_infinite() {
-            return if val.is_sign_negative() { Self(0xFC00) } else { Self(0x7C00) };
+            return if val.is_sign_negative() {
+                Self(0xFC00)
+            } else {
+                Self(0x7C00)
+            };
         }
 
         let bits = val.to_bits();
@@ -391,7 +411,10 @@ mod tests {
         block.dequantize(&mut output);
 
         for &o in &output {
-            assert!((o - 0.0).abs() < 0.01, "zero block should dequantize to near zero");
+            assert!(
+                (o - 0.0).abs() < 0.01,
+                "zero block should dequantize to near zero"
+            );
         }
     }
 
@@ -451,7 +474,12 @@ mod tests {
         for &val in &test_values {
             let f16_val = Half16::from_f32(val);
             let back = f16_val.to_f32();
-            assert!((val - back).abs() < 0.01, "f16 roundtrip for {}: got {}", val, back);
+            assert!(
+                (val - back).abs() < 0.01,
+                "f16 roundtrip for {}: got {}",
+                val,
+                back
+            );
         }
     }
 

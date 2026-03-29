@@ -79,6 +79,13 @@ __device__ inline size_t get_global_id() {
     return blockIdx.x * blockDim.x + threadIdx.x;
 }
 
+/// Unpack a 4-bit nibble from sequential (llama.cpp) packed layout.
+/// Layout: qs[i] low nibble → element i, qs[i] high nibble → element i+16.
+/// tid: thread index within the 32-thread block (0-31).
+__device__ inline uint8_t unpack_nibble_sequential(const uint8_t* qs, int tid) {
+    return (tid < 16) ? (qs[tid] & 0x0F) : (qs[tid - 16] >> 4);
+}
+
 /// Get lane ID within warp (0-31)
 __device__ inline int get_lane_id() {
     return threadIdx.x & 31;

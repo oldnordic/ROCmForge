@@ -205,6 +205,31 @@ set_target_properties(q4_1_gemv PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
 
+# GEMM Kernels (Batched)
+add_library(q4_0_gemm STATIC q4_0_gemm.hip)
+target_link_libraries(q4_0_gemm quant_common)
+set_target_properties(q4_0_gemm PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+
+add_library(q4_0_fused STATIC q4_0_fused.hip)
+target_link_libraries(q4_0_fused quant_common)
+set_target_properties(q4_0_fused PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+
+add_library(q4_1_gemm STATIC q4_1_gemm.hip)
+target_link_libraries(q4_1_gemm quant_common)
+set_target_properties(q4_1_gemm PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+
+add_library(q8_0_gemm STATIC q8_0_gemm.hip)
+target_link_libraries(q8_0_gemm quant_common)
+set_target_properties(q8_0_gemm PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+
+add_library(q4_k_gemm STATIC q4_k_gemm.hip)
+target_link_libraries(q4_k_gemm quant_common)
+set_target_properties(q4_k_gemm PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+
+add_library(q5_k_gemm STATIC q5_k_gemm.hip)
+target_link_libraries(q5_k_gemm quant_common)
+set_target_properties(q5_k_gemm PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+
 # Test kernel library (for Phase 1 verification)
 add_library(test_quant STATIC
     test_kernel.hip

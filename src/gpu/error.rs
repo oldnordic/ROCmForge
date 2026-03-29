@@ -3,7 +3,7 @@
 //! Design principle: Never panic, always return errors gracefully.
 //! All GPU errors should be recoverable (CPU fallback).
 
-use std::fmt;
+use crate::loader::GgmlType;
 
 /// Errors that can occur during GPU operations.
 #[derive(Debug)]
@@ -36,6 +36,19 @@ pub enum GpuError {
 
     /// KV cache allocation failed
     CacheAllocationFailed { reason: String },
+
+    /// GPU backend does not implement this GGUF weight format yet
+    UnsupportedWeightType { tensor: String, wtype: GgmlType },
+
+    /// Matrix weight metadata is invalid for GPU inference
+    InvalidWeightLayout {
+        tensor: String,
+        dims: Vec<u64>,
+        reason: String,
+    },
+
+    /// Model does not fit in available VRAM
+    ModelTooLarge { required: usize, available: usize },
 }
 
 impl std::fmt::Display for GpuError {
@@ -50,7 +63,10 @@ impl std::fmt::Display for GpuError {
             GpuError::HipApiError { code, description } => {
                 write!(f, "HIP API error (code {}): {}", code, description)
             }
-            GpuError::OutOfMemory { requested, available } => {
+            GpuError::OutOfMemory {
+                requested,
+                available,
+            } => {
                 write!(
                     f,
                     "Out of GPU memory: requested {} MB, available {} MB",
@@ -69,6 +85,31 @@ impl std::fmt::Display for GpuError {
             }
             GpuError::CacheAllocationFailed { reason } => {
                 write!(f, "Failed to allocate KV cache: {}", reason)
+            }
+            GpuError::UnsupportedWeightType { tensor, wtype } => {
+                write!(f, "unsupported GPU weight type for {}: {}", tensor, wtype)
+            }
+            GpuError::InvalidWeightLayout {
+                tensor,
+                dims,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "invalid GPU weight layout for {} {:?}: {}",
+                    tensor, dims, reason
+                )
+            }
+            GpuError::ModelTooLarge {
+                required,
+                available,
+            } => {
+                write!(
+                    f,
+                    "model too large for GPU: requires {} MB, available {} MB",
+                    required / (1024 * 1024),
+                    available / (1024 * 1024)
+                )
             }
         }
     }
@@ -99,8 +140,8 @@ mod tests {
     #[test]
     fn display_out_of_memory() {
         let e = GpuError::OutOfMemory {
-            requested: 1024 * 1024 * 1024,  // 1 GB
-            available: 512 * 1024 * 1024,    // 512 MB
+            requested: 1024 * 1024 * 1024, // 1 GB
+            available: 512 * 1024 * 1024,  // 512 MB
         };
         let s = e.to_string();
         assert!(s.contains("1024 MB"));
@@ -122,5 +163,28 @@ mod tests {
 
         let err: GpuResult<()> = Err(GpuError::HipNotAvailable);
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn display_unsupported_weight_type() {
+        let e = GpuError::UnsupportedWeightType {
+            tensor: "blk.0.attn_q.weight".to_string(),
+            wtype: GgmlType::Q6_K,
+        };
+        let s = e.to_string();
+        assert!(s.contains("blk.0.attn_q.weight"));
+        assert!(s.contains("Q6_K"));
+    }
+
+    #[test]
+    fn display_invalid_weight_layout() {
+        let e = GpuError::InvalidWeightLayout {
+            tensor: "output.weight".to_string(),
+            dims: vec![32000],
+            reason: "matrix weights must have at least 2 dimensions".to_string(),
+        };
+        let s = e.to_string();
+        assert!(s.contains("output.weight"));
+        assert!(s.contains("32000"));
     }
 }

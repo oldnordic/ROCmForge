@@ -1,9 +1,9 @@
-pub mod loader;
+pub mod bench;
 pub mod config;
-pub mod tokenizer;
 pub mod cpu;
 pub mod hardware;
-pub mod bench;
+pub mod loader;
+pub mod tokenizer;
 
 #[cfg(feature = "gpu")]
 pub mod gpu;

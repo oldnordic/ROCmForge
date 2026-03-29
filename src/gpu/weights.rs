@@ -8,6 +8,7 @@
 use super::error::{GpuError, GpuResult};
 use super::ffi;
 use crate::config::{ModelConfig, TensorName, TensorNamingScheme};
+use crate::cpu::transpose::compute_transpose_flag;
 use crate::loader::{GgmlType, GgufFile, TensorDesc};
 use std::ptr::NonNull;
 
@@ -107,7 +108,10 @@ impl GpuBuffer {
             available: 0,
         })?;
 
-        Ok(Self { ptr: Some(nn), size })
+        Ok(Self {
+            ptr: Some(nn),
+            size,
+        })
     }
 
     /// Create empty buffer (no allocation).
@@ -119,7 +123,9 @@ impl GpuBuffer {
     ///
     /// Returns None if buffer is empty.
     pub fn as_ptr(&self) -> *mut u8 {
-        self.ptr.map(|nn| nn.as_ptr()).unwrap_or(std::ptr::null_mut())
+        self.ptr
+            .map(|nn| nn.as_ptr())
+            .unwrap_or(std::ptr::null_mut())
     }
 
     /// Get size in bytes.
@@ -137,7 +143,11 @@ impl GpuBuffer {
         if src.len() != self.size {
             return Err(GpuError::HipApiError {
                 code: -1,
-                description: format!("size mismatch: got {} bytes, expected {}", src.len(), self.size),
+                description: format!(
+                    "size mismatch: got {} bytes, expected {}",
+                    src.len(),
+                    self.size
+                ),
             });
         }
         if self.size == 0 {
@@ -151,7 +161,11 @@ impl GpuBuffer {
         if dst.len() != self.size {
             return Err(GpuError::HipApiError {
                 code: -1,
-                description: format!("size mismatch: got {} bytes, expected {}", dst.len(), self.size),
+                description: format!(
+                    "size mismatch: got {} bytes, expected {}",
+                    dst.len(),
+                    self.size
+                ),
             });
         }
         if self.size == 0 {
@@ -203,6 +217,61 @@ mod buffer_tests {
     }
 }
 
+fn supports_gpu_matrix_type(wtype: GgmlType) -> bool {
+    matches!(
+        wtype,
+        GgmlType::F32
+            | GgmlType::Q4_0
+            | GgmlType::Q4_1
+            | GgmlType::Q4_K
+            | GgmlType::Q5_K
+            | GgmlType::Q8_0
+    )
+}
+
+fn build_matrix_meta(
+    weight_name: &str,
+    dims: &[u64],
+    wtype: GgmlType,
+    config: &ModelConfig,
+    is_lm_head: bool,
+    is_tied: bool,
+) -> GpuResult<WeightMeta> {
+    if dims.len() < 2 {
+        return Err(GpuError::InvalidWeightLayout {
+            tensor: weight_name.to_string(),
+            dims: dims.to_vec(),
+            reason: "matrix weights must have at least 2 dimensions".to_string(),
+        });
+    }
+
+    if !supports_gpu_matrix_type(wtype) {
+        return Err(GpuError::UnsupportedWeightType {
+            tensor: weight_name.to_string(),
+            wtype,
+        });
+    }
+
+    Ok(WeightMeta {
+        wtype,
+        dims: dims.to_vec(),
+        needs_transpose: compute_transpose_flag(
+            weight_name,
+            dims,
+            wtype,
+            config,
+            is_lm_head,
+            is_tied,
+        ),
+    })
+}
+
+fn upload_tensor_bytes(data: &[u8]) -> GpuResult<GpuBuffer> {
+    let mut buf = GpuBuffer::alloc(data.len())?;
+    buf.copy_from_host(data)?;
+    Ok(buf)
+}
+
 // ── GPU Layer Weights ─────────────────────────────────────────────────────────────
 
 /// Weights for a single transformer layer, stored in VRAM.
@@ -248,14 +317,11 @@ impl GpuLayerWeights {
     ///
     /// Returns error if any allocation or transfer fails.
     /// On error, all allocated memory is freed via Drop.
-    pub fn load(
-        file: &GgufFile,
-        layer: usize,
-        config: &ModelConfig,
-    ) -> GpuResult<Self> {
+    pub fn load(file: &GgufFile, layer: usize, config: &ModelConfig) -> GpuResult<Self> {
         // Helper to load weight into GPU buffer with metadata
         let load_weight = |name: &str| -> GpuResult<(GpuBuffer, WeightMeta)> {
-            let t = file.tensor(name)
+            let t = file
+                .tensor(name)
                 .map_err(|e| GpuError::HipApiError {
                     code: -1,
                     description: format!("tensor lookup failed: {}", e),
@@ -265,17 +331,8 @@ impl GpuLayerWeights {
                     description: format!("tensor not found: {}", name),
                 })?;
 
-            let data = t.data;
-            let size = data.len();
-            let meta = WeightMeta {
-                wtype: t.ggml_type,
-                dims: t.dims.to_vec(),
-                needs_transpose: false, // Computed elsewhere for now
-            };
-
-            // Allocate GPU memory
-            let mut buf = GpuBuffer::alloc(size)?;
-            buf.copy_from_host(data)?;
+            let meta = build_matrix_meta(name, t.dims, t.ggml_type, config, false, false)?;
+            let buf = upload_tensor_bytes(t.data)?;
 
             Ok((buf, meta))
         };
@@ -283,17 +340,20 @@ impl GpuLayerWeights {
         // Helper to load weight with fallback names (for MoE models)
         let load_weight_fallback = |names: &[&str]| -> GpuResult<(GpuBuffer, WeightMeta)> {
             for name in names {
-                if let Ok(Some(t)) = file.tensor(name) {
-                    let data = t.data;
-                    let size = data.len();
-                    let meta = WeightMeta {
-                        wtype: t.ggml_type,
-                        dims: t.dims.to_vec(),
-                        needs_transpose: false,
-                    };
-                    let mut buf = GpuBuffer::alloc(size)?;
-                    buf.copy_from_host(data)?;
-                    return Ok((buf, meta));
+                match file.tensor(name) {
+                    Ok(Some(t)) => {
+                        let meta =
+                            build_matrix_meta(name, t.dims, t.ggml_type, config, false, false)?;
+                        let buf = upload_tensor_bytes(t.data)?;
+                        return Ok((buf, meta));
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        return Err(GpuError::HipApiError {
+                            code: -1,
+                            description: format!("tensor lookup failed: {}", e),
+                        });
+                    }
                 }
             }
             Err(GpuError::HipApiError {
@@ -304,7 +364,8 @@ impl GpuLayerWeights {
 
         // Helper to load F32 weight
         let load_f32 = |name: &str| -> GpuResult<GpuBuffer> {
-            let t = file.tensor(name)
+            let t = file
+                .tensor(name)
                 .map_err(|e| GpuError::HipApiError {
                     code: -1,
                     description: format!("tensor lookup failed: {}", e),
@@ -335,13 +396,35 @@ impl GpuLayerWeights {
 
         // Load all weights - if any fail, this entire struct is dropped (RAII cleanup)
         let attn_norm = load_f32(&config.tensor_registry.resolve(TensorName::AttnNorm, layer))?;
-        let (attn_q, attn_q_meta) = load_weight(&config.tensor_registry.resolve(TensorName::AttnQ, layer))?;
-        let attn_q_bias = load_f32_opt(&config.tensor_registry.resolve_optional(TensorName::AttnQBias, layer).unwrap_or_default())?;
-        let (attn_k, attn_k_meta) = load_weight(&config.tensor_registry.resolve(TensorName::AttnK, layer))?;
-        let attn_k_bias = load_f32_opt(&config.tensor_registry.resolve_optional(TensorName::AttnKBias, layer).unwrap_or_default())?;
-        let (attn_v, attn_v_meta) = load_weight(&config.tensor_registry.resolve(TensorName::AttnV, layer))?;
-        let attn_v_bias = load_f32_opt(&config.tensor_registry.resolve_optional(TensorName::AttnVBias, layer).unwrap_or_default())?;
-        let (attn_o, attn_o_meta) = load_weight(&config.tensor_registry.resolve(TensorName::AttnOutput, layer))?;
+        let (attn_q, attn_q_meta) =
+            load_weight(&config.tensor_registry.resolve(TensorName::AttnQ, layer))?;
+        let attn_q_bias = load_f32_opt(
+            &config
+                .tensor_registry
+                .resolve_optional(TensorName::AttnQBias, layer)
+                .unwrap_or_default(),
+        )?;
+        let (attn_k, attn_k_meta) =
+            load_weight(&config.tensor_registry.resolve(TensorName::AttnK, layer))?;
+        let attn_k_bias = load_f32_opt(
+            &config
+                .tensor_registry
+                .resolve_optional(TensorName::AttnKBias, layer)
+                .unwrap_or_default(),
+        )?;
+        let (attn_v, attn_v_meta) =
+            load_weight(&config.tensor_registry.resolve(TensorName::AttnV, layer))?;
+        let attn_v_bias = load_f32_opt(
+            &config
+                .tensor_registry
+                .resolve_optional(TensorName::AttnVBias, layer)
+                .unwrap_or_default(),
+        )?;
+        let (attn_o, attn_o_meta) = load_weight(
+            &config
+                .tensor_registry
+                .resolve(TensorName::AttnOutput, layer),
+        )?;
         let ffn_norm = load_f32(&config.tensor_registry.resolve(TensorName::FfnNorm, layer))?;
 
         // For MoE models, try _exps tensors first, then fall back to standard names
@@ -349,26 +432,33 @@ impl GpuLayerWeights {
         let ffn_up_name = config.tensor_registry.resolve(TensorName::FfnUp, layer);
         let ffn_down_name = config.tensor_registry.resolve(TensorName::FfnDown, layer);
 
-        let (ffn_gate, ffn_gate_meta) = if matches!(config.tensor_registry.scheme, TensorNamingScheme::GgufMoE) {
-            let ffn_gate_exps_name = config.tensor_registry.resolve(TensorName::FfnGateExps, layer);
-            load_weight_fallback(&[&ffn_gate_exps_name, &ffn_gate_name])?
-        } else {
-            load_weight(&ffn_gate_name)?
-        };
+        let (ffn_gate, ffn_gate_meta) =
+            if matches!(config.tensor_registry.scheme, TensorNamingScheme::GgufMoE) {
+                let ffn_gate_exps_name = config
+                    .tensor_registry
+                    .resolve(TensorName::FfnGateExps, layer);
+                load_weight_fallback(&[&ffn_gate_exps_name, &ffn_gate_name])?
+            } else {
+                load_weight(&ffn_gate_name)?
+            };
 
-        let (ffn_up, ffn_up_meta) = if matches!(config.tensor_registry.scheme, TensorNamingScheme::GgufMoE) {
-            let ffn_up_exps_name = config.tensor_registry.resolve(TensorName::FfnUpExps, layer);
-            load_weight_fallback(&[&ffn_up_exps_name, &ffn_up_name])?
-        } else {
-            load_weight(&ffn_up_name)?
-        };
+        let (ffn_up, ffn_up_meta) =
+            if matches!(config.tensor_registry.scheme, TensorNamingScheme::GgufMoE) {
+                let ffn_up_exps_name = config.tensor_registry.resolve(TensorName::FfnUpExps, layer);
+                load_weight_fallback(&[&ffn_up_exps_name, &ffn_up_name])?
+            } else {
+                load_weight(&ffn_up_name)?
+            };
 
-        let (ffn_down, ffn_down_meta) = if matches!(config.tensor_registry.scheme, TensorNamingScheme::GgufMoE) {
-            let ffn_down_exps_name = config.tensor_registry.resolve(TensorName::FfnDownExps, layer);
-            load_weight_fallback(&[&ffn_down_exps_name, &ffn_down_name])?
-        } else {
-            load_weight(&ffn_down_name)?
-        };
+        let (ffn_down, ffn_down_meta) =
+            if matches!(config.tensor_registry.scheme, TensorNamingScheme::GgufMoE) {
+                let ffn_down_exps_name = config
+                    .tensor_registry
+                    .resolve(TensorName::FfnDownExps, layer);
+                load_weight_fallback(&[&ffn_down_exps_name, &ffn_down_name])?
+            } else {
+                load_weight(&ffn_down_name)?
+            };
 
         Ok(Self {
             attn_norm,
@@ -423,32 +513,34 @@ impl GpuModelWeights {
         let n = config.num_layers;
 
         // Helper to load tensor into GPU buffer
-        let load_tensor = |name: &str| -> GpuResult<(GpuBuffer, WeightMeta)> {
-            let t = file.tensor(name)
-                .map_err(|e| GpuError::WeightTransferFailed { layer: 0 })?
-                .ok_or_else(|| GpuError::WeightTransferFailed { layer: 0 })?;
+        let load_tensor =
+            |name: &str, is_lm_head: bool, is_tied: bool| -> GpuResult<(GpuBuffer, WeightMeta)> {
+                let t = file
+                    .tensor(name)
+                    .map_err(|e| GpuError::HipApiError {
+                        code: -1,
+                        description: format!("tensor lookup failed: {}", e),
+                    })?
+                    .ok_or_else(|| GpuError::HipApiError {
+                        code: -1,
+                        description: format!("tensor not found: {}", name),
+                    })?;
 
-            let data = t.data;
-            let size = data.len();
-            let meta = WeightMeta {
-                wtype: t.ggml_type,
-                dims: t.dims.to_vec(),
-                needs_transpose: false,
+                let meta =
+                    build_matrix_meta(name, t.dims, t.ggml_type, config, is_lm_head, is_tied)?;
+                let buf = upload_tensor_bytes(t.data)?;
+
+                Ok((buf, meta))
             };
-
-            let mut buf = GpuBuffer::alloc(size)?;
-            buf.copy_from_host(data)?;
-
-            Ok((buf, meta))
-        };
 
         // Load token embeddings using registry
         let token_emb_name = config.tensor_registry.resolve(TensorName::TokenEmb, 0);
-        let (token_emb, token_emb_meta) = load_tensor(&token_emb_name)?;
+        let (token_emb, token_emb_meta) = load_tensor(&token_emb_name, false, false)?;
 
         // Load output norm using registry
         let output_norm_name = config.tensor_registry.resolve(TensorName::OutputNorm, 0);
-        let output_norm_view = file.tensor(&output_norm_name)
+        let output_norm_view = file
+            .tensor(&output_norm_name)
             .map_err(|_| GpuError::WeightTransferFailed { layer: 0 })?
             .ok_or_else(|| GpuError::WeightTransferFailed { layer: 0 })?;
 
@@ -458,18 +550,21 @@ impl GpuModelWeights {
         // LM head: use lm_head.weight if present, otherwise tie to embeddings
         let lm_head_name = config.tensor_registry.resolve(TensorName::LmHead, 0);
         let (lm_head, lm_head_meta, lm_head_tied) = if file.has_tensor(&lm_head_name) {
-            let (buf, mut meta) = load_tensor(&lm_head_name)?;
-            meta.needs_transpose = true; // LM head needs transpose
+            let (buf, meta) = load_tensor(&lm_head_name, true, false)?;
             (buf, meta, false)
         } else {
-            // Weight tying: share embedding weights
-            // For now, create empty buffer - actual sharing would need different design
-            let tied_meta = WeightMeta {
-                wtype: token_emb_meta.wtype,
-                dims: token_emb_meta.dims.clone(),
-                needs_transpose: true,
-            };
-            (GpuBuffer::empty(), tied_meta, true)
+            // Materialize a second GPU buffer for the tied head.
+            // This keeps the decode path simple while preserving explicit tied metadata.
+            let (buf, _) = load_tensor(&token_emb_name, false, false)?;
+            let tied_meta = build_matrix_meta(
+                &lm_head_name,
+                &token_emb_meta.dims,
+                token_emb_meta.wtype,
+                config,
+                true,
+                true,
+            )?;
+            (buf, tied_meta, true)
         };
 
         // Load all layers
@@ -494,5 +589,95 @@ impl GpuModelWeights {
     /// Get weights for a specific layer.
     pub fn layer(&self, i: usize) -> &GpuLayerWeights {
         &self.layers[i]
+    }
+}
+
+#[cfg(test)]
+mod matrix_meta_tests {
+    use super::*;
+    use crate::config::{AttentionLayout, TensorNameRegistry, TensorNamingScheme};
+
+    fn make_test_config() -> ModelConfig {
+        ModelConfig {
+            num_layers: 2,
+            num_kv_heads: 4,
+            head_dim: 128,
+            max_seq_len: 512,
+            hidden_size: 1024,
+            num_heads: 8,
+            intermediate_size: 2048,
+            vocab_size: 32000,
+            rms_norm_eps: 1e-5,
+            rope_theta: 10000.0,
+            rope_neox: false,
+            use_attention_bias: false,
+            attention_layout: AttentionLayout::SplitQkv,
+            architecture: "test".to_string(),
+            tensor_registry: TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf),
+        }
+    }
+
+    #[test]
+    fn explicit_lm_head_matches_cpu_transpose_rule() {
+        let config = make_test_config();
+        let meta = build_matrix_meta(
+            "output.weight",
+            &[32000, 1024],
+            GgmlType::Q4_0,
+            &config,
+            true,
+            false,
+        )
+        .unwrap();
+
+        assert!(!meta.needs_transpose);
+    }
+
+    #[test]
+    fn tied_lm_head_is_marked_transposed() {
+        let config = make_test_config();
+        let meta = build_matrix_meta(
+            "output.weight",
+            &[32000, 1024],
+            GgmlType::Q4_0,
+            &config,
+            true,
+            true,
+        )
+        .unwrap();
+
+        assert!(meta.needs_transpose);
+    }
+
+    #[test]
+    fn unsupported_matrix_type_is_rejected() {
+        let config = make_test_config();
+        let err = build_matrix_meta(
+            "blk.0.attn_q.weight",
+            &[1024, 1024],
+            GgmlType::Q6_K,
+            &config,
+            false,
+            false,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, GpuError::UnsupportedWeightType { .. }));
+    }
+
+    #[test]
+    fn matrix_weights_require_two_dims() {
+        let config = make_test_config();
+        let err = build_matrix_meta(
+            "output.weight",
+            &[32000],
+            GgmlType::Q4_0,
+            &config,
+            true,
+            false,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, GpuError::InvalidWeightLayout { .. }));
     }
 }

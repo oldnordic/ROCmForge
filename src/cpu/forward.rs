@@ -4,7 +4,7 @@
 //! Uses KV cache for efficient attention computation.
 
 use super::cache::{CpuForwardScratch, CpuKvCache};
-use super::ops::{dispatch_gemv, residual_add, rms_norm, rope, silu_fuse, flash_attn_decode};
+use super::ops::{dispatch_gemv, flash_attn_decode, residual_add, rms_norm, rope, silu_fuse};
 use super::weights::{CpuLayerWeights, CpuModelWeights};
 use super::CpuError;
 use crate::config::ModelConfig;
@@ -36,15 +36,43 @@ pub fn cpu_layer_forward(
 
     if debug && layer == 0 {
         let norm_mean: f32 = scratch.normed.iter().copied().sum::<f32>() / h as f32;
-        let norm_std: f32 = ((scratch.normed.iter().map(|x| x * x).sum::<f32>() / h as f32) - norm_mean * norm_mean).sqrt();
-        eprintln!("[Layer {} after norm] mean={:.4} std={:.4}",
-                 layer, norm_mean, norm_std);
+        let norm_std: f32 = ((scratch.normed.iter().map(|x| x * x).sum::<f32>() / h as f32)
+            - norm_mean * norm_mean)
+            .sqrt();
+        eprintln!(
+            "[Layer {} after norm] mean={:.4} std={:.4}",
+            layer, norm_mean, norm_std
+        );
     }
 
     // 2. QKV projections
-    dispatch_gemv(&weights.attn_q, &weights.attn_q_meta, &scratch.normed, &mut scratch.q, q_size, h, Some(&mut scratch.q8_scratch))?;
-    dispatch_gemv(&weights.attn_k, &weights.attn_k_meta, &scratch.normed, &mut scratch.k, kv_size, h, Some(&mut scratch.q8_scratch))?;
-    dispatch_gemv(&weights.attn_v, &weights.attn_v_meta, &scratch.normed, &mut scratch.v, kv_size, h, Some(&mut scratch.q8_scratch))?;
+    dispatch_gemv(
+        &weights.attn_q,
+        &weights.attn_q_meta,
+        &scratch.normed,
+        &mut scratch.q,
+        q_size,
+        h,
+        Some(&mut scratch.q8_scratch),
+    )?;
+    dispatch_gemv(
+        &weights.attn_k,
+        &weights.attn_k_meta,
+        &scratch.normed,
+        &mut scratch.k,
+        kv_size,
+        h,
+        Some(&mut scratch.q8_scratch),
+    )?;
+    dispatch_gemv(
+        &weights.attn_v,
+        &weights.attn_v_meta,
+        &scratch.normed,
+        &mut scratch.v,
+        kv_size,
+        h,
+        Some(&mut scratch.q8_scratch),
+    )?;
 
     // 3. Optional biases (same as prefill)
     if let Some(bq) = &weights.attn_q_bias {
@@ -58,16 +86,32 @@ pub fn cpu_layer_forward(
     }
 
     if debug && layer == 0 {
-        eprintln!("[Layer {} after QKV] q_mean={:.4} k_mean={:.4} v_mean={:.4}",
-                 layer,
-                 scratch.q.iter().copied().sum::<f32>() / q_size as f32,
-                 scratch.k.iter().copied().sum::<f32>() / kv_size as f32,
-                 scratch.v.iter().copied().sum::<f32>() / kv_size as f32);
+        eprintln!(
+            "[Layer {} after QKV] q_mean={:.4} k_mean={:.4} v_mean={:.4}",
+            layer,
+            scratch.q.iter().copied().sum::<f32>() / q_size as f32,
+            scratch.k.iter().copied().sum::<f32>() / kv_size as f32,
+            scratch.v.iter().copied().sum::<f32>() / kv_size as f32
+        );
     }
 
     // 3. RoPE on Q and K
-    rope(&mut scratch.q, config.num_heads, config.head_dim, pos, config.rope_theta, config.rope_neox);
-    rope(&mut scratch.k, config.num_kv_heads, config.head_dim, pos, config.rope_theta, config.rope_neox);
+    rope(
+        &mut scratch.q,
+        config.num_heads,
+        config.head_dim,
+        pos,
+        config.rope_theta,
+        config.rope_neox,
+    );
+    rope(
+        &mut scratch.k,
+        config.num_kv_heads,
+        config.head_dim,
+        pos,
+        config.rope_theta,
+        config.rope_neox,
+    );
 
     // 4. Write K, V in cache
     kv.write_k(layer, pos, &scratch.k);
@@ -98,18 +142,35 @@ pub fn cpu_layer_forward(
 
     if debug && layer == 0 {
         let ao_mean: f32 = scratch.attn_out.iter().copied().sum::<f32>() / q_size as f32;
-        let ao_std: f32 = ((scratch.attn_out.iter().map(|x| x * x).sum::<f32>() / q_size as f32) - ao_mean * ao_mean).sqrt();
-        eprintln!("[Layer {} after attn] out_mean={:.4} out_std={:.4}",
-                 layer, ao_mean, ao_std);
+        let ao_std: f32 = ((scratch.attn_out.iter().map(|x| x * x).sum::<f32>() / q_size as f32)
+            - ao_mean * ao_mean)
+            .sqrt();
+        eprintln!(
+            "[Layer {} after attn] out_mean={:.4} out_std={:.4}",
+            layer, ao_mean, ao_std
+        );
     }
 
     // 6. Output projection
-    dispatch_gemv(&weights.attn_o, &weights.attn_o_meta, &scratch.attn_out, &mut scratch.layer_out, h, q_size, Some(&mut scratch.q8_scratch))?;
+    dispatch_gemv(
+        &weights.attn_o,
+        &weights.attn_o_meta,
+        &scratch.attn_out,
+        &mut scratch.layer_out,
+        h,
+        q_size,
+        Some(&mut scratch.q8_scratch),
+    )?;
 
     if debug && layer == 0 {
         let lo_mean: f32 = scratch.layer_out.iter().copied().sum::<f32>() / h as f32;
-        let lo_std: f32 = ((scratch.layer_out.iter().map(|x| x * x).sum::<f32>() / h as f32) - lo_mean * lo_mean).sqrt();
-        eprintln!("[Layer {} attn_out_proj] layer_out mean={:.4} std={:.4}", layer, lo_mean, lo_std);
+        let lo_std: f32 = ((scratch.layer_out.iter().map(|x| x * x).sum::<f32>() / h as f32)
+            - lo_mean * lo_mean)
+            .sqrt();
+        eprintln!(
+            "[Layer {} attn_out_proj] layer_out mean={:.4} std={:.4}",
+            layer, lo_mean, lo_std
+        );
     }
 
     // 7. Residual
@@ -117,26 +178,64 @@ pub fn cpu_layer_forward(
 
     if debug && layer == 0 {
         let h_mean: f32 = hidden.iter().copied().sum::<f32>() / h as f32;
-        let h_std: f32 = ((hidden.iter().map(|x| x * x).sum::<f32>() / h as f32) - h_mean * h_mean).sqrt();
-        eprintln!("[Layer {} after attn residual] hidden mean={:.4} std={:.4}", layer, h_mean, h_std);
+        let h_std: f32 =
+            ((hidden.iter().map(|x| x * x).sum::<f32>() / h as f32) - h_mean * h_mean).sqrt();
+        eprintln!(
+            "[Layer {} after attn residual] hidden mean={:.4} std={:.4}",
+            layer, h_mean, h_std
+        );
     }
 
     // 8. FFN RMS norm
     rms_norm(hidden, &weights.ffn_norm, &mut scratch.normed, eps);
 
     // 9. FFN: gate + up projections
-    dispatch_gemv(&weights.ffn_gate, &weights.ffn_gate_meta, &scratch.normed, &mut scratch.gate, ff_size, h, Some(&mut scratch.q8_scratch))?;
-    dispatch_gemv(&weights.ffn_up, &weights.ffn_up_meta, &scratch.normed, &mut scratch.swiglu, ff_size, h, Some(&mut scratch.q8_scratch))?;
+    dispatch_gemv(
+        &weights.ffn_gate,
+        &weights.ffn_gate_meta,
+        &scratch.normed,
+        &mut scratch.gate,
+        ff_size,
+        h,
+        Some(&mut scratch.q8_scratch),
+    )?;
+    dispatch_gemv(
+        &weights.ffn_up,
+        &weights.ffn_up_meta,
+        &scratch.normed,
+        &mut scratch.swiglu,
+        ff_size,
+        h,
+        Some(&mut scratch.q8_scratch),
+    )?;
 
     if debug && layer == 0 {
         let gate_mean: f32 = scratch.gate.iter().copied().sum::<f32>() / ff_size as f32;
-        let gate_std: f32 = ((scratch.gate.iter().map(|x| x * x).sum::<f32>() / ff_size as f32) - gate_mean * gate_mean).sqrt();
+        let gate_std: f32 = ((scratch.gate.iter().map(|x| x * x).sum::<f32>() / ff_size as f32)
+            - gate_mean * gate_mean)
+            .sqrt();
         let up_mean: f32 = scratch.swiglu.iter().copied().sum::<f32>() / ff_size as f32;
-        let up_std: f32 = ((scratch.swiglu.iter().map(|x| x * x).sum::<f32>() / ff_size as f32) - up_mean * up_mean).sqrt();
-        eprintln!("[Layer {} ffn_gate] mean={:.4} std={:.4}", layer, gate_mean, gate_std);
-        eprintln!("[Layer {} ffn_up] mean={:.4} std={:.4}", layer, up_mean, up_std);
-        eprintln!("[Layer {} ffn_gate] [0..5] = {:?}", layer, &scratch.gate[0..5]);
-        eprintln!("[Layer {} ffn_up] [0..5] = {:?}", layer, &scratch.swiglu[0..5]);
+        let up_std: f32 = ((scratch.swiglu.iter().map(|x| x * x).sum::<f32>() / ff_size as f32)
+            - up_mean * up_mean)
+            .sqrt();
+        eprintln!(
+            "[Layer {} ffn_gate] mean={:.4} std={:.4}",
+            layer, gate_mean, gate_std
+        );
+        eprintln!(
+            "[Layer {} ffn_up] mean={:.4} std={:.4}",
+            layer, up_mean, up_std
+        );
+        eprintln!(
+            "[Layer {} ffn_gate] [0..5] = {:?}",
+            layer,
+            &scratch.gate[0..5]
+        );
+        eprintln!(
+            "[Layer {} ffn_up] [0..5] = {:?}",
+            layer,
+            &scratch.swiglu[0..5]
+        );
     }
 
     // 10. SwiGLU: silu(gate) * up
@@ -144,8 +243,14 @@ pub fn cpu_layer_forward(
 
     if debug && layer == 0 {
         let swiglu_mean: f32 = scratch.swiglu.iter().copied().sum::<f32>() / ff_size as f32;
-        let swiglu_std: f32 = ((scratch.swiglu.iter().map(|x| x * x).sum::<f32>() / ff_size as f32) - swiglu_mean * swiglu_mean).sqrt();
-        eprintln!("[Layer {} swiglu] mean={:.4} std={:.4}", layer, swiglu_mean, swiglu_std);
+        let swiglu_std: f32 = ((scratch.swiglu.iter().map(|x| x * x).sum::<f32>()
+            / ff_size as f32)
+            - swiglu_mean * swiglu_mean)
+            .sqrt();
+        eprintln!(
+            "[Layer {} swiglu] mean={:.4} std={:.4}",
+            layer, swiglu_mean, swiglu_std
+        );
     }
 
     // 11. Down projection
@@ -157,13 +262,24 @@ pub fn cpu_layer_forward(
         let expected_weight_bytes = h * col_bytes;
         eprintln!("[Layer {} ffn_down] out_dim={} in_dim={} num_blocks_per_col={} col_bytes={} expected_weight_bytes={} actual_weight_bytes={}",
                  layer, h, ff_size, num_blocks_per_col, col_bytes, expected_weight_bytes, weights.ffn_down.len());
-        eprintln!("[Layer {} ffn_down] swiglu.len={} layer_out.len={}",
-                 layer, scratch.swiglu.len(), scratch.layer_out.len());
+        eprintln!(
+            "[Layer {} ffn_down] swiglu.len={} layer_out.len={}",
+            layer,
+            scratch.swiglu.len(),
+            scratch.layer_out.len()
+        );
         // Print first 5 values of swiglu
-        eprintln!("[Layer {} ffn_down] swiglu[0..5] = {:?}", layer, &scratch.swiglu[0..5]);
+        eprintln!(
+            "[Layer {} ffn_down] swiglu[0..5] = {:?}",
+            layer,
+            &scratch.swiglu[0..5]
+        );
         // Print first block of weights
         let first_block = &weights.ffn_down[0..18];
-        eprintln!("[Layer {} ffn_down] first_weight_block = {:?}", layer, first_block);
+        eprintln!(
+            "[Layer {} ffn_down] first_weight_block = {:?}",
+            layer, first_block
+        );
         let scale = super::quant::load_f16_scale(&first_block[0..2]);
         let qs = &first_block[2..18];
         let mut dequant = [0.0f32; 32];
@@ -171,7 +287,11 @@ pub fn cpu_layer_forward(
             dequant[i] = (((qs[i] & 0x0F) as i32) - 8) as f32 * scale;
             dequant[i + 16] = (((qs[i] >> 4) as i32) - 8) as f32 * scale;
         }
-        eprintln!("[Layer {} ffn_down] first_block dequant[0..5] = {:?}", layer, &dequant[0..5]);
+        eprintln!(
+            "[Layer {} ffn_down] first_block dequant[0..5] = {:?}",
+            layer,
+            &dequant[0..5]
+        );
     }
     // FFN down projection - uses metadata to determine if transposition is needed
     super::ops::dispatch_gemv(
@@ -179,16 +299,25 @@ pub fn cpu_layer_forward(
         &weights.ffn_down_meta,
         &scratch.swiglu,
         &mut scratch.layer_out,
-        h,  // out_dim (hidden_size)
-        ff_size,  // in_dim (intermediate_size)
+        h,       // out_dim (hidden_size)
+        ff_size, // in_dim (intermediate_size)
         Some(&mut scratch.q8_scratch),
     )?;
 
     if debug && layer == 0 {
         let ffn_out_mean: f32 = scratch.layer_out.iter().copied().sum::<f32>() / h as f32;
-        let ffn_out_std: f32 = ((scratch.layer_out.iter().map(|x| x * x).sum::<f32>() / h as f32) - ffn_out_mean * ffn_out_mean).sqrt();
-        eprintln!("[Layer {} ffn_down] layer_out mean={:.4} std={:.4}", layer, ffn_out_mean, ffn_out_std);
-        eprintln!("[Layer {} ffn_down] layer_out[0..5] = {:?}", layer, &scratch.layer_out[0..5]);
+        let ffn_out_std: f32 = ((scratch.layer_out.iter().map(|x| x * x).sum::<f32>() / h as f32)
+            - ffn_out_mean * ffn_out_mean)
+            .sqrt();
+        eprintln!(
+            "[Layer {} ffn_down] layer_out mean={:.4} std={:.4}",
+            layer, ffn_out_mean, ffn_out_std
+        );
+        eprintln!(
+            "[Layer {} ffn_down] layer_out[0..5] = {:?}",
+            layer,
+            &scratch.layer_out[0..5]
+        );
     }
 
     // 12. Residual
@@ -196,8 +325,12 @@ pub fn cpu_layer_forward(
 
     if debug && layer == 0 {
         let h_mean: f32 = hidden.iter().copied().sum::<f32>() / h as f32;
-        let h_std: f32 = ((hidden.iter().map(|x| x * x).sum::<f32>() / h as f32) - h_mean * h_mean).sqrt();
-        eprintln!("[Layer {} after ffn residual] hidden mean={:.4} std={:.4}", layer, h_mean, h_std);
+        let h_std: f32 =
+            ((hidden.iter().map(|x| x * x).sum::<f32>() / h as f32) - h_mean * h_mean).sqrt();
+        eprintln!(
+            "[Layer {} after ffn residual] hidden mean={:.4} std={:.4}",
+            layer, h_mean, h_std
+        );
     }
 
     Ok(())
@@ -220,8 +353,13 @@ pub fn cpu_full_forward(
     let debug = std::env::var("ROCMFORGE_DEBUG").is_ok();
     if debug {
         let mean: f32 = hidden.iter().copied().sum::<f32>() / hidden.len() as f32;
-        let std: f32 = ((hidden.iter().map(|x| x * x).sum::<f32>() / hidden.len() as f32) - mean * mean).sqrt();
-        eprintln!("[Forward input] pos={} mean={:.4} std={:.4}", pos, mean, std);
+        let std: f32 = ((hidden.iter().map(|x| x * x).sum::<f32>() / hidden.len() as f32)
+            - mean * mean)
+            .sqrt();
+        eprintln!(
+            "[Forward input] pos={} mean={:.4} std={:.4}",
+            pos, mean, std
+        );
     }
 
     // Process all transformer layers
@@ -240,18 +378,31 @@ pub fn cpu_full_forward(
         // Debug: show hidden state after each layer
         if debug && layer_idx < 2 {
             let mean: f32 = hidden.iter().copied().sum::<f32>() / hidden.len() as f32;
-            let std: f32 = ((hidden.iter().map(|x| x * x).sum::<f32>() / hidden.len() as f32) - mean * mean).sqrt();
-            eprintln!("[After layer {}] mean={:.4} std={:.4}", layer_idx, mean, std);
+            let std: f32 = ((hidden.iter().map(|x| x * x).sum::<f32>() / hidden.len() as f32)
+                - mean * mean)
+                .sqrt();
+            eprintln!(
+                "[After layer {}] mean={:.4} std={:.4}",
+                layer_idx, mean, std
+            );
         }
     }
 
     // Final RMS norm
-    rms_norm(hidden, &weights.output_norm, &mut scratch.normed, config.rms_norm_eps);
+    rms_norm(
+        hidden,
+        &weights.output_norm,
+        &mut scratch.normed,
+        config.rms_norm_eps,
+    );
 
     // Debug: show normed output
     if debug {
         let mean: f32 = scratch.normed.iter().copied().sum::<f32>() / scratch.normed.len() as f32;
-        let std: f32 = ((scratch.normed.iter().map(|x| x * x).sum::<f32>() / scratch.normed.len() as f32) - mean * mean).sqrt();
+        let std: f32 = ((scratch.normed.iter().map(|x| x * x).sum::<f32>()
+            / scratch.normed.len() as f32)
+            - mean * mean)
+            .sqrt();
         eprintln!("[After final norm] mean={:.4} std={:.4}", mean, std);
     }
 
@@ -259,9 +410,14 @@ pub fn cpu_full_forward(
     let h = config.hidden_size;
     let v = config.vocab_size;
     if debug {
-        eprintln!("[LM head] type={:?} h={} v={} tied={} transpose={}",
-                 weights.lm_head_meta.wtype, h, v, weights.lm_head_tied,
-                 weights.lm_head_meta.needs_transpose);
+        eprintln!(
+            "[LM head] type={:?} h={} v={} tied={} transpose={}",
+            weights.lm_head_meta.wtype,
+            h,
+            v,
+            weights.lm_head_tied,
+            weights.lm_head_meta.needs_transpose
+        );
     }
     // Use metadata to automatically select correct kernel (regular or transposed)
     super::ops::dispatch_gemv(
@@ -269,18 +425,28 @@ pub fn cpu_full_forward(
         &weights.lm_head_meta,
         &scratch.normed,
         &mut scratch.logits,
-        v,  // vocab_size (out_dim)
-        h,  // hidden_size (in_dim)
+        v, // vocab_size (out_dim)
+        h, // hidden_size (in_dim)
         Some(&mut scratch.q8_scratch),
     )?;
 
     // Debug: show logits statistics
     if debug {
         let mean: f32 = scratch.logits.iter().copied().sum::<f32>() / scratch.logits.len() as f32;
-        let std: f32 = ((scratch.logits.iter().map(|x| x * x).sum::<f32>() / scratch.logits.len() as f32) - mean * mean).sqrt();
+        let std: f32 = ((scratch.logits.iter().map(|x| x * x).sum::<f32>()
+            / scratch.logits.len() as f32)
+            - mean * mean)
+            .sqrt();
         let min: f32 = scratch.logits.iter().cloned().fold(f32::INFINITY, f32::min);
-        let max: f32 = scratch.logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        eprintln!("[After LM head] mean={:.4} std={:.4} range=[{:.4}, {:.4}]", mean, std, min, max);
+        let max: f32 = scratch
+            .logits
+            .iter()
+            .cloned()
+            .fold(f32::NEG_INFINITY, f32::max);
+        eprintln!(
+            "[After LM head] mean={:.4} std={:.4} range=[{:.4}, {:.4}]",
+            mean, std, min, max
+        );
     }
 
     Ok(())
@@ -302,7 +468,10 @@ pub fn cpu_embed_token(
     match weights.token_emb_meta.wtype {
         GgmlType::F32 => {
             let emb: &[f32] = unsafe {
-                std::slice::from_raw_parts(weights.token_emb.as_ptr() as *const f32, weights.token_emb.len() / 4)
+                std::slice::from_raw_parts(
+                    weights.token_emb.as_ptr() as *const f32,
+                    weights.token_emb.len() / 4,
+                )
             };
             super::quant::embed_f32(token_id as usize, emb, &mut hidden[..h]);
         }
@@ -324,7 +493,9 @@ pub fn cpu_embed_token(
         GgmlType::Q8_0 => {
             super::quant::embed_q8_0(token_id as usize, &weights.token_emb, &mut hidden[..h], h);
         }
-        _ => panic!("Unsupported embedding type: {:?}", weights.token_emb_meta.wtype),
+        _ => panic!(
+            "Unsupported embedding type: {:?}",
+            weights.token_emb_meta.wtype
+        ),
     }
 }
-

@@ -13,7 +13,10 @@ mod gpu_build {
         use std::process::Command;
 
         let hip_path = find_rocm_path();
-        let hip_path = hip_path.as_ref().map(|p| p.as_path()).unwrap_or(Path::new("/opt/rocm"));
+        let hip_path = hip_path
+            .as_ref()
+            .map(|p| p.as_path())
+            .unwrap_or(Path::new("/opt/rocm"));
 
         let kernels = [
             ("norm", "hip_kernels/norm.hip"),
@@ -27,7 +30,10 @@ mod gpu_build {
         let hipcc = hip_path.join("bin/hipcc");
 
         if !hipcc.exists() {
-            println!("cargo:warning=hipcc not found at {:?}, skipping kernel compilation", hipcc);
+            println!(
+                "cargo:warning=hipcc not found at {:?}, skipping kernel compilation",
+                hipcc
+            );
             println!("cargo:warning=GPU feature will use Memoria's libgpu.so as fallback");
             return;
         }
@@ -75,7 +81,11 @@ mod gpu_build {
                     }
                 }
                 Ok(s) => {
-                    println!("cargo:warning=Kernel {} compilation returned non-zero exit code: {:?}", name, s.code());
+                    println!(
+                        "cargo:warning=Kernel {} compilation returned non-zero exit code: {:?}",
+                        name,
+                        s.code()
+                    );
                 }
                 Err(e) => {
                     println!("cargo:warning=Kernel {} compilation failed: {:?}", name, e);
@@ -102,7 +112,10 @@ mod gpu_build {
         // Create build directory if it doesn't exist
         if !quant_build.exists() {
             if let Err(e) = std::fs::create_dir_all(quant_build) {
-                println!("cargo:warning=Failed to create quant build directory: {}", e);
+                println!(
+                    "cargo:warning=Failed to create quant build directory: {}",
+                    e
+                );
                 return;
             }
         }
@@ -120,10 +133,7 @@ mod gpu_build {
         match config_status {
             Ok(s) if s.success() => {
                 // Build the project
-                let build_status = Command::new(cmake)
-                    .arg("--build")
-                    .arg(quant_build)
-                    .status();
+                let build_status = Command::new(cmake).arg("--build").arg(quant_build).status();
 
                 match build_status {
                     Ok(_) => {
@@ -157,6 +167,13 @@ mod gpu_build {
                             ("libq4_1_dequantize.a", "q4_1_dequantize"),
                             ("libq4_1_verify.a", "q4_1_verify"),
                             ("libq4_1_gemv.a", "q4_1_gemv"),
+                            // GEMM libraries
+                            ("libq4_0_gemm.a", "q4_0_gemm"),
+                            ("libq4_0_fused.a", "q4_0_fused"),
+                            ("libq4_1_gemm.a", "q4_1_gemm"),
+                            ("libq8_0_gemm.a", "q8_0_gemm"),
+                            ("libq4_k_gemm.a", "q4_k_gemm"),
+                            ("libq5_k_gemm.a", "q5_k_gemm"),
                         ];
 
                         for (lib_name, link_name) in libs_to_copy {
@@ -182,7 +199,10 @@ mod gpu_build {
                 }
             }
             Ok(s) => {
-                println!("cargo:warning=CMake configuration returned non-zero: {:?}", s.code());
+                println!(
+                    "cargo:warning=CMake configuration returned non-zero: {:?}",
+                    s.code()
+                );
             }
             Err(e) => {
                 println!("cargo:warning=CMake configuration failed: {:?}", e);
@@ -246,10 +266,15 @@ fn main() {
         gpu_build::compile_quant_kernels();
 
         // Link HIP runtime
-        let hip_path = env::var("HIP_PATH").ok()
+        let hip_path = env::var("HIP_PATH")
+            .ok()
             .and_then(|p| {
                 let path = PathBuf::from(&p);
-                if path.exists() { Some(path) } else { None }
+                if path.exists() {
+                    Some(path)
+                } else {
+                    None
+                }
             })
             .or_else(|| {
                 if PathBuf::from("/opt/rocm/lib").exists() {

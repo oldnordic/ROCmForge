@@ -10,13 +10,13 @@
 
 mod common;
 
-use serial_test::serial;
-use rocmforge::gpu::{self, GpuDevice, GpuKvCache, GpuForwardScratch};
 use rocmforge::config::ModelConfig;
+use rocmforge::gpu::{self, GpuDevice, GpuForwardScratch, GpuKvCache};
+use serial_test::serial;
 // require_gpu! and require_vram! macros are available via #[macro_export] in common/mod.rs
 
 fn make_test_config() -> ModelConfig {
-    use rocmforge::config::{TensorNamingScheme, TensorNameRegistry};
+    use rocmforge::config::{TensorNameRegistry, TensorNamingScheme};
     ModelConfig {
         num_layers: 2,
         num_kv_heads: 4,
@@ -49,7 +49,11 @@ fn test_full_gpu_pipeline_initialization() {
 
     // Step 2: Verify GPU capabilities
     let caps = gpu::detect().expect("GPU should be detected");
-    println!("GPU: {} ({} GB free)", caps.device_name, caps.free_vram_gb());
+    println!(
+        "GPU: {} ({} GB free)",
+        caps.device_name,
+        caps.free_vram_gb()
+    );
 
     // Step 3: Allocate KV cache
     let kv_cache = GpuKvCache::new(&config, 256).expect("KV cache should allocate");
@@ -61,6 +65,7 @@ fn test_full_gpu_pipeline_initialization() {
     assert_eq!(device.device_id(), 0);
     assert_eq!(kv_cache.num_layers, 2);
     assert_eq!(kv_cache.max_seq_len, 256);
+    assert!(!scratch.hidden.is_empty());
     assert!(!scratch.q.is_empty());
     assert!(!scratch.k.is_empty());
     assert!(!scratch.v.is_empty());
@@ -81,6 +86,7 @@ fn test_single_token_decode_setup() {
     let scratch = GpuForwardScratch::new(&config).expect("Scratch should allocate");
 
     // Verify we have all necessary buffers
+    assert!(!scratch.hidden.is_empty(), "hidden buffer required");
     assert!(!scratch.normed.is_empty(), "normed buffer required");
     assert!(!scratch.q.is_empty(), "q buffer required");
     assert!(!scratch.k.is_empty(), "k buffer required");
@@ -112,14 +118,20 @@ fn test_prefill_batch_setup() {
     let scratch = GpuForwardScratch::new(&config).expect("Scratch should allocate");
 
     // Verify KV cache can handle the sequence length
-    assert!(kv_cache.max_seq_len >= seq_len, "KV cache must accommodate prefill length");
+    assert!(
+        kv_cache.max_seq_len >= seq_len,
+        "KV cache must accommodate prefill length"
+    );
 
     // For prefill, batched kernels would be used
     // Verify we have the buffer space
     let scratch_bytes = scratch.layer_out.size();
 
     // This is a rough check - scratch buffers are reused
-    assert!(scratch_bytes >= config.hidden_size * 4, "Scratch must have enough space");
+    assert!(
+        scratch_bytes >= config.hidden_size * 4,
+        "Scratch must have enough space"
+    );
 
     println!("✓ Prefill batch setup verified for {} tokens", seq_len);
 }
@@ -139,29 +151,32 @@ fn test_memory_usage_within_vram() {
 
     let kv_cache_bytes = kv_cache.memory_bytes();
 
-    let scratch_bytes =
-        scratch.normed.size() +
-        scratch.q.size() +
-        scratch.k.size() +
-        scratch.v.size() +
-        scratch.attn_out.size() +
-        scratch.layer_out.size() +
-        scratch.gate.size() +
-        scratch.swiglu.size() +
-        scratch.logits.size();
+    let scratch_bytes = scratch.hidden.size()
+        + scratch.normed.size()
+        + scratch.q.size()
+        + scratch.k.size()
+        + scratch.v.size()
+        + scratch.attn_out.size()
+        + scratch.layer_out.size()
+        + scratch.gate.size()
+        + scratch.swiglu.size()
+        + scratch.logits.size();
 
     let total_bytes = kv_cache_bytes + scratch_bytes;
     let total_gb = total_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
 
-    println!("Memory usage: {:.2} GB (KV cache: {:.2} GB, Scratch: {:.2} GB)",
+    println!(
+        "Memory usage: {:.2} GB (KV cache: {:.2} GB, Scratch: {:.2} GB)",
         total_gb,
         kv_cache_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
         scratch_bytes as f64 / (1024.0 * 1024.0 * 1024.0)
     );
 
     // Verify we're using less than available VRAM
-    assert!(total_bytes < caps.free_vram_bytes,
-        "Memory usage should fit within available VRAM");
+    assert!(
+        total_bytes < caps.free_vram_bytes,
+        "Memory usage should fit within available VRAM"
+    );
 }
 
 #[test]

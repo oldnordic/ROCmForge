@@ -34,7 +34,7 @@ impl GpuArchitecture {
     /// Warp size (wavefront size) for this architecture
     pub fn warp_size(&self) -> u32 {
         match self {
-            Self::Gfx1100 | Self::Gfx1030 => 32, // RDNA
+            Self::Gfx1100 | Self::Gfx1030 => 32,              // RDNA
             Self::Gfx90a | Self::Gfx908 | Self::Gfx900 => 64, // CDNA/Vega
             Self::Unknown(_) => 32,
         }
@@ -54,10 +54,7 @@ impl GpuArchitecture {
     pub fn from_name(name: &str) -> Option<Self> {
         // Handle format: "gfx1100" or "gfx1100_architecture" or similar
         let name_lower = name.to_lowercase();
-        let gfx_name = name_lower
-            .split('_')
-            .next()?
-            .trim_start_matches("gfx");
+        let gfx_name = name_lower.split('_').next()?.trim_start_matches("gfx");
 
         let arch_id = u32::from_str_radix(gfx_name, 16).ok()?;
         Some(match arch_id {
@@ -118,6 +115,9 @@ mod tests {
     #[test]
     fn test_shared_mem_per_block() {
         assert_eq!(GpuArchitecture::Gfx1100.shared_mem_per_block(), 64 * 1024);
-        assert_eq!(GpuArchitecture::Unknown(999).shared_mem_per_block(), 32 * 1024);
+        assert_eq!(
+            GpuArchitecture::Unknown(999).shared_mem_per_block(),
+            32 * 1024
+        );
     }
 }

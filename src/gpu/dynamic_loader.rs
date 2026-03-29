@@ -8,10 +8,10 @@
 
 use super::error::{GpuError, GpuResult};
 use std::ffi::CStr;
+use std::fmt;
 use std::os::raw::{c_char, c_int, c_void};
 use std::path::PathBuf;
 use std::sync::OnceLock;
-use std::fmt;
 
 /// Search paths for kernel library, in order of priority.
 ///
@@ -61,8 +61,8 @@ fn detect_rocm_path() -> Result<PathBuf, ()> {
     // Check common ROCm installation directories
     let rocm_dirs = [
         "/opt/rocm",
-        "/opt/rocm-@VERSION@",  // Versioned installations
-        "/usr/lib/x86_64-linux-gnu",  // System ROCm packages
+        "/opt/rocm-@VERSION@",       // Versioned installations
+        "/usr/lib/x86_64-linux-gnu", // System ROCm packages
     ];
 
     for dir in rocm_dirs {
@@ -109,8 +109,9 @@ impl DynamicLibrary {
             // Try to open the library
             let handle = unsafe {
                 let path_str = full_path.to_string_lossy();
+                let c_path = std::ffi::CString::new(path_str.as_ref()).unwrap();
                 libc::dlopen(
-                    path_str.as_ptr() as *const i8,
+                    c_path.as_ptr(),
                     libc::RTLD_LAZY | libc::RTLD_LOCAL,
                 )
             };
@@ -135,12 +136,7 @@ impl DynamicLibrary {
     pub fn get_symbol(&self, symbol_name: &str) -> GpuResult<*const c_void> {
         let symbol_cstr = format!("{}\0", symbol_name);
 
-        let ptr = unsafe {
-            libc::dlsym(
-                self.handle,
-                symbol_cstr.as_ptr() as *const i8,
-            )
-        };
+        let ptr = unsafe { libc::dlsym(self.handle, symbol_cstr.as_ptr() as *const i8) };
 
         if ptr.is_null() {
             return Err(GpuError::HipApiError {
@@ -217,39 +213,53 @@ impl KernelRegistry {
     ///
     /// # Safety
     /// Caller must ensure the function signature matches the actual kernel.
-    unsafe fn load_kernel<T>(
-        library: &DynamicLibrary,
-        symbol_name: &str,
-    ) -> GpuResult<T> {
+    unsafe fn load_kernel<T>(library: &DynamicLibrary, symbol_name: &str) -> GpuResult<T> {
         let ptr = library.get_symbol(symbol_name)?;
 
         Ok(std::mem::transmute_copy::<*const c_void, T>(&ptr))
     }
 
     /// Get gpu_kv_write kernel.
-    pub fn gpu_kv_write(&self) -> GpuResult<unsafe extern "C" fn(
-        *mut f32, *mut f32, *const f32, *const f32,
-        c_int, c_int, c_int
-    ) -> c_int> {
-        let library = self.library.as_ref()
-            .ok_or_else(|| GpuError::HipApiError {
-                code: -1,
-                description: "Kernel library not loaded".to_string(),
-            })?;
+    pub fn gpu_kv_write(
+        &self,
+    ) -> GpuResult<
+        unsafe extern "C" fn(
+            *mut f32,
+            *mut f32,
+            *const f32,
+            *const f32,
+            c_int,
+            c_int,
+            c_int,
+        ) -> c_int,
+    > {
+        let library = self.library.as_ref().ok_or_else(|| GpuError::HipApiError {
+            code: -1,
+            description: "Kernel library not loaded".to_string(),
+        })?;
 
         unsafe { Self::load_kernel(library, "gpu_kv_write") }
     }
 
     /// Get gpu_kv_write_batched kernel.
-    pub fn gpu_kv_write_batched(&self) -> GpuResult<unsafe extern "C" fn(
-        *mut f32, *mut f32, *const f32, *const f32,
-        c_int, c_int, c_int, c_int
-    ) -> c_int> {
-        let library = self.library.as_ref()
-            .ok_or_else(|| GpuError::HipApiError {
-                code: -1,
-                description: "Kernel library not loaded".to_string(),
-            })?;
+    pub fn gpu_kv_write_batched(
+        &self,
+    ) -> GpuResult<
+        unsafe extern "C" fn(
+            *mut f32,
+            *mut f32,
+            *const f32,
+            *const f32,
+            c_int,
+            c_int,
+            c_int,
+            c_int,
+        ) -> c_int,
+    > {
+        let library = self.library.as_ref().ok_or_else(|| GpuError::HipApiError {
+            code: -1,
+            description: "Kernel library not loaded".to_string(),
+        })?;
 
         unsafe { Self::load_kernel(library, "gpu_kv_write_batched") }
     }
@@ -332,6 +342,9 @@ mod registry_tests {
     #[test]
     fn library_info_returns_none_before_load() {
         let info = library_info();
-        assert!(info.is_none(), "library_info should be None before any kernel is loaded");
+        assert!(
+            info.is_none(),
+            "library_info should be None before any kernel is loaded"
+        );
     }
 }

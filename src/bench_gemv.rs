@@ -1,5 +1,4 @@
 /// Simple benchmark for GEMV performance comparison.
-
 use rocmforge::cpu::ops::{gemv_q4_0, gemv_q4_0_q8_0};
 use rocmforge::cpu::quant::{load_f16_scale, store_f16_scale};
 
@@ -47,11 +46,23 @@ fn main() {
     let elapsed_q8 = start.elapsed();
     let tps_q8 = (iterations as f64 * 1000.0) / elapsed_q8.as_secs_f64();
 
-    println!("Q4_0 × f32: {:.2} ms per GEMV ({:.1} calls/s)", elapsed_f32.as_millis() as f64 / iterations as f64, tps_f32);
-    println!("Q4_0 × Q8_0: {:.2} ms per GEMV ({:.1} calls/s)", elapsed_q8.as_millis() as f64 / iterations as f64, tps_q8);
+    println!(
+        "Q4_0 × f32: {:.2} ms per GEMV ({:.1} calls/s)",
+        elapsed_f32.as_millis() as f64 / iterations as f64,
+        tps_f32
+    );
+    println!(
+        "Q4_0 × Q8_0: {:.2} ms per GEMV ({:.1} calls/s)",
+        elapsed_q8.as_millis() as f64 / iterations as f64,
+        tps_q8
+    );
     println!("Speedup: {:.2}x", tps_q8 / tps_f32);
 
     // Verify correctness
-    let max_diff = y_f32.iter().zip(y_q8.iter()).map(|(a, b)| (a - b).abs()).fold(0.0f32, |m, d| m.max(d));
+    let max_diff = y_f32
+        .iter()
+        .zip(y_q8.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, |m, d| m.max(d));
     println!("Max difference: {:.6}", max_diff);
 }

@@ -90,14 +90,28 @@ impl BpeTokenizer {
             _ => PreTokenizerType::Qwen2, // Default to Qwen2 for rocmforge
         };
 
-        Self::new(data.tokens.clone(), data.merges.clone(),
-                 data.bos_token_id, data.eos_token_id, data.unk_token_id,
-                 data.add_bos, data.add_eos, pre_type)
+        Self::new(
+            data.tokens.clone(),
+            data.merges.clone(),
+            data.bos_token_id,
+            data.eos_token_id,
+            data.unk_token_id,
+            data.add_bos,
+            data.add_eos,
+            pre_type,
+        )
     }
 
-    fn new(vocab: Vec<Vec<u8>>, merges: Vec<(Vec<u8>, Vec<u8>)>,
-            bos: Option<u32>, eos: Option<u32>, unk: Option<u32>,
-            add_bos: bool, add_eos: bool, pre_type: PreTokenizerType) -> Self {
+    fn new(
+        vocab: Vec<Vec<u8>>,
+        merges: Vec<(Vec<u8>, Vec<u8>)>,
+        bos: Option<u32>,
+        eos: Option<u32>,
+        unk: Option<u32>,
+        add_bos: bool,
+        add_eos: bool,
+        pre_type: PreTokenizerType,
+    ) -> Self {
         let mut token_to_id = HashMap::with_capacity(vocab.len());
         let mut special_tokens = HashSet::new();
         for (id, token) in vocab.iter().enumerate() {
@@ -432,8 +446,7 @@ impl BpeTokenizer {
         if let Some(bytes) = self.vocab.get(id as usize) {
             matches!(
                 String::from_utf8_lossy(bytes).as_ref(),
-                ""
-                    | "<|eos|>"
+                "" | "<|eos|>"
                     | "</s>"
                     | "<|eot_id|>"
                     | "<|eom_id|>"
@@ -536,7 +549,16 @@ mod tests {
             (b"he".to_vec(), b"ll".to_vec()),
             (b"hel".to_vec(), b"lo".to_vec()),
         ];
-        BpeTokenizer::new(vocab, merges, None, Some(9), None, false, false, PreTokenizerType::Qwen2)
+        BpeTokenizer::new(
+            vocab,
+            merges,
+            None,
+            Some(9),
+            None,
+            false,
+            false,
+            PreTokenizerType::Qwen2,
+        )
     }
 
     #[test]

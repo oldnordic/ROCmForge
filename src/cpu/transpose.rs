@@ -20,7 +20,12 @@ use crate::loader::TensorDesc;
 /// Returns:
 /// - `true` if tensor should be transposed before GEMV
 /// - `false` if tensor is already in correct layout
-pub fn needs_transposition(tensor: &TensorDesc, is_lm_head: bool, hidden_size: usize, vocab_size: usize) -> bool {
+pub fn needs_transposition(
+    tensor: &TensorDesc,
+    is_lm_head: bool,
+    hidden_size: usize,
+    vocab_size: usize,
+) -> bool {
     // Check tensor dimensions
     if tensor.dims.len() < 2 {
         return false; // Not enough info

@@ -53,8 +53,10 @@ fn main() {
             process::exit(1);
         }
     };
-    println!("OK ({} layers, {} vocab, {} hidden)",
-             config.num_layers, config.vocab_size, config.hidden_size);
+    println!(
+        "OK ({} layers, {} vocab, {} hidden)",
+        config.num_layers, config.vocab_size, config.hidden_size
+    );
 
     // 3. Load tokenizer
     print!("Loading tokenizer... ");
@@ -83,7 +85,11 @@ fn main() {
         eprintln!("ERROR: Prompt tokenized to zero tokens");
         process::exit(1);
     }
-    println!("  Prompt: \"{}\" -> {} tokens", test_prompt, prompt_tokens.len());
+    println!(
+        "  Prompt: \"{}\" -> {} tokens",
+        test_prompt,
+        prompt_tokens.len()
+    );
 
     // Allocate KV cache and scratch
     let max_seq = (prompt_tokens.len() + 5).min(config.max_seq_len);
@@ -106,8 +112,15 @@ fn main() {
     // Generate 3 tokens
     let mut generated = Vec::new();
     for _ in 0..3 {
-        cpu_full_forward(&mut hidden, &weights, &mut kv, &mut scratch, prompt_tokens.len() + generated.len(), &config)
-            .expect("Decode forward failed");
+        cpu_full_forward(
+            &mut hidden,
+            &weights,
+            &mut kv,
+            &mut scratch,
+            prompt_tokens.len() + generated.len(),
+            &config,
+        )
+        .expect("Decode forward failed");
 
         let next_token = cpu_sample_greedy(&scratch.logits);
         generated.push(next_token);
@@ -123,7 +136,11 @@ fn main() {
 
     // Decode output
     let output_text = tok.decode(&generated, false);
-    println!("  Generated: \"{}\" ({} tokens)", output_text, generated.len());
+    println!(
+        "  Generated: \"{}\" ({} tokens)",
+        output_text,
+        generated.len()
+    );
 
     println!();
     println!("Q5_0 support: OK (all tests passed)");

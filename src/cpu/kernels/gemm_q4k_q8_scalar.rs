@@ -8,10 +8,7 @@ use rayon::prelude::*;
 /// Scalar fallback for Q4_K × Q8_K dot product.
 ///
 /// Reference: llama.cpp ggml/src/ggml-cpu/arch/x86/quants.c:2004 (#else branch)
-pub fn dot_q4_k_q8_k_block_scalar(
-    q4_block: &BlockQ4K,
-    q8_block: &BlockQ8K,
-) -> f32 {
+pub fn dot_q4_k_q8_k_block_scalar(q4_block: &BlockQ4K, q8_block: &BlockQ8K) -> f32 {
     const KMASK1: u32 = 0x3f3f3f3f;
     const KMASK2: u32 = 0x0f0f0f0f;
     const KMASK3: u32 = 0x03030303;
@@ -23,11 +20,7 @@ pub fn dot_q4_k_q8_k_block_scalar(
     // Unpack Q4_K scales (12 bytes into 4 u32)
     let mut utmp = [0u32; 4];
     unsafe {
-        std::ptr::copy_nonoverlapping(
-            q4_block.scales.as_ptr(),
-            utmp.as_mut_ptr() as *mut u8,
-            12,
-        );
+        std::ptr::copy_nonoverlapping(q4_block.scales.as_ptr(), utmp.as_mut_ptr() as *mut u8, 12);
     }
 
     // Scale unpacking algorithm from llama.cpp
@@ -39,7 +32,7 @@ pub fn dot_q4_k_q8_k_block_scalar(
 
     // scales and mins are accessed as byte arrays from utmp
     let scales = &utmp[0..2]; // First 8 bytes contain scales
-    let mins = &utmp[2..4];   // Next 8 bytes contain mins (after unpacking)
+    let mins = &utmp[2..4]; // Next 8 bytes contain mins (after unpacking)
 
     // Copy bsums to local array to avoid packed struct reference issues
     let mut bsums_local = [0i16; 16];
@@ -109,9 +102,8 @@ fn get_scale(scales: &[u32], index: usize) -> i32 {
     let byte_idx = index / 2;
     let bit_offset = (index % 2) * 6;
 
-    let scales_bytes: &[u8] = unsafe {
-        std::slice::from_raw_parts(scales.as_ptr() as *const u8, 8)
-    };
+    let scales_bytes: &[u8] =
+        unsafe { std::slice::from_raw_parts(scales.as_ptr() as *const u8, 8) };
 
     let scale = ((scales_bytes[byte_idx] as u32) >> bit_offset) & 0x3F;
     // Convert to signed value centered around 32
@@ -123,9 +115,7 @@ fn get_scaled_min(mins: &[u32], index: usize) -> i32 {
     let byte_idx = index / 2;
     let bit_offset = (index % 2) * 6;
 
-    let mins_bytes: &[u8] = unsafe {
-        std::slice::from_raw_parts(mins.as_ptr() as *const u8, 8)
-    };
+    let mins_bytes: &[u8] = unsafe { std::slice::from_raw_parts(mins.as_ptr() as *const u8, 8) };
 
     let min_val = ((mins_bytes[byte_idx] as u32) >> bit_offset) & 0x3F;
     // Convert to signed value centered around 32
@@ -140,13 +130,7 @@ fn get_scaled_min(mins: &[u32], index: usize) -> i32 {
 /// * `y` - Output vector (f32, length = out_dim)
 /// * `out_dim` - Number of output rows
 /// * `in_dim` - Inner dimension (must be multiple of 256)
-pub fn gemv_q4_k_q8_k(
-    w: &[u8],
-    x: &[f32],
-    y: &mut [f32],
-    out_dim: usize,
-    in_dim: usize,
-) {
+pub fn gemv_q4_k_q8_k(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
     assert!(in_dim % 256 == 0, "in_dim must be multiple of QK_K=256");
     assert_eq!(x.len(), in_dim);
     assert_eq!(y.len(), out_dim);
@@ -169,9 +153,7 @@ pub fn gemv_q4_k_q8_k(
 
         for b in 0..num_blocks_per_row {
             let block_offset = row_start + b * BlockQ4K::SIZE;
-            let q4_block = unsafe {
-                &*(w.as_ptr().add(block_offset) as *const BlockQ4K)
-            };
+            let q4_block = unsafe { &*(w.as_ptr().add(block_offset) as *const BlockQ4K) };
             let q8_block = &x_q8[b];
 
             acc += dot_q4_k_q8_k_block_scalar(q4_block, q8_block);
@@ -190,43 +172,38 @@ pub fn gemv_q4_k_q8_k(
 /// * `m` - Batch size
 /// * `n` - Output dimension (out_dim)
 /// * `k` - Inner dimension (in_dim)
-pub fn gemm_q4_k_q8_k(
-    w: &[u8],
-    x: &[f32],
-    y: &mut [f32],
-    m: usize,
-    n: usize,
-    k: usize,
-) {
+pub fn gemm_q4_k_q8_k(w: &[u8], x: &[f32], y: &mut [f32], m: usize, n: usize, k: usize) {
     assert!(k % 256 == 0, "k must be multiple of QK_K=256");
 
     let num_blocks_k = k / 256;
 
     // Process each batch row
-    y.par_chunks_mut(n).enumerate().for_each(|(batch_idx, y_row)| {
-        let x_row = &x[batch_idx * k..(batch_idx + 1) * k];
+    y.par_chunks_mut(n)
+        .enumerate()
+        .for_each(|(batch_idx, y_row)| {
+            let x_row = &x[batch_idx * k..(batch_idx + 1) * k];
 
-        // Quantize this row to Q8_K blocks
-        let mut x_q8 = vec![BlockQ8K::zero(); num_blocks_k];
-        for b in 0..num_blocks_k {
-            x_q8[b] = crate::cpu::kernels::q8::quantize_q8_k(&x_row[b * 256..(b + 1) * 256]);
-        }
-
-        // Compute dot products for each output column
-        for out_col in 0..n {
-            let mut acc = 0.0f32;
-
+            // Quantize this row to Q8_K blocks
+            let mut x_q8 = vec![BlockQ8K::zero(); num_blocks_k];
             for b in 0..num_blocks_k {
-                let w_offset = out_col * num_blocks_k * BlockQ4K::SIZE + b * BlockQ4K::SIZE;
-                let q4_block = unsafe { &*(w.as_ptr().add(w_offset) as *const BlockQ4K) };
-                let q8_block = &x_q8[b];
-
-                acc += dot_q4_k_q8_k_block_scalar(q4_block, q8_block);
+                x_q8[b] = crate::cpu::kernels::q8::quantize_q8_k(&x_row[b * 256..(b + 1) * 256]);
             }
 
-            y_row[out_col] = acc;
-        }
-    });
+            // Compute dot products for each output column
+            for out_col in 0..n {
+                let mut acc = 0.0f32;
+
+                for b in 0..num_blocks_k {
+                    let w_offset = out_col * num_blocks_k * BlockQ4K::SIZE + b * BlockQ4K::SIZE;
+                    let q4_block = unsafe { &*(w.as_ptr().add(w_offset) as *const BlockQ4K) };
+                    let q8_block = &x_q8[b];
+
+                    acc += dot_q4_k_q8_k_block_scalar(q4_block, q8_block);
+                }
+
+                y_row[out_col] = acc;
+            }
+        });
 }
 
 #[cfg(test)]

@@ -4,12 +4,12 @@
 
 mod common;
 
-use serial_test::serial;
-use rocmforge::gpu::{GpuLayerWeights, GpuModelWeights, WeightMeta, GpuBuffer};
 use rocmforge::config::ModelConfig;
+use rocmforge::gpu::{GpuBuffer, GpuLayerWeights, GpuModelWeights, WeightMeta};
+use serial_test::serial;
 
 fn make_test_config() -> ModelConfig {
-    use rocmforge::config::{TensorNamingScheme, TensorNameRegistry};
+    use rocmforge::config::{TensorNameRegistry, TensorNamingScheme};
     ModelConfig {
         num_layers: 2,
         num_kv_heads: 4,

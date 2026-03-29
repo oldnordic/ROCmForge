@@ -42,7 +42,7 @@ impl SimdFeatures {
             Self {
                 has_avx2: false,
                 has_avx512: false,
-                has_neon: true,  // Always available on aarch64
+                has_neon: true, // Always available on aarch64
                 has_sve: cfg!(target_feature = "sve"),
             }
         }
@@ -56,7 +56,9 @@ impl SimdFeatures {
     /// Get human-readable SIMD feature description.
     pub fn description(&self) -> &'static str {
         // Use the CPU features module for accurate detection
-        crate::cpu::features::CpuFeatures::get().description().leak()
+        crate::cpu::features::CpuFeatures::get()
+            .description()
+            .leak()
     }
 
     /// Get the kernel preference enum value.
@@ -115,23 +117,30 @@ impl CpuCapabilities {
         sys.refresh_all();
 
         // Get physical core count (associated function in sysinfo 0.38+)
-        let physical_cores = System::physical_core_count()
-            .ok_or_else(|| HardwareError::DetectionFailed("could not detect physical core count".into()))?;
+        let physical_cores = System::physical_core_count().ok_or_else(|| {
+            HardwareError::DetectionFailed("could not detect physical core count".into())
+        })?;
 
         if physical_cores == 0 {
-            return Err(HardwareError::DetectionFailed("physical core count is zero".into()));
+            return Err(HardwareError::DetectionFailed(
+                "physical core count is zero".into(),
+            ));
         }
 
         // Get logical CPU count (cpus() returns &[Cpu])
         let logical_cpus = sys.cpus().len();
         if logical_cpus == 0 {
-            return Err(HardwareError::DetectionFailed("logical CPU count is zero".into()));
+            return Err(HardwareError::DetectionFailed(
+                "logical CPU count is zero".into(),
+            ));
         }
 
         // Get total memory
         let total_memory_bytes = sys.total_memory() as usize;
         if total_memory_bytes == 0 {
-            return Err(HardwareError::DetectionFailed("total memory is zero".into()));
+            return Err(HardwareError::DetectionFailed(
+                "total memory is zero".into(),
+            ));
         }
 
         // Cache detection: sysinfo 0.38+ does NOT provide cache_sizes() method

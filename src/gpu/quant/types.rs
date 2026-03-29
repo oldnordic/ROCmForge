@@ -23,10 +23,10 @@ pub const Q8_0_MAX: f32 = 127.0;
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct Q4KBlock {
-    pub d: half::f16,              // delta/scale (2 bytes)
-    pub dmin: half::f16,           // minimum scale (2 bytes)
-    pub scales: [u8; 12],    // quantized scales (12 bytes)
-    pub qs: [u8; 128],       // quants, 4-bit values (128 bytes)
+    pub d: half::f16,     // delta/scale (2 bytes)
+    pub dmin: half::f16,  // minimum scale (2 bytes)
+    pub scales: [u8; 12], // quantized scales (12 bytes)
+    pub qs: [u8; 128],    // quants, 4-bit values (128 bytes)
 }
 
 impl Default for Q4KBlock {
@@ -47,11 +47,11 @@ pub const Q5_K_BLOCK_SIZE: usize = 2 + 2 + 12 + 32 + 128; // d + dmin + scales +
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct Q5KBlock {
-    pub d: half::f16,              // delta/scale (2 bytes)
-    pub dmin: half::f16,           // minimum scale (2 bytes)
-    pub scales: [u8; 12],          // quantized scales (12 bytes)
-    pub qh: [u8; 32],              // quants, high bit (32 bytes)
-    pub qs: [u8; 128],             // quants, low 4 bits (128 bytes)
+    pub d: half::f16,     // delta/scale (2 bytes)
+    pub dmin: half::f16,  // minimum scale (2 bytes)
+    pub scales: [u8; 12], // quantized scales (12 bytes)
+    pub qh: [u8; 32],     // quants, high bit (32 bytes)
+    pub qs: [u8; 128],    // quants, low 4 bits (128 bytes)
 }
 
 impl Default for Q5KBlock {
@@ -70,8 +70,8 @@ impl Default for Q5KBlock {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct Q8_0Block {
-    pub d: half::f16,        // scale (2 bytes)
-    pub qs: [i8; 32],       // quantized values (32 bytes)
+    pub d: half::f16, // scale (2 bytes)
+    pub qs: [i8; 32], // quantized values (32 bytes)
 }
 
 impl Default for Q8_0Block {
@@ -94,8 +94,8 @@ pub const Q4_0_BLOCK_SIZE: usize = 18; // 2 (scale) + 16 (data)
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct Q4_0Block {
-    pub d: half::f16,        // scale (2 bytes)
-    pub qs: [u8; 16],       // 4-bit values packed (16 bytes)
+    pub d: half::f16, // scale (2 bytes)
+    pub qs: [u8; 16], // 4-bit values packed (16 bytes)
 }
 
 impl Default for Q4_0Block {
@@ -118,9 +118,9 @@ pub const Q4_1_BLOCK_SIZE: usize = 20; // 2 (scale) + 2 (min) + 16 (data)
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct Q4_1Block {
-    pub d: half::f16,        // scale (2 bytes)
-    pub m: half::f16,        // min offset (2 bytes)
-    pub qs: [u8; 16],        // 4-bit values packed (16 bytes)
+    pub d: half::f16, // scale (2 bytes)
+    pub m: half::f16, // min offset (2 bytes)
+    pub qs: [u8; 16], // 4-bit values packed (16 bytes)
 }
 
 impl Default for Q4_1Block {

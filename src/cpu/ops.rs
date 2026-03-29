@@ -7,10 +7,13 @@
 //! - SwiGLU activation
 //! - Softmax and sampling utilities
 
-use rayon::prelude::*;
-use crate::cpu::quant::{Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS, Q4_1_BLOCK_BYTES, Q4_1_BLOCK_ELEMS, Q5_0_BLOCK_BYTES, Q5_0_BLOCK_ELEMS, Q8_BLOCK_BYTES, Q8_BLOCK_ELEMS, Q8_0_MAX, load_f16_scale};
+use crate::cpu::quant::{
+    load_f16_scale, Q4_1_BLOCK_BYTES, Q4_1_BLOCK_ELEMS, Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS,
+    Q5_0_BLOCK_BYTES, Q5_0_BLOCK_ELEMS, Q8_0_MAX, Q8_BLOCK_BYTES, Q8_BLOCK_ELEMS,
+};
 use crate::cpu::weights::WeightMeta;
 use crate::loader::GgmlType;
+use rayon::prelude::*;
 
 /// Load f16 value from bytes as f32.
 fn load_f16_as_f32(bytes: &[u8]) -> f32 {
@@ -277,8 +280,10 @@ pub fn flash_attn_prefill(
 
                 // Causal: attend to positions 0..=s
                 for t in 0..=s {
-                    let k_th = &k[t * kv_stride + kv_h * head_dim..t * kv_stride + kv_h * head_dim + head_dim];
-                    let v_th = &v[t * kv_stride + kv_h * head_dim..t * kv_stride + kv_h * head_dim + head_dim];
+                    let k_th = &k[t * kv_stride + kv_h * head_dim
+                        ..t * kv_stride + kv_h * head_dim + head_dim];
+                    let v_th = &v[t * kv_stride + kv_h * head_dim
+                        ..t * kv_stride + kv_h * head_dim + head_dim];
 
                     let score: f32 = q_sh
                         .iter()
@@ -335,13 +340,15 @@ pub fn residual_add_batched(a: &mut [f32], b: &[f32], dim: usize, seq_len: usize
 /// F32 GEMM: Y[s, o] = dot(W[o, :], X[s, :])
 /// W: [out_dim, in_dim], X: [seq_len, in_dim], Y: [seq_len, out_dim]
 pub fn gemm_f32(w: &[f32], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
-    y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
-        let x_row = &x[s * in_dim..(s + 1) * in_dim];
-        for o in 0..out_dim {
-            let w_row = &w[o * in_dim..(o + 1) * in_dim];
-            y_row[o] = w_row.iter().zip(x_row.iter()).map(|(wi, xi)| wi * xi).sum();
-        }
-    });
+    y.par_chunks_mut(out_dim)
+        .enumerate()
+        .for_each(|(s, y_row)| {
+            let x_row = &x[s * in_dim..(s + 1) * in_dim];
+            for o in 0..out_dim {
+                let w_row = &w[o * in_dim..(o + 1) * in_dim];
+                y_row[o] = w_row.iter().zip(x_row.iter()).map(|(wi, xi)| wi * xi).sum();
+            }
+        });
 }
 
 /// Q4_0 GEMM: dequant on-the-fly.
@@ -349,25 +356,27 @@ pub fn gemm_q4_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
     let num_blocks = in_dim / Q4_BLOCK_ELEMS;
     let row_bytes = num_blocks * Q4_BLOCK_BYTES;
 
-    y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
-        let x_row = &x[s * in_dim..(s + 1) * in_dim];
-        for o in 0..out_dim {
-            let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
-            let mut acc = 0.0f32;
-            for b in 0..num_blocks {
-                let block = &row_w[b * Q4_BLOCK_BYTES..(b + 1) * Q4_BLOCK_BYTES];
-                let scale = super::quant::load_f16_scale(&block[0..2]);
-                let qs = &block[2..18];
-                let xb = &x_row[b * Q4_BLOCK_ELEMS..];
-                for i in 0..16 {
-                    let q_lo = (((qs[i] & 0x0F) as i32) - 8) as f32 * scale;
-                    let q_hi = (((qs[i] >> 4) as i32) - 8) as f32 * scale;
-                    acc += q_lo * xb[i] + q_hi * xb[i + 16];
+    y.par_chunks_mut(out_dim)
+        .enumerate()
+        .for_each(|(s, y_row)| {
+            let x_row = &x[s * in_dim..(s + 1) * in_dim];
+            for o in 0..out_dim {
+                let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
+                let mut acc = 0.0f32;
+                for b in 0..num_blocks {
+                    let block = &row_w[b * Q4_BLOCK_BYTES..(b + 1) * Q4_BLOCK_BYTES];
+                    let scale = super::quant::load_f16_scale(&block[0..2]);
+                    let qs = &block[2..18];
+                    let xb = &x_row[b * Q4_BLOCK_ELEMS..];
+                    for i in 0..16 {
+                        let q_lo = (((qs[i] & 0x0F) as i32) - 8) as f32 * scale;
+                        let q_hi = (((qs[i] >> 4) as i32) - 8) as f32 * scale;
+                        acc += q_lo * xb[i] + q_hi * xb[i + 16];
+                    }
                 }
+                y_row[o] = acc;
             }
-            y_row[o] = acc;
-        }
-    });
+        });
 }
 
 /// Q4_1 GEMM: dequant on-the-fly with min offset.
@@ -375,26 +384,28 @@ pub fn gemm_q4_1(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
     let num_blocks = in_dim / Q4_1_BLOCK_ELEMS;
     let row_bytes = num_blocks * Q4_1_BLOCK_BYTES;
 
-    y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
-        let x_row = &x[s * in_dim..(s + 1) * in_dim];
-        for o in 0..out_dim {
-            let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
-            let mut acc = 0.0f32;
-            for b in 0..num_blocks {
-                let block = &row_w[b * Q4_1_BLOCK_BYTES..(b + 1) * Q4_1_BLOCK_BYTES];
-                let scale = load_f16_scale(&block[0..2]);
-                let min = load_f16_as_f32(&block[2..4]);
-                let qs = &block[4..20];
-                let xb = &x_row[b * Q4_1_BLOCK_ELEMS..];
-                for i in 0..16 {
-                    let q_lo = (qs[i] & 0x0F) as f32 * scale + min;
-                    let q_hi = (qs[i] >> 4) as f32 * scale + min;
-                    acc += q_lo * xb[i] + q_hi * xb[i + 16];
+    y.par_chunks_mut(out_dim)
+        .enumerate()
+        .for_each(|(s, y_row)| {
+            let x_row = &x[s * in_dim..(s + 1) * in_dim];
+            for o in 0..out_dim {
+                let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
+                let mut acc = 0.0f32;
+                for b in 0..num_blocks {
+                    let block = &row_w[b * Q4_1_BLOCK_BYTES..(b + 1) * Q4_1_BLOCK_BYTES];
+                    let scale = load_f16_scale(&block[0..2]);
+                    let min = load_f16_as_f32(&block[2..4]);
+                    let qs = &block[4..20];
+                    let xb = &x_row[b * Q4_1_BLOCK_ELEMS..];
+                    for i in 0..16 {
+                        let q_lo = (qs[i] & 0x0F) as f32 * scale + min;
+                        let q_hi = (qs[i] >> 4) as f32 * scale + min;
+                        acc += q_lo * xb[i] + q_hi * xb[i + 16];
+                    }
                 }
+                y_row[o] = acc;
             }
-            y_row[o] = acc;
-        }
-    });
+        });
 }
 
 /// Q5_0 GEMM: dequant on-the-fly.
@@ -402,34 +413,36 @@ pub fn gemm_q5_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
     let num_blocks = in_dim / Q5_0_BLOCK_ELEMS;
     let row_bytes = num_blocks * Q5_0_BLOCK_BYTES;
 
-    y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
-        let x_row = &x[s * in_dim..(s + 1) * in_dim];
-        for o in 0..out_dim {
-            let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
-            let mut acc = 0.0f32;
-            for b in 0..num_blocks {
-                let block = &row_w[b * Q5_0_BLOCK_BYTES..(b + 1) * Q5_0_BLOCK_BYTES];
-                let d = super::quant::load_f16_scale(&block[0..2]);
-                let qh = &block[2..6];
-                let qs = &block[6..22];
-                let xb = &x_row[b * Q5_0_BLOCK_ELEMS..];
+    y.par_chunks_mut(out_dim)
+        .enumerate()
+        .for_each(|(s, y_row)| {
+            let x_row = &x[s * in_dim..(s + 1) * in_dim];
+            for o in 0..out_dim {
+                let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
+                let mut acc = 0.0f32;
+                for b in 0..num_blocks {
+                    let block = &row_w[b * Q5_0_BLOCK_BYTES..(b + 1) * Q5_0_BLOCK_BYTES];
+                    let d = super::quant::load_f16_scale(&block[0..2]);
+                    let qh = &block[2..6];
+                    let qs = &block[6..22];
+                    let xb = &x_row[b * Q5_0_BLOCK_ELEMS..];
 
-                for i in 0..16 {
-                    // Process 2 values per iteration
-                    let high_bit_0 = ((qh[i / 8] >> (i % 8)) & 1) << 4;
-                    let low_bits_0 = qs[i] & 0x0F;
-                    let q0 = ((high_bit_0 | low_bits_0) as i32) - 16;
+                    for i in 0..16 {
+                        // Process 2 values per iteration
+                        let high_bit_0 = ((qh[i / 8] >> (i % 8)) & 1) << 4;
+                        let low_bits_0 = qs[i] & 0x0F;
+                        let q0 = ((high_bit_0 | low_bits_0) as i32) - 16;
 
-                    let high_bit_1 = ((qh[i / 8 + 2] >> (i % 8)) & 1) << 4;
-                    let low_bits_1 = (qs[i] >> 4) & 0x0F;
-                    let q1 = ((high_bit_1 | low_bits_1) as i32) - 16;
+                        let high_bit_1 = ((qh[i / 8 + 2] >> (i % 8)) & 1) << 4;
+                        let low_bits_1 = (qs[i] >> 4) & 0x0F;
+                        let q1 = ((high_bit_1 | low_bits_1) as i32) - 16;
 
-                    acc += d * (q0 as f32) * xb[i] + d * (q1 as f32) * xb[i + 16];
+                        acc += d * (q0 as f32) * xb[i] + d * (q1 as f32) * xb[i + 16];
+                    }
                 }
+                y_row[o] = acc;
             }
-            y_row[o] = acc;
-        }
-    });
+        });
 }
 
 /// Q8_0 GEMM: dequant on-the-fly.
@@ -437,23 +450,25 @@ pub fn gemm_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
     let num_blocks = in_dim / Q8_BLOCK_ELEMS;
     let row_bytes = num_blocks * Q8_BLOCK_BYTES;
 
-    y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
-        let x_row = &x[s * in_dim..(s + 1) * in_dim];
-        for o in 0..out_dim {
-            let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
-            let mut acc = 0.0f32;
-            for b in 0..num_blocks {
-                let block = &row_w[b * Q8_BLOCK_BYTES..(b + 1) * Q8_BLOCK_BYTES];
-                let scale = super::quant::load_f16_scale(&block[0..2]);
-                let qs = &block[2..34];
-                let xb = &x_row[b * Q8_BLOCK_ELEMS..];
-                for i in 0..Q8_BLOCK_ELEMS {
-                    acc += (qs[i] as i8) as f32 * scale * xb[i];
+    y.par_chunks_mut(out_dim)
+        .enumerate()
+        .for_each(|(s, y_row)| {
+            let x_row = &x[s * in_dim..(s + 1) * in_dim];
+            for o in 0..out_dim {
+                let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
+                let mut acc = 0.0f32;
+                for b in 0..num_blocks {
+                    let block = &row_w[b * Q8_BLOCK_BYTES..(b + 1) * Q8_BLOCK_BYTES];
+                    let scale = super::quant::load_f16_scale(&block[0..2]);
+                    let qs = &block[2..34];
+                    let xb = &x_row[b * Q8_BLOCK_ELEMS..];
+                    for i in 0..Q8_BLOCK_ELEMS {
+                        acc += (qs[i] as i8) as f32 * scale * xb[i];
+                    }
                 }
+                y_row[o] = acc;
             }
-            y_row[o] = acc;
-        }
-    });
+        });
 }
 
 /// Q6_K GEMM fallback: exact translation of llama.cpp dequantize_row_q6_K + dot product.
@@ -468,86 +483,88 @@ pub fn gemm_q6_k_fallback(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in
     let num_blocks = in_dim / Q6_K_BLOCK_ELEMS;
     let row_bytes = num_blocks * Q6_K_BLOCK_BYTES;
 
-    y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
-        let x_row = &x[s * in_dim..(s + 1) * in_dim];
-        for o in 0..out_dim {
-            let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
-            let mut acc = 0.0f32;
+    y.par_chunks_mut(out_dim)
+        .enumerate()
+        .for_each(|(s, y_row)| {
+            let x_row = &x[s * in_dim..(s + 1) * in_dim];
+            for o in 0..out_dim {
+                let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
+                let mut acc = 0.0f32;
 
-            for b in 0..num_blocks {
-                let block = &row_w[b * Q6_K_BLOCK_BYTES..(b + 1) * Q6_K_BLOCK_BYTES];
+                for b in 0..num_blocks {
+                    let block = &row_w[b * Q6_K_BLOCK_BYTES..(b + 1) * Q6_K_BLOCK_BYTES];
 
-                // Q6_K block layout (from llama.cpp ggml-common.h):
-                // struct block_q6_K {
-                //     uint8_t ql[QK_K/2];      // 128 bytes
-                //     uint8_t qh[QK_K/4];      // 64 bytes
-                //     int8_t  scales[QK_K/16]; // 16 bytes
-                //     ggml_half d;             // 2 bytes (AT THE END!)
-                // }
-                let mut ql = &block[0..128];
-                let mut qh = &block[128..192];
-                let mut sc: &[i8] = unsafe {
-                    std::slice::from_raw_parts(block[192..208].as_ptr() as *const i8, 16)
-                };
-                let d = super::quant::load_f16_scale(&block[208..210]);
+                    // Q6_K block layout (from llama.cpp ggml-common.h):
+                    // struct block_q6_K {
+                    //     uint8_t ql[QK_K/2];      // 128 bytes
+                    //     uint8_t qh[QK_K/4];      // 64 bytes
+                    //     int8_t  scales[QK_K/16]; // 16 bytes
+                    //     ggml_half d;             // 2 bytes (AT THE END!)
+                    // }
+                    let mut ql = &block[0..128];
+                    let mut qh = &block[128..192];
+                    let mut sc: &[i8] = unsafe {
+                        std::slice::from_raw_parts(block[192..208].as_ptr() as *const i8, 16)
+                    };
+                    let d = super::quant::load_f16_scale(&block[208..210]);
 
-                // Base index into x_row for this 256-element block
-                let xb_base = b * Q6_K_BLOCK_ELEMS;
-                let mut xb_offset = 0; // Offset within block (0, then 128)
+                    // Base index into x_row for this 256-element block
+                    let xb_base = b * Q6_K_BLOCK_ELEMS;
+                    let mut xb_offset = 0; // Offset within block (0, then 128)
 
-                // for (int n = 0; n < QK_K; n += 128) {
-                // This iterates TWICE: n=0, n=128
-                for _ in 0..2 {
-                    // for (int l = 0; l < 32; ++l) {
-                    for l in 0..32 {
-                        let is = l / 16;
+                    // for (int n = 0; n < QK_K; n += 128) {
+                    // This iterates TWICE: n=0, n=128
+                    for _ in 0..2 {
+                        // for (int l = 0; l < 32; ++l) {
+                        for l in 0..32 {
+                            let is = l / 16;
 
-                        // const int8_t q1 = (int8_t)((ql[l +  0] & 0xF) | (((qh[l] >> 0) & 3) << 4)) - 32;
-                        let q1_ql_part = ql[l + 0] & 0xF;
-                        let q1_qh_part = ((qh[l] >> 0) & 3) << 4;
-                        let q1_combined = q1_ql_part | q1_qh_part;
-                        let q1 = q1_combined as i8 as i32 - 32;
-                        // const int8_t q2 = (int8_t)((ql[l + 32] & 0xF) | (((qh[l] >> 2) & 3) << 4)) - 32;
-                        let q2_ql_part = ql[l + 32] & 0xF;
-                        let q2_qh_part = ((qh[l] >> 2) & 3) << 4;
-                        let q2_combined = q2_ql_part | q2_qh_part;
-                        let q2 = q2_combined as i8 as i32 - 32;
-                        // const int8_t q3 = (int8_t)((ql[l +  0]  >> 4) | (((qh[l] >> 4) & 3) << 4)) - 32;
-                        let q3_ql_part = (ql[l + 0] >> 4) & 0xF;
-                        let q3_qh_part = ((qh[l] >> 4) & 3) << 4;
-                        let q3_combined = q3_ql_part | q3_qh_part;
-                        let q3 = q3_combined as i8 as i32 - 32;
-                        // const int8_t q4 = (int8_t)((ql[l + 32]  >> 4) | (((qh[l] >> 6) & 3) << 4)) - 32;
-                        let q4_ql_part = (ql[l + 32] >> 4) & 0xF;
-                        let q4_qh_part = ((qh[l] >> 6) & 3) << 4;
-                        let q4_combined = q4_ql_part | q4_qh_part;
-                        let q4 = q4_combined as i8 as i32 - 32;
+                            // const int8_t q1 = (int8_t)((ql[l +  0] & 0xF) | (((qh[l] >> 0) & 3) << 4)) - 32;
+                            let q1_ql_part = ql[l + 0] & 0xF;
+                            let q1_qh_part = ((qh[l] >> 0) & 3) << 4;
+                            let q1_combined = q1_ql_part | q1_qh_part;
+                            let q1 = q1_combined as i8 as i32 - 32;
+                            // const int8_t q2 = (int8_t)((ql[l + 32] & 0xF) | (((qh[l] >> 2) & 3) << 4)) - 32;
+                            let q2_ql_part = ql[l + 32] & 0xF;
+                            let q2_qh_part = ((qh[l] >> 2) & 3) << 4;
+                            let q2_combined = q2_ql_part | q2_qh_part;
+                            let q2 = q2_combined as i8 as i32 - 32;
+                            // const int8_t q3 = (int8_t)((ql[l +  0]  >> 4) | (((qh[l] >> 4) & 3) << 4)) - 32;
+                            let q3_ql_part = (ql[l + 0] >> 4) & 0xF;
+                            let q3_qh_part = ((qh[l] >> 4) & 3) << 4;
+                            let q3_combined = q3_ql_part | q3_qh_part;
+                            let q3 = q3_combined as i8 as i32 - 32;
+                            // const int8_t q4 = (int8_t)((ql[l + 32]  >> 4) | (((qh[l] >> 6) & 3) << 4)) - 32;
+                            let q4_ql_part = (ql[l + 32] >> 4) & 0xF;
+                            let q4_qh_part = ((qh[l] >> 6) & 3) << 4;
+                            let q4_combined = q4_ql_part | q4_qh_part;
+                            let q4 = q4_combined as i8 as i32 - 32;
 
-                        // Compute dot product contribution
-                        // llama.cpp: y[l + 0] = d * sc[is + 0] * q1;
-                        // For dot product: acc += d * sc[is + 0] * q1 * xb[l + 0]
-                        let scale1 = d * (sc[is + 0] as f32);
-                        let scale2 = d * (sc[is + 2] as f32);
-                        let scale3 = d * (sc[is + 4] as f32);
-                        let scale4 = d * (sc[is + 6] as f32);
+                            // Compute dot product contribution
+                            // llama.cpp: y[l + 0] = d * sc[is + 0] * q1;
+                            // For dot product: acc += d * sc[is + 0] * q1 * xb[l + 0]
+                            let scale1 = d * (sc[is + 0] as f32);
+                            let scale2 = d * (sc[is + 2] as f32);
+                            let scale3 = d * (sc[is + 4] as f32);
+                            let scale4 = d * (sc[is + 6] as f32);
 
-                        acc += scale1 * (q1 as f32) * x_row[xb_base + xb_offset + l + 0];
-                        acc += scale2 * (q2 as f32) * x_row[xb_base + xb_offset + l + 32];
-                        acc += scale3 * (q3 as f32) * x_row[xb_base + xb_offset + l + 64];
-                        acc += scale4 * (q4 as f32) * x_row[xb_base + xb_offset + l + 96];
+                            acc += scale1 * (q1 as f32) * x_row[xb_base + xb_offset + l + 0];
+                            acc += scale2 * (q2 as f32) * x_row[xb_base + xb_offset + l + 32];
+                            acc += scale3 * (q3 as f32) * x_row[xb_base + xb_offset + l + 64];
+                            acc += scale4 * (q4 as f32) * x_row[xb_base + xb_offset + l + 96];
+                        }
+
+                        // Advance pointers for next 128 elements (llama.cpp pattern)
+                        // y  += 128;  ql += 64;  qh += 32;  sc += 8;
+                        ql = &ql[64..]; // Advance 64 bytes into the block
+                        qh = &qh[32..]; // Advance 32 bytes
+                        sc = &sc[8..]; // Advance 8 scales
+                        xb_offset += 128; // Advance 128 elements in x_row
                     }
-
-                    // Advance pointers for next 128 elements (llama.cpp pattern)
-                    // y  += 128;  ql += 64;  qh += 32;  sc += 8;
-                    ql = &ql[64..];   // Advance 64 bytes into the block
-                    qh = &qh[32..];   // Advance 32 bytes
-                    sc = &sc[8..];    // Advance 8 scales
-                    xb_offset += 128; // Advance 128 elements in x_row
                 }
+                y_row[o] = acc;
             }
-            y_row[o] = acc;
-        }
-    });
+        });
 }
 
 /// Q3_K GEMM fallback: dequantize blocks on the fly and compute matrix multiply.
@@ -568,90 +585,94 @@ pub fn gemm_q3_k_fallback(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in
     let num_blocks = in_dim / Q3_K_BLOCK_ELEMS;
     let row_bytes = num_blocks * Q3_K_BLOCK_BYTES;
 
-    y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
-        let x_row = &x[s * in_dim..(s + 1) * in_dim];
-        for o in 0..out_dim {
-            let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
-            let mut acc = 0.0f32;
+    y.par_chunks_mut(out_dim)
+        .enumerate()
+        .for_each(|(s, y_row)| {
+            let x_row = &x[s * in_dim..(s + 1) * in_dim];
+            for o in 0..out_dim {
+                let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
+                let mut acc = 0.0f32;
 
-            for b in 0..num_blocks {
-                let block = &row_w[b * Q3_K_BLOCK_BYTES..(b + 1) * Q3_K_BLOCK_BYTES];
+                for b in 0..num_blocks {
+                    let block = &row_w[b * Q3_K_BLOCK_BYTES..(b + 1) * Q3_K_BLOCK_BYTES];
 
-                // Q3_K block layout:
-                // - hmask[32]: high bit mask
-                // - qs[64]: low 2 bits
-                // - scales[12]: packed 6-bit scales
-                // - d[2]: f16 super-block scale
-                let hmask = &block[0..32];
-                let qs = &block[32..96];
-                let scales = &block[96..108];
-                let d = super::quant::load_f16_scale(&block[108..110]);
+                    // Q3_K block layout:
+                    // - hmask[32]: high bit mask
+                    // - qs[64]: low 2 bits
+                    // - scales[12]: packed 6-bit scales
+                    // - d[2]: f16 super-block scale
+                    let hmask = &block[0..32];
+                    let qs = &block[32..96];
+                    let scales = &block[96..108];
+                    let d = super::quant::load_f16_scale(&block[108..110]);
 
-                // Unpack scales from packed 6-bit format
-                let tmp = u32::from_le_bytes([scales[2], scales[3], scales[4], scales[5]]);
-                let mut unpacked_scales = [0i8; 12];
-                unpacked_scales[0] = (((scales[0] & 0x0F) as i8) << 2) | ((tmp & 0x03) as i8);
-                unpacked_scales[1] = ((scales[0] >> 4) & 0x0F) as i8;
-                unpacked_scales[2] = (((scales[1] & 0x0F) as i8) << 2) | (((tmp >> 2) & 0x03)) as i8;
-                unpacked_scales[3] = ((scales[1] >> 4) & 0x0F) as i8;
-                unpacked_scales[4] = ((tmp >> 4) & 0x0F) as i8;
-                unpacked_scales[5] = (((scales[2] & 0x0F) as i8) << 2) | (((tmp >> 6) & 0x03)) as i8;
-                unpacked_scales[6] = ((scales[2] >> 4) & 0x0F) as i8;
-                unpacked_scales[7] = ((tmp >> 8) & 0x0F) as i8;
-                unpacked_scales[8] = ((scales[0] >> 6) & 0x03) as i8;
-                unpacked_scales[9] = ((scales[1] >> 6) & 0x03) as i8;
-                unpacked_scales[10] = (((scales[2] >> 2) & 0x03) as i8) << 2;
-                unpacked_scales[11] = ((scales[2] >> 0) & 0x03) as i8;
+                    // Unpack scales from packed 6-bit format
+                    let tmp = u32::from_le_bytes([scales[2], scales[3], scales[4], scales[5]]);
+                    let mut unpacked_scales = [0i8; 12];
+                    unpacked_scales[0] = (((scales[0] & 0x0F) as i8) << 2) | ((tmp & 0x03) as i8);
+                    unpacked_scales[1] = ((scales[0] >> 4) & 0x0F) as i8;
+                    unpacked_scales[2] =
+                        (((scales[1] & 0x0F) as i8) << 2) | ((tmp >> 2) & 0x03) as i8;
+                    unpacked_scales[3] = ((scales[1] >> 4) & 0x0F) as i8;
+                    unpacked_scales[4] = ((tmp >> 4) & 0x0F) as i8;
+                    unpacked_scales[5] =
+                        (((scales[2] & 0x0F) as i8) << 2) | ((tmp >> 6) & 0x03) as i8;
+                    unpacked_scales[6] = ((scales[2] >> 4) & 0x0F) as i8;
+                    unpacked_scales[7] = ((tmp >> 8) & 0x0F) as i8;
+                    unpacked_scales[8] = ((scales[0] >> 6) & 0x03) as i8;
+                    unpacked_scales[9] = ((scales[1] >> 6) & 0x03) as i8;
+                    unpacked_scales[10] = (((scales[2] >> 2) & 0x03) as i8) << 2;
+                    unpacked_scales[11] = ((scales[2] >> 0) & 0x03) as i8;
 
-                let mut scale_idx = 0;
-                let xb_base = b * Q3_K_BLOCK_ELEMS;
+                    let mut scale_idx = 0;
+                    let xb_base = b * Q3_K_BLOCK_ELEMS;
 
-                // Process 256 elements as two 128-element chunks
-                for chunk in 0..2 {
-                    let q = &qs[chunk * 32..];
-                    let hm = &hmask[chunk * 16..];
+                    // Process 256 elements as two 128-element chunks
+                    for chunk in 0..2 {
+                        let q = &qs[chunk * 32..];
+                        let hm = &hmask[chunk * 16..];
 
-                    let mut m = 1u8;
-                    let mut shift = 0i32;
+                        let mut m = 1u8;
+                        let mut shift = 0i32;
 
-                    // Reset scale_idx for second chunk (second 128 elements use only 4 scales)
-                    if chunk == 1 {
-                        scale_idx = 8;
-                    }
-
-                    // First chunk: 4 groups (8 scales), second chunk: 2 groups (4 scales)
-                    let num_groups = if chunk == 0 { 4 } else { 2 };
-                    for _group in 0..num_groups {
-                        let dl = d * (unpacked_scales[scale_idx] - 32) as f32;
-                        scale_idx += 1;
-
-                        // First 16 elements
-                        for l in 0..16 {
-                            let ql = (q[l >> 2] >> shift) & 0x03;
-                            let hbit = if hm[l >> 3] & m != 0 { 0 } else { 4 };
-                            let q = (ql as i8 - hbit) as f32;
-                            acc += dl * q * x_row[xb_base + chunk * 64 + _group * 32 + l];
+                        // Reset scale_idx for second chunk (second 128 elements use only 4 scales)
+                        if chunk == 1 {
+                            scale_idx = 8;
                         }
 
-                        // Next 16 elements
-                        let dl = d * (unpacked_scales[scale_idx] - 32) as f32;
-                        scale_idx += 1;
+                        // First chunk: 4 groups (8 scales), second chunk: 2 groups (4 scales)
+                        let num_groups = if chunk == 0 { 4 } else { 2 };
+                        for _group in 0..num_groups {
+                            let dl = d * (unpacked_scales[scale_idx] - 32) as f32;
+                            scale_idx += 1;
 
-                        for l in 16..32 {
-                            let ql = (q[l >> 2] >> shift) & 0x03;
-                            let hbit = if hm[l >> 3] & m != 0 { 0 } else { 4 };
-                            let q = (ql as i8 - hbit) as f32;
-                            acc += dl * q * x_row[xb_base + chunk * 64 + _group * 32 + l];
+                            // First 16 elements
+                            for l in 0..16 {
+                                let ql = (q[l >> 2] >> shift) & 0x03;
+                                let hbit = if hm[l >> 3] & m != 0 { 0 } else { 4 };
+                                let q = (ql as i8 - hbit) as f32;
+                                acc += dl * q * x_row[xb_base + chunk * 64 + _group * 32 + l];
+                            }
+
+                            // Next 16 elements
+                            let dl = d * (unpacked_scales[scale_idx] - 32) as f32;
+                            scale_idx += 1;
+
+                            for l in 16..32 {
+                                let ql = (q[l >> 2] >> shift) & 0x03;
+                                let hbit = if hm[l >> 3] & m != 0 { 0 } else { 4 };
+                                let q = (ql as i8 - hbit) as f32;
+                                acc += dl * q * x_row[xb_base + chunk * 64 + _group * 32 + l];
+                            }
+
+                            shift += 2;
+                            m <<= 1;
                         }
-
-                        shift += 2;
-                        m <<= 1;
                     }
                 }
+                y_row[o] = acc;
             }
-            y_row[o] = acc;
-        }
-    });
+        });
 }
 
 /// Q5_K GEMM fallback: dequantize weights on the fly during matrix multiplication.
@@ -675,76 +696,80 @@ pub fn gemm_q5_k_fallback(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in
     let num_blocks = in_dim / Q5_K_BLOCK_ELEMS;
     let row_bytes = num_blocks * Q5_K_BLOCK_BYTES;
 
-    y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
-        let x_row = &x[s * in_dim..(s + 1) * in_dim];
-        for o in 0..out_dim {
-            let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
-            let mut acc = 0.0f32;
+    y.par_chunks_mut(out_dim)
+        .enumerate()
+        .for_each(|(s, y_row)| {
+            let x_row = &x[s * in_dim..(s + 1) * in_dim];
+            for o in 0..out_dim {
+                let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
+                let mut acc = 0.0f32;
 
-            for b in 0..num_blocks {
-                let block = &row_w[b * Q5_K_BLOCK_BYTES..(b + 1) * Q5_K_BLOCK_BYTES];
+                for b in 0..num_blocks {
+                    let block = &row_w[b * Q5_K_BLOCK_BYTES..(b + 1) * Q5_K_BLOCK_BYTES];
 
-                // Q5_K block layout (matches llama.cpp block_q5_K):
-                // - d[2]: f16 super-block scale
-                // - dmin[2]: f16 super-block min scale
-                // - scales[12]: scales and mins packed as 6-bit values
-                // - qh[32]: high bit of 5-bit quantization
-                // - ql[128]: low 4-bit quantized weights
-                let d = super::quant::load_f16_scale(&block[0..2]);
-                let dmin = super::quant::load_f16_scale(&block[2..4]);
-                let scales = &block[4..16];
-                let qh = &block[16..48];
-                let ql = &block[48..176];
+                    // Q5_K block layout (matches llama.cpp block_q5_K):
+                    // - d[2]: f16 super-block scale
+                    // - dmin[2]: f16 super-block min scale
+                    // - scales[12]: scales and mins packed as 6-bit values
+                    // - qh[32]: high bit of 5-bit quantization
+                    // - ql[128]: low 4-bit quantized weights
+                    let d = super::quant::load_f16_scale(&block[0..2]);
+                    let dmin = super::quant::load_f16_scale(&block[2..4]);
+                    let scales = &block[4..16];
+                    let qh = &block[16..48];
+                    let ql = &block[48..176];
 
-                // Unpack scales and mins from packed 6-bit format (get_scale_min_k4 pattern)
-                let mut unpacked_scales = [0i8; 8];
-                let mut unpacked_mins = [0i8; 8];
-                for j in 0..8 {
-                    if j < 4 {
-                        unpacked_scales[j] = (scales[j] & 63) as i8;
-                        unpacked_mins[j] = (scales[j + 4] & 63) as i8;
-                    } else {
-                        unpacked_scales[j] = ((scales[j + 4] & 0xF) | ((scales[j - 4] >> 6) << 4)) as i8;
-                        unpacked_mins[j] = ((scales[j + 4] >> 4) | ((scales[j] >> 6) << 4)) as i8;
+                    // Unpack scales and mins from packed 6-bit format (get_scale_min_k4 pattern)
+                    let mut unpacked_scales = [0i8; 8];
+                    let mut unpacked_mins = [0i8; 8];
+                    for j in 0..8 {
+                        if j < 4 {
+                            unpacked_scales[j] = (scales[j] & 63) as i8;
+                            unpacked_mins[j] = (scales[j + 4] & 63) as i8;
+                        } else {
+                            unpacked_scales[j] =
+                                ((scales[j + 4] & 0xF) | ((scales[j - 4] >> 6) << 4)) as i8;
+                            unpacked_mins[j] =
+                                ((scales[j + 4] >> 4) | ((scales[j] >> 6) << 4)) as i8;
+                        }
+                    }
+
+                    let mut scale_idx = 0;
+                    let xb_base = b * Q5_K_BLOCK_ELEMS;
+
+                    // Process 256 elements as 4 chunks of 64 elements each
+                    for chunk in 0..4 {
+                        let q = &ql[chunk * 32..];
+                        let hm = &qh[chunk * 8..];
+                        let u1 = 1u8.wrapping_shl(2 * chunk as u32);
+                        let u2 = 1u8.wrapping_shl(2 * chunk as u32 + 1);
+
+                        // First 32 elements: d1 * q - m1
+                        let d1 = d * unpacked_scales[scale_idx] as f32;
+                        let m1 = dmin * unpacked_mins[scale_idx] as f32;
+                        scale_idx += 1;
+                        for l in 0..32 {
+                            let ql_bits = q[l] & 0x0F;
+                            let hbit = if hm[l >> 3] & u1 != 0 { 16 } else { 0 };
+                            let q_val = (ql_bits + hbit) as f32;
+                            acc += (d1 * q_val - m1) * x_row[xb_base + chunk * 64 + l];
+                        }
+
+                        // Next 32 elements: d2 * q - m2
+                        let d2 = d * unpacked_scales[scale_idx] as f32;
+                        let m2 = dmin * unpacked_mins[scale_idx] as f32;
+                        scale_idx += 1;
+                        for l in 0..32 {
+                            let ql_bits = q[l] >> 4;
+                            let hbit = if hm[l >> 3] & u2 != 0 { 16 } else { 0 };
+                            let q_val = (ql_bits + hbit) as f32;
+                            acc += (d2 * q_val - m2) * x_row[xb_base + chunk * 64 + 32 + l];
+                        }
                     }
                 }
-
-                let mut scale_idx = 0;
-                let xb_base = b * Q5_K_BLOCK_ELEMS;
-
-                // Process 256 elements as 4 chunks of 64 elements each
-                for chunk in 0..4 {
-                    let q = &ql[chunk * 32..];
-                    let hm = &qh[chunk * 8..];
-                    let u1 = 1u8.wrapping_shl(2 * chunk as u32);
-                    let u2 = 1u8.wrapping_shl(2 * chunk as u32 + 1);
-
-                    // First 32 elements: d1 * q - m1
-                    let d1 = d * unpacked_scales[scale_idx] as f32;
-                    let m1 = dmin * unpacked_mins[scale_idx] as f32;
-                    scale_idx += 1;
-                    for l in 0..32 {
-                        let ql_bits = q[l] & 0x0F;
-                        let hbit = if hm[l >> 3] & u1 != 0 { 16 } else { 0 };
-                        let q_val = (ql_bits + hbit) as f32;
-                        acc += (d1 * q_val - m1) * x_row[xb_base + chunk * 64 + l];
-                    }
-
-                    // Next 32 elements: d2 * q - m2
-                    let d2 = d * unpacked_scales[scale_idx] as f32;
-                    let m2 = dmin * unpacked_mins[scale_idx] as f32;
-                    scale_idx += 1;
-                    for l in 0..32 {
-                        let ql_bits = q[l] >> 4;
-                        let hbit = if hm[l >> 3] & u2 != 0 { 16 } else { 0 };
-                        let q_val = (ql_bits + hbit) as f32;
-                        acc += (d2 * q_val - m2) * x_row[xb_base + chunk * 64 + 32 + l];
-                    }
-                }
+                y_row[o] = acc;
             }
-            y_row[o] = acc;
-        }
-    });
+        });
 }
 
 /// Dispatch GEMM by weight type with automatic transposition detection.
@@ -821,7 +846,9 @@ pub fn dispatch_gemm(
                 // For transposed Q4_K, use dequant-on-the-fly fallback
                 gemm_q4_k_transposed_fallback(w, x, y, 1, out_dim, in_dim);
             } else {
-                crate::cpu::kernels::gemm_q4k_q8::gemm_q4_k_q8_k_dispatch_gemm(w, x, y, 1, out_dim, in_dim);
+                crate::cpu::kernels::gemm_q4k_q8::gemm_q4_k_q8_k_dispatch_gemm(
+                    w, x, y, 1, out_dim, in_dim,
+                );
             }
         }
         GgmlType::Q6_K => {
@@ -919,26 +946,29 @@ pub fn gemm_q4_0_transposed_gemm(
         let col_offset = o * col_bytes;
 
         // Process all sequences in parallel
-        y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
-            let x_row = &x[s * in_dim..(s + 1) * in_dim];
-            let mut acc = 0.0f32;
+        y.par_chunks_mut(out_dim)
+            .enumerate()
+            .for_each(|(s, y_row)| {
+                let x_row = &x[s * in_dim..(s + 1) * in_dim];
+                let mut acc = 0.0f32;
 
-            // Iterate through blocks in this column
-            for b in 0..num_blocks_per_col {
-                let block = &w[col_offset + b * Q4_BLOCK_BYTES..col_offset + (b + 1) * Q4_BLOCK_BYTES];
-                let scale = super::quant::load_f16_scale(&block[0..2]);
-                let qs = &block[2..18];
-                let xb = &x_row[b * Q4_BLOCK_ELEMS..];
+                // Iterate through blocks in this column
+                for b in 0..num_blocks_per_col {
+                    let block =
+                        &w[col_offset + b * Q4_BLOCK_BYTES..col_offset + (b + 1) * Q4_BLOCK_BYTES];
+                    let scale = super::quant::load_f16_scale(&block[0..2]);
+                    let qs = &block[2..18];
+                    let xb = &x_row[b * Q4_BLOCK_ELEMS..];
 
-                for i in 0..16 {
-                    let q_lo = (((qs[i] & 0x0F) as i32) - 8) as f32 * scale;
-                    let q_hi = (((qs[i] >> 4) as i32) - 8) as f32 * scale;
-                    acc += q_lo * xb[i] + q_hi * xb[i + 16];
+                    for i in 0..16 {
+                        let q_lo = (((qs[i] & 0x0F) as i32) - 8) as f32 * scale;
+                        let q_hi = (((qs[i] >> 4) as i32) - 8) as f32 * scale;
+                        acc += q_lo * xb[i] + q_hi * xb[i + 16];
+                    }
                 }
-            }
 
-            y_row[o] = acc;
-        });
+                y_row[o] = acc;
+            });
     }
 }
 
@@ -959,29 +989,32 @@ pub fn gemm_q4_1_transposed_gemm(
         let col_offset = o * col_bytes;
 
         // Process all sequences in parallel
-        y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
-            let x_row = &x[s * in_dim..(s + 1) * in_dim];
-            let mut acc = 0.0f32;
+        y.par_chunks_mut(out_dim)
+            .enumerate()
+            .for_each(|(s, y_row)| {
+                let x_row = &x[s * in_dim..(s + 1) * in_dim];
+                let mut acc = 0.0f32;
 
-            // Iterate through blocks in this column
-            for b in 0..num_blocks_per_col {
-                let block = &w[col_offset + b * Q4_1_BLOCK_BYTES..col_offset + (b + 1) * Q4_1_BLOCK_BYTES];
-                let w_scale = super::quant::load_f16_scale(&block[0..2]);
-                let w_min = super::quant::load_f16_scale(&block[2..4]);
-                let qs = &block[4..20];
-                let xb = &x_row[b * Q4_1_BLOCK_ELEMS..];
+                // Iterate through blocks in this column
+                for b in 0..num_blocks_per_col {
+                    let block = &w[col_offset + b * Q4_1_BLOCK_BYTES
+                        ..col_offset + (b + 1) * Q4_1_BLOCK_BYTES];
+                    let w_scale = super::quant::load_f16_scale(&block[0..2]);
+                    let w_min = super::quant::load_f16_scale(&block[2..4]);
+                    let qs = &block[4..20];
+                    let xb = &x_row[b * Q4_1_BLOCK_ELEMS..];
 
-                for i in 0..16 {
-                    let q_lo = ((qs[i] & 0x0F) as i32) as f32;
-                    let q_hi = ((qs[i] >> 4) as i32) as f32;
-                    let v_lo = (q_lo * w_scale + w_min) * xb[i];
-                    let v_hi = (q_hi * w_scale + w_min) * xb[i + 16];
-                    acc += v_lo + v_hi;
+                    for i in 0..16 {
+                        let q_lo = ((qs[i] & 0x0F) as i32) as f32;
+                        let q_hi = ((qs[i] >> 4) as i32) as f32;
+                        let v_lo = (q_lo * w_scale + w_min) * xb[i];
+                        let v_hi = (q_hi * w_scale + w_min) * xb[i + 16];
+                        acc += v_lo + v_hi;
+                    }
                 }
-            }
 
-            y_row[o] = acc;
-        });
+                y_row[o] = acc;
+            });
     }
 }
 
@@ -998,34 +1031,37 @@ pub fn gemm_q5_0_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, 
         let col_offset = o * col_bytes;
 
         // Process all sequences in parallel
-        y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
-            let x_row = &x[s * in_dim..(s + 1) * in_dim];
-            let mut acc = 0.0f32;
+        y.par_chunks_mut(out_dim)
+            .enumerate()
+            .for_each(|(s, y_row)| {
+                let x_row = &x[s * in_dim..(s + 1) * in_dim];
+                let mut acc = 0.0f32;
 
-            // Iterate through blocks in this column
-            for b in 0..num_blocks_per_col {
-                let block = &w[col_offset + b * Q5_0_BLOCK_BYTES..col_offset + (b + 1) * Q5_0_BLOCK_BYTES];
-                let d = super::quant::load_f16_scale(&block[0..2]);
-                let qh = &block[2..6];
-                let qs = &block[6..22];
-                let xb = &x_row[b * Q5_0_BLOCK_ELEMS..];
+                // Iterate through blocks in this column
+                for b in 0..num_blocks_per_col {
+                    let block = &w[col_offset + b * Q5_0_BLOCK_BYTES
+                        ..col_offset + (b + 1) * Q5_0_BLOCK_BYTES];
+                    let d = super::quant::load_f16_scale(&block[0..2]);
+                    let qh = &block[2..6];
+                    let qs = &block[6..22];
+                    let xb = &x_row[b * Q5_0_BLOCK_ELEMS..];
 
-                for i in 0..16 {
-                    // Process 2 values per iteration
-                    let high_bit_0 = ((qh[i / 8] >> (i % 8)) & 1) << 4;
-                    let low_bits_0 = qs[i] & 0x0F;
-                    let q0 = ((high_bit_0 | low_bits_0) as i32) - 16;
+                    for i in 0..16 {
+                        // Process 2 values per iteration
+                        let high_bit_0 = ((qh[i / 8] >> (i % 8)) & 1) << 4;
+                        let low_bits_0 = qs[i] & 0x0F;
+                        let q0 = ((high_bit_0 | low_bits_0) as i32) - 16;
 
-                    let high_bit_1 = ((qh[i / 8 + 2] >> (i % 8)) & 1) << 4;
-                    let low_bits_1 = (qs[i] >> 4) & 0x0F;
-                    let q1 = ((high_bit_1 | low_bits_1) as i32) - 16;
+                        let high_bit_1 = ((qh[i / 8 + 2] >> (i % 8)) & 1) << 4;
+                        let low_bits_1 = (qs[i] >> 4) & 0x0F;
+                        let q1 = ((high_bit_1 | low_bits_1) as i32) - 16;
 
-                    acc += d * (q0 as f32) * xb[i] + d * (q1 as f32) * xb[i + 16];
+                        acc += d * (q0 as f32) * xb[i] + d * (q1 as f32) * xb[i + 16];
+                    }
                 }
-            }
 
-            y_row[o] = acc;
-        });
+                y_row[o] = acc;
+            });
     }
 }
 
@@ -1045,51 +1081,50 @@ pub fn gemm_q8_0_transposed_gemm(
         let col_offset = o * col_bytes;
 
         // Process all sequences in parallel
-        y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
-            let x_row = &x[s * in_dim..(s + 1) * in_dim];
-            let mut acc = 0.0f32;
+        y.par_chunks_mut(out_dim)
+            .enumerate()
+            .for_each(|(s, y_row)| {
+                let x_row = &x[s * in_dim..(s + 1) * in_dim];
+                let mut acc = 0.0f32;
 
-            // Iterate through blocks in this column
-            for b in 0..num_blocks_per_col {
-                let block = &w[col_offset + b * Q8_BLOCK_BYTES..col_offset + (b + 1) * Q8_BLOCK_BYTES];
-                let scale = super::quant::load_f16_scale(&block[0..2]);
-                let qs = &block[2..34];
-                let xb = &x_row[b * Q8_BLOCK_ELEMS..];
+                // Iterate through blocks in this column
+                for b in 0..num_blocks_per_col {
+                    let block =
+                        &w[col_offset + b * Q8_BLOCK_BYTES..col_offset + (b + 1) * Q8_BLOCK_BYTES];
+                    let scale = super::quant::load_f16_scale(&block[0..2]);
+                    let qs = &block[2..34];
+                    let xb = &x_row[b * Q8_BLOCK_ELEMS..];
 
-                for i in 0..Q8_BLOCK_ELEMS {
-                    acc += (qs[i] as i8) as f32 * scale * xb[i];
+                    for i in 0..Q8_BLOCK_ELEMS {
+                        acc += (qs[i] as i8) as f32 * scale * xb[i];
+                    }
                 }
-            }
 
-            y_row[o] = acc;
-        });
+                y_row[o] = acc;
+            });
     }
 }
 
 /// F32 GEMM transposed.
-fn gemm_f32_transposed(
-    w: &[f32],
-    x: &[f32],
-    y: &mut [f32],
-    out_dim: usize,
-    in_dim: usize,
-) {
+fn gemm_f32_transposed(w: &[f32], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
     let seq_len = x.len() / in_dim;
 
     // For each output dimension (column in original matrix)
     for o in 0..out_dim {
         // Process all sequences in parallel
-        y.par_chunks_mut(out_dim).enumerate().for_each(|(s, y_row)| {
-            let x_row = &x[s * in_dim..(s + 1) * in_dim];
-            let mut acc = 0.0f32;
+        y.par_chunks_mut(out_dim)
+            .enumerate()
+            .for_each(|(s, y_row)| {
+                let x_row = &x[s * in_dim..(s + 1) * in_dim];
+                let mut acc = 0.0f32;
 
-            // Compute dot product: sum_i(x[i] * W[i, o])
-            for i in 0..in_dim {
-                acc += x_row[i] * w[i * out_dim + o];
-            }
+                // Compute dot product: sum_i(x[i] * W[i, o])
+                for i in 0..in_dim {
+                    acc += x_row[i] * w[i * out_dim + o];
+                }
 
-            y_row[o] = acc;
-        });
+                y_row[o] = acc;
+            });
     }
 }
 
@@ -1206,7 +1241,14 @@ pub fn gemv_q4_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
 /// * `out_dim` - Output dimension (number of output rows)
 /// * `in_dim` - Input dimension (must be multiple of Q4_BLOCK_ELEMS)
 /// * `scratch` - Optional scratch buffer for Q8_0 quantization. If None, allocates internally.
-pub fn gemv_q4_0_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize, scratch: Option<&mut [u8]>) {
+pub fn gemv_q4_0_q8_0(
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    in_dim: usize,
+    scratch: Option<&mut [u8]>,
+) {
     let num_blocks = in_dim / Q4_BLOCK_ELEMS;
     let row_bytes = num_blocks * Q4_BLOCK_BYTES;
 
@@ -1242,8 +1284,8 @@ pub fn gemv_q4_0_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim
             #[cfg(target_arch = "x86_64")]
             if b + 2 < num_blocks {
                 unsafe {
-                    use std::arch::x86_64::_MM_HINT_T0;
                     use std::arch::x86_64::_mm_prefetch;
+                    use std::arch::x86_64::_MM_HINT_T0;
                     let next_ptr = row_w[(b + 2) * Q4_BLOCK_BYTES..].as_ptr();
                     _mm_prefetch(next_ptr as *const i8, _MM_HINT_T0);
                 }
@@ -1316,7 +1358,14 @@ pub fn gemv_q4_0_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim
 ///
 /// Q4_1 block format: [f16 scale | f16 min | 16 nibble bytes] = 20 bytes
 /// Values are in range [min, min + 15*scale]
-pub fn gemv_q4_1_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize, scratch: Option<&mut [u8]>) {
+pub fn gemv_q4_1_q8_0(
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    in_dim: usize,
+    scratch: Option<&mut [u8]>,
+) {
     let num_blocks = in_dim / Q4_1_BLOCK_ELEMS;
     let row_bytes = num_blocks * Q4_1_BLOCK_BYTES;
 
@@ -1350,8 +1399,8 @@ pub fn gemv_q4_1_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim
             #[cfg(target_arch = "x86_64")]
             if b + 2 < num_blocks {
                 unsafe {
-                    use std::arch::x86_64::_MM_HINT_T0;
                     use std::arch::x86_64::_mm_prefetch;
+                    use std::arch::x86_64::_MM_HINT_T0;
                     let next_ptr = row_w[(b + 2) * Q4_1_BLOCK_BYTES..].as_ptr();
                     _mm_prefetch(next_ptr as *const i8, _MM_HINT_T0);
                 }
@@ -1379,13 +1428,19 @@ pub fn gemv_q4_1_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim
             if use_avx2 {
                 #[cfg(target_arch = "x86_64")]
                 {
-                    acc += unsafe { dot_q4_1_q8_0_block_avx2(qs0, q8_0, combined_scale0, w_min0 * x_scale0) };
-                    acc += unsafe { dot_q4_1_q8_0_block_avx2(qs1, q8_1, combined_scale1, w_min1 * x_scale1) };
+                    acc += unsafe {
+                        dot_q4_1_q8_0_block_avx2(qs0, q8_0, combined_scale0, w_min0 * x_scale0)
+                    };
+                    acc += unsafe {
+                        dot_q4_1_q8_0_block_avx2(qs1, q8_1, combined_scale1, w_min1 * x_scale1)
+                    };
                 }
                 #[cfg(not(target_arch = "x86_64"))]
                 {
-                    acc += dot_q4_1_q8_0_block_scalar(qs0, q8_0, combined_scale0, w_min0 * x_scale0);
-                    acc += dot_q4_1_q8_0_block_scalar(qs1, q8_1, combined_scale1, w_min1 * x_scale1);
+                    acc +=
+                        dot_q4_1_q8_0_block_scalar(qs0, q8_0, combined_scale0, w_min0 * x_scale0);
+                    acc +=
+                        dot_q4_1_q8_0_block_scalar(qs1, q8_1, combined_scale1, w_min1 * x_scale1);
                 }
             } else {
                 acc += dot_q4_1_q8_0_block_scalar(qs0, q8_0, combined_scale0, w_min0 * x_scale0);
@@ -1407,7 +1462,9 @@ pub fn gemv_q4_1_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim
             if use_avx2 {
                 #[cfg(target_arch = "x86_64")]
                 {
-                    acc += unsafe { dot_q4_1_q8_0_block_avx2(qs, q8, combined_scale, w_min * x_scale) };
+                    acc += unsafe {
+                        dot_q4_1_q8_0_block_avx2(qs, q8, combined_scale, w_min * x_scale)
+                    };
                 }
                 #[cfg(not(target_arch = "x86_64"))]
                 {
@@ -1519,7 +1576,9 @@ fn gemv_q4_k_transposed_fallback(
 
         for block_idx in 0..num_blocks_k {
             let block_ptr = unsafe {
-                w.as_ptr().add(vocab_idx * row_bytes + block_idx * BlockQ4K::SIZE) as *const BlockQ4K
+                w.as_ptr()
+                    .add(vocab_idx * row_bytes + block_idx * BlockQ4K::SIZE)
+                    as *const BlockQ4K
             };
             let block = unsafe { &*block_ptr };
 
@@ -1556,14 +1615,7 @@ fn gemv_q4_k_transposed_fallback(
 ///
 /// For transposed access, computes Y = W^T * X where W is stored as [in_dim, out_dim].
 /// Uses dequantization-on-the-fly for simplicity (slower but correct).
-fn gemm_q4_k_transposed_fallback(
-    w: &[u8],
-    x: &[f32],
-    y: &mut [f32],
-    m: usize,
-    n: usize,
-    k: usize,
-) {
+fn gemm_q4_k_transposed_fallback(w: &[u8], x: &[f32], y: &mut [f32], m: usize, n: usize, k: usize) {
     use crate::cpu::kernels::q4::BlockQ4K;
 
     let num_blocks_k = k / 256;
@@ -1571,39 +1623,43 @@ fn gemm_q4_k_transposed_fallback(
 
     // For transposed access: W stored as [k, n], compute as W^T * X
     // Each output column j corresponds to row j in stored layout
-    y.par_chunks_mut(n).enumerate().for_each(|(batch_idx, y_row)| {
-        let x_row = &x[batch_idx * k..(batch_idx + 1) * k];
+    y.par_chunks_mut(n)
+        .enumerate()
+        .for_each(|(batch_idx, y_row)| {
+            let x_row = &x[batch_idx * k..(batch_idx + 1) * k];
 
-        for out_col in 0..n {
-            let mut acc = 0.0f32;
+            for out_col in 0..n {
+                let mut acc = 0.0f32;
 
-            for block_idx in 0..num_blocks_k {
-                let block_ptr = unsafe {
-                    w.as_ptr().add(out_col * row_bytes + block_idx * BlockQ4K::SIZE) as *const BlockQ4K
-                };
-                let block = unsafe { &*block_ptr };
+                for block_idx in 0..num_blocks_k {
+                    let block_ptr = unsafe {
+                        w.as_ptr()
+                            .add(out_col * row_bytes + block_idx * BlockQ4K::SIZE)
+                            as *const BlockQ4K
+                    };
+                    let block = unsafe { &*block_ptr };
 
-                // Dequantize this block and compute dot product
-                let block_start = block_idx * 256;
-                for i in 0..256 {
-                    if block_start + i < k {
-                        // Simplified Q4_K dequantization
-                        let q4_value = if i < 128 {
-                            (block.qs[i / 2] >> (4 * (i % 2))) & 0x0F
-                        } else {
-                            (block.qs[64 + (i - 128) / 2] >> (4 * ((i - 128) % 2))) & 0x0F
-                        };
+                    // Dequantize this block and compute dot product
+                    let block_start = block_idx * 256;
+                    for i in 0..256 {
+                        if block_start + i < k {
+                            // Simplified Q4_K dequantization
+                            let q4_value = if i < 128 {
+                                (block.qs[i / 2] >> (4 * (i % 2))) & 0x0F
+                            } else {
+                                (block.qs[64 + (i - 128) / 2] >> (4 * ((i - 128) % 2))) & 0x0F
+                            };
 
-                        let d = half::f16::from_le_bytes(block.d).to_f32();
-                        let weight = d * (q4_value as f32 - 8.0);
-                        acc += weight * x_row[block_start + i];
+                            let d = half::f16::from_le_bytes(block.d).to_f32();
+                            let weight = d * (q4_value as f32 - 8.0);
+                            acc += weight * x_row[block_start + i];
+                        }
                     }
                 }
-            }
 
-            y_row[out_col] = acc;
-        }
-    });
+                y_row[out_col] = acc;
+            }
+        });
 }
 
 /// Dispatch GEMV based on weight type with automatic transposition detection.
@@ -1651,9 +1707,8 @@ pub fn dispatch_gemv(
 
     match meta.wtype {
         GgmlType::F32 => {
-            let wf: &[f32] = unsafe {
-                std::slice::from_raw_parts(w.as_ptr() as *const f32, w.len() / 4)
-            };
+            let wf: &[f32] =
+                unsafe { std::slice::from_raw_parts(w.as_ptr() as *const f32, w.len() / 4) };
             if meta.needs_transpose {
                 gemv_f32_transposed(wf, x, y, out_dim, in_dim);
             } else {
@@ -1987,8 +2042,8 @@ pub unsafe fn dot_q4_1_q8_0_block_avx2(qs: &[u8], q8: &[u8], scale: f32, min_off
     let q8_hadd = _mm256_hadd_epi16(q8_sum16, q8_sum16);
     let q8_hadd2 = _mm256_hadd_epi16(q8_hadd, q8_hadd);
     // Extract the result (only first two elements needed)
-    let q8_sum = (_mm256_extract_epi16(q8_hadd2, 0) as i32)
-        + (_mm256_extract_epi16(q8_hadd2, 4) as i32);
+    let q8_sum =
+        (_mm256_extract_epi16(q8_hadd2, 0) as i32) + (_mm256_extract_epi16(q8_hadd2, 4) as i32);
 
     let q4 = unpack_q4_1_nibbles_avx2(qs);
     let dotf = mul_sum_q4_1_q8_0_block_avx2_unscaled(q4, q8);
@@ -2073,13 +2128,7 @@ pub fn argmax(x: &[f32]) -> usize {
 /// - Each column (vocab token) is stored contiguously
 /// - Column v starts at offset: v * num_blocks * Q8_BLOCK_BYTES
 /// - Within each column, elements are stored in Q8_0 blocks of 32 elements
-pub fn gemv_q8_0_transposed(
-    w: &[u8],
-    x: &[f32],
-    y: &mut [f32],
-    out_dim: usize,
-    in_dim: usize,
-) {
+pub fn gemv_q8_0_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
     // Initialize output to zero
     y.fill(0.0);
 
@@ -2116,13 +2165,7 @@ pub fn gemv_q8_0_transposed(
 /// stored in column-major Q4_0 blocked format.
 ///
 /// Used for FFN down projection where weights are stored as [in_dim, out_dim].
-pub fn gemv_q4_0_transposed(
-    w: &[u8],
-    x: &[f32],
-    y: &mut [f32],
-    out_dim: usize,
-    in_dim: usize,
-) {
+pub fn gemv_q4_0_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
     // Initialize output to zero
     y.fill(0.0);
 
@@ -2161,13 +2204,7 @@ pub fn gemv_q4_0_transposed(
 /// stored in column-major Q4_1 blocked format.
 ///
 /// Used for FFN down projection where weights are stored as [in_dim, out_dim].
-pub fn gemv_q4_1_transposed(
-    w: &[u8],
-    x: &[f32],
-    y: &mut [f32],
-    out_dim: usize,
-    in_dim: usize,
-) {
+pub fn gemv_q4_1_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
     // Initialize output to zero
     y.fill(0.0);
 
@@ -2183,7 +2220,8 @@ pub fn gemv_q4_1_transposed(
 
         // Iterate through blocks in this column
         for b in 0..num_blocks_per_col {
-            let block = &w[col_offset + b * Q4_1_BLOCK_BYTES..col_offset + (b + 1) * Q4_1_BLOCK_BYTES];
+            let block =
+                &w[col_offset + b * Q4_1_BLOCK_BYTES..col_offset + (b + 1) * Q4_1_BLOCK_BYTES];
             let w_scale = super::quant::load_f16_scale(&block[0..2]);
             let w_min = super::quant::load_f16_scale(&block[2..4]);
             let qs = &block[4..20];
@@ -2231,9 +2269,8 @@ pub fn dispatch_gemv_transposed(
 ) -> Result<(), super::CpuError> {
     match wtype {
         GgmlType::F32 => {
-            let wf: &[f32] = unsafe {
-                std::slice::from_raw_parts(w.as_ptr() as *const f32, w.len() / 4)
-            };
+            let wf: &[f32] =
+                unsafe { std::slice::from_raw_parts(w.as_ptr() as *const f32, w.len() / 4) };
             if transposed {
                 gemv_f32_transposed(wf, x, y, out_dim, in_dim);
             } else {
@@ -2273,13 +2310,7 @@ pub fn dispatch_gemv_transposed(
 }
 
 /// F32 GEMV transposed for tied embeddings.
-fn gemv_f32_transposed(
-    w: &[f32],
-    x: &[f32],
-    y: &mut [f32],
-    out_dim: usize,
-    in_dim: usize,
-) {
+fn gemv_f32_transposed(w: &[f32], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
     // y = W^T * x, where W has shape [in_dim, out_dim]
     // y[v] = sum_i(x[i] * W[i, v])
     for v in 0..out_dim {

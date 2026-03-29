@@ -26,14 +26,8 @@ __global__ void dequantize_q4_1_device(
     const uint8_t* qs = in + 4;
     float* out = &output[block_idx * QK4_1];
 
-    // Sequential nibble unpacking: low nibble = first 16 values, high nibble = next 16
-    if (threadIdx.x < 16) {
-        uint8_t q = qs[threadIdx.x] & 0x0F;
-        out[threadIdx.x] = (float)q * d + m;
-    } else {
-        uint8_t q = qs[threadIdx.x - 16] >> 4;
-        out[threadIdx.x] = (float)q * d + m;
-    }
+    uint8_t q = unpack_nibble_sequential(qs, threadIdx.x);
+    out[threadIdx.x] = (float)q * d + m;
 }
 
 /// Batched dequantization for parallel processing
@@ -63,12 +57,11 @@ __global__ void dequantize_q4_1_batched_device(
     const uint8_t* qs = in + 4;
     float* out = &output[global_block_idx * QK4_1];
 
-    // Sequential unpacking: qs[i] low nibble → element i, high nibble → element i + 16
     for (int i = 0; i < QK4_1 / 2; ++i) {
         uint8_t q0 = qs[i] & 0x0F;
         uint8_t q1 = qs[i] >> 4;
-        out[i]                = (float)q0 * d + m;  // First half (elements 0..15)
-        out[i + QK4_1 / 2]   = (float)q1 * d + m;  // Second half (elements 16..31)
+        out[i]              = (float)q0 * d + m;
+        out[i + QK4_1 / 2] = (float)q1 * d + m;
     }
 }
 

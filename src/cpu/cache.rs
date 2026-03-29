@@ -149,8 +149,8 @@ impl CpuForwardScratch {
 
         // Q8_0 scratch buffer for GEMV quantization
         // Size: (hidden_size / 32) * 34 bytes per Q8_0 block
-        use super::quant::Q8_BLOCK_ELEMS;
         use super::quant::Q8_BLOCK_BYTES;
+        use super::quant::Q8_BLOCK_ELEMS;
         let num_blocks = h / Q8_BLOCK_ELEMS;
         let q8_scratch = vec![0u8; num_blocks * Q8_BLOCK_BYTES];
 

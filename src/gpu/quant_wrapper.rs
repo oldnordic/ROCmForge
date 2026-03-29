@@ -3,32 +3,55 @@
 //! Safe wrapper for Q4_K and Q8_0 quantization operations.
 //! Follows project patterns: GpuDevice, GpuBuffer, etc.
 
+use super::device::GpuDevice;
 use super::error::{GpuError, GpuResult};
 use super::ffi;
-use super::device::GpuDevice;
 use super::kernels::quant::{
-    // Q4_K kernels
-    quantize_q4_k, dequantize_q4_k, dequantize_q4_k_batched, verify_q4_k_accuracy, finalize_q4_k_metrics,
-    // Q5_K kernels
-    quantize_q5_k, dequantize_q5_k, dequantize_q5_k_batched, verify_q5_k_accuracy, finalize_q5_k_metrics,
-    // Q8_0 kernels
-    quantize_q8_0, dequantize_q8_0, dequantize_q8_0_batched, verify_q8_0_accuracy, finalize_q8_0_metrics,
-    // Q4_0 kernels
-    quantize_q4_0, dequantize_q4_0, dequantize_q4_0_batched, verify_q4_0_accuracy, finalize_q4_0_metrics,
-    // Q8_0 GEMV kernel
-    gemv_q8_0_f32,
+    dequantize_q4_0,
+    dequantize_q4_0_batched,
+    dequantize_q4_1,
+    dequantize_q4_1_batched,
+    dequantize_q4_k,
+    dequantize_q4_k_batched,
+    dequantize_q5_k,
+    dequantize_q5_k_batched,
+    dequantize_q8_0,
+    dequantize_q8_0_batched,
+    finalize_q4_0_metrics,
+    finalize_q4_1_metrics,
+    finalize_q4_k_metrics,
+    finalize_q5_k_metrics,
+    finalize_q8_0_metrics,
+    // Q4_0 GEMV kernel
+    gemv_q4_0_f32,
+    // Q4_1 GEMV kernel
+    gemv_q4_1_f32,
     // Q4_K GEMV kernel
     gemv_q4_k_f32,
     // Q5_K GEMV kernel
     gemv_q5_k_f32,
-    // Q4_0 GEMV kernel
-    gemv_q4_0_f32,
+    // Q8_0 GEMV kernel
+    gemv_q8_0_f32,
+    // Q4_0 kernels
+    quantize_q4_0,
     // Q4_1 kernels
-    quantize_q4_1, dequantize_q4_1, dequantize_q4_1_batched, verify_q4_1_accuracy, finalize_q4_1_metrics,
-    // Q4_1 GEMV kernel
-    gemv_q4_1_f32,
+    quantize_q4_1,
+    // Q4_K kernels
+    quantize_q4_k,
+    // Q5_K kernels
+    quantize_q5_k,
+    // Q8_0 kernels
+    quantize_q8_0,
+    verify_q4_0_accuracy,
+    verify_q4_1_accuracy,
+    verify_q4_k_accuracy,
+    verify_q5_k_accuracy,
+    verify_q8_0_accuracy,
 };
-use super::quant::{QK_K, Q4_K_BLOCK_SIZE, Q4KBlock, Q5_K_BLOCK_SIZE, Q5KBlock, QK8_0, Q8_0_BLOCK_SIZE, Q8_0_MAX, Q8_0Block, QK4_0, Q4_0_BLOCK_SIZE, QK4_1, Q4_1_BLOCK_SIZE};
+use super::quant::{
+    Q4KBlock, Q5KBlock, Q8_0Block, Q4_0_BLOCK_SIZE, Q4_1_BLOCK_SIZE, Q4_K_BLOCK_SIZE,
+    Q5_K_BLOCK_SIZE, Q8_0_BLOCK_SIZE, Q8_0_MAX, QK4_0, QK4_1, QK8_0, QK_K,
+};
 
 /// GPU quantization handle.
 ///
@@ -55,19 +78,7 @@ impl GpuQuant {
     }
 
     /// Quantize f32 data to Q4_K format.
-    ///
-    /// # Arguments
-    /// * `input` - GPU pointer to f32 input data [n]
-    /// * `output` - GPU pointer to Q4_K output data [n/256 * 144]
-    /// * `n` - Total number of elements
-    ///
-    /// # Returns
-    /// Ok(()) on success
-    ///
-    /// # Errors
-    /// - n is zero
-    /// - Kernel launch fails
-    pub fn quantize(&self, input: *const f32, output: *mut u8, n: usize) -> GpuResult<()> {
+    pub fn quantize_q4_k(&self, input: *const f32, output: *mut u8, n: usize) -> GpuResult<()> {
         if n == 0 {
             return Err(GpuError::HipApiError {
                 code: -1,
@@ -158,7 +169,13 @@ impl GpuQuant {
     /// # Errors
     /// - n or batch_size is zero
     /// - Kernel launch fails
-    pub fn dequantize_batched(&self, input: *const u8, output: *mut f32, n: usize, batch_size: usize) -> GpuResult<()> {
+    pub fn dequantize_batched(
+        &self,
+        input: *const u8,
+        output: *mut f32,
+        n: usize,
+        batch_size: usize,
+    ) -> GpuResult<()> {
         if n == 0 || batch_size == 0 {
             return Err(GpuError::HipApiError {
                 code: -1,
@@ -205,7 +222,12 @@ impl GpuQuant {
     /// # Errors
     /// - n is zero
     /// - Kernel launch fails
-    pub fn verify_accuracy(&self, original: *const f32, quantized: *const u8, n: usize) -> GpuResult<(f32, f32, f32)> {
+    pub fn verify_accuracy(
+        &self,
+        original: *const f32,
+        quantized: *const u8,
+        n: usize,
+    ) -> GpuResult<(f32, f32, f32)> {
         if n == 0 {
             return Err(GpuError::HipApiError {
                 code: -1,
@@ -232,17 +254,17 @@ impl GpuQuant {
         let num_blocks = (n + QK_K - 1) / QK_K;
 
         // Allocate temporary buffers for metrics
-        let errors_gpu = unsafe {
-            ffi::hip_malloc(4 * std::mem::size_of::<f32>())?
-        };
-        let metrics_gpu = unsafe {
-            ffi::hip_malloc(3 * std::mem::size_of::<f32>())?
-        };
+        let errors_gpu = unsafe { ffi::hip_malloc(4 * std::mem::size_of::<f32>())? };
+        let metrics_gpu = unsafe { ffi::hip_malloc(3 * std::mem::size_of::<f32>())? };
 
         // Initialize errors to zero
         let zeros = vec![0.0f32; 4];
         unsafe {
-            ffi::hip_memcpy_h2d(errors_gpu, zeros.as_ptr() as *const u8, 4 * std::mem::size_of::<f32>())?;
+            ffi::hip_memcpy_h2d(
+                errors_gpu,
+                zeros.as_ptr() as *const u8,
+                4 * std::mem::size_of::<f32>(),
+            )?;
         }
 
         // Run verification kernel
@@ -260,7 +282,7 @@ impl GpuQuant {
             ffi::hip_memcpy_d2h(
                 metrics.as_mut_ptr() as *mut u8,
                 metrics_gpu as *const u8,
-                3 * std::mem::size_of::<f32>()
+                3 * std::mem::size_of::<f32>(),
             )?;
         }
 
@@ -471,7 +493,13 @@ impl GpuQuant {
     /// # Errors
     /// - n or batch_size is zero
     /// - Kernel launch fails
-    pub fn dequantize_q8_0_batched(&self, input: *const u8, output: *mut f32, n: usize, batch_size: usize) -> GpuResult<()> {
+    pub fn dequantize_q8_0_batched(
+        &self,
+        input: *const u8,
+        output: *mut f32,
+        n: usize,
+        batch_size: usize,
+    ) -> GpuResult<()> {
         if n == 0 || batch_size == 0 {
             return Err(GpuError::HipApiError {
                 code: -1,
@@ -518,7 +546,12 @@ impl GpuQuant {
     /// # Errors
     /// - n is zero
     /// - Kernel launch fails
-    pub fn verify_q8_0_accuracy(&self, original: *const f32, quantized: *const u8, n: usize) -> GpuResult<(f32, f32, f32)> {
+    pub fn verify_q8_0_accuracy(
+        &self,
+        original: *const f32,
+        quantized: *const u8,
+        n: usize,
+    ) -> GpuResult<(f32, f32, f32)> {
         if n == 0 {
             return Err(GpuError::HipApiError {
                 code: -1,
@@ -545,17 +578,17 @@ impl GpuQuant {
         let num_blocks = (n + QK8_0 - 1) / QK8_0;
 
         // Allocate temporary buffers for metrics
-        let errors_gpu = unsafe {
-            ffi::hip_malloc(4 * std::mem::size_of::<f32>())?
-        };
-        let metrics_gpu = unsafe {
-            ffi::hip_malloc(3 * std::mem::size_of::<f32>())?
-        };
+        let errors_gpu = unsafe { ffi::hip_malloc(4 * std::mem::size_of::<f32>())? };
+        let metrics_gpu = unsafe { ffi::hip_malloc(3 * std::mem::size_of::<f32>())? };
 
         // Initialize errors to zero
         let zeros = vec![0.0f32; 4];
         unsafe {
-            ffi::hip_memcpy_h2d(errors_gpu, zeros.as_ptr() as *const u8, 4 * std::mem::size_of::<f32>())?;
+            ffi::hip_memcpy_h2d(
+                errors_gpu,
+                zeros.as_ptr() as *const u8,
+                4 * std::mem::size_of::<f32>(),
+            )?;
         }
 
         // Run verification kernel
@@ -573,7 +606,7 @@ impl GpuQuant {
             ffi::hip_memcpy_d2h(
                 metrics.as_mut_ptr() as *mut u8,
                 metrics_gpu as *const u8,
-                3 * std::mem::size_of::<f32>()
+                3 * std::mem::size_of::<f32>(),
             )?;
         }
 
@@ -692,7 +725,13 @@ impl GpuQuant {
     /// # Errors
     /// - n or batch_size is zero
     /// - Kernel launch fails
-    pub fn dequantize_q4_0_batched(&self, input: *const u8, output: *mut f32, n: usize, batch_size: usize) -> GpuResult<()> {
+    pub fn dequantize_q4_0_batched(
+        &self,
+        input: *const u8,
+        output: *mut f32,
+        n: usize,
+        batch_size: usize,
+    ) -> GpuResult<()> {
         if n == 0 || batch_size == 0 {
             return Err(GpuError::HipApiError {
                 code: -1,
@@ -739,7 +778,12 @@ impl GpuQuant {
     /// # Errors
     /// - n is zero
     /// - Kernel launch fails
-    pub fn verify_q4_0_accuracy(&self, original: *const f32, quantized: *const u8, n: usize) -> GpuResult<(f32, f32, f32)> {
+    pub fn verify_q4_0_accuracy(
+        &self,
+        original: *const f32,
+        quantized: *const u8,
+        n: usize,
+    ) -> GpuResult<(f32, f32, f32)> {
         if n == 0 {
             return Err(GpuError::HipApiError {
                 code: -1,
@@ -766,17 +810,17 @@ impl GpuQuant {
         let num_blocks = (n + QK4_0 - 1) / QK4_0;
 
         // Allocate temporary buffers for metrics
-        let errors_gpu = unsafe {
-            ffi::hip_malloc(4 * std::mem::size_of::<f32>())?
-        };
-        let metrics_gpu = unsafe {
-            ffi::hip_malloc(3 * std::mem::size_of::<f32>())?
-        };
+        let errors_gpu = unsafe { ffi::hip_malloc(4 * std::mem::size_of::<f32>())? };
+        let metrics_gpu = unsafe { ffi::hip_malloc(3 * std::mem::size_of::<f32>())? };
 
         // Initialize errors to zero
         let zeros = vec![0.0f32; 4];
         unsafe {
-            ffi::hip_memcpy_h2d(errors_gpu, zeros.as_ptr() as *const u8, 4 * std::mem::size_of::<f32>())?;
+            ffi::hip_memcpy_h2d(
+                errors_gpu,
+                zeros.as_ptr() as *const u8,
+                4 * std::mem::size_of::<f32>(),
+            )?;
         }
 
         // Run verification kernel
@@ -794,7 +838,7 @@ impl GpuQuant {
             ffi::hip_memcpy_d2h(
                 metrics.as_mut_ptr() as *mut u8,
                 metrics_gpu as *const u8,
-                3 * std::mem::size_of::<f32>()
+                3 * std::mem::size_of::<f32>(),
             )?;
         }
 
@@ -846,7 +890,10 @@ impl GpuQuant {
         if n_rows == 0 || ncols_dst == 0 {
             return Err(GpuError::HipApiError {
                 code: -1,
-                description: format!("gemv_q4_0_f32: invalid dimensions n_rows={} ncols_dst={}", n_rows, ncols_dst),
+                description: format!(
+                    "gemv_q4_0_f32: invalid dimensions n_rows={} ncols_dst={}",
+                    n_rows, ncols_dst
+                ),
             });
         }
 
@@ -854,7 +901,10 @@ impl GpuQuant {
         if n_rows % QK4_0 != 0 {
             return Err(GpuError::HipApiError {
                 code: -1,
-                description: format!("gemv_q4_0_f32: n_rows must be multiple of {}, got {}", QK4_0, n_rows),
+                description: format!(
+                    "gemv_q4_0_f32: n_rows must be multiple of {}, got {}",
+                    QK4_0, n_rows
+                ),
             });
         }
 
@@ -995,7 +1045,13 @@ impl GpuQuant {
     /// # Errors
     /// - n or batch_size is zero
     /// - Kernel launch fails
-    pub fn dequantize_q4_1_batched(&self, input: *const u8, output: *mut f32, n: usize, batch_size: usize) -> GpuResult<()> {
+    pub fn dequantize_q4_1_batched(
+        &self,
+        input: *const u8,
+        output: *mut f32,
+        n: usize,
+        batch_size: usize,
+    ) -> GpuResult<()> {
         if n == 0 || batch_size == 0 {
             return Err(GpuError::HipApiError {
                 code: -1,
@@ -1042,7 +1098,12 @@ impl GpuQuant {
     /// # Errors
     /// - n is zero
     /// - Kernel launch fails
-    pub fn verify_q4_1_accuracy(&self, original: *const f32, quantized: *const u8, n: usize) -> GpuResult<(f32, f32, f32)> {
+    pub fn verify_q4_1_accuracy(
+        &self,
+        original: *const f32,
+        quantized: *const u8,
+        n: usize,
+    ) -> GpuResult<(f32, f32, f32)> {
         if n == 0 {
             return Err(GpuError::HipApiError {
                 code: -1,
@@ -1069,17 +1130,17 @@ impl GpuQuant {
         let num_blocks = (n + QK4_1 - 1) / QK4_1;
 
         // Allocate temporary buffers for metrics
-        let errors_gpu = unsafe {
-            ffi::hip_malloc(4 * std::mem::size_of::<f32>())?
-        };
-        let metrics_gpu = unsafe {
-            ffi::hip_malloc(3 * std::mem::size_of::<f32>())?
-        };
+        let errors_gpu = unsafe { ffi::hip_malloc(4 * std::mem::size_of::<f32>())? };
+        let metrics_gpu = unsafe { ffi::hip_malloc(3 * std::mem::size_of::<f32>())? };
 
         // Initialize errors to zero
         let zeros = vec![0.0f32; 4];
         unsafe {
-            ffi::hip_memcpy_h2d(errors_gpu, zeros.as_ptr() as *const u8, 4 * std::mem::size_of::<f32>())?;
+            ffi::hip_memcpy_h2d(
+                errors_gpu,
+                zeros.as_ptr() as *const u8,
+                4 * std::mem::size_of::<f32>(),
+            )?;
         }
 
         // Run verification kernel
@@ -1097,7 +1158,7 @@ impl GpuQuant {
             ffi::hip_memcpy_d2h(
                 metrics.as_mut_ptr() as *mut u8,
                 metrics_gpu as *const u8,
-                3 * std::mem::size_of::<f32>()
+                3 * std::mem::size_of::<f32>(),
             )?;
         }
 
@@ -1144,7 +1205,10 @@ impl GpuQuant {
         if n_rows == 0 || ncols_dst == 0 {
             return Err(GpuError::HipApiError {
                 code: -1,
-                description: format!("gemv_q4_1_f32: invalid dimensions n_rows={} ncols_dst={}", n_rows, ncols_dst),
+                description: format!(
+                    "gemv_q4_1_f32: invalid dimensions n_rows={} ncols_dst={}",
+                    n_rows, ncols_dst
+                ),
             });
         }
 
@@ -1152,7 +1216,10 @@ impl GpuQuant {
         if n_rows % QK4_1 != 0 {
             return Err(GpuError::HipApiError {
                 code: -1,
-                description: format!("gemv_q4_1_f32: n_rows must be multiple of {}, got {}", QK4_1, n_rows),
+                description: format!(
+                    "gemv_q4_1_f32: n_rows must be multiple of {}, got {}",
+                    QK4_1, n_rows
+                ),
             });
         }
 
@@ -1205,7 +1272,12 @@ impl GpuQuant {
     /// # Errors
     /// - n is zero
     /// - Kernel launch fails
-    pub fn verify_q5_k_accuracy(&self, original: *const f32, quantized: *const u8, n: usize) -> GpuResult<(f32, f32, f32)> {
+    pub fn verify_q5_k_accuracy(
+        &self,
+        original: *const f32,
+        quantized: *const u8,
+        n: usize,
+    ) -> GpuResult<(f32, f32, f32)> {
         if n == 0 {
             return Err(GpuError::HipApiError {
                 code: -1,
@@ -1232,17 +1304,17 @@ impl GpuQuant {
         let num_blocks = (n + QK_K - 1) / QK_K;
 
         // Allocate temporary buffers for metrics
-        let errors_gpu = unsafe {
-            ffi::hip_malloc(4 * std::mem::size_of::<f32>())?
-        };
-        let metrics_gpu = unsafe {
-            ffi::hip_malloc(3 * std::mem::size_of::<f32>())?
-        };
+        let errors_gpu = unsafe { ffi::hip_malloc(4 * std::mem::size_of::<f32>())? };
+        let metrics_gpu = unsafe { ffi::hip_malloc(3 * std::mem::size_of::<f32>())? };
 
         // Initialize errors to zero
         let zeros = vec![0.0f32; 4];
         unsafe {
-            ffi::hip_memcpy_h2d(errors_gpu, zeros.as_ptr() as *const u8, 4 * std::mem::size_of::<f32>())?;
+            ffi::hip_memcpy_h2d(
+                errors_gpu,
+                zeros.as_ptr() as *const u8,
+                4 * std::mem::size_of::<f32>(),
+            )?;
         }
 
         // Run verification kernel
@@ -1260,7 +1332,7 @@ impl GpuQuant {
             ffi::hip_memcpy_d2h(
                 metrics.as_mut_ptr() as *mut u8,
                 metrics_gpu as *const u8,
-                3 * std::mem::size_of::<f32>()
+                3 * std::mem::size_of::<f32>(),
             )?;
         }
 
@@ -1312,7 +1384,10 @@ impl GpuQuant {
         if n_rows == 0 || ncols_dst == 0 {
             return Err(GpuError::HipApiError {
                 code: -1,
-                description: format!("gemv_q8_0_f32: invalid dimensions n_rows={} ncols_dst={}", n_rows, ncols_dst),
+                description: format!(
+                    "gemv_q8_0_f32: invalid dimensions n_rows={} ncols_dst={}",
+                    n_rows, ncols_dst
+                ),
             });
         }
 
@@ -1320,7 +1395,10 @@ impl GpuQuant {
         if n_rows % QK8_0 != 0 {
             return Err(GpuError::HipApiError {
                 code: -1,
-                description: format!("gemv_q8_0_f32: n_rows must be multiple of {}, got {}", QK8_0, n_rows),
+                description: format!(
+                    "gemv_q8_0_f32: n_rows must be multiple of {}, got {}",
+                    QK8_0, n_rows
+                ),
             });
         }
 
@@ -1395,7 +1473,10 @@ impl GpuQuant {
         if n_rows == 0 || ncols_dst == 0 {
             return Err(GpuError::HipApiError {
                 code: -1,
-                description: format!("gemv_q4_k_f32: invalid dimensions n_rows={} ncols_dst={}", n_rows, ncols_dst),
+                description: format!(
+                    "gemv_q4_k_f32: invalid dimensions n_rows={} ncols_dst={}",
+                    n_rows, ncols_dst
+                ),
             });
         }
 
@@ -1403,7 +1484,10 @@ impl GpuQuant {
         if n_rows % QK_K != 0 {
             return Err(GpuError::HipApiError {
                 code: -1,
-                description: format!("gemv_q4_k_f32: n_rows must be multiple of {}, got {}", QK_K, n_rows),
+                description: format!(
+                    "gemv_q4_k_f32: n_rows must be multiple of {}, got {}",
+                    QK_K, n_rows
+                ),
             });
         }
 
@@ -1411,7 +1495,10 @@ impl GpuQuant {
         if ncols_dst > 1024 {
             return Err(GpuError::HipApiError {
                 code: -1,
-                description: format!("gemv_q4_k_f32: ncols_dst must be <= 1024, got {}", ncols_dst),
+                description: format!(
+                    "gemv_q4_k_f32: ncols_dst must be <= 1024, got {}",
+                    ncols_dst
+                ),
             });
         }
 
@@ -1487,7 +1574,10 @@ impl GpuQuant {
         if n_rows == 0 || ncols_dst == 0 {
             return Err(GpuError::HipApiError {
                 code: -1,
-                description: format!("gemv_q5_k_f32: invalid dimensions n_rows={} ncols_dst={}", n_rows, ncols_dst),
+                description: format!(
+                    "gemv_q5_k_f32: invalid dimensions n_rows={} ncols_dst={}",
+                    n_rows, ncols_dst
+                ),
             });
         }
 
@@ -1495,7 +1585,10 @@ impl GpuQuant {
         if n_rows % QK_K != 0 {
             return Err(GpuError::HipApiError {
                 code: -1,
-                description: format!("gemv_q5_k_f32: n_rows must be multiple of {}, got {}", QK_K, n_rows),
+                description: format!(
+                    "gemv_q5_k_f32: n_rows must be multiple of {}, got {}",
+                    QK_K, n_rows
+                ),
             });
         }
 
@@ -1503,7 +1596,10 @@ impl GpuQuant {
         if ncols_dst > 1024 {
             return Err(GpuError::HipApiError {
                 code: -1,
-                description: format!("gemv_q5_k_f32: ncols_dst must be <= 1024, got {}", ncols_dst),
+                description: format!(
+                    "gemv_q5_k_f32: ncols_dst must be <= 1024, got {}",
+                    ncols_dst
+                ),
             });
         }
 

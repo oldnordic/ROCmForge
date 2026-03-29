@@ -82,10 +82,7 @@ fn test_encode_decode_complex_text() {
     for original in texts {
         let tokens = tok.encode(original, false);
         let decoded = tok.decode(&tokens, false);
-        assert_eq!(
-            decoded, original,
-            "Round-trip failed for: {:?}", original
-        );
+        assert_eq!(decoded, original, "Round-trip failed for: {:?}", original);
     }
 }
 

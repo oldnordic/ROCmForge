@@ -1,5 +1,7 @@
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
-use rocmforge::cpu::ops::{gemv_q4_0_q8_0, gemv_q4_0};
+use criterion::{
+    black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
+};
+use rocmforge::cpu::ops::{gemv_q4_0, gemv_q4_0_q8_0};
 
 /// Benchmark Q4_0 × Q8_0 GEMV.
 fn bench_q4_0_q8_0(c: &mut Criterion) {

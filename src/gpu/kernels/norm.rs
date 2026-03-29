@@ -36,9 +36,7 @@ pub fn rms_norm(
     }
 
     // Load and call kernel
-    let result = unsafe {
-        gpu_rms_norm(x, weight, out, n as c_int, eps)
-    };
+    let result = unsafe { gpu_rms_norm(x, weight, out, n as c_int, eps) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -74,9 +72,7 @@ pub fn rms_norm_batched(
         });
     }
 
-    let result = unsafe {
-        gpu_rms_norm_batched(x, weight, out, n as c_int, eps, seq_len as c_int)
-    };
+    let result = unsafe { gpu_rms_norm_batched(x, weight, out, n as c_int, eps, seq_len as c_int) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {

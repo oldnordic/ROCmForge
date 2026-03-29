@@ -87,14 +87,23 @@ impl SimdActivations {
 
         #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
         {
-            if matches!(self.kernel, KernelPreference::Avx2 | KernelPreference::AvxVnni | KernelPreference::Avx512 | KernelPreference::Avx512Vnni) {
+            if matches!(
+                self.kernel,
+                KernelPreference::Avx2
+                    | KernelPreference::AvxVnni
+                    | KernelPreference::Avx512
+                    | KernelPreference::Avx512Vnni
+            ) {
                 return self.gelu_avx2(x, y);
             }
         }
 
         #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
         {
-            if matches!(self.kernel, KernelPreference::Neon | KernelPreference::Sve | KernelPreference::Sve2) {
+            if matches!(
+                self.kernel,
+                KernelPreference::Neon | KernelPreference::Sve | KernelPreference::Sve2
+            ) {
                 return self.gelu_neon(x, y);
             }
         }
@@ -111,14 +120,23 @@ impl SimdActivations {
 
         #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
         {
-            if matches!(self.kernel, KernelPreference::Avx2 | KernelPreference::AvxVnni | KernelPreference::Avx512 | KernelPreference::Avx512Vnni) {
+            if matches!(
+                self.kernel,
+                KernelPreference::Avx2
+                    | KernelPreference::AvxVnni
+                    | KernelPreference::Avx512
+                    | KernelPreference::Avx512Vnni
+            ) {
                 return self.silu_avx2(x, y);
             }
         }
 
         #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
         {
-            if matches!(self.kernel, KernelPreference::Neon | KernelPreference::Sve | KernelPreference::Sve2) {
+            if matches!(
+                self.kernel,
+                KernelPreference::Neon | KernelPreference::Sve | KernelPreference::Sve2
+            ) {
                 return self.silu_neon(x, y);
             }
         }
@@ -180,17 +198,17 @@ impl SimdActivations {
             // tanh(x) = (exp(2x) - 1) / (exp(2x) + 1)
             let two_x = _mm256_mul_ps(tanh_arg, _mm256_set1_ps(2.0));
             let exp_2x = _mm256_exp_ps(two_x);
-            let tanh_val = _mm256_div_ps(
-                _mm256_sub_ps(exp_2x, one),
-                _mm256_add_ps(exp_2x, one),
-            );
+            let tanh_val = _mm256_div_ps(_mm256_sub_ps(exp_2x, one), _mm256_add_ps(exp_2x, one));
 
             let result = _mm256_mul_ps(half, _mm256_mul_ps(xi, _mm256_add_ps(one, tanh_val)));
             _mm256_storeu_ps(y.as_mut_ptr().add(chunk.len_offset()), result);
         }
 
         // Handle remainder
-        for (xi, yi) in remainder.iter().zip(y.iter_mut().skip(x.len() - remainder.len())) {
+        for (xi, yi) in remainder
+            .iter()
+            .zip(y.iter_mut().skip(x.len() - remainder.len()))
+        {
             let x_cube = xi * xi * xi;
             let tanh_arg = SQRT_2_OVER_PI * (xi + GELU_COEFF * x_cube);
             let tanh_val = tanh_arg.tanh();
@@ -217,7 +235,10 @@ impl SimdActivations {
         }
 
         // Handle remainder
-        for (xi, yi) in remainder.iter().zip(y.iter_mut().skip(x.len() - remainder.len())) {
+        for (xi, yi) in remainder
+            .iter()
+            .zip(y.iter_mut().skip(x.len() - remainder.len()))
+        {
             let sigmoid = (-xi).exp();
             let denom = 1.0 + sigmoid;
             *yi = xi / denom;
@@ -246,10 +267,7 @@ impl SimdActivations {
             let xi_sq = vmulq_f32(xi, xi);
             let xi_cube = vmulq_f32(xi_sq, xi);
 
-            let tanh_arg = vaddq_f32(
-                vmulq_f32(sqrt_2_pi, xi),
-                vmulq_f32(gelu_coeff, xi_cube),
-            );
+            let tanh_arg = vaddq_f32(vmulq_f32(sqrt_2_pi, xi), vmulq_f32(gelu_coeff, xi_cube));
 
             // tanh approximation or compute
             let tanh_val = vtanhq_f32(tanh_arg);
@@ -259,7 +277,10 @@ impl SimdActivations {
         }
 
         // Handle remainder
-        for (xi, yi) in remainder.iter().zip(y.iter_mut().skip(x.len() - remainder.len())) {
+        for (xi, yi) in remainder
+            .iter()
+            .zip(y.iter_mut().skip(x.len() - remainder.len()))
+        {
             let x_cube = xi * xi * xi;
             let tanh_arg = SQRT_2_OVER_PI * (xi + GELU_COEFF * x_cube);
             let tanh_val = tanh_arg.tanh();
@@ -286,7 +307,10 @@ impl SimdActivations {
         }
 
         // Handle remainder
-        for (xi, yi) in remainder.iter().zip(y.iter_mut().skip(x.len() - remainder.len())) {
+        for (xi, yi) in remainder
+            .iter()
+            .zip(y.iter_mut().skip(x.len() - remainder.len()))
+        {
             let sigmoid = (-xi).exp();
             let denom = 1.0 + sigmoid;
             *yi = xi / denom;

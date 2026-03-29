@@ -90,13 +90,19 @@ fn benchmark_models(models: &[PathBuf], args: &Args) -> Vec<ModelResult> {
     let mut results = Vec::new();
 
     for (idx, model_path) in models.iter().enumerate() {
-        eprintln!("[{}/{}] Benchmarking: {}", idx + 1, models.len(),
-                 model_path.file_name().unwrap_or_default().to_string_lossy());
+        eprintln!(
+            "[{}/{}] Benchmarking: {}",
+            idx + 1,
+            models.len(),
+            model_path.file_name().unwrap_or_default().to_string_lossy()
+        );
 
         match benchmark_model(model_path, args) {
             Ok(result) => {
-                eprintln!("  ✓ Prefill: {:.1} ms, Decode: {:.1} ms, {:.1} tok/s",
-                         result.prefill_ms, result.decode_ms, result.tokens_per_sec);
+                eprintln!(
+                    "  ✓ Prefill: {:.1} ms, Decode: {:.1} ms, {:.1} tok/s",
+                    result.prefill_ms, result.decode_ms, result.tokens_per_sec
+                );
                 results.push(result);
             }
             Err(e) => {
@@ -112,12 +118,11 @@ fn benchmark_models(models: &[PathBuf], args: &Args) -> Vec<ModelResult> {
 
 fn benchmark_model(model_path: &PathBuf, args: &Args) -> Result<ModelResult, String> {
     // Open GGUF file
-    let file = GgufFile::open(model_path)
-        .map_err(|e| format!("Failed to open: {}", e))?;
+    let file = GgufFile::open(model_path).map_err(|e| format!("Failed to open: {}", e))?;
 
     // Load configuration
-    let config = ModelConfig::from_gguf(&file)
-        .map_err(|e| format!("Failed to load config: {}", e))?;
+    let config =
+        ModelConfig::from_gguf(&file).map_err(|e| format!("Failed to load config: {}", e))?;
 
     // Load tokenizer
     let tok = BpeTokenizer::from_gguf(file.tokenizer_data());
@@ -190,10 +195,12 @@ fn benchmark_model(model_path: &PathBuf, args: &Args) -> Result<ModelResult, Str
 
     let avg_prefill_ms = total_prefill.as_secs_f64() * 1000.0 / args.iterations as f64;
     let avg_decode_ms = total_decode.as_secs_f64() * 1000.0 / args.iterations as f64;
-    let tokens_per_sec = (total_tokens as f64) / (total_decode.as_secs_f64() / args.iterations as f64);
+    let tokens_per_sec =
+        (total_tokens as f64) / (total_decode.as_secs_f64() / args.iterations as f64);
 
     Ok(ModelResult {
-        model_name: model_path.file_name()
+        model_name: model_path
+            .file_name()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string(),
@@ -228,7 +235,9 @@ fn detect_quantization(path: &PathBuf) -> String {
 }
 
 fn generate_report(results: &[ModelResult], args: &Args) {
-    let output_path = args.output.as_deref()
+    let output_path = args
+        .output
+        .as_deref()
         .unwrap_or("docs/benchmarks/real-model-benchmark.md");
 
     // Ensure output directory exists
@@ -239,8 +248,14 @@ fn generate_report(results: &[ModelResult], args: &Args) {
     // Generate markdown
     let mut markdown = String::new();
     markdown.push_str("# Real Model Benchmark Results\n\n");
-    markdown.push_str(&format!("**Date:** {}\n\n", chrono::Utc::now().format("%Y-%m-%d")));
-    markdown.push_str(&format!("**CPU Kernel:** {:?}\n\n", CpuFeatures::get().kernel));
+    markdown.push_str(&format!(
+        "**Date:** {}\n\n",
+        chrono::Utc::now().format("%Y-%m-%d")
+    ));
+    markdown.push_str(&format!(
+        "**CPU Kernel:** {:?}\n\n",
+        CpuFeatures::get().kernel
+    ));
 
     markdown.push_str("## Results\n\n");
     markdown.push_str("| Model | Quantization | Layers | Hidden | Load (ms) | Prefill (ms) | Decode (ms) | Tok/s |\n");
@@ -249,14 +264,19 @@ fn generate_report(results: &[ModelResult], args: &Args) {
     for r in results {
         markdown.push_str(&format!(
             "| {} | {} | {} | {} | {:.1} | {:.1} | {:.1} | {:.1} |\n",
-            r.model_name, r.quantization, r.num_layers, r.hidden_size,
-            r.load_time_ms, r.prefill_ms, r.decode_ms, r.tokens_per_sec
+            r.model_name,
+            r.quantization,
+            r.num_layers,
+            r.hidden_size,
+            r.load_time_ms,
+            r.prefill_ms,
+            r.decode_ms,
+            r.tokens_per_sec
         ));
     }
 
     // Write report
-    std::fs::write(output_path, markdown)
-        .expect("Failed to write report");
+    std::fs::write(output_path, markdown).expect("Failed to write report");
 
     eprintln!("Report written to: {}", output_path);
 }

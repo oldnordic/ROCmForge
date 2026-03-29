@@ -99,7 +99,10 @@ pub fn assert_close(a: &[f32], b: &[f32], tolerance: f32) {
         assert!(
             diff <= tolerance || diff <= x.abs() * tolerance,
             "Mismatch at index {}: {} vs {} (diff={})",
-            i, x, y, diff
+            i,
+            x,
+            y,
+            diff
         );
     }
 }
@@ -148,7 +151,10 @@ mod tests {
     fn test_check_vram_100gb_fails() {
         // 100 GB should always fail or return error
         let result = check_vram_available(100.0);
-        assert!(result.is_err() || result.is_ok(), "100 GB check should not crash");
+        assert!(
+            result.is_err() || result.is_ok(),
+            "100 GB check should not crash"
+        );
     }
 
     #[test]

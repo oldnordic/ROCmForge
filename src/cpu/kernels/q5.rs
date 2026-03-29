@@ -35,22 +35,38 @@ impl Half16 {
 
         if exponent == 0 {
             if mantissa == 0 {
-                if sign != 0 { -0.0 } else { 0.0 }
+                if sign != 0 {
+                    -0.0
+                } else {
+                    0.0
+                }
             } else {
                 let m = mantissa as f32 / (1u32 << 10) as f32;
                 let e = -(1 << (10 - 1));
-                if sign != 0 { -m * 2f32.powi(e - 14) } else { m * 2f32.powi(e - 14) }
+                if sign != 0 {
+                    -m * 2f32.powi(e - 14)
+                } else {
+                    m * 2f32.powi(e - 14)
+                }
             }
         } else if exponent == 31 {
             if mantissa == 0 {
-                if sign != 0 { f32::NEG_INFINITY } else { f32::INFINITY }
+                if sign != 0 {
+                    f32::NEG_INFINITY
+                } else {
+                    f32::INFINITY
+                }
             } else {
                 f32::NAN
             }
         } else {
             let m = 1.0 + (mantissa as f32) / (1u32 << 10) as f32;
             let e = exponent - 15;
-            if sign != 0 { -m * 2f32.powi(e) } else { m * 2f32.powi(e) }
+            if sign != 0 {
+                -m * 2f32.powi(e)
+            } else {
+                m * 2f32.powi(e)
+            }
         }
     }
 }
@@ -106,7 +122,11 @@ impl BlockQ5K {
     ///
     /// * `output` - Output array of 256 f32 values
     pub fn dequantize(&self, output: &mut [f32]) {
-        assert_eq!(output.len(), Self::N_WEIGHTS, "output must have 256 elements");
+        assert_eq!(
+            output.len(),
+            Self::N_WEIGHTS,
+            "output must have 256 elements"
+        );
 
         // Parse super-block scales from f16
         let d = Half16::from_le_bytes(self.d).to_f32();

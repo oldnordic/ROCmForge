@@ -144,7 +144,10 @@ mod tests {
 
         // Verify bsums match actual sums
         for i in 0..16 {
-            let expected: i16 = block.qs[i * 16..(i + 1) * 16].iter().map(|&x| x as i16).sum();
+            let expected: i16 = block.qs[i * 16..(i + 1) * 16]
+                .iter()
+                .map(|&x| x as i16)
+                .sum();
             let bsum_value = block.bsums[i];
             assert_eq!(bsum_value, expected);
         }
@@ -161,7 +164,9 @@ mod tests {
         block.dequantize(&mut reconstructed);
 
         // Check reconstruction error
-        let max_error = original.iter().zip(reconstructed.iter())
+        let max_error = original
+            .iter()
+            .zip(reconstructed.iter())
             .map(|(a, b)| (a - b).abs())
             .fold(0.0f32, f32::max);
 
