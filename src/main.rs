@@ -564,7 +564,7 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 );
                 let mut prompt_next_token = None;
                 for (pos, &token_id) in prompt_tokens.iter().enumerate() {
-                    gpu::gpu_embed_token_hybrid(
+                    gpu::gpu_embed_token_hybrid(&device, 
                         token_id,
                         &gpu_weights,
                         &cpu_weights,
@@ -602,7 +602,7 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             );
             let mut prompt_next_token = None;
             for (pos, &token_id) in prompt_tokens.iter().enumerate() {
-                gpu::gpu_embed_token_hybrid(
+                gpu::gpu_embed_token_hybrid(&device, 
                     token_id,
                     &gpu_weights,
                     &cpu_weights,
@@ -675,7 +675,7 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         std::io::stdout().flush().ok();
         n_generated += 1;
 
-        gpu::gpu_embed_token_hybrid(
+        gpu::gpu_embed_token_hybrid(&device, 
             next_token,
             &gpu_weights,
             &cpu_weights,
@@ -689,7 +689,7 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         } else {
             gpu::GpuLogitsMode::DownloadToHost
         };
-        let greedy_token = gpu::gpu_full_forward_hybrid(
+        gpu::gpu_full_forward_hybrid(
             &device,
             &gpu_weights,
             &cpu_weights,
@@ -708,9 +708,16 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             print_top_k_tokens(&host_scratch.logits, &tok, 5);
         }
 
+        // SYNC POINT: Wait for GPU to finish forward + argmax download
+        device.synchronize().map_err(|e| format!("gpu sync: {}", e))?;
+
         next_token = if use_greedy {
             if use_gpu_greedy_fastpath {
-                greedy_token.expect("greedy GPU decode should return next token")
+                let token = gpu_scratch.argmax_result_index.as_slice::<i32>()[0];
+                if token < 0 || (token as usize) >= config.vocab_size {
+                    return Err(format!("gpu argmax returned out-of-range index {}", token));
+                }
+                token as u32
             } else {
                 cpu_sample_greedy(&host_scratch.logits)
             }

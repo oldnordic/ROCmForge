@@ -7,6 +7,7 @@
 
 use super::error::{GpuError, GpuResult};
 use super::ffi;
+use super::ffi::hipStream_t;
 use crate::config::{ModelConfig, TensorName, TensorNamingScheme};
 use crate::cpu::transpose::compute_transpose_flag;
 use crate::loader::{GgmlType, GgufFile, TensorDesc};
@@ -17,6 +18,13 @@ use std::ptr::NonNull;
 /// Metadata for a weight tensor on GPU.
 ///
 /// Same as CPU WeightMeta - quantization type and dimensions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TensorRole {
+    Generic,
+    LmHead,
+    TiedLmHead,
+}
+
 #[derive(Clone, Debug)]
 pub struct WeightMeta {
     /// Quantization type (F32, Q4_0, Q4_1, Q8_0, etc.)
@@ -25,6 +33,11 @@ pub struct WeightMeta {
     pub dims: Vec<u64>,
     /// Whether this weight tensor needs transposed access
     pub needs_transpose: bool,
+    /// Semantic role derived from GGUF/model metadata.
+    ///
+    /// This allows dispatch to specialize important tensors without
+    /// hardcoding model names or architecture-specific assumptions.
+    pub role: TensorRole,
 }
 
 impl WeightMeta {
@@ -34,6 +47,7 @@ impl WeightMeta {
             wtype: desc.ggml_type,
             dims: desc.dims.clone(),
             needs_transpose,
+            role: TensorRole::Generic,
         }
     }
 
@@ -73,6 +87,7 @@ mod tests {
             wtype: GgmlType::F32,
             dims: vec![100, 200],
             needs_transpose: false,
+            role: TensorRole::Generic,
         };
         assert_eq!(meta.byte_size(), 100 * 200);
     }
@@ -133,6 +148,84 @@ impl GpuBuffer {
         self.size
     }
 
+    /// Set size in bytes (only for empty or manually managed buffers).
+    pub fn set_size(&mut self, size: usize) {
+        self.size = size;
+    }
+    }
+
+    // ── GPU Pinned Buffer (RAII) ──────────────────────────────────────────────────────
+
+    /// RAII wrapper for Pinned (Page-locked) Host memory.
+    ///
+    /// Allows for high-speed DMA transfers and zero-copy access from GPU.
+    pub struct GpuPinnedBuffer {
+    ptr: Option<NonNull<u8>>,
+    size: usize,
+    }
+
+    impl GpuPinnedBuffer {
+    pub fn alloc(size: usize) -> GpuResult<Self> {
+        if size == 0 {
+            return Ok(Self { ptr: None, size: 0 });
+        }
+
+        let ptr = ffi::hip_host_malloc(size)?;
+        let nn = NonNull::new(ptr).ok_or_else(|| GpuError::OutOfMemory {
+            requested: size,
+            available: 0,
+        })?;
+
+        Ok(Self {
+            ptr: Some(nn),
+            size,
+        })
+    }
+
+    pub fn as_ptr(&self) -> *mut u8 {
+        self.ptr.map(|nn| nn.as_ptr()).unwrap_or(std::ptr::null_mut())
+    }
+
+    pub fn as_slice<T>(&self) -> &[T] {
+        if self.size == 0 {
+            return &[];
+        }
+        unsafe {
+            std::slice::from_raw_parts(
+                self.as_ptr() as *const T,
+                self.size / std::mem::size_of::<T>(),
+            )
+        }
+    }
+
+    pub fn as_slice_mut<T>(&mut self) -> &mut [T] {
+        if self.size == 0 {
+            return &mut [];
+        }
+        unsafe {
+            std::slice::from_raw_parts_mut(
+                self.as_ptr() as *mut T,
+                self.size / std::mem::size_of::<T>(),
+            )
+        }
+    }
+
+    pub fn size(&self) -> usize {
+        self.size
+    }
+    }
+
+    impl Drop for GpuPinnedBuffer {
+    fn drop(&mut self) {
+        if let Some(nn) = self.ptr {
+            let _ = ffi::hip_host_free(nn.as_ptr());
+        }
+    }
+    }
+
+    unsafe impl Send for GpuPinnedBuffer {}
+    unsafe impl Sync for GpuPinnedBuffer {}
+
     /// Check if buffer is empty.
     pub fn is_empty(&self) -> bool {
         self.size == 0
@@ -154,6 +247,24 @@ impl GpuBuffer {
             return Ok(());
         }
         ffi::hip_memcpy_h2d(self.as_ptr(), src.as_ptr(), self.size)
+    }
+
+    /// Copy data from CPU to this GPU buffer on an explicit HIP stream.
+    pub fn copy_from_host_on_stream(&mut self, src: &[u8], stream: hipStream_t) -> GpuResult<()> {
+        if src.len() != self.size {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: format!(
+                    "size mismatch: got {} bytes, expected {}",
+                    src.len(),
+                    self.size
+                ),
+            });
+        }
+        if self.size == 0 {
+            return Ok(());
+        }
+        ffi::hip_memcpy_h2d_async(self.as_ptr(), src.as_ptr(), self.size, stream)
     }
 
     /// Copy data from GPU buffer to CPU.
@@ -229,6 +340,14 @@ fn supports_gpu_matrix_type(wtype: GgmlType) -> bool {
     )
 }
 
+fn derive_tensor_role(is_lm_head: bool, is_tied: bool) -> TensorRole {
+    match (is_lm_head, is_tied) {
+        (true, true) => TensorRole::TiedLmHead,
+        (true, false) => TensorRole::LmHead,
+        (false, _) => TensorRole::Generic,
+    }
+}
+
 fn build_matrix_meta(
     weight_name: &str,
     dims: &[u64],
@@ -263,6 +382,7 @@ fn build_matrix_meta(
             is_lm_head,
             is_tied,
         ),
+        role: derive_tensor_role(is_lm_head, is_tied),
     })
 }
 
@@ -631,6 +751,7 @@ mod matrix_meta_tests {
         .unwrap();
 
         assert!(!meta.needs_transpose);
+        assert_eq!(meta.role, TensorRole::LmHead);
     }
 
     #[test]
@@ -647,6 +768,7 @@ mod matrix_meta_tests {
         .unwrap();
 
         assert!(meta.needs_transpose);
+        assert_eq!(meta.role, TensorRole::TiedLmHead);
     }
 
     #[test]

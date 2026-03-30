@@ -10,7 +10,9 @@ use rocmforge::cpu::{
     sampler::cpu_sample_greedy,
     weights::CpuModelWeights,
 };
-use rocmforge::gpu::{self, GpuBuffer, GpuDevice, GpuForwardScratch, GpuKvCache};
+use rocmforge::gpu::{
+    self, graph::DecodeGraphScope, GpuBuffer, GpuDevice, GpuForwardScratch, GpuKvCache,
+};
 use rocmforge::loader::GgufFile;
 use rocmforge::tokenizer::BpeTokenizer;
 use serial_test::serial;
@@ -68,6 +70,22 @@ fn max_abs_error(a: &[f32], b: &[f32]) -> f32 {
         .zip(b.iter())
         .map(|(lhs, rhs)| (lhs - rhs).abs())
         .fold(0.0f32, f32::max)
+}
+
+fn mean(values: &[f64]) -> f64 {
+    values.iter().sum::<f64>() / values.len() as f64
+}
+
+fn stddev(values: &[f64], avg: f64) -> f64 {
+    let variance = values
+        .iter()
+        .map(|value| {
+            let delta = value - avg;
+            delta * delta
+        })
+        .sum::<f64>()
+        / values.len() as f64;
+    variance.sqrt()
 }
 
 #[test]
@@ -394,6 +412,395 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
     assert_eq!(
         gpu_next, cpu_next,
         "GPU and CPU greedy next-token should match"
+    );
+}
+
+#[test]
+#[serial]
+fn test_gpu_greedy_decode_populates_cached_graph() {
+    if skip_if_model_missing() {
+        eprintln!("Skipping test: model file not found at {}", MODEL_PATH);
+        return;
+    }
+
+    let _lock = match common::GpuLock::acquire() {
+        Ok(lock) => lock,
+        Err(err) => {
+            eprintln!("Skipping test: {}", err);
+            return;
+        }
+    };
+
+    require_gpu!();
+    require_vram!(4);
+
+    let caps = gpu::detect().expect("GPU should be detected");
+    let device = GpuDevice::init(caps.device_id).expect("GPU device should initialize");
+
+    let file = GgufFile::open(MODEL_PATH).expect("Failed to open GGUF file");
+    let config = ModelConfig::from_gguf(&file).expect("Failed to parse model config");
+    let cpu_weights = CpuModelWeights::load(&file, &config).expect("CPU weights should load");
+    let gpu_weights = gpu::GpuModelWeights::load(&file, &config).expect("GPU weights should load");
+    let tok = BpeTokenizer::from_gguf(file.tokenizer_data());
+
+    let template =
+        detect_chat_template(&config.architecture, file.tokenizer_data().model.as_deref());
+    let prompt = template.apply("Hello");
+    let prompt_tokens = tok.encode(&prompt, false);
+    assert!(!prompt_tokens.is_empty(), "prompt should tokenize");
+
+    let mut kv =
+        GpuKvCache::new(&config, prompt_tokens.len().max(1)).expect("GPU KV should allocate");
+    let mut gpu_scratch = GpuForwardScratch::new(&config).expect("GPU scratch should allocate");
+    let mut host_scratch = CpuForwardScratch::new(&config);
+
+    for (pos, &token_id) in prompt_tokens.iter().enumerate() {
+        gpu::gpu_embed_token_hybrid(
+            token_id,
+            &gpu_weights,
+            &cpu_weights,
+            &mut gpu_scratch,
+            &mut host_scratch,
+            &config,
+        )
+        .expect("GPU embed should succeed");
+        gpu::gpu_full_forward_hybrid(
+            &device,
+            &gpu_weights,
+            &cpu_weights,
+            &mut kv,
+            &mut gpu_scratch,
+            &mut host_scratch,
+            pos,
+            &config,
+            gpu::GpuLogitsMode::GreedyArgmax,
+        )
+        .expect("GPU decode should succeed");
+    }
+
+    let decode_graph = gpu_scratch
+        .decode_graph()
+        .expect("greedy GPU decode should cache a reusable decode graph");
+    assert_eq!(
+        decode_graph.key().scope(),
+        DecodeGraphScope::FullGreedyDecode,
+        "greedy GPU decode should cache the full-token replay graph"
+    );
+}
+
+#[test]
+#[ignore = "manual profiling entry point for rocprofv3 and decode throughput checks"]
+#[serial]
+fn test_gpu_greedy_decode_profile_real_model() {
+    if skip_if_model_missing() {
+        eprintln!("Skipping test: model file not found at {}", MODEL_PATH);
+        return;
+    }
+
+    let _lock = match common::GpuLock::acquire() {
+        Ok(lock) => lock,
+        Err(err) => {
+            eprintln!("Skipping test: {}", err);
+            return;
+        }
+    };
+
+    require_gpu!();
+    require_vram!(4);
+
+    gpu::reset_decode_stage_profile();
+    std::env::set_var("ROCMFORGE_PROFILE_DECODE_STAGES", "1");
+
+    let caps = gpu::detect().expect("GPU should be detected");
+    let device = GpuDevice::init(caps.device_id).expect("GPU device should initialize");
+
+    let file = GgufFile::open(MODEL_PATH).expect("Failed to open GGUF file");
+    let config = ModelConfig::from_gguf(&file).expect("Failed to parse model config");
+    let cpu_weights = CpuModelWeights::load(&file, &config).expect("CPU weights should load");
+    let gpu_weights = gpu::GpuModelWeights::load(&file, &config).expect("GPU weights should load");
+    let tok = BpeTokenizer::from_gguf(file.tokenizer_data());
+
+    let prompt_tokens = tok.encode("Hello", false);
+    assert!(!prompt_tokens.is_empty(), "prompt should tokenize");
+
+    let decode_tokens = 64usize;
+    let mut kv = GpuKvCache::new(&config, prompt_tokens.len() + decode_tokens)
+        .expect("GPU KV should allocate");
+    let mut gpu_scratch = GpuForwardScratch::new(&config).expect("GPU scratch should allocate");
+    let mut host_scratch = CpuForwardScratch::new(&config);
+
+    let prefill_start = std::time::Instant::now();
+    let mut next_token = None;
+    for (pos, &token_id) in prompt_tokens.iter().enumerate() {
+        gpu::gpu_embed_token_hybrid(
+            token_id,
+            &gpu_weights,
+            &cpu_weights,
+            &mut gpu_scratch,
+            &mut host_scratch,
+            &config,
+        )
+        .expect("GPU embed should succeed");
+        next_token = gpu::gpu_full_forward_hybrid(
+            &device,
+            &gpu_weights,
+            &cpu_weights,
+            &mut kv,
+            &mut gpu_scratch,
+            &mut host_scratch,
+            pos,
+            &config,
+            gpu::GpuLogitsMode::GreedyArgmax,
+        )
+        .expect("GPU prompt decode should succeed");
+    }
+    let prefill_elapsed = prefill_start.elapsed();
+
+    let mut token = next_token.expect("prompt decode should produce a greedy token");
+    let decode_start = std::time::Instant::now();
+    for step in 0..decode_tokens {
+        gpu::gpu_embed_token_hybrid(
+            token,
+            &gpu_weights,
+            &cpu_weights,
+            &mut gpu_scratch,
+            &mut host_scratch,
+            &config,
+        )
+        .expect("GPU embed should succeed");
+        token = gpu::gpu_full_forward_hybrid(
+            &device,
+            &gpu_weights,
+            &cpu_weights,
+            &mut kv,
+            &mut gpu_scratch,
+            &mut host_scratch,
+            prompt_tokens.len() + step,
+            &config,
+            gpu::GpuLogitsMode::GreedyArgmax,
+        )
+        .expect("GPU decode should succeed")
+        .expect("decode step should produce a greedy token");
+    }
+    let decode_elapsed = decode_start.elapsed();
+
+    let prefill_tok_s = prompt_tokens.len() as f64 / prefill_elapsed.as_secs_f64();
+    let decode_tok_s = decode_tokens as f64 / decode_elapsed.as_secs_f64();
+    eprintln!(
+        "PROFILE gpu_greedy_decode_real_model prompt_tokens={} decode_tokens={} prefill_ms={:.2} prefill_tok_s={:.1} decode_ms={:.2} decode_tok_s={:.1}",
+        prompt_tokens.len(),
+        decode_tokens,
+        prefill_elapsed.as_secs_f64() * 1000.0,
+        prefill_tok_s,
+        decode_elapsed.as_secs_f64() * 1000.0,
+        decode_tok_s,
+    );
+
+    let stage_profile = gpu::decode_stage_profile_snapshot();
+    eprintln!(
+        "PROFILE decode_stage_counts layers={} tails={}",
+        stage_profile.layer_invocations, stage_profile.tail_invocations
+    );
+    for (name, nanos) in [
+        ("attn_norm", stage_profile.attn_norm_ns),
+        ("qkv", stage_profile.qkv_ns),
+        ("q_rope", stage_profile.q_rope_ns),
+        ("k_rope", stage_profile.k_rope_ns),
+        ("kv_write", stage_profile.kv_write_ns),
+        ("attention", stage_profile.attention_ns),
+        ("attn_proj", stage_profile.attn_proj_ns),
+        ("attn_residual", stage_profile.attn_residual_ns),
+        ("ffn_norm", stage_profile.ffn_norm_ns),
+        ("gate_up", stage_profile.gate_up_ns),
+        ("ffn_down", stage_profile.ffn_down_ns),
+        ("ffn_residual", stage_profile.ffn_residual_ns),
+        ("logits_norm", stage_profile.logits_norm_ns),
+        ("logits_proj", stage_profile.logits_proj_ns),
+        ("argmax", stage_profile.argmax_ns),
+    ] {
+        eprintln!(
+            "PROFILE decode_stage name={} ms={:.3}",
+            name,
+            nanos as f64 / 1_000_000.0
+        );
+    }
+
+    assert_eq!(
+        stage_profile.layer_invocations,
+        (prompt_tokens.len() + decode_tokens) as u64 * config.num_layers as u64,
+        "stage profiler should see one layer profile entry per decode layer invocation"
+    );
+    assert_eq!(
+        stage_profile.tail_invocations,
+        (prompt_tokens.len() + decode_tokens) as u64,
+        "stage profiler should see one logits tail per decode step"
+    );
+    assert!(
+        gpu_scratch.decode_graph().is_none(),
+        "stage profiling disables decode graph replay so direct-path timings are meaningful"
+    );
+
+    std::env::remove_var("ROCMFORGE_PROFILE_DECODE_STAGES");
+}
+
+#[test]
+#[serial]
+#[ignore]
+fn test_gpu_greedy_decode_benchmark_real_model_multi_run() {
+    if skip_if_model_missing() {
+        eprintln!("Skipping test: model file not found at {}", MODEL_PATH);
+        return;
+    }
+
+    let _lock = match common::GpuLock::acquire() {
+        Ok(lock) => lock,
+        Err(err) => {
+            eprintln!("Skipping test: {}", err);
+            return;
+        }
+    };
+
+    require_gpu!();
+    require_vram!(4);
+
+    let runs = std::env::var("ROCMFORGE_BENCH_RUNS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&value| value > 0)
+        .unwrap_or(5);
+    let warmup_runs = std::env::var("ROCMFORGE_BENCH_WARMUP")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(1);
+    let decode_tokens = std::env::var("ROCMFORGE_BENCH_TOKENS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&value| value > 0)
+        .unwrap_or(64);
+
+    let caps = gpu::detect().expect("GPU should be detected");
+    let device = GpuDevice::init(caps.device_id).expect("GPU device should initialize");
+
+    let file = GgufFile::open(MODEL_PATH).expect("Failed to open GGUF file");
+    let config = ModelConfig::from_gguf(&file).expect("Failed to parse model config");
+    let cpu_weights = CpuModelWeights::load(&file, &config).expect("CPU weights should load");
+    let gpu_weights = gpu::GpuModelWeights::load(&file, &config).expect("GPU weights should load");
+    let tok = BpeTokenizer::from_gguf(file.tokenizer_data());
+
+    let prompt_tokens = tok.encode("Hello", false);
+    assert!(!prompt_tokens.is_empty(), "prompt should tokenize");
+
+    let mut prefill_tok_s_samples = Vec::with_capacity(runs);
+    let mut decode_tok_s_samples = Vec::with_capacity(runs);
+
+    for run_idx in 0..(warmup_runs + runs) {
+        let mut kv = GpuKvCache::new(&config, prompt_tokens.len() + decode_tokens)
+            .expect("GPU KV should allocate");
+        let mut gpu_scratch = GpuForwardScratch::new(&config).expect("GPU scratch should allocate");
+        let mut host_scratch = CpuForwardScratch::new(&config);
+
+        let prefill_start = std::time::Instant::now();
+        let mut next_token = None;
+        for (pos, &token_id) in prompt_tokens.iter().enumerate() {
+            gpu::gpu_embed_token_hybrid(
+                token_id,
+                &gpu_weights,
+                &cpu_weights,
+                &mut gpu_scratch,
+                &mut host_scratch,
+                &config,
+            )
+            .expect("GPU embed should succeed");
+            next_token = gpu::gpu_full_forward_hybrid(
+                &device,
+                &gpu_weights,
+                &cpu_weights,
+                &mut kv,
+                &mut gpu_scratch,
+                &mut host_scratch,
+                pos,
+                &config,
+                gpu::GpuLogitsMode::GreedyArgmax,
+            )
+            .expect("GPU prompt decode should succeed");
+        }
+        let prefill_elapsed = prefill_start.elapsed();
+
+        let mut token = next_token.expect("prompt decode should produce a greedy token");
+        let decode_start = std::time::Instant::now();
+        for step in 0..decode_tokens {
+            gpu::gpu_embed_token_hybrid(
+                token,
+                &gpu_weights,
+                &cpu_weights,
+                &mut gpu_scratch,
+                &mut host_scratch,
+                &config,
+            )
+            .expect("GPU embed should succeed");
+            token = gpu::gpu_full_forward_hybrid(
+                &device,
+                &gpu_weights,
+                &cpu_weights,
+                &mut kv,
+                &mut gpu_scratch,
+                &mut host_scratch,
+                prompt_tokens.len() + step,
+                &config,
+                gpu::GpuLogitsMode::GreedyArgmax,
+            )
+            .expect("GPU decode should succeed")
+            .expect("decode step should produce a greedy token");
+        }
+        let decode_elapsed = decode_start.elapsed();
+
+        let prefill_tok_s = prompt_tokens.len() as f64 / prefill_elapsed.as_secs_f64();
+        let decode_tok_s = decode_tokens as f64 / decode_elapsed.as_secs_f64();
+
+        if run_idx < warmup_runs {
+            eprintln!(
+                "BENCH gpu_greedy_decode_real_model warmup_run={} prefill_tok_s={:.1} decode_tok_s={:.1}",
+                run_idx + 1,
+                prefill_tok_s,
+                decode_tok_s,
+            );
+            continue;
+        }
+
+        let sample_idx = run_idx - warmup_runs + 1;
+        eprintln!(
+            "BENCH gpu_greedy_decode_real_model run={} prefill_tok_s={:.1} decode_tok_s={:.1}",
+            sample_idx, prefill_tok_s, decode_tok_s,
+        );
+        prefill_tok_s_samples.push(prefill_tok_s);
+        decode_tok_s_samples.push(decode_tok_s);
+    }
+
+    let prefill_avg = mean(&prefill_tok_s_samples);
+    let prefill_stddev = stddev(&prefill_tok_s_samples, prefill_avg);
+    let decode_avg = mean(&decode_tok_s_samples);
+    let decode_stddev = stddev(&decode_tok_s_samples, decode_avg);
+    let decode_min = decode_tok_s_samples
+        .iter()
+        .copied()
+        .fold(f64::INFINITY, f64::min);
+    let decode_max = decode_tok_s_samples
+        .iter()
+        .copied()
+        .fold(f64::NEG_INFINITY, f64::max);
+
+    eprintln!(
+        "BENCH gpu_greedy_decode_real_model summary runs={} warmup_runs={} prompt_tokens={} decode_tokens={} prefill_avg_tok_s={:.1} prefill_stddev={:.1} decode_avg_tok_s={:.1} decode_stddev={:.1} decode_min_tok_s={:.1} decode_max_tok_s={:.1}",
+        runs,
+        warmup_runs,
+        prompt_tokens.len(),
+        decode_tokens,
+        prefill_avg,
+        prefill_stddev,
+        decode_avg,
+        decode_stddev,
+        decode_min,
+        decode_max,
     );
 }
 

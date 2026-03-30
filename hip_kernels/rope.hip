@@ -84,6 +84,48 @@ __global__ void rope_heads_kernel(
     x[idx1] = x0 * sin_val + x1 * cos_val;
 }
 
+__global__ void rope_heads_state_kernel(
+    float* __restrict__ x,
+    const int* __restrict__ pos_ptr,
+    const int num_heads,
+    const int head_dim,
+    const float theta_base,
+    const int neox
+) {
+    const int pos = *pos_ptr;
+    const int half = head_dim / 2;
+    const int pair_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int total_pairs = num_heads * half;
+
+    if (pair_idx >= total_pairs) return;
+
+    const int head = pair_idx / half;
+    const int i = pair_idx % half;
+    const int base = head * head_dim;
+
+    const float exponent = (float)(2 * i) / (float)head_dim;
+    const float theta = 1.0f / pow(theta_base, exponent);
+    const float angle = (float)pos * theta;
+    const float cos_val = cos(angle);
+    const float sin_val = sin(angle);
+
+    int idx0;
+    int idx1;
+    if (neox) {
+        idx0 = base + i;
+        idx1 = base + i + half;
+    } else {
+        idx0 = base + 2 * i;
+        idx1 = base + 2 * i + 1;
+    }
+
+    const float x0 = x[idx0];
+    const float x1 = x[idx1];
+
+    x[idx0] = x0 * cos_val - x1 * sin_val;
+    x[idx1] = x0 * sin_val + x1 * cos_val;
+}
+
 /// Batched RoPE for prefill (multiple tokens)
 ///
 /// # Arguments
@@ -205,7 +247,8 @@ hipError_t gpu_rope_heads(
     const int num_heads,
     const int head_dim,
     const float theta_base,
-    const int neox
+    const int neox,
+    hipStream_t stream
 ) {
     if (num_heads <= 0 || head_dim <= 0 || head_dim % 2 != 0) {
         return hipErrorInvalidValue;
@@ -217,8 +260,34 @@ hipError_t gpu_rope_heads(
 
     hipLaunchKernelGGL(
         rope_heads_kernel,
-        grid_size, block_size, 0, 0,
+        grid_size, block_size, 0, stream,
         d_x, pos, num_heads, head_dim, theta_base, neox
+    );
+
+    return hipGetLastError();
+}
+
+hipError_t gpu_rope_heads_state(
+    float* d_x,
+    const int* d_pos,
+    const int num_heads,
+    const int head_dim,
+    const float theta_base,
+    const int neox,
+    hipStream_t stream
+) {
+    if (d_pos == nullptr || num_heads <= 0 || head_dim <= 0 || head_dim % 2 != 0) {
+        return hipErrorInvalidValue;
+    }
+
+    const int total_pairs = num_heads * (head_dim / 2);
+    const int block_size = 256;
+    const int grid_size = (total_pairs + block_size - 1) / block_size;
+
+    hipLaunchKernelGGL(
+        rope_heads_state_kernel,
+        grid_size, block_size, 0, stream,
+        d_x, d_pos, num_heads, head_dim, theta_base, neox
     );
 
     return hipGetLastError();

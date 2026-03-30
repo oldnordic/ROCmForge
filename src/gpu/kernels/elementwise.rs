@@ -9,6 +9,17 @@ use std::os::raw::c_int;
 
 /// Element-wise add: out = x + y
 pub fn add(x: *const f32, y: *const f32, out: *mut f32, n: usize) -> GpuResult<()> {
+    add_on_stream(x, y, out, n, hipStream_t::null())
+}
+
+/// Element-wise add on an explicit HIP stream.
+pub fn add_on_stream(
+    x: *const f32,
+    y: *const f32,
+    out: *mut f32,
+    n: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
     if n == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
@@ -16,7 +27,7 @@ pub fn add(x: *const f32, y: *const f32, out: *mut f32, n: usize) -> GpuResult<(
         });
     }
 
-    let result = unsafe { gpu_add(x, y, out, n as c_int) };
+    let result = unsafe { gpu_add(x, y, out, n as c_int, stream) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -178,6 +189,27 @@ pub fn argmax_f32(
     output_index: *mut i32,
     n: usize,
 ) -> GpuResult<()> {
+    argmax_f32_on_stream(
+        input,
+        partial_values,
+        partial_indices,
+        output_index,
+        n,
+        hipStream_t::null(),
+    )
+}
+
+/// Argmax reduction over logits on an explicit HIP stream.
+///
+/// Uses reusable GPU workspace to avoid per-token allocations.
+pub fn argmax_f32_on_stream(
+    input: *const f32,
+    partial_values: *mut f32,
+    partial_indices: *mut i32,
+    output_index: *mut i32,
+    n: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
     if n == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
@@ -196,12 +228,13 @@ pub fn argmax_f32(
     }
 
     let result = unsafe {
-        gpu_argmax_f32(
+        gpu_argmax_f32_on_stream(
             input,
             partial_values,
             partial_indices,
             output_index,
             n as c_int,
+            stream,
         )
     };
 
@@ -358,7 +391,13 @@ pub fn zero_fill(ptr: *mut f32, n: usize, device: &GpuDevice) -> GpuResult<()> {
 
 // FFI declarations - will be linked from compiled HIP kernels
 unsafe extern "C" {
-    fn gpu_add(x: *const f32, y: *const f32, out: *mut f32, n: c_int) -> hipError_t;
+    fn gpu_add(
+        x: *const f32,
+        y: *const f32,
+        out: *mut f32,
+        n: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
 
     fn gpu_mul(x: *const f32, y: *const f32, out: *mut f32, n: c_int) -> hipError_t;
 
@@ -390,6 +429,15 @@ unsafe extern "C" {
         partial_indices: *mut i32,
         output_index: *mut i32,
         n: c_int,
+    ) -> hipError_t;
+
+    fn gpu_argmax_f32_on_stream(
+        input: *const f32,
+        partial_values: *mut f32,
+        partial_indices: *mut i32,
+        output_index: *mut i32,
+        n: c_int,
+        stream: hipStream_t,
     ) -> hipError_t;
 
     fn gpu_embed_q8_0_token(

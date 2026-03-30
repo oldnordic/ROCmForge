@@ -3,7 +3,7 @@
 //! Safety-first: bounds checked before kernel launch.
 
 use super::super::error::{GpuError, GpuResult};
-use super::super::ffi::hipError_t;
+use super::super::ffi::{hipError_t, hipStream_t};
 use std::os::raw::c_int;
 
 /// RoPE in-place transformation for a single token.
@@ -63,6 +63,27 @@ pub fn rope_heads(
     theta_base: f32,
     neox: bool,
 ) -> GpuResult<()> {
+    rope_heads_on_stream(
+        x,
+        pos,
+        num_heads,
+        head_dim,
+        theta_base,
+        neox,
+        hipStream_t::null(),
+    )
+}
+
+/// Multi-head RoPE for decode on an explicit HIP stream.
+pub fn rope_heads_on_stream(
+    x: *mut f32,
+    pos: usize,
+    num_heads: usize,
+    head_dim: usize,
+    theta_base: f32,
+    neox: bool,
+    stream: hipStream_t,
+) -> GpuResult<()> {
     if num_heads == 0 || head_dim == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
@@ -85,6 +106,7 @@ pub fn rope_heads(
             head_dim as c_int,
             theta_base,
             neox as c_int,
+            stream,
         )
     };
 
@@ -92,6 +114,57 @@ pub fn rope_heads(
         return Err(GpuError::HipApiError {
             code: result as i32,
             description: format!("rope_heads kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+/// Multi-head RoPE for decode using a device-resident position scalar.
+pub fn rope_heads_from_state_on_stream(
+    x: *mut f32,
+    pos_ptr: *const i32,
+    num_heads: usize,
+    head_dim: usize,
+    theta_base: f32,
+    neox: bool,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    if num_heads == 0 || head_dim == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "RoPE heads: num_heads and head_dim cannot be zero".to_string(),
+        });
+    }
+    if pos_ptr.is_null() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "RoPE heads: pos_ptr must be non-null".to_string(),
+        });
+    }
+    if head_dim % 2 != 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!("RoPE heads: head_dim {} must be even", head_dim),
+        });
+    }
+
+    let result = unsafe {
+        gpu_rope_heads_state(
+            x,
+            pos_ptr,
+            num_heads as c_int,
+            head_dim as c_int,
+            theta_base,
+            neox as c_int,
+            stream,
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("rope_heads_state kernel failed: {:?}", result),
         });
     }
 
@@ -205,6 +278,17 @@ unsafe extern "C" {
         head_dim: c_int,
         theta_base: f32,
         neox: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
+    fn gpu_rope_heads_state(
+        x: *mut f32,
+        pos_ptr: *const c_int,
+        num_heads: c_int,
+        head_dim: c_int,
+        theta_base: f32,
+        neox: c_int,
+        stream: hipStream_t,
     ) -> hipError_t;
 
     fn gpu_rope_batched(

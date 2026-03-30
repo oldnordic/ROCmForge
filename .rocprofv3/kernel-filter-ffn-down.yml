@@ -1,0 +1,4 @@
+jobs:
+  - kernel_include_regex: "gemv_q4_0_f32_residual_wave_parallel_kernel"
+    kernel_exclude_regex: ""
+    kernel_iteration_range: ""

@@ -7,8 +7,10 @@
 
 use super::device::GpuDevice;
 use super::error::{GpuError, GpuResult};
-use super::kernels::{kv_write, kv_write_batched, zero_fill};
-use super::weights::GpuBuffer;
+use super::ffi::hipStream_t;
+use super::graph::{CapturedDecodeGraph, DecodeGraphKey};
+use super::kernels::{kv_write, kv_write_batched, kv_write_on_stream, zero_fill};
+use super::weights::{GpuBuffer, GpuPinnedBuffer};
 use crate::config::ModelConfig;
 
 // ── KV Cache ─────────────────────────────────────────────────────────────────────
@@ -126,6 +128,30 @@ impl GpuKvCache {
             pos,
             self.kv_size,
             self.max_seq_len,
+        )
+    }
+
+    /// Write K/V vectors to cache on an explicit HIP stream.
+    pub fn write_on_stream(
+        &self,
+        layer: usize,
+        pos: usize,
+        k_gpu: *const f32,
+        v_gpu: *const f32,
+        stream: hipStream_t,
+    ) -> GpuResult<()> {
+        let k_cache = self.k_ptr(layer)?;
+        let v_cache = self.v_ptr(layer)?;
+
+        kv_write_on_stream(
+            k_cache,
+            v_cache,
+            k_gpu,
+            v_gpu,
+            pos,
+            self.kv_size,
+            self.max_seq_len,
+            stream,
         )
     }
 
@@ -282,8 +308,16 @@ pub struct GpuForwardScratch {
     pub argmax_partial_values: GpuBuffer,
     /// Partial argmax indices for greedy decode [ceil(vocab_size / 1024)]
     pub argmax_partial_indices: GpuBuffer,
-    /// Final greedy token index [1]
-    pub argmax_result_index: GpuBuffer,
+    /// Final greedy token index [1] - Device destination
+    pub argmax_result_device: GpuBuffer,
+    /// Final greedy token index [1] - Pinned host buffer for async overlap
+    pub argmax_result_index: GpuPinnedBuffer,
+    /// Pinned host buffer for hidden state upload overlap
+    pub input_hidden_pinned: GpuPinnedBuffer,
+    /// Per-token decode state uploaded before full-graph replay: [pos, seq_len]
+    decode_state: GpuBuffer,
+    /// Cached executable graph for repeated decode work.
+    captured_decode: Option<CapturedDecodeGraph>,
 }
 
 impl GpuForwardScratch {
@@ -373,9 +407,25 @@ impl GpuForwardScratch {
                 reason: format!("argmax partial indices allocation failed: {}", e),
             })?;
 
-        let argmax_result_index = GpuBuffer::alloc(std::mem::size_of::<i32>()).map_err(|e| {
+        let argmax_result_device = GpuBuffer::alloc(std::mem::size_of::<i32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("argmax result device allocation failed: {}", e),
+            }
+        })?;
+
+        let argmax_result_index = GpuPinnedBuffer::alloc(std::mem::size_of::<i32>()).map_err(|e| {
             GpuError::CacheAllocationFailed {
                 reason: format!("argmax result allocation failed: {}", e),
+            }
+        })?;
+        let input_hidden_pinned = GpuPinnedBuffer::alloc(h * std::mem::size_of::<f32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("input hidden pinned allocation failed: {}", e),
+            }
+        })?;
+        let decode_state = GpuBuffer::alloc(2 * std::mem::size_of::<i32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("decode state allocation failed: {}", e),
             }
         })?;
 
@@ -392,7 +442,11 @@ impl GpuForwardScratch {
             logits,
             argmax_partial_values,
             argmax_partial_indices,
+            argmax_result_device,
             argmax_result_index,
+            input_hidden_pinned,
+            decode_state,
+            captured_decode: None,
         })
     }
 
@@ -508,7 +562,69 @@ impl GpuForwardScratch {
 
     /// Get GPU pointer to final argmax index.
     pub fn argmax_result_index_mut_ptr(&mut self) -> *mut i32 {
-        self.argmax_result_index.as_ptr() as *mut i32
+        self.argmax_result_device.as_ptr() as *mut i32
+    }
+
+    pub fn decode_pos_ptr(&self) -> *const i32 {
+        self.decode_state.as_ptr() as *const i32
+    }
+
+    pub fn decode_seq_len_ptr(&self) -> *const i32 {
+        unsafe { (self.decode_state.as_ptr() as *const i32).add(1) }
+    }
+
+    pub fn upload_decode_state(
+        &mut self,
+        pos: usize,
+        seq_len: usize,
+        _stream: hipStream_t,
+    ) -> GpuResult<()> {
+        let pos_i32 = i32::try_from(pos).map_err(|_| GpuError::HipApiError {
+            code: -1,
+            description: format!("decode pos {} exceeds i32 range", pos),
+        })?;
+        let seq_len_i32 = i32::try_from(seq_len).map_err(|_| GpuError::HipApiError {
+            code: -1,
+            description: format!("decode seq_len {} exceeds i32 range", seq_len),
+        })?;
+        let state = [pos_i32, seq_len_i32];
+        let state_bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(state.as_ptr() as *const u8, std::mem::size_of_val(&state))
+        };
+        self.decode_state.copy_from_host(state_bytes)
+    }
+
+    pub fn decode_graph(&self) -> Option<&CapturedDecodeGraph> {
+        self.captured_decode.as_ref()
+    }
+
+    pub fn decode_graph_mut(&mut self) -> Option<&mut CapturedDecodeGraph> {
+        self.captured_decode.as_mut()
+    }
+
+    pub fn has_decode_graph_for(&self, key: DecodeGraphKey) -> bool {
+        self.captured_decode
+            .as_ref()
+            .is_some_and(|graph| graph.matches_key(key))
+    }
+
+    pub fn replace_decode_graph(
+        &mut self,
+        graph: CapturedDecodeGraph,
+    ) -> Option<CapturedDecodeGraph> {
+        self.captured_decode.replace(graph)
+    }
+
+    pub fn try_update_decode_graph(&mut self, new_graph: crate::gpu::graph::HipGraph) -> GpuResult<bool> {
+        if let Some(graph) = &self.captured_decode {
+            graph.update(&new_graph)
+        } else {
+            Ok(false)
+        }
+    }
+
+    pub fn clear_decode_graph(&mut self) {
+        self.captured_decode = None;
     }
 }
 

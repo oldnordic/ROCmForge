@@ -4,6 +4,53 @@
 
 ### [GPU Backend]
 
+**perf(tooling): Add Criterion and perf harnesses for graph-backed GPU decode**
+
+- **Issue:** Decode throughput work was relying too much on one-off shell commands and ignored tests, which made host-side regressions and end-to-end variability harder to spot
+- **Root Cause:** The repository had `rocprofv3` helpers and ignored real-model tests, but no dedicated Criterion target for the graph-backed GPU decode path and no repo-local `perf` wrapper
+- **Fix:**
+  - Added a Criterion `gpu_decode` bench target for the real-model graph-backed decode workload
+  - Kept the bench model-agnostic through environment overrides while defaulting to the local 0.5B regression model
+  - Added a repo-local `.perf/perf_decode.sh` wrapper that defaults to software counters on this machine
+  - Documented when to use Criterion, `perf`, and `rocprofv3`
+- **Impact:** The repo now has stable end-to-end measurement paths for GPU decode regressions on both the HIP/GPU side and the host/runtime side
+- **Files Changed:** `Cargo.toml`, `benches/gpu_decode.rs`, `.perf/README.md`, `.perf/perf_decode.sh`, `docs/benchmarks/README.md`, `docs/amd-rocm-7.2-findings.md`, `AGENTS.md`
+
+**perf(gpu): Use a smaller wave-parallel fast path for Q4_0 fused Gate/Up decode**
+
+- **Issue:** Profile-driven work showed the fused `gate_up` FFN kernel remained the top decode hotspot on the graph-backed 0.5B Q4_0 decode path
+- **Root Cause:** The fused `gate_up` fast path always launched with `8` waves (`256` threads), even on small hidden sizes where a smaller workgroup schedules better through the cached decode graph path
+- **Fix:**
+  - Kept the kernel math unchanged
+  - Added a generic HIP launch heuristic for the non-chunked fused `gate_up` fast path
+  - Selected `4` waves (`128` threads) when `n_rows <= 1024`
+  - Preserved the existing `8`-wave launch for larger shapes and the chunked fallback for large LDS footprints
+- **Impact:** Stable graph-backed decode improvement from about `168 tok/s` to about `227 tok/s` on `Qwen2.5-0.5B-Instruct Q4_0` on RX 7900 XT, while the cached-graph regression test still passes
+- **Files Changed:** `hip_kernels/quant/q4_0_fused.hip`, `docs/amd-rocm-7.2-findings.md`, `docs/benchmarks/README.md`, `.rocprofv3/README.md`, `.rocprofv3/profile_decode.sh`
+
+**perf(gpu): Select Q8_0 LM-head specialization from tensor metadata**
+
+- **Issue:** Decode throughput was much lower than expected because the generic Q8_0 GEMV launch geometry wasted most lanes on large-vocabulary LM-head projections with short hidden sizes
+- **Root Cause:** GPU dispatch had no semantic tensor role information, so every Q8_0 tensor used the same fixed 256-thread GEMV kernel even when the tensor was the LM head
+- **Fix:**
+  - Added `TensorRole` to GPU `WeightMeta`
+  - Marked explicit and tied LM heads from GGUF/model metadata during GPU weight loading
+  - Routed only metadata-marked LM heads to a dedicated Q8_0 launch path
+  - Selected LM-head block width from runtime shape (`64/128/256` threads) instead of hardcoding any model family
+- **Impact:** Preserves model-agnostic dispatch while improving measured decode throughput from about 117 tok/s to about 187.5 tok/s on `Qwen2.5-0.5B-Instruct Q4_0` on RX 7900 XT
+- **Files Changed:** `src/gpu/weights.rs`, `src/gpu/ops.rs`, `src/gpu/mod.rs`, `src/gpu/kernels/quant.rs`, `hip_kernels/quant/q8_0_gemv.hip`, `tests/weights_gpu.rs`
+
+**perf(gpu): Route decode hotpath through the device HIP stream**
+
+- **Issue:** Decode mixed default-stream launches with explicit-stream launches, making ordering harder to reason about and blocking clean HIP graph-capture work
+- **Root Cause:** Several decode kernels still only exposed default-stream wrappers and were launched outside the device-owned stream
+- **Fix:**
+  - Added stream-aware wrappers for decode-used kernels
+  - Routed decode GEMV, fused QKV, fused gate/up, norm, RoPE, KV writes, and decode attention through `device.stream()`
+  - Preserved the existing non-stream entry points as conservative fallbacks
+- **Impact:** Small measured decode improvement (about 202.5 tok/s to about 205 tok/s) and a cleaner base for future HIP graph replay
+- **Files Changed:** `src/gpu/cache.rs`, `src/gpu/forward.rs`, `src/gpu/kernels/attention.rs`, `src/gpu/kernels/elementwise.rs`, `src/gpu/kernels/mod.rs`, `src/gpu/kernels/norm.rs`, `src/gpu/kernels/quant.rs`, `src/gpu/kernels/rope.rs`, `src/gpu/ops.rs`, `hip_kernels/attention.hip`, `hip_kernels/elementwise.hip`, `hip_kernels/norm.hip`, `hip_kernels/rope.hip`
+
 **feat(gpu): Add Q5_K quantization with non-uniform sub-block scaling**
 
 - **Issue:** Q5_K (5-bit) quantization format not implemented, limiting model compression options
@@ -229,6 +276,19 @@ Phase 1 COMPLETE ✅
 - **Root Cause:** Attempted to use non-existent method for converting `__m256i` to extract sum
 - **Fix:** Use `_mm256_hadd_epi16` pairwise addition followed by `_mm256_extract_epi16` to extract final sum
 - **Files Changed:** `src/cpu/ops.rs`
+
+### [Documentation]
+
+**docs: Add `improvements.md` for the GPU performance investigation**
+
+- **Issue:** The current performance work had benchmark notes, VRAM findings, reverted experiments, and ROCm 7.2 research spread across the session instead of one repository document
+- **Root Cause:** There was no dedicated place to capture GPU investigation results and next-step guidance outside the changelog
+- **Fix:**
+  - Added `improvements.md`
+  - Documented the large-model LDS fallback, metadata-driven LM-head dispatch, decode stream cleanup, and measured throughput deltas
+  - Recorded the local `llama.cpp` comparison, VRAM findings from external counters, and the recommended next work on HIP graphs and bytes-per-token reduction
+- **Impact:** Keeps the current optimization direction and evidence in the repo so the next iteration can start from measured findings instead of reconstructing context
+- **Files Changed:** `improvements.md`, `CHANGELOG.md`
 
 ### [0.1.1] - 2026-03-25
 

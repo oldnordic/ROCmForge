@@ -74,3 +74,50 @@ extern "C" hipError_t gemv_q8_0_f32_launch(
 
     return hipGetLastError();
 }
+
+static inline int select_lm_head_block_size(int n_rows) {
+    const int n_blocks = n_rows / QK8_0;
+
+    // LM heads have very large output dimensions, so using fewer threads when
+    // the hidden size is short avoids wasting most of a 256-thread block on
+    // idle lanes while keeping the generic path unchanged for other tensors.
+    if (n_blocks <= 64) {
+        return 64;
+    }
+    if (n_blocks <= 128) {
+        return 128;
+    }
+    return 256;
+}
+
+extern "C" hipError_t gemv_q8_0_f32_lm_head_launch(
+    const void* weights_q8_0,
+    const float* input,
+    float* output,
+    int n_rows,
+    int ncols_dst,
+    hipStream_t stream
+) {
+    if (n_rows <= 0 || ncols_dst <= 0) return hipErrorInvalidValue;
+    if (n_rows % QK8_0 != 0) return hipErrorInvalidValue;
+
+    switch (select_lm_head_block_size(n_rows)) {
+        case 64:
+            gemv_q8_0_f32_kernel<<<ncols_dst, 64, 0, stream>>>(
+                weights_q8_0, input, output, n_rows, ncols_dst
+            );
+            break;
+        case 128:
+            gemv_q8_0_f32_kernel<<<ncols_dst, 128, 0, stream>>>(
+                weights_q8_0, input, output, n_rows, ncols_dst
+            );
+            break;
+        default:
+            gemv_q8_0_f32_kernel<<<ncols_dst, 256, 0, stream>>>(
+                weights_q8_0, input, output, n_rows, ncols_dst
+            );
+            break;
+    }
+
+    return hipGetLastError();
+}

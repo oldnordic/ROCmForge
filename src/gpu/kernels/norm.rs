@@ -3,7 +3,7 @@
 //! Safety-first: bounds checked before kernel launch.
 
 use super::super::error::{GpuError, GpuResult};
-use super::super::ffi::hipError_t;
+use super::super::ffi::{hipError_t, hipStream_t};
 use std::os::raw::c_int;
 
 /// RMS normalization: out = x * rsqrt(mean(x^2) + eps) * weight
@@ -28,6 +28,18 @@ pub fn rms_norm(
     n: usize,
     eps: f32,
 ) -> GpuResult<()> {
+    rms_norm_on_stream(x, weight, out, n, eps, hipStream_t::null())
+}
+
+/// RMS normalization on an explicit HIP stream.
+pub fn rms_norm_on_stream(
+    x: *const f32,
+    weight: *const f32,
+    out: *mut f32,
+    n: usize,
+    eps: f32,
+    stream: hipStream_t,
+) -> GpuResult<()> {
     if n == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
@@ -36,12 +48,40 @@ pub fn rms_norm(
     }
 
     // Load and call kernel
-    let result = unsafe { gpu_rms_norm(x, weight, out, n as c_int, eps) };
+    let result = unsafe { gpu_rms_norm(x, weight, out, n as c_int, eps, stream) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
             code: result as i32,
             description: format!("rms_norm kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+/// Specialized RMS normalization using wavefront shuffles (Vulkan-style).
+pub fn rms_norm_vulkan_style(
+    x: *const f32,
+    weight: *const f32,
+    out: *mut f32,
+    n: usize,
+    eps: f32,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    if n == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "RMS norm: n cannot be zero".to_string(),
+        });
+    }
+
+    let result = unsafe { gpu_rms_norm_vulkan_style(x, weight, out, n as c_int, eps, stream) };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("rms_norm_vulkan_style kernel failed: {:?}", result),
         });
     }
 
@@ -92,6 +132,16 @@ unsafe extern "C" {
         out: *mut f32,
         n: c_int,
         eps: f32,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
+    fn gpu_rms_norm_vulkan_style(
+        x: *const f32,
+        weight: *const f32,
+        out: *mut f32,
+        n: c_int,
+        eps: f32,
+        stream: hipStream_t,
     ) -> hipError_t;
 
     fn gpu_rms_norm_batched(

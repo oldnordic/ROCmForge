@@ -1104,7 +1104,7 @@ fn test_q4_k_gemm_matches_cpu_oracle() {
 
     use gpu_test_utils::assert_close;
     use rocmforge::gpu::{
-        detect, gemm_q4_k_f32, dequantize_q4_k, GpuBuffer, GpuQuant, Q4_K_BLOCK_SIZE, QK_K,
+        dequantize_q4_k, detect, gemm_q4_k_f32, GpuBuffer, GpuQuant, Q4_K_BLOCK_SIZE, QK_K,
     };
 
     let caps = detect().expect("GPU required for Q4_K GEMM test");
@@ -1221,7 +1221,7 @@ fn test_q4_k_gemm_matches_cpu_oracle() {
     for b in 0..batch_size {
         let mut expected = vec![0.0f32; ncols_dst];
         let input_batch = &input_data[b * n_rows..(b + 1) * n_rows];
-        
+
         // Simple matrix-vector multiplication for oracle
         for col in 0..ncols_dst {
             let mut sum = 0.0f32;
@@ -1245,7 +1245,7 @@ fn test_q5_k_gemm_matches_cpu_oracle() {
 
     use gpu_test_utils::assert_close;
     use rocmforge::gpu::{
-        detect, gemm_q5_k_f32, dequantize_q5_k, GpuBuffer, GpuQuant, Q5_K_BLOCK_SIZE, QK_K,
+        dequantize_q5_k, detect, gemm_q5_k_f32, GpuBuffer, GpuQuant, Q5_K_BLOCK_SIZE, QK_K,
     };
 
     let caps = detect().expect("GPU required for Q5_K GEMM test");
@@ -1362,7 +1362,7 @@ fn test_q5_k_gemm_matches_cpu_oracle() {
     for b in 0..batch_size {
         let mut expected = vec![0.0f32; ncols_dst];
         let input_batch = &input_data[b * n_rows..(b + 1) * n_rows];
-        
+
         for col in 0..ncols_dst {
             let mut sum = 0.0f32;
             let col_weights = &dequantized_weights[col * n_rows..(col + 1) * n_rows];

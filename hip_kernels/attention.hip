@@ -1,5 +1,73 @@
 #include "common.hip"
 
+namespace {
+
+constexpr float kNegInf = -3.402823466e+38f;
+constexpr int kDecodeScoreCapacity = 2048;
+constexpr int kDecodeReductionScratch = MAX_BLOCK_SIZE / 32;
+
+__device__ inline float warp_reduce_sum(float value) {
+    #pragma unroll
+    for (int delta = warpSize / 2; delta > 0; delta >>= 1) {
+        value += __shfl_down(value, delta);
+    }
+    return value;
+}
+
+__device__ inline float warp_reduce_max(float value) {
+    #pragma unroll
+    for (int delta = warpSize / 2; delta > 0; delta >>= 1) {
+        value = fmaxf(value, __shfl_down(value, delta));
+    }
+    return value;
+}
+
+__device__ inline float block_reduce_sum(float value, float* scratch) {
+    const int lane = threadIdx.x % warpSize;
+    const int warp_id = threadIdx.x / warpSize;
+    const int warp_count = (blockDim.x + warpSize - 1) / warpSize;
+
+    value = warp_reduce_sum(value);
+    if (lane == 0) {
+        scratch[warp_id] = value;
+    }
+    __syncthreads();
+
+    if (warp_id == 0) {
+        value = (lane < warp_count) ? scratch[lane] : 0.0f;
+        value = warp_reduce_sum(value);
+        if (lane == 0) {
+            scratch[0] = value;
+        }
+    }
+    __syncthreads();
+    return scratch[0];
+}
+
+__device__ inline float block_reduce_max(float value, float* scratch) {
+    const int lane = threadIdx.x % warpSize;
+    const int warp_id = threadIdx.x / warpSize;
+    const int warp_count = (blockDim.x + warpSize - 1) / warpSize;
+
+    value = warp_reduce_max(value);
+    if (lane == 0) {
+        scratch[warp_id] = value;
+    }
+    __syncthreads();
+
+    if (warp_id == 0) {
+        value = (lane < warp_count) ? scratch[lane] : kNegInf;
+        value = warp_reduce_max(value);
+        if (lane == 0) {
+            scratch[0] = value;
+        }
+    }
+    __syncthreads();
+    return scratch[0];
+}
+
+} // namespace
+
 // ── Multi-Head Flash Attention (Single Token Decode) ──────────────────────────────
 
 // One block handles ONE head.
@@ -32,7 +100,7 @@ __global__ void flash_attn_decode_strided_multi_head_kernel(
     const float* head_q = q + head_idx * head_dim;
 
     // Local registers for online softmax
-    float m = -3.402823466e+38f;
+    float m = kNegInf;
     float l = 0.0f;
 
     // Buffer for results in shared memory (one per thread)
@@ -99,10 +167,9 @@ __global__ void flash_attn_decode_strided_multi_head_v2_kernel(
     const float* head_q = q + head_idx * head_dim;
     
     // 1. Compute scores for all positions
-    // We use shared memory to store scores if seq_len is small
-    extern __shared__ float s_scores[]; // Size: max_seq_len (e.g. 1024)
-
-    float m = -3.402823466e+38f;
+    // We use shared memory to store scores if seq_len is small.
+    extern __shared__ float s_scores[];
+    float* s_reduce = s_scores + kDecodeScoreCapacity;
     
     // Each thread handles some positions
     for (int pos = tid; pos < seq_len; pos += blockDim.x) {
@@ -116,26 +183,85 @@ __global__ void flash_attn_decode_strided_multi_head_v2_kernel(
     }
     __syncthreads();
 
-    // 2. Local max reduction
-    if (tid == 0) {
-        for (int i = 0; i < seq_len; ++i) m = max(m, s_scores[i]);
+    float local_max = kNegInf;
+    for (int pos = tid; pos < seq_len; pos += blockDim.x) {
+        local_max = fmaxf(local_max, s_scores[pos]);
     }
-    __syncthreads();
-    // (We could use parallel reduction here but for 1024 it's fast enough)
+    const float m = block_reduce_max(local_max, s_reduce);
 
     // 3. Compute exp and sum
-    __shared__ float s_sum;
-    if (tid == 0) {
-        float sum = 0.0f;
-        for (int i = 0; i < seq_len; ++i) {
-            s_scores[i] = expf(s_scores[i] - m);
-            sum += s_scores[i];
+    float local_sum = 0.0f;
+    for (int pos = tid; pos < seq_len; pos += blockDim.x) {
+        const float weight = expf(s_scores[pos] - m);
+        s_scores[pos] = weight;
+        local_sum += weight;
+    }
+    const float s_sum = block_reduce_sum(local_sum, s_reduce);
+
+    // 4. Compute final output values
+    const float inv_sum = 1.0f / s_sum;
+    float* head_out = out + head_idx * head_dim;
+
+    for (int i = tid; i < head_dim; i += blockDim.x) {
+        float val = 0.0f;
+        for (int pos = 0; pos < seq_len; ++pos) {
+            const size_t cache_base = (size_t)pos * kv_size + head_offset;
+            val += s_scores[pos] * v_cache[cache_base + i];
         }
-        s_sum = sum;
+        head_out[i] = val * inv_sum;
+    }
+}
+
+__global__ void flash_attn_decode_strided_multi_head_state_kernel(
+    float* __restrict__ out,
+    const float* __restrict__ q,
+    const float* __restrict__ k_cache,
+    const float* __restrict__ v_cache,
+    const int* __restrict__ seq_len_ptr,
+    const int num_heads,
+    const int num_kv_heads,
+    const int head_dim,
+    const float scale
+) {
+    const int seq_len = *seq_len_ptr;
+    const int head_idx = blockIdx.x;
+    const int tid = threadIdx.x;
+    const int kv_head_idx = head_idx / (num_heads / num_kv_heads);
+    const int kv_size = num_kv_heads * head_dim;
+    const int head_offset = kv_head_idx * head_dim;
+
+    if (head_idx >= num_heads) return;
+
+    const float* head_q = q + head_idx * head_dim;
+    extern __shared__ float s_scores[];
+
+    float* s_reduce = s_scores + kDecodeScoreCapacity;
+
+    for (int pos = tid; pos < seq_len; pos += blockDim.x) {
+        const size_t cache_base = (size_t)pos * kv_size + head_offset;
+        float score = 0.0f;
+        for (int i = 0; i < head_dim; ++i) {
+            score += head_q[i] * k_cache[cache_base + i];
+        }
+        score *= scale;
+        s_scores[pos] = score;
     }
     __syncthreads();
 
-    // 4. Compute final output values
+    float local_max = kNegInf;
+    for (int pos = tid; pos < seq_len; pos += blockDim.x) {
+        local_max = fmaxf(local_max, s_scores[pos]);
+    }
+    const float m = block_reduce_max(local_max, s_reduce);
+
+    float local_sum = 0.0f;
+    for (int pos = tid; pos < seq_len; pos += blockDim.x) {
+        const float weight = expf(s_scores[pos] - m);
+        s_scores[pos] = weight;
+        local_sum += weight;
+    }
+    const float s_sum = block_reduce_sum(local_sum, s_reduce);
+
     const float inv_sum = 1.0f / s_sum;
     float* head_out = out + head_idx * head_dim;
 
@@ -163,10 +289,36 @@ extern "C" hipError_t gpu_flash_attn_decode_strided_multi_head(
 ) {
     const int threads_per_block = 256;
     // We need shared memory for scores. Assume max seq_len = 2048 for now.
-    const size_t smem_size = 2048 * sizeof(float);
+    const size_t smem_size = (kDecodeScoreCapacity + kDecodeReductionScratch) * sizeof(float);
 
     flash_attn_decode_strided_multi_head_v2_kernel<<<num_heads, threads_per_block, smem_size, stream>>>(
         d_out, d_q, d_k_cache, d_v_cache, seq_len, num_heads, num_kv_heads, head_dim, scale
+    );
+
+    return hipGetLastError();
+}
+
+extern "C" hipError_t gpu_flash_attn_decode_strided_multi_head_state(
+    float* d_out,
+    const float* d_q,
+    const float* d_k_cache,
+    const float* d_v_cache,
+    const int* d_seq_len,
+    const int num_heads,
+    const int num_kv_heads,
+    const int head_dim,
+    const float scale,
+    hipStream_t stream
+) {
+    if (d_seq_len == nullptr) {
+        return hipErrorInvalidValue;
+    }
+
+    const int threads_per_block = 256;
+    const size_t smem_size = (kDecodeScoreCapacity + kDecodeReductionScratch) * sizeof(float);
+
+    flash_attn_decode_strided_multi_head_state_kernel<<<num_heads, threads_per_block, smem_size, stream>>>(
+        d_out, d_q, d_k_cache, d_v_cache, d_seq_len, num_heads, num_kv_heads, head_dim, scale
     );
 
     return hipGetLastError();
@@ -188,6 +340,84 @@ __global__ void kv_write_kernel(
         k_cache[cache_idx] = k[i];
         v_cache[cache_idx] = v[i];
     }
+}
+
+__global__ void kv_write_state_kernel(
+    float* __restrict__ k_cache,
+    float* __restrict__ v_cache,
+    const float* __restrict__ k,
+    const float* __restrict__ v,
+    const int* __restrict__ pos_ptr,
+    const int kv_size
+) {
+    const int pos = *pos_ptr;
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < kv_size) {
+        const size_t cache_idx = (size_t)pos * kv_size + i;
+        k_cache[cache_idx] = k[i];
+        v_cache[cache_idx] = v[i];
+    }
+}
+
+__global__ void kv_write_rope_state_kernel(
+    float* __restrict__ k_cache,
+    float* __restrict__ v_cache,
+    const float* __restrict__ k,
+    const float* __restrict__ v,
+    const int* __restrict__ pos_ptr,
+    const int num_kv_heads,
+    const int head_dim,
+    const float theta_base,
+    const int neox
+) {
+    const int pos = *pos_ptr;
+    const int kv_size = num_kv_heads * head_dim;
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (i >= kv_size) {
+        return;
+    }
+
+    const size_t cache_idx = (size_t)pos * kv_size + i;
+    v_cache[cache_idx] = v[i];
+
+    const int head = i / head_dim;
+    const int idx_in_head = i - head * head_dim;
+    const int head_base = head * head_dim;
+    const int half = head_dim / 2;
+
+    int pair_idx;
+    int idx0;
+    int idx1;
+
+    if (neox) {
+        if (idx_in_head < half) {
+            pair_idx = idx_in_head;
+            idx0 = head_base + idx_in_head;
+            idx1 = idx0 + half;
+        } else {
+            pair_idx = idx_in_head - half;
+            idx0 = head_base + pair_idx;
+            idx1 = idx0 + half;
+        }
+    } else {
+        pair_idx = idx_in_head / 2;
+        idx0 = head_base + 2 * pair_idx;
+        idx1 = idx0 + 1;
+    }
+
+    const float exponent = (float)(2 * pair_idx) / (float)head_dim;
+    const float theta = 1.0f / pow(theta_base, exponent);
+    const float angle = (float)pos * theta;
+    const float cos_val = cos(angle);
+    const float sin_val = sin(angle);
+    const float x0 = k[idx0];
+    const float x1 = k[idx1];
+
+    const bool first = neox ? (idx_in_head < half) : ((idx_in_head & 1) == 0);
+    k_cache[cache_idx] = first
+        ? (x0 * cos_val - x1 * sin_val)
+        : (x0 * sin_val + x1 * cos_val);
 }
 
 __global__ void kv_write_batched_kernel(
@@ -276,8 +506,26 @@ __global__ void flash_attn_prefill_strided_kernel(
 
 extern "C" {
 
-hipError_t gpu_kv_write(float* d_k_cache, float* d_v_cache, const float* d_k, const float* d_v, const int pos, const int kv_size, const int max_seq) {
-    hipLaunchKernelGGL(kv_write_kernel, (kv_size + 255) / 256, 256, 0, 0, d_k_cache, d_v_cache, d_k, d_v, pos, kv_size);
+hipError_t gpu_kv_write(float* d_k_cache, float* d_v_cache, const float* d_k, const float* d_v, const int pos, const int kv_size, const int max_seq, hipStream_t stream) {
+    hipLaunchKernelGGL(kv_write_kernel, (kv_size + 255) / 256, 256, 0, stream, d_k_cache, d_v_cache, d_k, d_v, pos, kv_size);
+    return hipGetLastError();
+}
+
+hipError_t gpu_kv_write_state(float* d_k_cache, float* d_v_cache, const float* d_k, const float* d_v, const int* d_pos, const int kv_size, const int max_seq, hipStream_t stream) {
+    (void)max_seq;
+    if (d_pos == nullptr) {
+        return hipErrorInvalidValue;
+    }
+    hipLaunchKernelGGL(kv_write_state_kernel, (kv_size + 255) / 256, 256, 0, stream, d_k_cache, d_v_cache, d_k, d_v, d_pos, kv_size);
+    return hipGetLastError();
+}
+
+hipError_t gpu_kv_write_rope_state(float* d_k_cache, float* d_v_cache, const float* d_k, const float* d_v, const int* d_pos, const int num_kv_heads, const int head_dim, const float theta_base, const int neox, hipStream_t stream) {
+    if (d_pos == nullptr) {
+        return hipErrorInvalidValue;
+    }
+    const int kv_size = num_kv_heads * head_dim;
+    hipLaunchKernelGGL(kv_write_rope_state_kernel, (kv_size + 255) / 256, 256, 0, stream, d_k_cache, d_v_cache, d_k, d_v, d_pos, num_kv_heads, head_dim, theta_base, neox);
     return hipGetLastError();
 }
 

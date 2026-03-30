@@ -110,10 +110,7 @@ impl DynamicLibrary {
             let handle = unsafe {
                 let path_str = full_path.to_string_lossy();
                 let c_path = std::ffi::CString::new(path_str.as_ref()).unwrap();
-                libc::dlopen(
-                    c_path.as_ptr(),
-                    libc::RTLD_LAZY | libc::RTLD_LOCAL,
-                )
+                libc::dlopen(c_path.as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL)
             };
 
             if !handle.is_null() {

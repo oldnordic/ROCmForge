@@ -292,14 +292,15 @@ hipError_t gpu_add(
     const float* d_x,
     const float* d_y,
     float* d_out,
-    const int n
+    const int n,
+    hipStream_t stream
 ) {
     const int block_size = 256;
     const int grid_size = (n + block_size - 1) / block_size;
 
     hipLaunchKernelGGL(
         add_kernel,
-        grid_size, block_size, 0, 0,
+        grid_size, block_size, 0, stream,
         d_x, d_y, d_out, n
     );
 
@@ -418,12 +419,13 @@ hipError_t gpu_mul_batched(
     return hipGetLastError();
 }
 
-hipError_t gpu_argmax_f32(
+hipError_t gpu_argmax_f32_on_stream(
     const float* d_input,
     float* d_partial_values,
     int* d_partial_indices,
     int* d_output_index,
-    const int n
+    const int n,
+    hipStream_t stream
 ) {
     if (d_input == nullptr || d_partial_values == nullptr ||
         d_partial_indices == nullptr || d_output_index == nullptr || n <= 0) {
@@ -435,7 +437,7 @@ hipError_t gpu_argmax_f32(
 
     hipLaunchKernelGGL(
         argmax_stage1_kernel,
-        grid_size, block_size, 0, 0,
+        grid_size, block_size, 0, stream,
         d_input, d_partial_values, d_partial_indices, n
     );
 
@@ -446,11 +448,28 @@ hipError_t gpu_argmax_f32(
 
     hipLaunchKernelGGL(
         argmax_finalize_kernel,
-        1, block_size, 0, 0,
+        1, block_size, 0, stream,
         d_partial_values, d_partial_indices, d_output_index, grid_size
     );
 
     return hipGetLastError();
+}
+
+hipError_t gpu_argmax_f32(
+    const float* d_input,
+    float* d_partial_values,
+    int* d_partial_indices,
+    int* d_output_index,
+    const int n
+) {
+    return gpu_argmax_f32_on_stream(
+        d_input,
+        d_partial_values,
+        d_partial_indices,
+        d_output_index,
+        n,
+        0
+    );
 }
 
 hipError_t gpu_embed_q8_0_token(

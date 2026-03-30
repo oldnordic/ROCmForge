@@ -1,0 +1,5 @@
+jobs:
+  - pmc: ["SQ_WAVES"]
+    kernel_include_regex: "gemv_gate_up_swiglu_q4_0_f32_kernel"
+    kernel_exclude_regex: ""
+    kernel_iteration_range: ""

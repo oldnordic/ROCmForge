@@ -22,33 +22,63 @@ __global__ void rms_norm_kernel(
     const int n,
     const float eps
 ) {
-    // Shared memory for parallel reduction
-    extern __shared__ float shared_sq[];
-
     const int tid = threadIdx.x;
+    const int wave_id = tid / 32;
+    const int lane_id = tid % 32;
+    
+    __shared__ float s_reduction[32];
 
-    // Compute sum of squares
     float sum_sq = 0.0f;
-    for (int i = tid; i < n; i += blockDim.x) {
+
+    int i = tid * 4;
+    for (; i + 3 < n; i += blockDim.x * 4) {
+        float4 val4 = reinterpret_cast<const float4*>(&x[i])[0];
+        sum_sq += val4.x * val4.x;
+        sum_sq += val4.y * val4.y;
+        sum_sq += val4.z * val4.z;
+        sum_sq += val4.w * val4.w;
+    }
+    for (; i < n; i++) {
         float val = x[i];
         sum_sq += val * val;
     }
-    shared_sq[tid] = sum_sq;
-    __syncthreads();
 
-    // Parallel reduction in shared memory
-    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
-        if (tid < s) {
-            shared_sq[tid] += shared_sq[tid + s];
-        }
-        __syncthreads();
+    #pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        sum_sq += __shfl_down(sum_sq, offset);
     }
 
-    // Compute inverse RMS
-    float inv_rms = rsqrt(shared_sq[0] / (float)n + eps);
+    if (lane_id == 0) {
+        s_reduction[wave_id] = sum_sq;
+    }
+    __syncthreads();
 
-    // Apply normalization
-    for (int i = tid; i < n; i += blockDim.x) {
+    float final_sum_sq = (tid < (blockDim.x / 32)) ? s_reduction[tid] : 0.0f;
+    if (wave_id == 0) {
+        #pragma unroll
+        for (int offset = 16; offset > 0; offset >>= 1) {
+            final_sum_sq += __shfl_down(final_sum_sq, offset);
+        }
+        if (tid == 0) {
+            s_reduction[0] = final_sum_sq;
+        }
+    }
+    __syncthreads();
+
+    float inv_rms = rsqrtf(s_reduction[0] / (float)n + eps);
+
+    i = tid * 4;
+    for (; i + 3 < n; i += blockDim.x * 4) {
+        float4 x4 = reinterpret_cast<const float4*>(&x[i])[0];
+        float4 w4 = reinterpret_cast<const float4*>(&weight[i])[0];
+        float4 out4;
+        out4.x = x4.x * inv_rms * w4.x;
+        out4.y = x4.y * inv_rms * w4.y;
+        out4.z = x4.z * inv_rms * w4.z;
+        out4.w = x4.w * inv_rms * w4.w;
+        reinterpret_cast<float4*>(&out[i])[0] = out4;
+    }
+    for (; i < n; i++) {
         out[i] = x[i] * inv_rms * weight[i];
     }
 }
@@ -114,14 +144,14 @@ hipError_t gpu_rms_norm(
     const float* d_weight,
     float* d_out,
     const int n,
-    const float eps
+    const float eps,
+    hipStream_t stream
 ) {
     const int block_size = 256;
-    const int smem_size = block_size * sizeof(float);
 
     hipLaunchKernelGGL(
         rms_norm_kernel,
-        1, block_size, smem_size, 0,
+        1, block_size, 0, stream,
         d_x, d_weight, d_out, n, eps
     );
 

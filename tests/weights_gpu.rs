@@ -5,7 +5,7 @@
 mod common;
 
 use rocmforge::config::ModelConfig;
-use rocmforge::gpu::{GpuBuffer, GpuLayerWeights, GpuModelWeights, WeightMeta};
+use rocmforge::gpu::{GpuBuffer, GpuLayerWeights, GpuModelWeights, TensorRole, WeightMeta};
 use serial_test::serial;
 
 fn make_test_config() -> ModelConfig {
@@ -39,6 +39,7 @@ fn test_weight_metadata_calculations() {
         wtype: rocmforge::loader::GgmlType::Q4_0,
         dims: vec![1024, 768],
         needs_transpose: false,
+        role: TensorRole::Generic,
     };
 
     assert_eq!(meta.num_elements(), 1024 * 768);
@@ -62,6 +63,7 @@ fn test_weight_metadata_from_desc() {
     assert_eq!(meta.wtype, rocmforge::loader::GgmlType::Q8_0);
     assert_eq!(meta.dims, vec![512, 256]);
     assert_eq!(meta.needs_transpose, true);
+    assert_eq!(meta.role, TensorRole::Generic);
     assert_eq!(meta.num_elements(), 512 * 256);
 }
 
@@ -133,6 +135,7 @@ fn test_gpu_weights_lm_head_tied() {
         wtype: rocmforge::loader::GgmlType::Q4_0,
         dims: vec![32000, 1024],
         needs_transpose: false,
+        role: TensorRole::Generic,
     };
 
     // Simulate tied weights
@@ -140,11 +143,13 @@ fn test_gpu_weights_lm_head_tied() {
         wtype: token_emb_meta.wtype,
         dims: token_emb_meta.dims.clone(),
         needs_transpose: true, // LM head needs transpose
+        role: TensorRole::TiedLmHead,
     };
 
     assert_eq!(tied_meta.wtype, rocmforge::loader::GgmlType::Q4_0);
     assert_eq!(tied_meta.dims, vec![32000, 1024]);
     assert!(tied_meta.needs_transpose);
+    assert_eq!(tied_meta.role, TensorRole::TiedLmHead);
 }
 
 // Note: Full integration tests with actual GGUF file loading would require:

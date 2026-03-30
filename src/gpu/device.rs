@@ -13,6 +13,7 @@ use super::ffi;
 pub struct GpuDevice {
     device_id: i32,
     stream: ffi::hipStream_t,
+    warp_size: usize,
 }
 
 impl GpuDevice {
@@ -21,12 +22,16 @@ impl GpuDevice {
     /// Returns error if device ID invalid or HIP not available.
     pub fn init(device_id: i32) -> GpuResult<Self> {
         // Verify device exists
-        let _info = ffi::hip_get_device_info(device_id)?;
+        let info = ffi::hip_get_device_info(device_id)?;
 
         // Create HIP stream
         let stream = ffi::hip_stream_create()?;
 
-        Ok(Self { device_id, stream })
+        Ok(Self {
+            device_id,
+            stream,
+            warp_size: info.warp_size,
+        })
     }
 
     /// Get device ID.
@@ -59,6 +64,26 @@ impl GpuDevice {
         self.stream
     }
 
+    /// Begin capture on the device stream.
+    pub fn begin_capture(&self, mode: ffi::hipStreamCaptureMode) -> GpuResult<()> {
+        ffi::hip_stream_begin_capture(self.stream, mode)
+    }
+
+    /// End capture on the device stream and return the graph template.
+    pub fn end_capture(&self) -> GpuResult<ffi::hipGraph_t> {
+        ffi::hip_stream_end_capture(self.stream)
+    }
+
+    /// Return the current stream capture status.
+    pub fn stream_capture_status(&self) -> GpuResult<ffi::hipStreamCaptureStatus> {
+        ffi::hip_stream_is_capturing(self.stream)
+    }
+
+    /// Report the device wavefront size exposed by HIP.
+    pub fn warp_size(&self) -> usize {
+        self.warp_size
+    }
+
     /// Synchronize all queued operations on this device's stream.
     ///
     /// Blocks until all previously queued operations on the stream complete.
@@ -80,6 +105,7 @@ impl std::fmt::Debug for GpuDevice {
         f.debug_struct("GpuDevice")
             .field("device_id", &self.device_id)
             .field("stream", &self.stream)
+            .field("warp_size", &self.warp_size)
             .finish()
     }
 }

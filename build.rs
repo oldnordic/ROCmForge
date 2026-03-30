@@ -20,6 +20,7 @@ mod gpu_build {
 
         let kernels = [
             ("norm", "hip_kernels/norm.hip"),
+            ("norm_vulkan_style", "hip_kernels/norm_vulkan_style.hip"),
             ("rope", "hip_kernels/rope.hip"),
             ("matmul", "hip_kernels/matmul.hip"),
             ("elementwise", "hip_kernels/elementwise.hip"),
@@ -167,6 +168,10 @@ mod gpu_build {
                             ("libq4_1_dequantize.a", "q4_1_dequantize"),
                             ("libq4_1_verify.a", "q4_1_verify"),
                             ("libq4_1_gemv.a", "q4_1_gemv"),
+                            ("libq4_1_ffn_experimental.a", "q4_1_ffn_experimental"),
+                            ("libq4_0_vulkan_style.a", "q4_0_vulkan_style"),
+                            ("libq4_0_gemv_vulkan_style.a", "q4_0_gemv_vulkan_style"),
+                            ("libq4_k_gemv_vulkan_style.a", "q4_k_gemv_vulkan_style"),
                             // GEMM libraries
                             ("libq4_0_gemm.a", "q4_0_gemm"),
                             ("libq4_0_fused.a", "q4_0_fused"),
