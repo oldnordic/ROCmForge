@@ -2084,7 +2084,7 @@ unsafe extern "C" {
         ncols_dst: c_int,
         n_waves: c_int,
         stream: hipStream_t,
-    );
+    ) -> hipError_t;
 
     fn gemv_q4_k_f32_vulkan_style_launch(
         weights_q4_k: *const u8,
@@ -2252,6 +2252,7 @@ pub fn gemv_gate_up_swiglu_vulkan_q4_0_f32(
 
 /// Experimental Vulkan-style GEMV (multi-row reuse) for Q4_0.
 pub fn gemv_q4_0_f32_vulkan_style(
+    device: &GpuDevice,
     weights_q4_0: *const u8,
     input: *const f32,
     output: *mut f32,
@@ -2260,7 +2261,31 @@ pub fn gemv_q4_0_f32_vulkan_style(
     n_waves: usize,
     stream: hipStream_t,
 ) -> GpuResult<()> {
-    unsafe {
+    if n_rows == 0 || ncols_dst == 0 {
+        return Ok(());
+    }
+
+    // LDS limit check (4 bytes per f32 input element)
+    if n_rows * 4 > device.max_shared_mem_per_block() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!(
+                "gemv_q4_0_vulkan_style: n_rows {} exceeds LDS limit {}",
+                n_rows,
+                device.max_shared_mem_per_block()
+            ),
+        });
+    }
+
+    // Alignment checks for vectorized loads (16 bytes)
+    if !super::is_aligned(input, 16) {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "gemv_q4_0_vulkan_style: input is not 16-byte aligned".to_string(),
+        });
+    }
+
+    let result = unsafe {
         gemv_q4_0_f32_vulkan_style_launch(
             weights_q4_0,
             input,
@@ -2269,12 +2294,20 @@ pub fn gemv_q4_0_f32_vulkan_style(
             ncols_dst as c_int,
             n_waves as c_int,
             stream,
-        );
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("gemv_q4_0_f32_vulkan_style kernel failed: {:?}", result),
+        });
     }
     Ok(())
 }
 
 pub fn gemv_q4_k_f32_vulkan_style(
+    device: &GpuDevice,
     weights_q4_k: *const u8,
     input: *const f32,
     output: *mut f32,
@@ -2283,6 +2316,30 @@ pub fn gemv_q4_k_f32_vulkan_style(
     n_waves: usize,
     stream: hipStream_t,
 ) -> GpuResult<()> {
+    if n_rows == 0 || ncols_dst == 0 {
+        return Ok(());
+    }
+
+    // LDS limit check
+    if n_rows * 4 > device.max_shared_mem_per_block() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!(
+                "gemv_q4_k_vulkan_style: n_rows {} exceeds LDS limit {}",
+                n_rows,
+                device.max_shared_mem_per_block()
+            ),
+        });
+    }
+
+    // Alignment checks
+    if !super::is_aligned(input, 16) {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "gemv_q4_k_vulkan_style: input is not 16-byte aligned".to_string(),
+        });
+    }
+
     let result = unsafe {
         gemv_q4_k_f32_vulkan_style_launch(
             weights_q4_k,

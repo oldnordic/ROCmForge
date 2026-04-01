@@ -114,6 +114,7 @@ fn test_gpu_vulkan_style_q4_k_gemv() {
     ).expect("production warmup");
 
     gpu::kernels::quant::gemv_q4_k_f32_vulkan_style(
+        &device,
         d_weights.as_ptr(),
         d_input.as_ptr() as *const f32,
         d_out_vulkan.as_ptr() as *mut f32,
@@ -140,6 +141,7 @@ fn test_gpu_vulkan_style_q4_k_gemv() {
     // Benchmark Vulkan-Style
     let vulkan_ms = average_kernel_ms(&device, 200, || {
         gpu::kernels::quant::gemv_q4_k_f32_vulkan_style(
+            &device,
             d_weights.as_ptr(),
             d_input.as_ptr() as *const f32,
             d_out_vulkan.as_ptr() as *mut f32,

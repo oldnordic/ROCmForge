@@ -11,6 +11,11 @@ pub mod norm;
 pub mod quant;
 pub mod rope;
 
+/// Check if a pointer is aligned to a given boundary.
+pub(crate) fn is_aligned<T>(ptr: *const T, alignment: usize) -> bool {
+    (ptr as usize) % alignment == 0
+}
+
 pub use attention::{
     flash_attn_decode, flash_attn_decode_strided, flash_attn_decode_strided_multi_head,
     flash_attn_decode_strided_multi_head_from_state_on_stream,

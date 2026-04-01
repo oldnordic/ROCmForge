@@ -76,6 +76,14 @@ pub fn rms_norm_vulkan_style(
         });
     }
 
+    // Alignment check for float4 (16 bytes)
+    if !super::is_aligned(x, 16) || !super::is_aligned(weight, 16) || !super::is_aligned(out, 16) {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "rms_norm_vulkan_style: pointers are not 16-byte aligned".to_string(),
+        });
+    }
+
     let result = unsafe { gpu_rms_norm_vulkan_style(x, weight, out, n as c_int, eps, stream) };
 
     if result != hipError_t::hipSuccess {
