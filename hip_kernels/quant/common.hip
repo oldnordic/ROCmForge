@@ -19,6 +19,12 @@
         } \
     } while (0)
 
+/// Host-side null check macro for launchers
+#define CHECK_NULL(ptr) \
+    if ((ptr) == nullptr) { \
+        return hipErrorInvalidValue; \
+    }
+
 /// Kernel-safe bounds check macro
 /// Use this to validate indices before memory access
 #define CHECK_BOUNDS(idx, max) \

@@ -101,7 +101,7 @@ __global__ void gemv_q4_0_f32_multi_row_vulkan_style_kernel(
 }
 
 extern "C" {
-    void gemv_q4_0_f32_vulkan_style_launch(
+    hipError_t gemv_q4_0_f32_vulkan_style_launch(
         const void* weights_q4_0,
         const float* input,
         float* output,
@@ -110,6 +110,13 @@ extern "C" {
         int n_waves,
         hipStream_t stream
     ) {
+        CHECK_NULL(weights_q4_0);
+        CHECK_NULL(input);
+        CHECK_NULL(output);
+
+        if (n_rows % QK4_0 != 0) return hipErrorInvalidValue;
+        if (n_rows * sizeof(float) > MAX_SHARED_MEM) return hipErrorInvalidValue;
+
         // Simple heuristic selection for prototypes
         if (n_waves == 4) {
             int n_blocks = (ncols_dst + (4 * 4) - 1) / (4 * 4);
@@ -126,5 +133,7 @@ extern "C" {
                 weights_q4_0, input, output, n_rows, ncols_dst
             );
         }
+        CHECK_LAST();
+        return hipSuccess;
     }
 }

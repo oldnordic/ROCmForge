@@ -194,7 +194,12 @@ extern "C" {
         int n_waves,
         hipStream_t stream
     ) {
+        CHECK_NULL(weights_q4_k);
+        CHECK_NULL(input);
+        CHECK_NULL(output);
+
         if (n_rows % QK_K != 0) return hipErrorInvalidValue;
+        if (n_rows * sizeof(float) > MAX_SHARED_MEM) return hipErrorInvalidValue;
 
         if (n_waves == 4) {
             int n_blocks = (ncols_dst + (4 * 4) - 1) / (4 * 4);
@@ -211,6 +216,7 @@ extern "C" {
                 weights_q4_k, input, output, n_rows, ncols_dst
             );
         }
-        return hipGetLastError();
+        CHECK_LAST();
+        return hipSuccess;
     }
 }

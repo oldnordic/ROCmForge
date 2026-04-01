@@ -96,6 +96,15 @@ hipError_t gpu_rms_norm_vulkan_style(
     const float eps,
     hipStream_t stream
 ) {
+    CHECK_NULL(d_x);
+    CHECK_NULL(d_weight);
+    CHECK_NULL(d_out);
+
+    // Verify alignment for float4 (16 bytes)
+    if (((uintptr_t)d_x % 16 != 0) || ((uintptr_t)d_weight % 16 != 0) || ((uintptr_t)d_out % 16 != 0)) {
+        return hipErrorInvalidValue;
+    }
+
     // 256 threads is a good default for RDNA3 occupancy
     const int block_size = 256;
 
@@ -105,7 +114,8 @@ hipError_t gpu_rms_norm_vulkan_style(
         d_x, d_weight, d_out, n, eps
     );
 
-    return hipGetLastError();
+    CHECK_LAST();
+    return hipSuccess;
 }
 
 }
