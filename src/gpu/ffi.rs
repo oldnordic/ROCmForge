@@ -104,6 +104,7 @@ pub fn hip_get_device_info(device_id: i32) -> GpuResult<DeviceInfo> {
             device_id,
             warp_size: props.warpSize as usize,
             arch_name: String::from("unknown"), // Placeholder - will query from HIP in next task
+            max_shared_mem_per_block: props.sharedMemPerBlock as usize,
         })
     }
 }
@@ -344,13 +345,14 @@ pub fn hip_graph_exec_update(
     graph: hipGraph_t,
 ) -> GpuResult<hipGraphExecUpdateResult> {
     unsafe {
-        let mut error_node: hipGraphNode_t = std::ptr::null_mut();
+        let mut error_node = hipGraphNode_t::null();
         let mut result = hipGraphExecUpdateResult::hipGraphExecUpdateError;
         let code = hipGraphExecUpdate(graph_exec, graph, &mut error_node, &mut result);
         hip_check(code)?;
         Ok(result)
     }
 }
+
 
 /// Destroy an executable graph.
 
@@ -701,6 +703,8 @@ pub struct DeviceInfo {
     pub warp_size: usize,
     /// Device architecture name (e.g., "gfx1100")
     pub arch_name: String,
+    /// Maximum shared memory available per block in bytes
+    pub max_shared_mem_per_block: usize,
 }
 
 /// Q4_K quantized block (144 bytes for 256 f32 values)

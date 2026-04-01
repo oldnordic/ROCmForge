@@ -152,79 +152,6 @@ impl GpuBuffer {
     pub fn set_size(&mut self, size: usize) {
         self.size = size;
     }
-    }
-
-    // ── GPU Pinned Buffer (RAII) ──────────────────────────────────────────────────────
-
-    /// RAII wrapper for Pinned (Page-locked) Host memory.
-    ///
-    /// Allows for high-speed DMA transfers and zero-copy access from GPU.
-    pub struct GpuPinnedBuffer {
-    ptr: Option<NonNull<u8>>,
-    size: usize,
-    }
-
-    impl GpuPinnedBuffer {
-    pub fn alloc(size: usize) -> GpuResult<Self> {
-        if size == 0 {
-            return Ok(Self { ptr: None, size: 0 });
-        }
-
-        let ptr = ffi::hip_host_malloc(size)?;
-        let nn = NonNull::new(ptr).ok_or_else(|| GpuError::OutOfMemory {
-            requested: size,
-            available: 0,
-        })?;
-
-        Ok(Self {
-            ptr: Some(nn),
-            size,
-        })
-    }
-
-    pub fn as_ptr(&self) -> *mut u8 {
-        self.ptr.map(|nn| nn.as_ptr()).unwrap_or(std::ptr::null_mut())
-    }
-
-    pub fn as_slice<T>(&self) -> &[T] {
-        if self.size == 0 {
-            return &[];
-        }
-        unsafe {
-            std::slice::from_raw_parts(
-                self.as_ptr() as *const T,
-                self.size / std::mem::size_of::<T>(),
-            )
-        }
-    }
-
-    pub fn as_slice_mut<T>(&mut self) -> &mut [T] {
-        if self.size == 0 {
-            return &mut [];
-        }
-        unsafe {
-            std::slice::from_raw_parts_mut(
-                self.as_ptr() as *mut T,
-                self.size / std::mem::size_of::<T>(),
-            )
-        }
-    }
-
-    pub fn size(&self) -> usize {
-        self.size
-    }
-    }
-
-    impl Drop for GpuPinnedBuffer {
-    fn drop(&mut self) {
-        if let Some(nn) = self.ptr {
-            let _ = ffi::hip_host_free(nn.as_ptr());
-        }
-    }
-    }
-
-    unsafe impl Send for GpuPinnedBuffer {}
-    unsafe impl Sync for GpuPinnedBuffer {}
 
     /// Check if buffer is empty.
     pub fn is_empty(&self) -> bool {
@@ -285,6 +212,88 @@ impl GpuBuffer {
         ffi::hip_memcpy_d2h(dst.as_mut_ptr(), self.as_ptr(), self.size)
     }
 }
+
+// ── GPU Pinned Buffer (RAII) ──────────────────────────────────────────────────────
+
+/// RAII wrapper for Pinned (Page-locked) Host memory.
+///
+/// Allows for high-speed DMA transfers and zero-copy access from GPU.
+pub struct GpuPinnedBuffer {
+    ptr: Option<NonNull<u8>>,
+    size: usize,
+}
+
+impl GpuPinnedBuffer {
+    pub fn alloc(size: usize) -> GpuResult<Self> {
+        if size == 0 {
+            return Ok(Self {
+                ptr: None,
+                size: 0,
+            });
+        }
+
+        let ptr = ffi::hip_host_malloc(size)?;
+        let nn = NonNull::new(ptr).ok_or_else(|| GpuError::OutOfMemory {
+            requested: size,
+            available: 0,
+        })?;
+
+        Ok(Self {
+            ptr: Some(nn),
+            size,
+        })
+    }
+
+    pub fn as_ptr(&self) -> *mut u8 {
+        self.ptr
+            .map(|nn| nn.as_ptr())
+            .unwrap_or(std::ptr::null_mut())
+    }
+
+    pub fn as_slice<T>(&self) -> &[T] {
+        if self.size == 0 {
+            return &[];
+        }
+        unsafe {
+            std::slice::from_raw_parts(
+                self.as_ptr() as *const T,
+                self.size / std::mem::size_of::<T>(),
+            )
+        }
+    }
+
+    pub fn as_slice_mut<T>(&mut self) -> &mut [T] {
+        if self.size == 0 {
+            return &mut [];
+        }
+        unsafe {
+            std::slice::from_raw_parts_mut(
+                self.as_ptr() as *mut T,
+                self.size / std::mem::size_of::<T>(),
+            )
+        }
+    }
+
+    pub fn size(&self) -> usize {
+        self.size
+    }
+
+    /// Check if buffer is empty.
+    pub fn is_empty(&self) -> bool {
+        self.size == 0
+    }
+}
+
+impl Drop for GpuPinnedBuffer {
+    fn drop(&mut self) {
+        if let Some(nn) = self.ptr {
+            let _ = ffi::hip_host_free(nn.as_ptr());
+        }
+    }
+}
+
+unsafe impl Send for GpuPinnedBuffer {}
+unsafe impl Sync for GpuPinnedBuffer {}
 
 // SAFETY: Send/Sync are safe because this represents owned GPU memory
 // Access is only through &mut self for copy operations

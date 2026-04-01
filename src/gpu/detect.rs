@@ -36,6 +36,9 @@ pub struct GpuCapabilities {
 
     /// GPU architecture (gfx1100, gfx1030, etc.)
     pub architecture: GpuArchitecture,
+
+    /// Maximum shared memory available per block in bytes
+    pub max_shared_mem_per_block: usize,
 }
 
 impl GpuCapabilities {
@@ -89,6 +92,7 @@ impl GpuCapabilities {
             },
             device_id,
             architecture,
+            max_shared_mem_per_block: info.max_shared_mem_per_block,
         })
     }
 
@@ -148,6 +152,7 @@ mod tests {
             hip_driver_version: 0x05060000,
             device_id: 0,
             architecture: GpuArchitecture::Unknown(0),
+            max_shared_mem_per_block: 64 * 1024,
         };
 
         assert!(caps.can_fit_model(4 * 1024 * 1024 * 1024));
@@ -165,6 +170,7 @@ mod tests {
             hip_driver_version: 0x05060000,
             device_id: 0,
             architecture: GpuArchitecture::Unknown(0),
+            max_shared_mem_per_block: 64 * 1024,
         };
 
         let batch = caps.recommend_batch_size(1024 * 1024);
@@ -183,6 +189,7 @@ mod tests {
             hip_driver_version: 0x05060000,
             device_id: 0,
             architecture: GpuArchitecture::Unknown(0),
+            max_shared_mem_per_block: 64 * 1024,
         };
 
         let _gb = caps.total_vram_gb();

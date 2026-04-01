@@ -9,12 +9,18 @@ use super::device::GpuDevice;
 use super::error::{GpuError, GpuResult};
 use super::ffi;
 use super::graph::{DecodeGraphKey, DecodeGraphScope, HipGraph};
-use super::kernels::{
-    add, add_batched, add_on_stream, argmax_f32, argmax_f32_on_stream, embed_q8_0_batch,
-    embed_q8_0_token, flash_attn_decode_strided_multi_head_from_state_on_stream,
+use super::kernels::attention::{
+    flash_attn_decode_strided_multi_head_from_state_on_stream,
     flash_attn_decode_strided_multi_head_on_stream, flash_attn_prefill_strided,
-    kv_write_rope_from_state_on_stream, rms_norm, rms_norm_batched, rms_norm_on_stream,
-    rope_heads_batched, rope_heads_from_state_on_stream, rope_heads_on_stream, silu,
+    kv_write_rope_from_state_on_stream, kv_write_rope_on_stream,
+};
+use super::kernels::elementwise::{
+    add, add_batched, add_on_stream, argmax_f32, argmax_f32_on_stream, embed_q8_0_batch,
+    embed_q8_0_token, silu,
+};
+use super::kernels::norm::{rms_norm, rms_norm_batched, rms_norm_on_stream};
+use super::kernels::rope::{
+    rope_heads_batched, rope_heads_from_state_on_stream, rope_heads_on_stream,
 };
 use super::ops::{
     gpu_dispatch_fused_gate_up_on_stream, gpu_dispatch_fused_qkv_on_stream, gpu_dispatch_gemm,
@@ -263,8 +269,8 @@ fn gpu_launch_greedy_argmax(scratch: &mut GpuForwardScratch, vocab_size: usize) 
 fn gpu_read_greedy_argmax_result(
     device: &GpuDevice,
     scratch: &mut GpuForwardScratch,
-    vocab_size: usize,
-) -> GpuResult<u32> {
+    _vocab_size: usize,
+) -> GpuResult<()> {
     unsafe {
         ffi::hip_memcpy_d2h_async(
             scratch.argmax_result_index.as_ptr(),
@@ -274,12 +280,7 @@ fn gpu_read_greedy_argmax_result(
         )?;
     }
     
-    // NO SYNCHRONIZE HERE! We let the main loop handle it.
-    // This allows the CPU to continue while the index is being copied.
-
-    let index = scratch.argmax_result_index.as_slice::<i32>()[0];
-    // Note: This check will be moved to the caller after sync.
-    Ok(index as u32)
+    Ok(())
 }
 
 fn gpu_greedy_argmax_token(
@@ -288,7 +289,10 @@ fn gpu_greedy_argmax_token(
     vocab_size: usize,
 ) -> GpuResult<u32> {
     gpu_launch_greedy_argmax(scratch, vocab_size)?;
-    gpu_read_greedy_argmax_result(device, scratch, vocab_size)
+    gpu_read_greedy_argmax_result(device, scratch, vocab_size)?;
+    device.synchronize()?;
+    let index = scratch.argmax_result_index.as_slice::<i32>()[0];
+    Ok(index as u32)
 }
 
 fn gpu_launch_greedy_logits_tail_on_stream(
@@ -465,7 +469,10 @@ fn gpu_greedy_logits_tail_token(
     config: &ModelConfig,
 ) -> GpuResult<u32> {
     gpu_launch_greedy_logits_tail_on_stream(device, gpu_weights, scratch, config)?;
-    gpu_read_greedy_argmax_result(device, scratch, config.vocab_size)
+    gpu_read_greedy_argmax_result(device, scratch, config.vocab_size)?;
+    device.synchronize()?;
+    let index = scratch.argmax_result_index.as_slice::<i32>()[0];
+    Ok(index as u32)
 }
 
 fn gpu_try_greedy_decode_graph(
@@ -501,7 +508,10 @@ fn gpu_try_greedy_decode_graph(
 
     if let Some(graph) = scratch.decode_graph() {
         if graph.launch(device.stream()).is_ok() {
-            return gpu_read_greedy_argmax_result(device, scratch, config.vocab_size);
+            gpu_read_greedy_argmax_result(device, scratch, config.vocab_size)?;
+            device.synchronize()?;
+            let index = scratch.argmax_result_index.as_slice::<i32>()[0];
+            return Ok(index as u32);
         }
         scratch.clear_decode_graph();
     }
@@ -1216,11 +1226,11 @@ fn gpu_try_full_greedy_decode_graph(
         capture_res?;
         
         let new_graph = HipGraph::from_raw(raw_graph);
-        if scratch.try_update_decode_graph(new_graph)? {
+        if scratch.try_update_decode_graph(&new_graph)? {
             // Update successful! No need to instantiate a new Executable graph.
         } else {
             // Topology changed or no existing graph, instantiate new one
-            let captured = super::graph::CapturedDecodeGraph::from_captured_graph(HipGraph::from_raw(raw_graph), key)?;
+            let captured = super::graph::CapturedDecodeGraph::from_captured_graph(new_graph, key)?;
             scratch.replace_decode_graph(captured);
         }
     }
@@ -1228,7 +1238,11 @@ fn gpu_try_full_greedy_decode_graph(
     scratch.upload_decode_state(pos, pos + 1, device.stream())?;
     if let Some(graph) = scratch.decode_graph() {
         if graph.launch(device.stream()).is_ok() {
-            return gpu_read_greedy_argmax_result(device, scratch, config.vocab_size).map(Some);
+            // Wait for completion and read result safely
+            gpu_read_greedy_argmax_result(device, scratch, config.vocab_size)?;
+            device.synchronize()?;
+            let token = scratch.argmax_result_index.as_slice::<i32>()[0];
+            return Ok(Some(token as u32));
         }
         scratch.clear_decode_graph();
     }
@@ -1303,24 +1317,18 @@ pub fn gpu_layer_forward_hybrid(
             device.stream(),
         )
     })?;
-    profile_decode_stage(device, DecodeStage::KRope, || {
-        rope_heads_on_stream(
+
+    profile_decode_stage(device, DecodeStage::KvWrite, || {
+        kv_write_rope_on_stream(
+            kv,
+            layer_idx,
             scratch.k.as_ptr() as *mut f32,
+            scratch.v.as_ptr() as *mut f32,
             pos,
             config.num_kv_heads,
             config.head_dim,
             config.rope_theta,
             config.rope_neox,
-            device.stream(),
-        )
-    })?;
-
-    profile_decode_stage(device, DecodeStage::KvWrite, || {
-        kv.write_on_stream(
-            layer_idx,
-            pos,
-            scratch.k.as_ptr() as *const f32,
-            scratch.v.as_ptr() as *const f32,
             device.stream(),
         )
     })?;

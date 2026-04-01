@@ -49,6 +49,9 @@ pub enum GpuError {
 
     /// Model does not fit in available VRAM
     ModelTooLarge { required: usize, available: usize },
+
+    /// Position index is out of bounds for KV cache
+    InvalidSequencePosition { pos: usize, max: usize },
 }
 
 impl std::fmt::Display for GpuError {
@@ -110,6 +113,9 @@ impl std::fmt::Display for GpuError {
                     required / (1024 * 1024),
                     available / (1024 * 1024)
                 )
+            }
+            GpuError::InvalidSequencePosition { pos, max } => {
+                write!(f, "invalid sequence position: {} (max context {})", pos, max)
             }
         }
     }

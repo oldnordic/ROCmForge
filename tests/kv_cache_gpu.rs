@@ -4,8 +4,8 @@
 
 mod common;
 
-use rocmforge::config::ModelConfig;
-use rocmforge::gpu::{GpuBuffer, GpuKvCache};
+use rocmforge::config::{ModelConfig, TensorNameRegistry, TensorNamingScheme};
+use rocmforge::gpu::{GpuBuffer, GpuDevice, GpuKvCache};
 use serial_test::serial;
 
 fn make_test_config() -> ModelConfig {
@@ -24,6 +24,7 @@ fn make_test_config() -> ModelConfig {
         use_attention_bias: false,
         attention_layout: rocmforge::config::AttentionLayout::SplitQkv,
         architecture: "test".to_string(),
+        tensor_registry: TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf),
     }
 }
 
@@ -118,11 +119,12 @@ fn test_kv_cache_memory_usage() {
 fn test_kv_cache_clear_does_not_panic() {
     require_gpu!();
 
+    let device = GpuDevice::init(0).unwrap();
     let config = make_test_config();
     let mut cache = GpuKvCache::new(&config, 256);
 
     if let Ok(cache) = &mut cache {
-        let result = cache.clear();
+        let result = cache.clear(&device);
         assert!(result.is_ok(), "clear should not panic");
     }
 }

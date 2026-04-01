@@ -14,6 +14,7 @@ pub struct GpuDevice {
     device_id: i32,
     stream: ffi::hipStream_t,
     warp_size: usize,
+    max_shared_mem_per_block: usize,
 }
 
 impl GpuDevice {
@@ -31,6 +32,7 @@ impl GpuDevice {
             device_id,
             stream,
             warp_size: info.warp_size,
+            max_shared_mem_per_block: info.max_shared_mem_per_block,
         })
     }
 
@@ -54,6 +56,7 @@ impl GpuDevice {
             device_id: self.device_id,
             architecture: super::arch::GpuArchitecture::from_name(&info.arch_name)
                 .unwrap_or(super::arch::GpuArchitecture::Unknown(0)),
+            max_shared_mem_per_block: info.max_shared_mem_per_block,
         })
     }
 
@@ -106,6 +109,7 @@ impl std::fmt::Debug for GpuDevice {
             .field("device_id", &self.device_id)
             .field("stream", &self.stream)
             .field("warp_size", &self.warp_size)
+            .field("max_shared_mem_per_block", &self.max_shared_mem_per_block)
             .finish()
     }
 }

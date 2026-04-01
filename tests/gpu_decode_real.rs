@@ -107,6 +107,9 @@ fn test_gpu_embed_real_model_matches_cpu_hidden() {
     require_gpu!();
     require_vram!(4);
 
+    let caps = gpu::detect().expect("GPU should be detected");
+    let device = GpuDevice::init(caps.device_id).expect("GPU device should initialize");
+
     let file = GgufFile::open(MODEL_PATH).expect("Failed to open GGUF file");
     let config = ModelConfig::from_gguf(&file).expect("Failed to parse model config");
     let cpu_weights = CpuModelWeights::load(&file, &config).expect("CPU weights should load");
@@ -131,6 +134,7 @@ fn test_gpu_embed_real_model_matches_cpu_hidden() {
     let mut gpu_scratch = GpuForwardScratch::new(&config).expect("GPU scratch should allocate");
     let mut host_scratch = CpuForwardScratch::new(&config);
     gpu::gpu_embed_token_hybrid(
+        &device,
         first_token,
         &gpu_weights,
         &cpu_weights,
@@ -193,6 +197,7 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
 
     for (pos, &token_id) in prompt_tokens.iter().enumerate() {
         gpu::gpu_embed_token_hybrid(
+            &device,
             token_id,
             &gpu_weights,
             &cpu_weights,
@@ -246,6 +251,7 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
             GpuForwardScratch::new(&config).expect("GPU layer-0 scratch should allocate");
         let mut gpu_host_scratch_l0 = CpuForwardScratch::new(&config);
         gpu::gpu_embed_token_hybrid(
+            &device,
             first_token,
             &gpu_weights,
             &cpu_weights,
@@ -314,6 +320,7 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
         for (diag_pos, &diag_token_id) in prompt_tokens.iter().enumerate() {
             cpu_embed_token(diag_token_id, &cpu_weights, &mut cpu_hidden_diag, &config);
             gpu::gpu_embed_token_hybrid(
+                &device,
                 diag_token_id,
                 &gpu_weights,
                 &cpu_weights,
@@ -456,6 +463,7 @@ fn test_gpu_greedy_decode_populates_cached_graph() {
 
     for (pos, &token_id) in prompt_tokens.iter().enumerate() {
         gpu::gpu_embed_token_hybrid(
+            &device,
             token_id,
             &gpu_weights,
             &cpu_weights,
@@ -533,6 +541,7 @@ fn test_gpu_greedy_decode_profile_real_model() {
     let mut next_token = None;
     for (pos, &token_id) in prompt_tokens.iter().enumerate() {
         gpu::gpu_embed_token_hybrid(
+            &device,
             token_id,
             &gpu_weights,
             &cpu_weights,
@@ -560,6 +569,7 @@ fn test_gpu_greedy_decode_profile_real_model() {
     let decode_start = std::time::Instant::now();
     for step in 0..decode_tokens {
         gpu::gpu_embed_token_hybrid(
+            &device,
             token,
             &gpu_weights,
             &cpu_weights,
@@ -703,6 +713,7 @@ fn test_gpu_greedy_decode_benchmark_real_model_multi_run() {
         let mut next_token = None;
         for (pos, &token_id) in prompt_tokens.iter().enumerate() {
             gpu::gpu_embed_token_hybrid(
+                &device,
                 token_id,
                 &gpu_weights,
                 &cpu_weights,
@@ -730,6 +741,7 @@ fn test_gpu_greedy_decode_benchmark_real_model_multi_run() {
         let decode_start = std::time::Instant::now();
         for step in 0..decode_tokens {
             gpu::gpu_embed_token_hybrid(
+                &device,
                 token,
                 &gpu_weights,
                 &cpu_weights,
@@ -876,6 +888,7 @@ fn test_gpu_prefill_real_model_matches_cpu_greedy_token() {
         let mut host_decode = CpuForwardScratch::new(&config);
         for (pos, &token_id) in prompt_tokens.iter().enumerate() {
             gpu::gpu_embed_token_hybrid(
+                &device,
                 token_id,
                 &gpu_weights,
                 &cpu_weights,
@@ -906,6 +919,7 @@ fn test_gpu_prefill_real_model_matches_cpu_greedy_token() {
         let mut decode_embeddings = vec![0.0f32; prompt_tokens.len() * config.hidden_size];
         for (row, &token_id) in prompt_tokens.iter().enumerate() {
             gpu::gpu_embed_token_hybrid(
+                &device,
                 token_id,
                 &gpu_weights,
                 &cpu_weights,
@@ -989,6 +1003,7 @@ fn test_gpu_prefill_real_model_matches_cpu_greedy_token() {
         let mut gpu_decode_l0_swiglu = vec![0.0f32; prompt_tokens.len() * ff_size];
         for (pos, &token_id) in prompt_tokens.iter().enumerate() {
             gpu::gpu_embed_token_hybrid(
+                &device,
                 token_id,
                 &gpu_weights,
                 &cpu_weights,

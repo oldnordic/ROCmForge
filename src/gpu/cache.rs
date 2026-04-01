@@ -615,9 +615,9 @@ impl GpuForwardScratch {
         self.captured_decode.replace(graph)
     }
 
-    pub fn try_update_decode_graph(&mut self, new_graph: crate::gpu::graph::HipGraph) -> GpuResult<bool> {
+    pub fn try_update_decode_graph(&mut self, new_graph: &crate::gpu::graph::HipGraph) -> GpuResult<bool> {
         if let Some(graph) = &self.captured_decode {
-            graph.update(&new_graph)
+            graph.update(new_graph)
         } else {
             Ok(false)
         }

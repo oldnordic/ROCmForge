@@ -24,6 +24,7 @@ pub use arch::GpuArchitecture;
 pub use cache::{GpuForwardScratch, GpuKvCache, GpuPrefillScratch};
 pub use detect::GpuCapabilities;
 pub use device::GpuDevice;
+pub use dynamic_loader::{DynamicLibrary, LibraryInfo, library_info};
 pub use error::{GpuError, GpuResult};
 pub use forward::{
     decode_stage_profile_snapshot, gpu_embed_token_hybrid, gpu_full_forward_hybrid,
@@ -36,8 +37,8 @@ pub use kernels::{
     dequantize_q4_1_batched, dequantize_q4_k, dequantize_q4_k_batched, dequantize_q5_k,
     dequantize_q5_k_batched, dequantize_q8_0, dequantize_q8_0_batched, embed_q8_0_batch,
     embed_q8_0_token, finalize_q4_0_metrics, finalize_q4_1_metrics, finalize_q4_k_metrics,
-    finalize_q5_k_metrics, finalize_q8_0_metrics, flash_attn_decode_strided_multi_head,
-    flash_attn_prefill_strided, gelu, gemm_q4_0_f32, gemm_q4_1_f32, gemm_q4_k_f32, gemm_q5_k_f32,
+    finalize_q5_k_metrics, finalize_q8_0_metrics, flash_attn_decode, flash_attn_decode_strided,
+    flash_attn_decode_strided_multi_head, flash_attn_prefill_strided, gelu, gemm_q4_0_f32, gemm_q4_1_f32, gemm_q4_k_f32, gemm_q5_k_f32,
     gemm_q8_0_f32, gemv_gate_up_swiglu_q4_0_f32, gemv_q4_0_f32, gemv_q4_1_f32, gemv_q4_k_f32,
     gemv_q5_k_f32, gemv_q8_0_f32, gemv_q8_0_f32_lm_head, gemv_qkv_q4_0_f32, kv_write,
     kv_write_batched, mul, mul_batched, quantize_q4_0, quantize_q4_1, quantize_q4_k, quantize_q5_k,

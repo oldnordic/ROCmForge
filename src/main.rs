@@ -689,7 +689,7 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         } else {
             gpu::GpuLogitsMode::DownloadToHost
         };
-        gpu::gpu_full_forward_hybrid(
+        let decode_next_token = gpu::gpu_full_forward_hybrid(
             &device,
             &gpu_weights,
             &cpu_weights,
@@ -708,22 +708,26 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             print_top_k_tokens(&host_scratch.logits, &tok, 5);
         }
 
-        // SYNC POINT: Wait for GPU to finish forward + argmax download
-        device.synchronize().map_err(|e| format!("gpu sync: {}", e))?;
-
-        next_token = if use_greedy {
-            if use_gpu_greedy_fastpath {
-                let token = gpu_scratch.argmax_result_index.as_slice::<i32>()[0];
-                if token < 0 || (token as usize) >= config.vocab_size {
-                    return Err(format!("gpu argmax returned out-of-range index {}", token));
-                }
-                token as u32
-            } else {
-                cpu_sample_greedy(&host_scratch.logits)
-            }
+        next_token = if let Some(token) = decode_next_token {
+            token
         } else {
-            seed = seed.wrapping_add(1);
-            cpu_sample_top_p(&host_scratch.logits, args.temperature, args.top_p, seed)
+            // SYNC POINT: Wait for GPU to finish forward + argmax download (non-graph path)
+            device.synchronize().map_err(|e| format!("gpu sync: {}", e))?;
+
+            if use_greedy {
+                if use_gpu_greedy_fastpath {
+                    let token = gpu_scratch.argmax_result_index.as_slice::<i32>()[0];
+                    if token < 0 || (token as usize) >= config.vocab_size {
+                        return Err(format!("gpu argmax returned out-of-range index {}", token).into());
+                    }
+                    token as u32
+                } else {
+                    cpu_sample_greedy(&host_scratch.logits)
+                }
+            } else {
+                seed = seed.wrapping_add(1);
+                cpu_sample_top_p(&host_scratch.logits, args.temperature, args.top_p, seed)
+            }
         };
     }
 

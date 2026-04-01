@@ -504,7 +504,71 @@ __global__ void flash_attn_prefill_strided_kernel(
     }
 }
 
+__global__ void kv_write_rope_kernel(
+    float* __restrict__ k_cache,
+    float* __restrict__ v_cache,
+    const float* __restrict__ k,
+    const float* __restrict__ v,
+    const int pos,
+    const int num_kv_heads,
+    const int head_dim,
+    const float theta_base,
+    const int neox
+) {
+    const int kv_size = num_kv_heads * head_dim;
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (i >= kv_size) return;
+
+    const size_t cache_idx = (size_t)pos * kv_size + i;
+    v_cache[cache_idx] = v[i];
+
+    const int head = i / head_dim;
+    const int idx_in_head = i % head_dim;
+    const int head_base = head * head_dim;
+    const int half = head_dim / 2;
+
+    int pair_idx;
+    int idx0;
+    int idx1;
+
+    if (neox) {
+        if (idx_in_head < half) {
+            pair_idx = idx_in_head;
+            idx0 = head_base + idx_in_head;
+            idx1 = idx0 + half;
+        } else {
+            pair_idx = idx_in_head - half;
+            idx0 = head_base + pair_idx;
+            idx1 = idx0 + half;
+        }
+    } else {
+        pair_idx = idx_in_head / 2;
+        idx0 = head_base + 2 * pair_idx;
+        idx1 = idx0 + 1;
+    }
+
+    const float exponent = (float)(2 * pair_idx) / (float)head_dim;
+    const float theta = 1.0f / powf(theta_base, exponent);
+    const float angle = (float)pos * theta;
+    const float cos_val = cosf(angle);
+    const float sin_val = sinf(angle);
+    const float x0 = k[idx0];
+    const float x1 = k[idx1];
+
+    const bool first = neox ? (idx_in_head < half) : ((idx_in_head & 1) == 0);
+    k_cache[cache_idx] = first
+        ? (x0 * cos_val - x1 * sin_val)
+        : (x0 * sin_val + x1 * cos_val);
+}
+
 extern "C" {
+
+hipError_t gpu_kv_write_rope(float* d_k_cache, float* d_v_cache, const float* d_k, const float* d_v, const int pos, const int num_kv_heads, const int head_dim, const float theta_base, const int neox, hipStream_t stream) {
+    const int kv_size = num_kv_heads * head_dim;
+    hipLaunchKernelGGL(kv_write_rope_kernel, (kv_size + 255) / 256, 256, 0, stream, d_k_cache, d_v_cache, d_k, d_v, pos, num_kv_heads, head_dim, theta_base, neox);
+    return hipGetLastError();
+}
 
 hipError_t gpu_kv_write(float* d_k_cache, float* d_v_cache, const float* d_k, const float* d_v, const int pos, const int kv_size, const int max_seq, hipStream_t stream) {
     hipLaunchKernelGGL(kv_write_kernel, (kv_size + 255) / 256, 256, 0, stream, d_k_cache, d_v_cache, d_k, d_v, pos, kv_size);

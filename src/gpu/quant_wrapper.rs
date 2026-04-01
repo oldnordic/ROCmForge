@@ -78,6 +78,11 @@ impl GpuQuant {
     }
 
     /// Quantize f32 data to Q4_K format.
+    pub fn quantize(&self, input: *const f32, output: *mut u8, n: usize) -> GpuResult<()> {
+        self.quantize_q4_k(input, output, n)
+    }
+
+    /// Quantize f32 data to Q4_K format.
     pub fn quantize_q4_k(&self, input: *const f32, output: *mut u8, n: usize) -> GpuResult<()> {
         if n == 0 {
             return Err(GpuError::HipApiError {

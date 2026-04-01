@@ -4,6 +4,7 @@
 
 use super::super::error::{GpuError, GpuResult};
 use super::super::ffi::{hipError_t, hipStream_t};
+use crate::gpu::GpuKvCache;
 use std::os::raw::{c_float, c_int};
 
 unsafe extern "C" {
@@ -26,6 +27,19 @@ unsafe extern "C" {
         d_pos: *const c_int,
         kv_size: c_int,
         max_seq: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
+    fn gpu_kv_write_rope(
+        d_k_cache: *mut f32,
+        d_v_cache: *mut f32,
+        d_k: *const f32,
+        d_v: *const f32,
+        pos: c_int,
+        num_kv_heads: c_int,
+        head_dim: c_int,
+        theta_base: f32,
+        neox: c_int,
         stream: hipStream_t,
     ) -> hipError_t;
 
@@ -153,6 +167,51 @@ pub fn kv_write_on_stream(
         return Err(GpuError::HipApiError {
             code: result as i32,
             description: format!("kv_write kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+/// Fused KV cache write and RoPE application.
+pub fn kv_write_rope_on_stream(
+    kv: &mut GpuKvCache,
+    layer_idx: usize,
+    d_k: *const f32,
+    d_v: *const f32,
+    pos: usize,
+    num_kv_heads: usize,
+    head_dim: usize,
+    theta_base: f32,
+    neox: bool,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    if pos >= kv.max_seq_len {
+        return Err(GpuError::InvalidSequencePosition {
+            pos,
+            max: kv.max_seq_len,
+        });
+    }
+
+    let result = unsafe {
+        gpu_kv_write_rope(
+            kv.k_ptr(layer_idx)? as *mut f32,
+            kv.v_ptr(layer_idx)? as *mut f32,
+            d_k,
+            d_v,
+            pos as c_int,
+            num_kv_heads as c_int,
+            head_dim as c_int,
+            theta_base,
+            if neox { 1 } else { 0 },
+            stream,
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("kv_write_rope kernel failed: {:?}", result),
         });
     }
 
@@ -421,6 +480,53 @@ pub fn flash_attn_decode_strided_multi_head_from_state_on_stream(
     }
 
     Ok(())
+}
+
+/// Fused attention decode (single head alias for tests).
+pub fn flash_attn_decode(
+    d_out: *mut f32,
+    d_q: *const f32,
+    d_k_cache: *const f32,
+    d_v_cache: *const f32,
+    seq_len: usize,
+    head_dim: usize,
+    scale: f32,
+) -> GpuResult<()> {
+    flash_attn_decode_strided_multi_head(
+        d_out, d_q, d_k_cache, d_v_cache, seq_len, 1, 1, head_dim, scale,
+    )
+}
+
+/// Fused attention decode strided (single head alias for tests).
+pub fn flash_attn_decode_strided(
+    d_out: *mut f32,
+    d_q: *const f32,
+    d_k_cache: *const f32,
+    d_v_cache: *const f32,
+    seq_len: usize,
+    head_dim: usize,
+    kv_size: usize,
+    head_offset: usize,
+    scale: f32,
+) -> GpuResult<()> {
+    // Offset pointers by head_offset to simulate selecting a specific head
+    let d_k_offset = unsafe { d_k_cache.add(head_offset) };
+    let d_v_offset = unsafe { d_v_cache.add(head_offset) };
+
+    // Calculate num_kv_heads based on kv_size
+    let num_kv_heads = kv_size / head_dim;
+
+    flash_attn_decode_strided_multi_head(
+        d_out,
+        d_q,
+        d_k_offset,
+        d_v_offset,
+        seq_len,
+        1, // single output head
+        num_kv_heads,
+        head_dim,
+        scale,
+    )
 }
 
 /// Flash attention prefill (strided).
