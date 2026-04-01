@@ -413,16 +413,18 @@ impl GpuForwardScratch {
             }
         })?;
 
-        let argmax_result_index = GpuPinnedBuffer::alloc(std::mem::size_of::<i32>()).map_err(|e| {
-            GpuError::CacheAllocationFailed {
-                reason: format!("argmax result allocation failed: {}", e),
-            }
-        })?;
-        let input_hidden_pinned = GpuPinnedBuffer::alloc(h * std::mem::size_of::<f32>()).map_err(|e| {
-            GpuError::CacheAllocationFailed {
-                reason: format!("input hidden pinned allocation failed: {}", e),
-            }
-        })?;
+        let argmax_result_index =
+            GpuPinnedBuffer::alloc(std::mem::size_of::<i32>()).map_err(|e| {
+                GpuError::CacheAllocationFailed {
+                    reason: format!("argmax result allocation failed: {}", e),
+                }
+            })?;
+        let input_hidden_pinned =
+            GpuPinnedBuffer::alloc(h * std::mem::size_of::<f32>()).map_err(|e| {
+                GpuError::CacheAllocationFailed {
+                    reason: format!("input hidden pinned allocation failed: {}", e),
+                }
+            })?;
         let decode_state = GpuBuffer::alloc(2 * std::mem::size_of::<i32>()).map_err(|e| {
             GpuError::CacheAllocationFailed {
                 reason: format!("decode state allocation failed: {}", e),
@@ -615,7 +617,10 @@ impl GpuForwardScratch {
         self.captured_decode.replace(graph)
     }
 
-    pub fn try_update_decode_graph(&mut self, new_graph: &crate::gpu::graph::HipGraph) -> GpuResult<bool> {
+    pub fn try_update_decode_graph(
+        &mut self,
+        new_graph: &crate::gpu::graph::HipGraph,
+    ) -> GpuResult<bool> {
         if let Some(graph) = &self.captured_decode {
             graph.update(new_graph)
         } else {

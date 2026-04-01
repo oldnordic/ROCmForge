@@ -18,12 +18,28 @@
         } \
     } while (0)
 
+/// Host-side null check macro for launchers
+#define CHECK_NULL(ptr) \
+    if ((ptr) == nullptr) { \
+        return hipErrorInvalidValue; \
+    }
+
 /// Kernel-safe bounds check macro
 /// Use this to validate indices before memory access
 #define CHECK_BOUNDS(idx, max) \
     if ((idx) >= (max)) { \
         return; \
     }
+
+/// CHECK_LAST macro for kernel launch error checking
+/// Must be called immediately after kernel launch
+#define CHECK_LAST() \
+    do { \
+        hipError_t error = hipGetLastError(); \
+        if (error != hipSuccess) { \
+            return error; \
+        } \
+    } while (0)
 
 // ── Common Constants ───────────────────────────────────────────────────────────────
 

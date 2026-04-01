@@ -80,7 +80,8 @@ fn test_gpu_rms_norm_vulkan_style_shuffles() {
         n,
         eps,
         device.stream(),
-    ).expect("production warmup");
+    )
+    .expect("production warmup");
 
     gpu::kernels::norm::rms_norm_vulkan_style(
         d_x.as_ptr() as *const f32,
@@ -89,7 +90,8 @@ fn test_gpu_rms_norm_vulkan_style_shuffles() {
         n,
         eps,
         device.stream(),
-    ).expect("vulkan warmup");
+    )
+    .expect("vulkan warmup");
 
     device.synchronize().expect("warmup sync");
 
@@ -102,7 +104,8 @@ fn test_gpu_rms_norm_vulkan_style_shuffles() {
             n,
             eps,
             device.stream(),
-        ).expect("production run");
+        )
+        .expect("production run");
     });
 
     // Benchmark Vulkan-Style
@@ -114,7 +117,8 @@ fn test_gpu_rms_norm_vulkan_style_shuffles() {
             n,
             eps,
             device.stream(),
-        ).expect("vulkan run");
+        )
+        .expect("vulkan run");
     });
 
     let out_prod = download_f32(&d_out_production, n);
@@ -130,5 +134,9 @@ fn test_gpu_rms_norm_vulkan_style_shuffles() {
         cross_err
     );
 
-    assert!(cross_err <= 1e-5, "Vulkan-style RMS Norm diverged: cross_err={}", cross_err);
+    assert!(
+        cross_err <= 1e-5,
+        "Vulkan-style RMS Norm diverged: cross_err={}",
+        cross_err
+    );
 }

@@ -2,7 +2,7 @@
 
 mod common;
 
-use rocmforge::config::{ModelConfig};
+use rocmforge::config::ModelConfig;
 use rocmforge::gpu::{self, GpuBuffer, GpuDevice};
 use rocmforge::loader::{GgmlType, GgufFile};
 use serial_test::serial;
@@ -78,13 +78,13 @@ fn test_gpu_vulkan_style_q4_k_gemv() {
 
     let file = GgufFile::open(MODEL_PATH).expect("Failed to open GGUF file");
     let config = ModelConfig::from_gguf(&file).expect("Failed to parse model config");
-    
+
     // Find a Q4_K tensor
     let tensor_name = "blk.0.attn_q.weight";
     // file.tensor returns Result<Option<TensorView>, LoadError>
     let tensor_res = file.tensor(tensor_name).expect("Failed to query tensor");
     let tensor_view = tensor_res.expect("Tensor not found in file");
-    
+
     // Note: TensorView in rocmforge uses 'ggml_type' field name, not 'wtype()' method
     assert_eq!(tensor_view.ggml_type, GgmlType::Q4_K);
 
@@ -97,8 +97,10 @@ fn test_gpu_vulkan_style_q4_k_gemv() {
 
     let d_weights = upload_u8(tensor_view.data);
     let mut input = vec![0.0f32; h];
-    for i in 0..h { input[i] = (i as f32).sin(); }
-    
+    for i in 0..h {
+        input[i] = (i as f32).sin();
+    }
+
     let d_input = upload_f32(&input);
     let d_out_production = GpuBuffer::alloc(out_dim * 4).expect("alloc production out");
     let d_out_vulkan = GpuBuffer::alloc(out_dim * 4).expect("alloc vulkan out");
@@ -111,7 +113,8 @@ fn test_gpu_vulkan_style_q4_k_gemv() {
         h,
         out_dim,
         device.stream(),
-    ).expect("production warmup");
+    )
+    .expect("production warmup");
 
     gpu::kernels::quant::gemv_q4_k_f32_vulkan_style(
         &device,
@@ -122,7 +125,8 @@ fn test_gpu_vulkan_style_q4_k_gemv() {
         out_dim,
         8, // n_waves
         device.stream(),
-    ).expect("vulkan warmup");
+    )
+    .expect("vulkan warmup");
 
     device.synchronize().expect("warmup sync");
 
@@ -135,7 +139,8 @@ fn test_gpu_vulkan_style_q4_k_gemv() {
             h,
             out_dim,
             device.stream(),
-        ).expect("production run");
+        )
+        .expect("production run");
     });
 
     // Benchmark Vulkan-Style
@@ -149,7 +154,8 @@ fn test_gpu_vulkan_style_q4_k_gemv() {
             out_dim,
             8,
             device.stream(),
-        ).expect("vulkan run");
+        )
+        .expect("vulkan run");
     });
 
     let production_out = download_f32(&d_out_production, out_dim);

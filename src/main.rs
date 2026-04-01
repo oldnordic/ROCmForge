@@ -564,7 +564,8 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 );
                 let mut prompt_next_token = None;
                 for (pos, &token_id) in prompt_tokens.iter().enumerate() {
-                    gpu::gpu_embed_token_hybrid(&device, 
+                    gpu::gpu_embed_token_hybrid(
+                        &device,
                         token_id,
                         &gpu_weights,
                         &cpu_weights,
@@ -602,7 +603,8 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             );
             let mut prompt_next_token = None;
             for (pos, &token_id) in prompt_tokens.iter().enumerate() {
-                gpu::gpu_embed_token_hybrid(&device, 
+                gpu::gpu_embed_token_hybrid(
+                    &device,
                     token_id,
                     &gpu_weights,
                     &cpu_weights,
@@ -675,7 +677,8 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         std::io::stdout().flush().ok();
         n_generated += 1;
 
-        gpu::gpu_embed_token_hybrid(&device, 
+        gpu::gpu_embed_token_hybrid(
+            &device,
             next_token,
             &gpu_weights,
             &cpu_weights,
@@ -712,13 +715,17 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             token
         } else {
             // SYNC POINT: Wait for GPU to finish forward + argmax download (non-graph path)
-            device.synchronize().map_err(|e| format!("gpu sync: {}", e))?;
+            device
+                .synchronize()
+                .map_err(|e| format!("gpu sync: {}", e))?;
 
             if use_greedy {
                 if use_gpu_greedy_fastpath {
                     let token = gpu_scratch.argmax_result_index.as_slice::<i32>()[0];
                     if token < 0 || (token as usize) >= config.vocab_size {
-                        return Err(format!("gpu argmax returned out-of-range index {}", token).into());
+                        return Err(
+                            format!("gpu argmax returned out-of-range index {}", token).into()
+                        );
                     }
                     token as u32
                 } else {

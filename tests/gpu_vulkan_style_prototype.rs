@@ -4,10 +4,7 @@ mod common;
 
 use rocmforge::config::{detect_chat_template, ModelConfig};
 use rocmforge::cpu::{
-    cache::CpuForwardScratch,
-    forward::cpu_embed_token,
-    ops::{rms_norm},
-    weights::CpuModelWeights,
+    cache::CpuForwardScratch, forward::cpu_embed_token, ops::rms_norm, weights::CpuModelWeights,
 };
 use rocmforge::gpu::{self, GpuBuffer, GpuDevice};
 use rocmforge::loader::{GgmlType, GgufFile};
@@ -91,18 +88,24 @@ fn test_gpu_vulkan_style_gate_up_interleaved_q4_0() {
 
     // Prepare input from real model forward pass
     let tok = BpeTokenizer::from_gguf(file.tokenizer_data());
-    let template = detect_chat_template(&config.architecture, file.tokenizer_data().model.as_deref());
+    let template =
+        detect_chat_template(&config.architecture, file.tokenizer_data().model.as_deref());
     let prompt = template.apply("Hello");
     let prompt_tokens = tok.encode(&prompt, false);
-    
+
     let h = config.hidden_size;
     let ff_size = config.intermediate_size;
     let mut hidden = vec![0.0f32; h];
     cpu_embed_token(prompt_tokens[0], &cpu_weights, &mut hidden, &config);
 
     let mut scratch = CpuForwardScratch::new(&config);
-    rms_norm(&hidden, &cpu_weights.layer(0).ffn_norm, &mut scratch.normed, config.rms_norm_eps);
-    
+    rms_norm(
+        &hidden,
+        &cpu_weights.layer(0).ffn_norm,
+        &mut scratch.normed,
+        config.rms_norm_eps,
+    );
+
     let d_input = upload_f32(&scratch.normed);
     let d_out_production = GpuBuffer::alloc(ff_size * 4).expect("alloc production out");
     let d_out_vulkan = GpuBuffer::alloc(ff_size * 4).expect("alloc vulkan out");
@@ -119,7 +122,8 @@ fn test_gpu_vulkan_style_gate_up_interleaved_q4_0() {
         h,
         ff_size,
         device.stream(),
-    ).expect("production warmup");
+    )
+    .expect("production warmup");
 
     gpu::kernels::quant::gemv_gate_up_swiglu_vulkan_q4_0_f32(
         layer.ffn_gate.as_ptr(),
@@ -130,7 +134,8 @@ fn test_gpu_vulkan_style_gate_up_interleaved_q4_0() {
         ff_size,
         n_waves,
         device.stream(),
-    ).expect("vulkan warmup");
+    )
+    .expect("vulkan warmup");
 
     device.synchronize().expect("warmup sync");
 
@@ -144,7 +149,8 @@ fn test_gpu_vulkan_style_gate_up_interleaved_q4_0() {
             h,
             ff_size,
             device.stream(),
-        ).expect("production run");
+        )
+        .expect("production run");
     });
 
     // Benchmark Vulkan-Style
@@ -158,7 +164,8 @@ fn test_gpu_vulkan_style_gate_up_interleaved_q4_0() {
             ff_size,
             n_waves,
             device.stream(),
-        ).expect("vulkan run");
+        )
+        .expect("vulkan run");
     });
 
     let production_out = download_f32(&d_out_production, ff_size);
@@ -173,5 +180,9 @@ fn test_gpu_vulkan_style_gate_up_interleaved_q4_0() {
         cross_err
     );
 
-    assert!(cross_err <= 1e-5, "Vulkan-style output diverged from production: cross_err={}", cross_err);
+    assert!(
+        cross_err <= 1e-5,
+        "Vulkan-style output diverged from production: cross_err={}",
+        cross_err
+    );
 }

@@ -226,10 +226,7 @@ pub struct GpuPinnedBuffer {
 impl GpuPinnedBuffer {
     pub fn alloc(size: usize) -> GpuResult<Self> {
         if size == 0 {
-            return Ok(Self {
-                ptr: None,
-                size: 0,
-            });
+            return Ok(Self { ptr: None, size: 0 });
         }
 
         let ptr = ffi::hip_host_malloc(size)?;

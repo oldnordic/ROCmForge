@@ -2,6 +2,7 @@
 //!
 //! Safety-first: bounds checked before kernel launch.
 
+use super::super::device::GpuDevice;
 use super::super::error::{GpuError, GpuResult};
 use super::super::ffi::{hipError_t, hipStream_t};
 use std::os::raw::{c_int, c_void};

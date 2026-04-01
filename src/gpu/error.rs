@@ -115,7 +115,11 @@ impl std::fmt::Display for GpuError {
                 )
             }
             GpuError::InvalidSequencePosition { pos, max } => {
-                write!(f, "invalid sequence position: {} (max context {})", pos, max)
+                write!(
+                    f,
+                    "invalid sequence position: {} (max context {})",
+                    pos, max
+                )
             }
         }
     }

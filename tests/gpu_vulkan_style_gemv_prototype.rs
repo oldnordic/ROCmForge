@@ -2,11 +2,8 @@
 
 mod common;
 
-use rocmforge::config::{ModelConfig};
-use rocmforge::cpu::{
-    cache::CpuForwardScratch,
-    weights::CpuModelWeights,
-};
+use rocmforge::config::ModelConfig;
+use rocmforge::cpu::{cache::CpuForwardScratch, weights::CpuModelWeights};
 use rocmforge::gpu::{self, GpuBuffer, GpuDevice};
 use rocmforge::loader::{GgmlType, GgufFile};
 use serial_test::serial;
@@ -94,11 +91,13 @@ fn test_gpu_vulkan_style_ffn_down_multi_row_q4_0() {
 
     let h = config.hidden_size;
     let ff_size = config.intermediate_size;
-    
+
     // Create random input
     let mut input = vec![0.0f32; ff_size];
-    for i in 0..ff_size { input[i] = (i as f32).sin(); }
-    
+    for i in 0..ff_size {
+        input[i] = (i as f32).sin();
+    }
+
     let d_input = upload_f32(&input);
     let d_out_production = GpuBuffer::alloc(h * 4).expect("alloc production out");
     let d_out_vulkan = GpuBuffer::alloc(h * 4).expect("alloc vulkan out");
@@ -113,7 +112,8 @@ fn test_gpu_vulkan_style_ffn_down_multi_row_q4_0() {
         ff_size,
         h,
         device.stream(),
-    ).expect("production warmup");
+    )
+    .expect("production warmup");
 
     gpu::kernels::quant::gemv_q4_0_f32_vulkan_style(
         &device,
@@ -124,7 +124,8 @@ fn test_gpu_vulkan_style_ffn_down_multi_row_q4_0() {
         h,
         n_waves,
         device.stream(),
-    ).expect("vulkan warmup");
+    )
+    .expect("vulkan warmup");
 
     device.synchronize().expect("warmup sync");
 
@@ -137,7 +138,8 @@ fn test_gpu_vulkan_style_ffn_down_multi_row_q4_0() {
             ff_size,
             h,
             device.stream(),
-        ).expect("production run");
+        )
+        .expect("production run");
     });
 
     // Benchmark Vulkan-Style
@@ -151,7 +153,8 @@ fn test_gpu_vulkan_style_ffn_down_multi_row_q4_0() {
             h,
             n_waves,
             device.stream(),
-        ).expect("vulkan run");
+        )
+        .expect("vulkan run");
     });
 
     let production_out = download_f32(&d_out_production, h);
@@ -166,5 +169,9 @@ fn test_gpu_vulkan_style_ffn_down_multi_row_q4_0() {
         cross_err
     );
 
-    assert!(cross_err <= 1e-5, "Vulkan-style GEMV output diverged from production: cross_err={}", cross_err);
+    assert!(
+        cross_err <= 1e-5,
+        "Vulkan-style GEMV output diverged from production: cross_err={}",
+        cross_err
+    );
 }

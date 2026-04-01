@@ -87,6 +87,11 @@ impl GpuDevice {
         self.warp_size
     }
 
+    /// Get maximum shared memory available per block in bytes.
+    pub fn max_shared_mem_per_block(&self) -> usize {
+        self.max_shared_mem_per_block
+    }
+
     /// Synchronize all queued operations on this device's stream.
     ///
     /// Blocks until all previously queued operations on the stream complete.

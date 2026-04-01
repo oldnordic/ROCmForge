@@ -353,7 +353,6 @@ pub fn hip_graph_exec_update(
     }
 }
 
-
 /// Destroy an executable graph.
 
 pub fn hip_graph_exec_destroy(graph_exec: hipGraphExec_t) -> GpuResult<()> {

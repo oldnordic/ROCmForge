@@ -25,6 +25,7 @@ use super::kernels::rope::{
 use super::ops::{
     gpu_dispatch_fused_gate_up_on_stream, gpu_dispatch_fused_qkv_on_stream, gpu_dispatch_gemm,
     gpu_dispatch_gemv, gpu_dispatch_gemv_on_stream, gpu_dispatch_gemv_residual_on_stream,
+    gpu_dispatch_rms_norm,
 };
 use super::weights::{GpuBuffer, GpuLayerWeights, GpuModelWeights, WeightMeta};
 use crate::config::ModelConfig;
@@ -279,7 +280,7 @@ fn gpu_read_greedy_argmax_result(
             device.stream(),
         )?;
     }
-    
+
     Ok(())
 }
 
@@ -310,7 +311,8 @@ fn gpu_launch_greedy_logits_tail_on_stream(
         guard.tail_invocations += 1;
     }
     profile_decode_stage(device, DecodeStage::LogitsNorm, || {
-        rms_norm_on_stream(
+        gpu_dispatch_rms_norm(
+            device,
             scratch.hidden.as_ptr() as *const f32,
             gpu_weights.output_norm.as_ptr() as *const f32,
             scratch.normed.as_ptr() as *mut f32,
@@ -321,6 +323,7 @@ fn gpu_launch_greedy_logits_tail_on_stream(
     })?;
     profile_decode_stage(device, DecodeStage::LogitsProj, || {
         gpu_dispatch_gemv_on_stream(
+            device,
             &gpu_weights.lm_head,
             &gpu_weights.lm_head_meta,
             scratch.normed.as_ptr() as *const f32,
@@ -981,7 +984,9 @@ pub fn gpu_prefill_forward_hybrid(
                 download_f32(&decode_scratch.logits, &mut host_scratch.logits[..v])?;
                 Ok(None)
             }
-            GpuLogitsMode::GreedyArgmax => gpu_greedy_argmax_token(device, decode_scratch, v).map(Some),
+            GpuLogitsMode::GreedyArgmax => {
+                gpu_greedy_argmax_token(device, decode_scratch, v).map(Some)
+            }
             GpuLogitsMode::Skip => Ok(None),
         },
         Err(GpuError::InvalidWeightLayout { .. }) | Err(GpuError::UnsupportedWeightType { .. }) => {
@@ -1022,7 +1027,8 @@ fn gpu_layer_forward_from_state_on_stream(
     let ff_size = config.intermediate_size;
     let eps = config.rms_norm_eps;
 
-    rms_norm_on_stream(
+    gpu_dispatch_rms_norm(
+        device,
         scratch.hidden.as_ptr() as *const f32,
         gpu_layer.attn_norm.as_ptr() as *const f32,
         scratch.normed.as_ptr() as *mut f32,
@@ -1032,6 +1038,7 @@ fn gpu_layer_forward_from_state_on_stream(
     )?;
 
     gpu_dispatch_fused_qkv_on_stream(
+        device,
         &gpu_layer.attn_q,
         &gpu_layer.attn_q_meta,
         gpu_layer.attn_q_bias.as_ref(),
@@ -1076,6 +1083,7 @@ fn gpu_layer_forward_from_state_on_stream(
     gpu_attention_decode_from_state(device, scratch, kv, layer_idx, config)?;
 
     let attn_residual_fused = gpu_dispatch_gemv_residual_on_stream(
+        device,
         &gpu_layer.attn_o,
         &gpu_layer.attn_o_meta,
         scratch.attn_out.as_ptr() as *const f32,
@@ -1087,6 +1095,7 @@ fn gpu_layer_forward_from_state_on_stream(
     )?;
     if !attn_residual_fused {
         gpu_dispatch_gemv_on_stream(
+            device,
             &gpu_layer.attn_o,
             &gpu_layer.attn_o_meta,
             scratch.attn_out.as_ptr() as *const f32,
@@ -1098,7 +1107,8 @@ fn gpu_layer_forward_from_state_on_stream(
         residual_add_inplace(device, &scratch.hidden, &scratch.layer_out, h)?;
     }
 
-    rms_norm_on_stream(
+    gpu_dispatch_rms_norm(
+        device,
         scratch.hidden.as_ptr() as *const f32,
         gpu_layer.ffn_norm.as_ptr() as *const f32,
         scratch.normed.as_ptr() as *mut f32,
@@ -1107,6 +1117,7 @@ fn gpu_layer_forward_from_state_on_stream(
         device.stream(),
     )?;
     gpu_dispatch_fused_gate_up_on_stream(
+        device,
         &gpu_layer.ffn_gate,
         &gpu_layer.ffn_gate_meta,
         &gpu_layer.ffn_up,
@@ -1119,17 +1130,19 @@ fn gpu_layer_forward_from_state_on_stream(
     )?;
 
     let ffn_residual_fused = gpu_dispatch_gemv_residual_on_stream(
+        device,
         &gpu_layer.ffn_down,
         &gpu_layer.ffn_down_meta,
         scratch.swiglu.as_ptr() as *const f32,
         scratch.hidden.as_ptr() as *const f32,
         scratch.hidden.as_ptr() as *mut f32,
-        h,
         ff_size,
+        h,
         device.stream(),
     )?;
     if !ffn_residual_fused {
         gpu_dispatch_gemv_on_stream(
+            device,
             &gpu_layer.ffn_down,
             &gpu_layer.ffn_down_meta,
             scratch.swiglu.as_ptr() as *const f32,
@@ -1209,7 +1222,7 @@ fn gpu_try_full_greedy_decode_graph(
         // Try updating existing graph if it matches top-level key
         // (This part is simplified for prototype, true llama.cpp logic
         // would keep the executable graph alive and just patch pointers)
-        
+
         let capture_status = match device.stream_capture_status() {
             Ok(status) => status,
             Err(_) => return Ok(None),
@@ -1221,10 +1234,11 @@ fn gpu_try_full_greedy_decode_graph(
         // Capture a new graph temporarily to see if we can update the executable one
         scratch.upload_decode_state(0, 1, device.stream())?;
         device.begin_capture(ffi::hipStreamCaptureMode::hipStreamCaptureModeGlobal)?;
-        let capture_res = gpu_launch_full_greedy_decode_on_stream(device, gpu_weights, kv, scratch, config);
+        let capture_res =
+            gpu_launch_full_greedy_decode_on_stream(device, gpu_weights, kv, scratch, config);
         let raw_graph = device.end_capture()?;
         capture_res?;
-        
+
         let new_graph = HipGraph::from_raw(raw_graph);
         if scratch.try_update_decode_graph(&new_graph)? {
             // Update successful! No need to instantiate a new Executable graph.
@@ -1274,7 +1288,8 @@ pub fn gpu_layer_forward_hybrid(
     }
 
     profile_decode_stage(device, DecodeStage::AttnNorm, || {
-        rms_norm_on_stream(
+        gpu_dispatch_rms_norm(
+            device,
             scratch.hidden.as_ptr() as *const f32,
             gpu_layer.attn_norm.as_ptr() as *const f32,
             scratch.normed.as_ptr() as *mut f32,
@@ -1286,6 +1301,7 @@ pub fn gpu_layer_forward_hybrid(
 
     profile_decode_stage(device, DecodeStage::Qkv, || {
         gpu_dispatch_fused_qkv_on_stream(
+            device,
             &gpu_layer.attn_q,
             &gpu_layer.attn_q_meta,
             gpu_layer.attn_q_bias.as_ref(),
@@ -1339,6 +1355,7 @@ pub fn gpu_layer_forward_hybrid(
 
     let attn_residual_fused = profile_decode_stage(device, DecodeStage::AttnProj, || {
         gpu_dispatch_gemv_residual_on_stream(
+            device,
             &gpu_layer.attn_o,
             &gpu_layer.attn_o_meta,
             scratch.attn_out.as_ptr() as *const f32,
@@ -1352,6 +1369,7 @@ pub fn gpu_layer_forward_hybrid(
     if !attn_residual_fused {
         profile_decode_stage(device, DecodeStage::AttnProj, || {
             gpu_dispatch_gemv_on_stream(
+                device,
                 &gpu_layer.attn_o,
                 &gpu_layer.attn_o_meta,
                 scratch.attn_out.as_ptr() as *const f32,
@@ -1367,7 +1385,8 @@ pub fn gpu_layer_forward_hybrid(
     }
 
     profile_decode_stage(device, DecodeStage::FfnNorm, || {
-        rms_norm_on_stream(
+        gpu_dispatch_rms_norm(
+            device,
             scratch.hidden.as_ptr() as *const f32,
             gpu_layer.ffn_norm.as_ptr() as *const f32,
             scratch.normed.as_ptr() as *mut f32,
@@ -1378,6 +1397,7 @@ pub fn gpu_layer_forward_hybrid(
     })?;
     profile_decode_stage(device, DecodeStage::GateUp, || {
         gpu_dispatch_fused_gate_up_on_stream(
+            device,
             &gpu_layer.ffn_gate,
             &gpu_layer.ffn_gate_meta,
             &gpu_layer.ffn_up,
@@ -1392,6 +1412,7 @@ pub fn gpu_layer_forward_hybrid(
 
     let ffn_residual_fused = profile_decode_stage(device, DecodeStage::FfnDown, || {
         gpu_dispatch_gemv_residual_on_stream(
+            device,
             &gpu_layer.ffn_down,
             &gpu_layer.ffn_down_meta,
             scratch.swiglu.as_ptr() as *const f32,
@@ -1405,6 +1426,7 @@ pub fn gpu_layer_forward_hybrid(
     if !ffn_residual_fused {
         profile_decode_stage(device, DecodeStage::FfnDown, || {
             gpu_dispatch_gemv_on_stream(
+                device,
                 &gpu_layer.ffn_down,
                 &gpu_layer.ffn_down_meta,
                 scratch.swiglu.as_ptr() as *const f32,
@@ -1506,7 +1528,8 @@ pub fn gpu_full_forward_hybrid(
     let v = config.vocab_size;
     let gpu_result = match logits_mode {
         GpuLogitsMode::DownloadToHost => {
-            rms_norm_on_stream(
+            gpu_dispatch_rms_norm(
+                device,
                 scratch.hidden.as_ptr() as *const f32,
                 gpu_weights.output_norm.as_ptr() as *const f32,
                 scratch.normed.as_ptr() as *mut f32,
@@ -1515,6 +1538,7 @@ pub fn gpu_full_forward_hybrid(
                 device.stream(),
             )?;
             gpu_dispatch_gemv_on_stream(
+                device,
                 &gpu_weights.lm_head,
                 &gpu_weights.lm_head_meta,
                 scratch.normed.as_ptr() as *const f32,
@@ -1535,7 +1559,8 @@ pub fn gpu_full_forward_hybrid(
     match gpu_result {
         Ok(result) => Ok(result),
         Err(GpuError::InvalidWeightLayout { .. }) | Err(GpuError::UnsupportedWeightType { .. }) => {
-            rms_norm_on_stream(
+            gpu_dispatch_rms_norm(
+                device,
                 scratch.hidden.as_ptr() as *const f32,
                 gpu_weights.output_norm.as_ptr() as *const f32,
                 scratch.normed.as_ptr() as *mut f32,
