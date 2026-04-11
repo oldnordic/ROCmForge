@@ -4,7 +4,6 @@ rocmforge - LLM inference on AMD GPUs (HIP) with a CPU fallback path.
 
 - The project currently works for local Qwen GGUF runs on this machine.
 - The GPU path is AMD-only and pure HIP. There is no CUDA or cross-vendor backend here.
-- This is still a prototype, but it is usable enough for AMD colleagues to build, run, and profile locally.
 - Performance work is moving slowly and in small steps.
 - Recent changes improved 7B decode throughput, but this project is still behind llama.cpp on the same hardware.
 
@@ -24,8 +23,6 @@ cargo build --release --features gpu
 ```
 
 ## Run
-
-Current user-facing testing is centered on Qwen2.5 GGUF models. Other GGUF models may partially work, but they are not the supported focus of the current prototype.
 
 GPU:
 
@@ -147,7 +144,6 @@ cargo test --release --features gpu --test gpu_decode_real \
 
 ## Positioning
 
-- `rocmforge` is currently best treated as a Qwen-focused AMD/HIP prototype.
 - The main value today is that it is a small pure-HIP codebase that AMD developers can inspect, build, profile, and compare against other runtimes.
 - Expect more work on decode throughput, launch tuning, and profiling workflow before calling it broadly production-ready.
 

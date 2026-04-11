@@ -5,8 +5,6 @@
 This manual describes the current command-line workflow for `rocmforge` in this repository state.
 
 This project is usable, but progress is incremental. Throughput work is improving in small steps.
-The current validated scope is Qwen2.5 GGUF inference, especially on the AMD GPU HIP path.
-This is best treated as a pure-HIP AMD prototype that colleagues can build, run, and profile locally.
 
 ## 2. Prerequisites
 
@@ -15,7 +13,6 @@ This is best treated as a pure-HIP AMD prototype that colleagues can build, run,
 - AMD GPU for HIP path (local validation on RX 7900 XT)
 - ROCm runtime libraries available at execution time so `libamdhip64.so.7` resolves
 - GGUF model file
-- Current development focus: Qwen2.5 GGUF models
 
 ## 3. Build
 
@@ -25,8 +22,6 @@ cargo build --release --features gpu
 ```
 
 ## 4. Run Inference
-
-Current user-facing testing is centered on Qwen2.5 GGUF models. Other GGUF models may partially work, but they are not the supported focus of the current prototype.
 
 GPU:
 
