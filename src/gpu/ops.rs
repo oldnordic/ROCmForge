@@ -4,23 +4,44 @@
 
 use super::device::GpuDevice;
 use super::error::{GpuError, GpuResult};
-use super::ffi::hipStream_t;
+use super::ffi::hip_stream_synchronize;
+use super::ffi::{hipStreamCaptureStatus, hipStream_t, hip_stream_is_capturing};
 use super::kernels::{
     add_on_stream, gemm_q4_0_f32, gemm_q4_1_f32, gemm_q4_k_f32, gemm_q5_k_f32, gemm_q8_0_f32,
-    gemv_gate_up_swiglu_q4_0_f32_on_stream, gemv_q4_0_f32_on_stream,
-    gemv_q4_0_f32_residual_on_stream, gemv_q4_1_f32_on_stream, gemv_q4_k_f32_on_stream,
-    gemv_q5_k_f32_on_stream, gemv_q8_0_f32_lm_head_on_stream, gemv_q8_0_f32_on_stream,
-    gemv_qkv_q4_0_f32_on_stream, rms_norm_on_stream, rms_norm_vulkan_style,
+    gemv_gate_up_q4_0_f32_on_stream, gemv_gate_up_q4_0_q8_0_on_stream,
+    gemv_gate_up_swiglu_q4_0_f32_on_stream,
+    gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_on_stream,
+    gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_tile4_on_stream,
+    gemv_gate_up_swiglu_q4_0_f32_q8_inline_on_stream_variant, gemv_q4_0_f32_on_stream_unchecked,
+    gemv_q4_0_f32_q8_inline_residual_on_stream, gemv_q4_0_f32_q8_inline_residual_on_stream_variant,
+    gemv_q4_0_f32_residual_on_stream_unchecked, gemv_q4_0_q8_0_on_stream,
+    gemv_q4_0_q8_0_residual_on_stream, gemv_q4_1_f32_on_stream_unchecked,
+    gemv_q4_1_f32_residual_on_stream_unchecked, gemv_q4_1_f32_residual_on_stream_variant_unchecked,
+    gemv_q4_k_f32_on_stream, gemv_q5_k_f32_on_stream, gemv_q8_0_f32_lm_head_on_stream,
+    gemv_q8_0_f32_lm_head_on_stream_variant, gemv_q8_0_f32_on_stream, gemv_qkv_q4_0_f32_on_stream,
+    gemv_qkv_q4_0_f32_on_stream_variant, mul_on_stream, q8_0_workspace_bytes,
+    quantize_q8_0_on_stream, rms_norm_on_stream, rms_norm_vulkan_style, silu_on_stream,
+};
+use super::launch_autotune::{
+    lookup_gate_up_swiglu_q8_variant, lookup_lm_head_q8_variant, lookup_q4_0_q8_residual_variant,
+    select_gate_up_swiglu_q8_variant, select_lm_head_q8_variant, select_q4_0_q8_residual_variant,
+    select_q4_1_residual_variant, select_qkv_variant, VariantId,
+};
+use super::safety::{
+    disable_q8_activation_fastpath_runtime, experimental_gpu_kernels_enabled,
+    experimental_q8_activation_fastpath_enabled, launch_autotune_enabled,
 };
 use super::weights::{GpuBuffer, TensorRole, WeightMeta};
 use crate::loader::GgmlType;
-use std::os::raw::c_int;
-
 fn supports_gemv_type(wtype: GgmlType) -> bool {
     matches!(
         wtype,
         GgmlType::Q4_0 | GgmlType::Q4_1 | GgmlType::Q8_0 | GgmlType::Q4_K | GgmlType::Q5_K
     )
+}
+
+fn is_lm_head_role(role: TensorRole) -> bool {
+    matches!(role, TensorRole::LmHead | TensorRole::TiedLmHead)
 }
 
 fn config_num_heads(q_size: usize, h: usize) -> usize {
@@ -35,7 +56,7 @@ fn config_num_heads(q_size: usize, h: usize) -> usize {
 
 /// Dispatch a GPU RMS norm.
 pub fn gpu_dispatch_rms_norm(
-    device: &GpuDevice,
+    _device: &GpuDevice,
     x: *const f32,
     weight: *const f32,
     out: *mut f32,
@@ -43,12 +64,12 @@ pub fn gpu_dispatch_rms_norm(
     eps: f32,
     stream: hipStream_t,
 ) -> GpuResult<()> {
-    // 1. Try specialized Vulkan-style kernel if safe (alignment check inside)
-    if let Ok(()) = rms_norm_vulkan_style(x, weight, out, n, eps, stream) {
-        return Ok(());
+    if experimental_gpu_kernels_enabled() {
+        if let Ok(()) = rms_norm_vulkan_style(x, weight, out, n, eps, stream) {
+            return Ok(());
+        }
     }
 
-    // 2. Fallback to generic path
     rms_norm_on_stream(x, weight, out, n, eps, stream)
 }
 
@@ -77,6 +98,169 @@ fn validate_gemv_layout(meta: &WeightMeta, out_dim: usize, in_dim: usize) -> Gpu
     }
 }
 
+fn quantize_input_q8_workspace(
+    device: &GpuDevice,
+    input: *const f32,
+    n_rows: usize,
+    stream: hipStream_t,
+) -> GpuResult<*mut u8> {
+    let workspace = device.q8_workspace_ptr(q8_0_workspace_bytes(n_rows))?;
+    quantize_q8_0_on_stream(input, workspace, n_rows, stream)?;
+    Ok(workspace)
+}
+
+fn q8_fastpath_ok(context: &str, fastpath_result: GpuResult<()>) -> bool {
+    match fastpath_result {
+        Ok(()) => true,
+        Err(err) => {
+            disable_q8_activation_fastpath_runtime(&format!("{context}: {err}"));
+            false
+        }
+    }
+}
+
+fn try_q4_0_q8_0_fastpath(
+    device: &GpuDevice,
+    weights: &GpuBuffer,
+    input: *const f32,
+    output: *mut f32,
+    in_dim: usize,
+    out_dim: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    let workspace = quantize_input_q8_workspace(device, input, in_dim, stream)?;
+    gemv_q4_0_q8_0_on_stream(
+        weights.as_ptr() as *const u8,
+        workspace as *const u8,
+        output,
+        in_dim,
+        out_dim,
+        stream,
+    )
+}
+
+fn try_q4_0_q8_0_residual_fastpath(
+    weights: &GpuBuffer,
+    input: *const f32,
+    residual: *const f32,
+    output: *mut f32,
+    in_dim: usize,
+    out_dim: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    gemv_q4_0_f32_q8_inline_residual_on_stream(
+        weights.as_ptr() as *const u8,
+        input,
+        residual,
+        output,
+        in_dim,
+        out_dim,
+        stream,
+    )
+}
+
+fn try_q4_0_q8_0_residual_fastpath_prequantized(
+    device: &GpuDevice,
+    weights: &GpuBuffer,
+    input: *const f32,
+    residual: *const f32,
+    output: *mut f32,
+    in_dim: usize,
+    out_dim: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    let workspace = quantize_input_q8_workspace(device, input, in_dim, stream)?;
+    gemv_q4_0_q8_0_residual_on_stream(
+        weights.as_ptr() as *const u8,
+        workspace as *const u8,
+        residual,
+        output,
+        in_dim,
+        out_dim,
+        stream,
+    )
+}
+
+fn try_q4_0_q8_0_gate_up_fastpath(
+    device: &GpuDevice,
+    w_gate: &GpuBuffer,
+    w_up: &GpuBuffer,
+    input: *const f32,
+    gate_output: *mut f32,
+    up_output: *mut f32,
+    h: usize,
+    ff_size: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    let workspace = quantize_input_q8_workspace(device, input, h, stream)?;
+    gemv_gate_up_q4_0_q8_0_on_stream(
+        w_gate.as_ptr() as *const u8,
+        w_up.as_ptr() as *const u8,
+        workspace as *const u8,
+        gate_output,
+        up_output,
+        h,
+        ff_size,
+        stream,
+    )
+}
+
+fn try_q4_0_q8_0_fused_gate_up_fastpath(
+    w_gate: &GpuBuffer,
+    w_up: &GpuBuffer,
+    input: *const f32,
+    output: *mut f32,
+    h: usize,
+    ff_size: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    try_q4_0_q8_0_fused_gate_up_fastpath_variant(w_gate, w_up, input, output, h, ff_size, 0, stream)
+}
+
+fn try_q4_0_q8_0_fused_gate_up_fastpath_prequantized(
+    device: &GpuDevice,
+    w_gate: &GpuBuffer,
+    w_up: &GpuBuffer,
+    input: *const f32,
+    output: *mut f32,
+    h: usize,
+    ff_size: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    let workspace = quantize_input_q8_workspace(device, input, h, stream)?;
+    super::kernels::gemv_gate_up_swiglu_q4_0_q8_0_on_stream(
+        w_gate.as_ptr() as *const u8,
+        w_up.as_ptr() as *const u8,
+        workspace as *const u8,
+        output,
+        h,
+        ff_size,
+        stream,
+    )
+}
+
+fn try_q4_0_q8_0_fused_gate_up_fastpath_variant(
+    w_gate: &GpuBuffer,
+    w_up: &GpuBuffer,
+    input: *const f32,
+    output: *mut f32,
+    h: usize,
+    ff_size: usize,
+    variant: i32,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    gemv_gate_up_swiglu_q4_0_f32_q8_inline_on_stream_variant(
+        w_gate.as_ptr() as *const u8,
+        w_up.as_ptr() as *const u8,
+        input,
+        output,
+        h,
+        ff_size,
+        variant,
+        stream,
+    )
+}
+
 fn dispatch_gemv_impl(
     device: &GpuDevice,
     stream: hipStream_t,
@@ -90,23 +274,34 @@ fn dispatch_gemv_impl(
     unsafe {
         match meta.wtype {
             GgmlType::Q4_0 => {
-                // 1. Try specialized Vulkan-style kernel if safe
-                let n_waves = 8;
-                if let Ok(()) = super::kernels::quant::gemv_q4_0_f32_vulkan_style(
-                    device,
-                    weights.as_ptr() as *const u8,
-                    input,
-                    output,
-                    in_dim,
-                    out_dim,
-                    n_waves,
-                    stream,
-                ) {
+                if experimental_q8_activation_fastpath_enabled()
+                    && q8_fastpath_ok(
+                        "gemv_q4_0_q8_0",
+                        try_q4_0_q8_0_fastpath(
+                            device, weights, input, output, in_dim, out_dim, stream,
+                        ),
+                    )
+                {
                     return Ok(());
                 }
 
-                // 2. Fallback to generic path
-                gemv_q4_0_f32_on_stream(
+                if experimental_gpu_kernels_enabled() {
+                    let n_waves = 8;
+                    if let Ok(()) = super::kernels::quant::gemv_q4_0_f32_vulkan_style(
+                        device,
+                        weights.as_ptr() as *const u8,
+                        input,
+                        output,
+                        in_dim,
+                        out_dim,
+                        n_waves,
+                        stream,
+                    ) {
+                        return Ok(());
+                    }
+                }
+
+                gemv_q4_0_f32_on_stream_unchecked(
                     weights.as_ptr() as *const u8,
                     input,
                     output,
@@ -115,7 +310,7 @@ fn dispatch_gemv_impl(
                     stream,
                 )?
             }
-            GgmlType::Q4_1 => gemv_q4_1_f32_on_stream(
+            GgmlType::Q4_1 => gemv_q4_1_f32_on_stream_unchecked(
                 weights.as_ptr() as *const u8,
                 input,
                 output,
@@ -125,15 +320,53 @@ fn dispatch_gemv_impl(
             )?,
             GgmlType::Q8_0 => {
                 // Check for LM-head specialization
-                if meta.role == TensorRole::LmHead {
-                    gemv_q8_0_f32_lm_head_on_stream(
-                        weights.as_ptr() as *const u8,
-                        input,
-                        output,
-                        in_dim,
-                        out_dim,
-                        stream,
-                    )?
+                if is_lm_head_role(meta.role) {
+                    let capture_active = matches!(
+                        hip_stream_is_capturing(stream),
+                        Err(_)
+                            | Ok(hipStreamCaptureStatus::hipStreamCaptureStatusActive)
+                            | Ok(hipStreamCaptureStatus::hipStreamCaptureStatusInvalidated)
+                    );
+
+                    if launch_autotune_enabled() {
+                        let variant = if capture_active {
+                            lookup_lm_head_q8_variant(in_dim, out_dim)
+                                .unwrap_or(VariantId::Baseline)
+                        } else {
+                            select_lm_head_q8_variant(in_dim, out_dim, |v| {
+                                let result = gemv_q8_0_f32_lm_head_on_stream_variant(
+                                    weights.as_ptr() as *const u8,
+                                    input,
+                                    output,
+                                    in_dim,
+                                    out_dim,
+                                    v as i32,
+                                    stream,
+                                );
+                                hip_stream_synchronize(stream)?;
+                                result
+                            })
+                        };
+
+                        gemv_q8_0_f32_lm_head_on_stream_variant(
+                            weights.as_ptr() as *const u8,
+                            input,
+                            output,
+                            in_dim,
+                            out_dim,
+                            variant as i32,
+                            stream,
+                        )?;
+                    } else {
+                        gemv_q8_0_f32_lm_head_on_stream(
+                            weights.as_ptr() as *const u8,
+                            input,
+                            output,
+                            in_dim,
+                            out_dim,
+                            stream,
+                        )?;
+                    }
                 } else {
                     gemv_q8_0_f32_on_stream(
                         weights.as_ptr() as *const u8,
@@ -146,22 +379,22 @@ fn dispatch_gemv_impl(
                 }
             }
             GgmlType::Q4_K => {
-                // 1. Try specialized Vulkan-style kernel if safe
-                let n_waves = 8;
-                if let Ok(()) = super::kernels::quant::gemv_q4_k_f32_vulkan_style(
-                    device,
-                    weights.as_ptr() as *const u8,
-                    input,
-                    output,
-                    in_dim,
-                    out_dim,
-                    n_waves,
-                    stream,
-                ) {
-                    return Ok(());
+                if experimental_gpu_kernels_enabled() {
+                    let n_waves = 8;
+                    if let Ok(()) = super::kernels::quant::gemv_q4_k_f32_vulkan_style(
+                        device,
+                        weights.as_ptr() as *const u8,
+                        input,
+                        output,
+                        in_dim,
+                        out_dim,
+                        n_waves,
+                        stream,
+                    ) {
+                        return Ok(());
+                    }
                 }
 
-                // 2. Fallback to generic path
                 gemv_q4_k_f32_on_stream(
                     weights.as_ptr() as *const u8,
                     input,
@@ -252,23 +485,155 @@ pub fn gpu_dispatch_gemv_residual_on_stream(
     out_dim: usize,
     stream: hipStream_t,
 ) -> GpuResult<bool> {
-    if meta.wtype != GgmlType::Q4_0 {
-        return Ok(false);
-    }
-
-    // Try specialized residual kernel
     unsafe {
-        gemv_q4_0_f32_residual_on_stream(
-            weights.as_ptr() as *const u8,
-            input,
-            residual,
-            output,
-            in_dim,
-            out_dim,
-            stream,
-        )?;
+        match meta.wtype {
+            GgmlType::Q4_0 => {
+                if experimental_q8_activation_fastpath_enabled() {
+                    // Check if stream capture is active - skip autotune benchmarking during capture
+                    let capture_active = matches!(
+                        hip_stream_is_capturing(stream),
+                        Err(_)
+                            | Ok(hipStreamCaptureStatus::hipStreamCaptureStatusActive)
+                            | Ok(hipStreamCaptureStatus::hipStreamCaptureStatusInvalidated)
+                    );
+
+                    if launch_autotune_enabled() {
+                        let variant = if capture_active {
+                            lookup_q4_0_q8_residual_variant(in_dim, out_dim)
+                                .unwrap_or(VariantId::Baseline)
+                        } else {
+                            select_q4_0_q8_residual_variant(in_dim, out_dim, |v| {
+                                let result = match v {
+                                    VariantId::Baseline | VariantId::Variant1 => {
+                                        gemv_q4_0_f32_q8_inline_residual_on_stream_variant(
+                                            weights.as_ptr() as *const u8,
+                                            input,
+                                            residual,
+                                            output,
+                                            in_dim,
+                                            out_dim,
+                                            v as i32,
+                                            stream,
+                                        )
+                                    }
+                                    VariantId::Variant2 => {
+                                        try_q4_0_q8_0_residual_fastpath_prequantized(
+                                            device, weights, input, residual, output, in_dim,
+                                            out_dim, stream,
+                                        )
+                                    }
+                                };
+                                hip_stream_synchronize(stream)?;
+                                result
+                            })
+                        };
+
+                        // Execute selected (or cached) fastpath variant and keep fallback behavior on failures.
+                        let selected_result = match variant {
+                            VariantId::Baseline | VariantId::Variant1 => {
+                                gemv_q4_0_f32_q8_inline_residual_on_stream_variant(
+                                    weights.as_ptr() as *const u8,
+                                    input,
+                                    residual,
+                                    output,
+                                    in_dim,
+                                    out_dim,
+                                    variant as i32,
+                                    stream,
+                                )
+                            }
+                            VariantId::Variant2 => try_q4_0_q8_0_residual_fastpath_prequantized(
+                                device, weights, input, residual, output, in_dim, out_dim, stream,
+                            ),
+                        };
+
+                        if q8_fastpath_ok("gemv_q4_0_f32_q8_inline_residual", selected_result) {
+                            return Ok(true);
+                        }
+                    }
+
+                    // Non-autotune fastpath: try inline residual, fall back to unchecked on failure
+                    if q8_fastpath_ok(
+                        "gemv_q4_0_f32_q8_inline_residual",
+                        try_q4_0_q8_0_residual_fastpath(
+                            weights, input, residual, output, in_dim, out_dim, stream,
+                        ),
+                    ) {
+                        return Ok(true);
+                    }
+                }
+
+                gemv_q4_0_f32_residual_on_stream_unchecked(
+                    weights.as_ptr() as *const u8,
+                    input,
+                    residual,
+                    output,
+                    in_dim,
+                    out_dim,
+                    stream,
+                )?;
+                Ok(true)
+            }
+            GgmlType::Q4_1 => {
+                // Check if stream capture is active - skip autotune benchmarking during capture
+                let capture_active = matches!(
+                    hip_stream_is_capturing(stream),
+                    Err(_)
+                        | Ok(hipStreamCaptureStatus::hipStreamCaptureStatusActive)
+                        | Ok(hipStreamCaptureStatus::hipStreamCaptureStatusInvalidated)
+                );
+
+                // Autotune-aware dispatch for Q4_1 residual (skip if capturing)
+                if launch_autotune_enabled() && !capture_active {
+                    let variant = select_q4_1_residual_variant(in_dim, out_dim, |v| {
+                        let result = unsafe {
+                            gemv_q4_1_f32_residual_on_stream_variant_unchecked(
+                                weights.as_ptr() as *const u8,
+                                input,
+                                residual,
+                                output,
+                                in_dim,
+                                out_dim,
+                                v as i32,
+                                stream,
+                            )
+                        };
+                        hip_stream_synchronize(stream)?;
+                        result
+                    });
+
+                    // Execute with selected variant
+                    unsafe {
+                        gemv_q4_1_f32_residual_on_stream_variant_unchecked(
+                            weights.as_ptr() as *const u8,
+                            input,
+                            residual,
+                            output,
+                            in_dim,
+                            out_dim,
+                            variant as i32,
+                            stream,
+                        )?;
+                    }
+                } else {
+                    // Baseline path (backward compatible)
+                    unsafe {
+                        gemv_q4_1_f32_residual_on_stream_unchecked(
+                            weights.as_ptr() as *const u8,
+                            input,
+                            residual,
+                            output,
+                            in_dim,
+                            out_dim,
+                            stream,
+                        )?;
+                    }
+                }
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
     }
-    Ok(true)
 }
 
 /// Dispatch a fused QKV GEMV with bias on an explicit HIP stream.
@@ -296,23 +661,80 @@ pub fn gpu_dispatch_fused_qkv_on_stream(
         && k_meta.wtype == GgmlType::Q4_0
         && v_meta.wtype == GgmlType::Q4_0
     {
-        unsafe {
-            gemv_qkv_q4_0_f32_on_stream(
-                w_q.as_ptr() as *const u8,
-                w_k.as_ptr() as *const u8,
-                w_v.as_ptr() as *const u8,
-                input,
-                out_q,
-                out_k,
-                out_v,
-                q_bias.map_or(std::ptr::null_mut(), |b| b.as_ptr() as *mut f32),
-                k_bias.map_or(std::ptr::null_mut(), |b| b.as_ptr() as *mut f32),
-                v_bias.map_or(std::ptr::null_mut(), |b| b.as_ptr() as *mut f32),
-                h,
-                q_size / h,
-                kv_size / h,
-                stream,
-            )?;
+        // Check if stream capture is active - skip autotune benchmarking during capture
+        let capture_active = matches!(
+            hip_stream_is_capturing(stream),
+            Err(_)
+                | Ok(hipStreamCaptureStatus::hipStreamCaptureStatusActive)
+                | Ok(hipStreamCaptureStatus::hipStreamCaptureStatusInvalidated)
+        );
+
+        // Autotune-aware dispatch for QKV fused (skip if capturing)
+        if launch_autotune_enabled() && !capture_active {
+            let variant = select_qkv_variant(h, q_size, kv_size, |v| {
+                let result = unsafe {
+                    gemv_qkv_q4_0_f32_on_stream_variant(
+                        w_q.as_ptr() as *const u8,
+                        w_k.as_ptr() as *const u8,
+                        w_v.as_ptr() as *const u8,
+                        q_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32),
+                        k_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32),
+                        v_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32),
+                        input,
+                        out_q,
+                        out_k,
+                        out_v,
+                        h,
+                        q_size,
+                        kv_size,
+                        stream,
+                        v as i32,
+                    )
+                };
+                hip_stream_synchronize(stream)?;
+                result
+            });
+
+            // Execute with selected variant
+            unsafe {
+                gemv_qkv_q4_0_f32_on_stream_variant(
+                    w_q.as_ptr() as *const u8,
+                    w_k.as_ptr() as *const u8,
+                    w_v.as_ptr() as *const u8,
+                    q_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32),
+                    k_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32),
+                    v_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32),
+                    input,
+                    out_q,
+                    out_k,
+                    out_v,
+                    h,
+                    q_size,
+                    kv_size,
+                    stream,
+                    variant as i32,
+                )?;
+            }
+        } else {
+            // Baseline path (backward compatible)
+            unsafe {
+                gemv_qkv_q4_0_f32_on_stream(
+                    w_q.as_ptr() as *const u8,
+                    w_k.as_ptr() as *const u8,
+                    w_v.as_ptr() as *const u8,
+                    q_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32),
+                    k_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32),
+                    v_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32),
+                    input,
+                    out_q,
+                    out_k,
+                    out_v,
+                    h,
+                    q_size,
+                    kv_size,
+                    stream,
+                )?;
+            }
         }
         return Ok(());
     }
@@ -340,6 +762,45 @@ pub fn gpu_dispatch_fused_qkv_on_stream(
     }
 
     Ok(())
+}
+
+/// Dispatch a fused QKV GEMV with bias on an explicit HIP stream (decode-strict).
+///
+/// Strictly enforces that Q/K/V weights are all Q4_0. Returns an error for any other type.
+pub fn gpu_dispatch_fused_qkv_decode_strict_on_stream(
+    device: &GpuDevice,
+    w_q: &GpuBuffer,
+    q_meta: &WeightMeta,
+    q_bias: Option<&GpuBuffer>,
+    w_k: &GpuBuffer,
+    k_meta: &WeightMeta,
+    k_bias: Option<&GpuBuffer>,
+    w_v: &GpuBuffer,
+    v_meta: &WeightMeta,
+    v_bias: Option<&GpuBuffer>,
+    input: *const f32,
+    out_q: *mut f32,
+    out_k: *mut f32,
+    out_v: *mut f32,
+    q_size: usize,
+    kv_size: usize,
+    h: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    if q_meta.wtype != GgmlType::Q4_0
+        || k_meta.wtype != GgmlType::Q4_0
+        || v_meta.wtype != GgmlType::Q4_0
+    {
+        return Err(GpuError::UnsupportedWeightType {
+            tensor: "decode.fused_qkv".to_string(),
+            wtype: q_meta.wtype,
+        });
+    }
+
+    gpu_dispatch_fused_qkv_on_stream(
+        device, w_q, q_meta, q_bias, w_k, k_meta, k_bias, w_v, v_meta, v_bias, input, out_q, out_k,
+        out_v, q_size, kv_size, h, stream,
+    )
 }
 
 /// Dispatch a fused QKV GEMV for a single row.
@@ -385,13 +846,93 @@ pub fn gpu_dispatch_fused_qkv(
 }
 
 /// Dispatch a fused Gate/Up GEMV + SwiGLU for a single row on an explicit stream.
-pub fn gpu_dispatch_fused_gate_up_on_stream(
+pub(crate) fn gpu_dispatch_gate_up_raw_on_stream(
     device: &GpuDevice,
     w_gate: &GpuBuffer,
     gate_meta: &WeightMeta,
     w_up: &GpuBuffer,
     up_meta: &WeightMeta,
     input: *const f32,
+    gate_output: *mut f32,
+    up_output: *mut f32,
+    ff_size: usize,
+    h: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    validate_gemv_layout(gate_meta, ff_size, h)?;
+    validate_gemv_layout(up_meta, ff_size, h)?;
+
+    if gate_output.is_null() || up_output.is_null() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "gpu_dispatch_gate_up_raw: output pointers must be non-null".to_string(),
+        });
+    }
+    if gate_output == up_output {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "gpu_dispatch_gate_up_raw: gate and up outputs must be distinct buffers"
+                .to_string(),
+        });
+    }
+
+    if gate_meta.wtype == GgmlType::Q4_0 && up_meta.wtype == GgmlType::Q4_0 {
+        if experimental_q8_activation_fastpath_enabled()
+            && q8_fastpath_ok(
+                "gemv_gate_up_q4_0_q8_0",
+                try_q4_0_q8_0_gate_up_fastpath(
+                    device,
+                    w_gate,
+                    w_up,
+                    input,
+                    gate_output,
+                    up_output,
+                    h,
+                    ff_size,
+                    stream,
+                ),
+            )
+        {
+            return Ok(());
+        }
+
+        gemv_gate_up_q4_0_f32_on_stream(
+            w_gate.as_ptr() as *const u8,
+            w_up.as_ptr() as *const u8,
+            input,
+            gate_output,
+            up_output,
+            h,
+            ff_size,
+            stream,
+        )?;
+        return Ok(());
+    }
+
+    gpu_dispatch_gemv_on_stream(
+        device,
+        w_gate,
+        gate_meta,
+        input,
+        gate_output,
+        ff_size,
+        h,
+        stream,
+    )?;
+    gpu_dispatch_gemv_on_stream(device, w_up, up_meta, input, up_output, ff_size, h, stream)?;
+    Ok(())
+}
+
+pub(crate) fn gpu_dispatch_fused_gate_up_with_scratch_on_stream(
+    device: &GpuDevice,
+    w_gate: &GpuBuffer,
+    gate_meta: &WeightMeta,
+    w_up: &GpuBuffer,
+    up_meta: &WeightMeta,
+    w_gate_up_interleaved: Option<&GpuBuffer>,
+    w_gate_up_interleaved_tile4: Option<&GpuBuffer>,
+    input: *const f32,
+    gate_scratch: *mut f32,
     output: *mut f32,
     ff_size: usize,
     h: usize,
@@ -401,6 +942,122 @@ pub fn gpu_dispatch_fused_gate_up_on_stream(
     validate_gemv_layout(up_meta, ff_size, h)?;
 
     if gate_meta.wtype == GgmlType::Q4_0 && up_meta.wtype == GgmlType::Q4_0 {
+        if experimental_q8_activation_fastpath_enabled() {
+            // Check if stream capture is active - skip autotune benchmarking during capture
+            let capture_active = matches!(
+                hip_stream_is_capturing(stream),
+                Err(_)
+                    | Ok(hipStreamCaptureStatus::hipStreamCaptureStatusActive)
+                    | Ok(hipStreamCaptureStatus::hipStreamCaptureStatusInvalidated)
+            );
+
+            if launch_autotune_enabled() {
+                let variant = if capture_active {
+                    lookup_gate_up_swiglu_q8_variant(h, ff_size).unwrap_or(VariantId::Baseline)
+                } else {
+                    select_gate_up_swiglu_q8_variant(h, ff_size, |v| {
+                        let result = match v {
+                            VariantId::Variant1 => {
+                                if let Some(interleaved_tile4) = w_gate_up_interleaved_tile4 {
+                                    gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_tile4_on_stream(
+                                        interleaved_tile4.as_ptr() as *const u8,
+                                        input,
+                                        output,
+                                        h,
+                                        ff_size,
+                                        stream,
+                                    )
+                                } else {
+                                    try_q4_0_q8_0_fused_gate_up_fastpath_variant(
+                                        w_gate, w_up, input, output, h, ff_size, 1, stream,
+                                    )
+                                }
+                            }
+                            VariantId::Variant2 => {
+                                if let Some(interleaved) = w_gate_up_interleaved {
+                                    gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_on_stream(
+                                        interleaved.as_ptr() as *const u8,
+                                        input,
+                                        output,
+                                        h,
+                                        ff_size,
+                                        stream,
+                                    )
+                                } else {
+                                    try_q4_0_q8_0_fused_gate_up_fastpath_variant(
+                                        w_gate, w_up, input, output, h, ff_size, 0, stream,
+                                    )
+                                }
+                            }
+                            _ => try_q4_0_q8_0_fused_gate_up_fastpath_variant(
+                                w_gate, w_up, input, output, h, ff_size, v as i32, stream,
+                            ),
+                        };
+                        hip_stream_synchronize(stream)?;
+                        result
+                    })
+                };
+
+                let selected_result = match variant {
+                    VariantId::Variant1 => {
+                        if let Some(interleaved_tile4) = w_gate_up_interleaved_tile4 {
+                            gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_tile4_on_stream(
+                                interleaved_tile4.as_ptr() as *const u8,
+                                input,
+                                output,
+                                h,
+                                ff_size,
+                                stream,
+                            )
+                        } else {
+                            try_q4_0_q8_0_fused_gate_up_fastpath_variant(
+                                w_gate, w_up, input, output, h, ff_size, 1, stream,
+                            )
+                        }
+                    }
+                    VariantId::Variant2 => {
+                        if let Some(interleaved) = w_gate_up_interleaved {
+                            gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_on_stream(
+                                interleaved.as_ptr() as *const u8,
+                                input,
+                                output,
+                                h,
+                                ff_size,
+                                stream,
+                            )
+                        } else {
+                            try_q4_0_q8_0_fused_gate_up_fastpath_variant(
+                                w_gate, w_up, input, output, h, ff_size, 0, stream,
+                            )
+                        }
+                    }
+                    _ => try_q4_0_q8_0_fused_gate_up_fastpath_variant(
+                        w_gate,
+                        w_up,
+                        input,
+                        output,
+                        h,
+                        ff_size,
+                        variant as i32,
+                        stream,
+                    ),
+                };
+
+                if q8_fastpath_ok("gemv_gate_up_swiglu_q4_0_f32_q8_inline", selected_result) {
+                    return Ok(());
+                }
+            }
+
+            if q8_fastpath_ok(
+                "gemv_gate_up_swiglu_q4_0_f32_q8_inline",
+                try_q4_0_q8_0_fused_gate_up_fastpath(
+                    w_gate, w_up, input, output, h, ff_size, stream,
+                ),
+            ) {
+                return Ok(());
+            }
+        }
+
         unsafe {
             gemv_gate_up_swiglu_q4_0_f32_on_stream(
                 w_gate.as_ptr() as *const u8,
@@ -415,10 +1072,89 @@ pub fn gpu_dispatch_fused_gate_up_on_stream(
         return Ok(());
     }
 
-    // Individual dispatches + manual silu/mul if no fused kernel matches
-    gpu_dispatch_gemv_on_stream(device, w_gate, gate_meta, input, output, ff_size, h, stream)?;
-    // (This path is slower, ideally we always hit the fused one)
+    if gate_scratch.is_null() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "gpu_dispatch_fused_gate_up: gate scratch pointer must be non-null"
+                .to_string(),
+        });
+    }
+    if gate_scratch == output {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description:
+                "gpu_dispatch_fused_gate_up: gate scratch and output must be distinct buffers"
+                    .to_string(),
+        });
+    }
+
+    gpu_dispatch_gate_up_raw_on_stream(
+        device,
+        w_gate,
+        gate_meta,
+        w_up,
+        up_meta,
+        input,
+        gate_scratch,
+        output,
+        ff_size,
+        h,
+        stream,
+    )?;
+    silu_on_stream(gate_scratch, gate_scratch, ff_size, stream)?;
+    mul_on_stream(gate_scratch, output, output, ff_size, stream)?;
     Ok(())
+}
+
+/// Dispatch a fused Gate/Up GEMV + SwiGLU for a single row on an explicit stream.
+pub fn gpu_dispatch_fused_gate_up_on_stream(
+    device: &GpuDevice,
+    w_gate: &GpuBuffer,
+    gate_meta: &WeightMeta,
+    w_up: &GpuBuffer,
+    up_meta: &WeightMeta,
+    w_gate_up_interleaved: Option<&GpuBuffer>,
+    w_gate_up_interleaved_tile4: Option<&GpuBuffer>,
+    input: *const f32,
+    output: *mut f32,
+    ff_size: usize,
+    h: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    if gate_meta.wtype == GgmlType::Q4_0 && up_meta.wtype == GgmlType::Q4_0 {
+        return gpu_dispatch_fused_gate_up_with_scratch_on_stream(
+            device,
+            w_gate,
+            gate_meta,
+            w_up,
+            up_meta,
+            w_gate_up_interleaved,
+            w_gate_up_interleaved_tile4,
+            input,
+            std::ptr::null_mut(),
+            output,
+            ff_size,
+            h,
+            stream,
+        );
+    }
+
+    let gate_scratch = GpuBuffer::alloc(ff_size * std::mem::size_of::<f32>())?;
+    gpu_dispatch_fused_gate_up_with_scratch_on_stream(
+        device,
+        w_gate,
+        gate_meta,
+        w_up,
+        up_meta,
+        w_gate_up_interleaved,
+        w_gate_up_interleaved_tile4,
+        input,
+        gate_scratch.as_ptr() as *mut f32,
+        output,
+        ff_size,
+        h,
+        stream,
+    )
 }
 
 /// Dispatch a fused Gate/Up GEMV + SwiGLU for a single row.
@@ -428,6 +1164,8 @@ pub fn gpu_dispatch_fused_gate_up(
     gate_meta: &WeightMeta,
     w_up: &GpuBuffer,
     up_meta: &WeightMeta,
+    w_gate_up_interleaved: Option<&GpuBuffer>,
+    w_gate_up_interleaved_tile4: Option<&GpuBuffer>,
     input: *const f32,
     output: *mut f32,
     ff_size: usize,
@@ -439,6 +1177,8 @@ pub fn gpu_dispatch_fused_gate_up(
         gate_meta,
         w_up,
         up_meta,
+        w_gate_up_interleaved,
+        w_gate_up_interleaved_tile4,
         input,
         output,
         ff_size,
@@ -468,40 +1208,40 @@ pub fn gpu_dispatch_gemm(
                 weights.as_ptr() as *const u8,
                 input,
                 output,
-                out_dim,
                 in_dim,
+                out_dim,
                 seq_len,
             )?,
             GgmlType::Q4_1 => gemm_q4_1_f32(
                 weights.as_ptr() as *const u8,
                 input,
                 output,
-                out_dim,
                 in_dim,
+                out_dim,
                 seq_len,
             )?,
             GgmlType::Q8_0 => gemm_q8_0_f32(
                 weights.as_ptr() as *const u8,
                 input,
                 output,
-                out_dim,
                 in_dim,
+                out_dim,
                 seq_len,
             )?,
             GgmlType::Q4_K => gemm_q4_k_f32(
                 weights.as_ptr() as *const u8,
                 input,
                 output,
-                out_dim,
                 in_dim,
+                out_dim,
                 seq_len,
             )?,
             GgmlType::Q5_K => gemm_q5_k_f32(
                 weights.as_ptr() as *const u8,
                 input,
                 output,
-                out_dim,
                 in_dim,
+                out_dim,
                 seq_len,
             )?,
             _ => {

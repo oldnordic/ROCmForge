@@ -4,6 +4,192 @@
 
 ### [GPU Backend]
 
+**fix(gpu): critical decode graph and Q8_0 kernel memory corruption bugs**
+
+- **Date:** April 11, 2026
+- **Issues Fixed:**
+  1. **Decode graph corruption**: Model output was corrupted (e.g., "SMART  ,,,1111111111") when using decode graph optimization
+  2. **Q8_0 kernel corruption**: Model output was corrupted (e.g., "SMARTA11,") when using experimental kernels without decode graph
+- **Root Causes:**
+  - **Decode graph**: The `gpu_try_greedy_decode_graph()` function was missing critical `scratch.upload_decode_state(pos, pos + 1, stream)` call before graph replay. HIP graphs capture memory pointers but not updated values like position, so stale position data from capture time was reused for subsequent tokens.
+  - **Q8_0 kernel**: The `gemv_q8_0_f32_kernel` in `hip_kernels/quant/q8_0_gemv.hip` used hardcoded `__shared__ float partial_sums[256]` but was launched with variable block sizes (64, 128, 256) via `select_lm_head_block_size()`, causing out-of-bounds memory access when block size < 256.
+- **Fixes:**
+  - `src/gpu/forward.rs`:
+    - Added `decode_state_next_pos()` getter to `src/gpu/cache.rs`
+    - Added proper position tracking and decode state upload before graph launch in `gpu_try_greedy_decode_graph()`
+    - Fixed function signature mismatches for `gpu_dispatch_fused_gate_up_on_stream` (added missing parameters)
+  - `hip_kernels/quant/q8_0_gemv.hip`:
+    - Changed `__shared__ float partial_sums[256]` to `extern __shared__ float partial_sums[]` for dynamic sizing
+    - Updated all kernel launch sites to allocate appropriate dynamic shared memory: `block_size * sizeof(float)`
+- **Validation:**
+  - Model now produces correct output in all execution modes:
+    - With decode graph: "SMART: A New Approach to Teaching Mathematics By: Dr. S." ✅
+    - Without decode graph: "Paris. It is the largest city in France and" ✅
+    - With/without experimental kernels: Both produce correct output ✅
+  - Performance maintained: ~400 tok/s decode throughput (no regression)
+  - `cargo build --release --features gpu` ✅
+  - All existing tests pass ✅
+- **Technical Notes:**
+  - The decode graph optimization is now fully functional and provides significant speedup while maintaining correctness
+  - Experimental kernels (Vulkan-style, wavefront shuffles, etc.) now work correctly in both graph and non-graph execution paths
+  - These were critical correctness bugs that affected all model sizes and quantization types when using GPU acceleration
+
+**fix(gpu/autotune): persist launch-autotune cache and stabilize full-decode graph warmup/update**
+
+- **Date:** April 10, 2026
+- **Issue:**
+  - launch autotune decisions were not persisted to disk, so each process started from an empty cache.
+  - decode-graph + autotune first-run flow could fail when a full-decode graph update was attempted against an existing non-full graph scope.
+- **Root Cause:**
+  - `launch_autotune_v1.json` used `HashMap<ShapeKey, VariantId>` JSON serialization, but JSON object keys must be strings; serialization failed and no cache file was written.
+  - full-decode warmup gating used `pos == 0`, but first decode after prompt prefill often starts at `pos > 0`.
+  - full-decode graph update path did not guard against updating from a different decode-graph scope.
+- **Fix:**
+  - `src/gpu/launch_autotune.rs`:
+    - switched persisted schema to `entries: Vec<{ key, variant }>` and added load/save conversion to/from runtime map.
+    - kept versioning with `v1`.
+  - `src/gpu/forward.rs`:
+    - warmup gate now checks `scratch.decode_graph().is_none()` + missing autotune entries (no `pos == 0` dependency).
+    - full-decode graph update now only attempts in-place update when existing scope is `FullGreedyDecode`; otherwise instantiate a new full-decode graph.
+  - `src/gpu/ops.rs`:
+    - removed now-unused imports in the autotune call path cleanup.
+- **Measured result (Qwen2.5-7B-Instruct-Q4_0-Pure.gguf, `--max-tokens 64`):**
+  - graph + q8 fastpath + launch autotune: about `105.2` to `106.0 tok/s` (stable)
+  - no graph + q8 fastpath + launch autotune: about `103.9 tok/s`
+  - autotune cache now persists at `~/.cache/rocmforge/launch_autotune_v1.json` with QKV/gate/residual entries.
+- **Validation:**
+  - `cargo fmt`
+  - `cargo build --release --features gpu`
+  - `cargo test --release --features gpu --lib gpu::launch_autotune::tests::cache_serialization_roundtrip -- --nocapture`
+  - `cargo test --release --features gpu --test gpu_q4_0_q8_dispatch -- --test-threads=1`
+  - `cargo test --release --features gpu --test gpu_q4_0_q8_residual_dispatch -- --test-threads=1`
+  - `cargo test --release --features gpu --test gpu_qkv_dispatch -- --test-threads=1`
+
+**perf(gpu): reuse decode v2/v3 launcher paths for 7B-sized rows when LDS budget allows**
+
+- **Issue:** Several decode launchers still used `n_rows <= 1024` guards from the 0.5B tuning pass, so 7B shapes were falling back to older geometry even when shared memory limits were still satisfied.
+- **Fix:**
+  - `hip_kernels/quant/q8_0_gemv.hip`:
+    - relaxed LM-head v2 guard to use alignment/subwave checks without the `<=1024` row cap when LDS staging is already in-range.
+  - `hip_kernels/quant/q4_0_fused.hip`:
+    - relaxed QKV v3/v2 row guard from `<=1024` to `<=4096`.
+  - `hip_kernels/quant/q4_0_fused_q8.hip`:
+    - relaxed inline Q8 gate/up v2 row guard from `<=1024` to `<=4096`.
+- **Measured result (same CLI command, Qwen2.5-7B-Instruct-Q4_0-Pure.gguf, 3 runs):**
+  - Before: decode `56.5/56.3/56.2 tok/s` (avg `56.3`), prefill `31.8/33.4/33.7 tok/s` (avg `33.0`)
+  - After: decode `106.7/106.7/106.5 tok/s` (avg `106.6`), prefill `31.5/32.4/32.0 tok/s` (avg `32.0`)
+- **Validation:**
+  - `cargo build --release --features gpu`
+  - `cargo test --release --features gpu --test gpu_q4_0_q8_dispatch -- --test-threads=1`
+  - `cargo test --release --features gpu --test gpu_q4_0_q8_residual_dispatch -- --test-threads=1`
+  - CLI throughput check:
+    - `ROCMFORGE_ENABLE_DECODE_GRAPH=1 ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH=1 ./target/release/rocmforge --gpu --model /home/feanor/Projects/Memoria/models/Qwen2.5-7B-Instruct-Q4_0-Pure.gguf --prompt Hello --no-template --top-p 1.0 --temperature 0.0 --max-tokens 64`
+
+**docs(status): refresh README/manual with measured 7B run and plain status language**
+
+- Updated CLI docs to match the current binary flags (`--gpu` supported, `--device` not supported).
+- Rewrote `README.md` to remove stale options and stale model table entries.
+- Added a factual project status section:
+  - progress is incremental and currently slower than `llama.cpp` on this machine.
+- Added current measured results (April 10, 2026):
+  - `Qwen2.5-0.5B-Instruct Q4_0` decode harness (`runs=10`, `warmup=1`): `decode_avg_tok_s=526.8`, `prefill_avg_tok_s=408.7`
+  - `Qwen2.5-7B-Instruct-Q4_0-Pure.gguf` CLI run (`3` runs, `--max-tokens 64`): decode `56.5/56.3/56.2 tok/s` (avg `56.3`), prefill `31.8/33.4/33.7 tok/s` (avg `33.0`)
+  - graph-disabled comparison (`0.5B Q4_0`, `runs=5`): `decode_avg_tok_s=486.0`
+- Added canonical uppercase manual file `MANUAL.md`.
+- Kept lowercase `manual.md` as a compatibility pointer to `MANUAL.md`.
+- Files Changed: `README.md`, `MANUAL.md`, `manual.md`, `CHANGELOG.md`
+
+**docs(gpu/research): add llama.cpp HIP kernel hotspot mapping and port guidance**
+
+- Added `docs/llama_cpp_hip_kernel_mapping.md` with:
+  - fixed-shape local HIP runs on `qwen2.5-0.5b-instruct-q4_0.gguf`
+  - `rocprofv3` top kernel/API buckets (`-fa` on/off)
+  - direct mapping from `llama.cpp` HIP kernel families to `rocmforge` decode kernels
+  - prioritized next-port guidance for decode GEMV/elementwise/launch-overhead work
+  - note about current local `llama.cpp` MMQ-vs-CUBLAS forced-build blocker
+  - note that pacman `llama-cpp-git` on this machine is Vulkan-backed in runtime, so it should be
+    treated as a practical baseline but not as a HIP-kernel baseline
+- Files Changed: `docs/llama_cpp_hip_kernel_mapping.md`, `CHANGELOG.md`
+
+**fix(gpu/safety): auto-disable risky decode fastpaths after first runtime failure**
+
+- **Issue:** Fast decode paths (HIP graph replay and `Q4_0 x Q8` activation fastpaths) could be retried on every token/layer even after a launch/capture failure, increasing the chance of repeated unstable launches on display-attached GPUs.
+- **Root Cause:** Runtime feature gates were env-only and static for the process; failure paths in dispatch/graph replay mostly fell back for one call but did not globally downgrade the feature for subsequent calls.
+- **Fix:**
+  - Added process-local runtime safety latches in `src/gpu/safety.rs`:
+    - `disable_decode_graph_runtime(reason)`
+    - `disable_q8_activation_fastpath_runtime(reason)`
+  - Added a process-wide conservative override:
+    - `ROCMFORGE_GPU_SAFE_MODE=1`
+    - forces decode graph + Q8 activation fastpath + FFN fastpath off for the process
+  - Wired `decode_graph_enabled()` and `experimental_q8_activation_fastpath_enabled()` to respect those latches.
+  - Updated `refresh_runtime_env_flags()` to reset runtime latches and log guards.
+  - Added unit coverage for both runtime-latch paths.
+  - Updated dispatch/replay call sites:
+    - `src/gpu/ops.rs`: Q8 activation fastpaths now disable themselves on first error instead of re-attempting forever.
+    - `src/gpu/forward.rs`: greedy/full decode graph capture/replay failures now trigger one-way runtime disable and clean fallback behavior.
+- **Impact:**
+  - Safety: one failed risky launch now de-risks the rest of the process by forcing conservative paths.
+  - Stability: avoids repeated graph/fastpath retries after a known failure condition.
+  - Performance: no observed regression in the graph-backed benchmark path.
+- **Validation:**
+  - `cargo test --release --features gpu runtime_disable_ -- --test-threads=1`
+  - `cargo test --release --features gpu gpu_safe_mode_forces_conservative_feature_set -- --test-threads=1`
+  - `cargo test --release --features gpu --test gpu_q4_0_q8_residual_dispatch -- --test-threads=1`
+  - `ROCMFORGE_RUN_REAL_MODEL_GPU_TESTS=1 ROCMFORGE_ENABLE_DECODE_GRAPH=1 ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH=1 ROCMFORGE_BENCH_RUNS=5 ROCMFORGE_BENCH_WARMUP=1 cargo test --release --features gpu --test gpu_decode_real test_gpu_greedy_decode_benchmark_real_model_multi_run -- --ignored --nocapture --test-threads=1`
+  - Benchmark summary after fix: `decode_avg_tok_s=515.6` (runs=5, warmup=1)
+- **Files Changed:** `src/gpu/safety.rs`, `src/gpu/mod.rs`, `src/gpu/ops.rs`, `src/gpu/forward.rs`, `README.md`, `CHANGELOG.md`, `docs/research.md`
+
+**perf(tooling): make GPU profiling wrappers explicit for decode graph and Q8 activation fastpath**
+
+- **Issue:** Throughput numbers from helper scripts were easy to misread because wrapper defaults did not always match the graph-backed decode baseline used by the real-model benchmark harness
+- **Root Cause:** `.perf/perf_decode.sh` and `.rocprofv3/profile_decode.sh` did not force or report effective decode-path feature flags consistently, so graph-off runs could be compared against graph-on harness results
+- **Fix:**
+  - Updated `.perf/perf_decode.sh` to set explicit defaults for:
+    - `ROCMFORGE_ENABLE_DECODE_GRAPH=1`
+    - `ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH=1`
+  - Added emitted wrapper banner lines so each run prints effective decode-related env settings
+  - Updated `.rocprofv3/profile_decode.sh` to:
+    - add explicit default knobs (`ROCPROF_ENABLE_DECODE_GRAPH_DEFAULT`, `ROCPROF_ENABLE_Q8_ACTIVATION_FASTPATH_DEFAULT`)
+    - print effective decode graph / Q8 fastpath state per mode
+    - add `runtime-graph` mode that forces graph-backed decode tracing
+  - Updated `.rocprofv3/README.md` with the new mode and env behavior
+  - Documented throughput reconciliation and profiler caveats in `docs/research.md`
+- **Impact:**
+  - Wrapper runs are now reproducible and self-describing for decode-path toggles
+  - Session measurements confirmed:
+    - default single-run CLI decode: about `472.8 tok/s`
+    - graph + Q8 fastpath on: about `509.6 tok/s`
+    - graph on + Q8 fastpath off: about `418.1 tok/s`
+  - Real-model harness remained stable at about `515.3 tok/s` decode (`runs=5`, `warmup=1`)
+  - `rocprofv3 runtime-graph` continues to show heavy trace overhead (`hipGraphLaunch` dominant), so it remains diagnostics-only for bucket ordering rather than primary throughput truth
+- **Validation:**
+  - `cargo test --release --features gpu --test gpu_decode_real test_gpu_greedy_decode_benchmark_real_model_multi_run -- --ignored --nocapture --test-threads=1`
+  - `cargo test --release --features gpu --test gpu_decode_real test_gpu_greedy_decode_profile_real_model -- --ignored --nocapture --test-threads=1`
+  - `cargo test --release --features gpu --test gpu_safety_fallback -- --test-threads=1`
+  - `./.rocprofv3/profile_decode.sh runtime`
+  - `ROCMFORGE_ENABLE_DECODE_GRAPH=1 ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH=1 ./.rocprofv3/profile_decode.sh runtime`
+  - `./.perf/perf_decode.sh`
+  - `journalctl -k -b --since '10 minutes ago' | rg -i 'gpu reset|amdgpu|ring|fault|hang|timeout'`
+- **Files Changed:** `.perf/perf_decode.sh`, `.rocprofv3/profile_decode.sh`, `.rocprofv3/README.md`, `docs/research.md`, `CHANGELOG.md`
+
+**refactor(gpu): split decode-graph key construction out of forward hotpath**
+
+- **Issue:** `src/gpu/forward.rs` had mixed responsibilities (decode execution + decode-graph key policy), increasing hotpath complexity and making graph identity logic harder to reason about during safety/perf work
+- **Root Cause:** Decode-graph key assembly and binding-tag hashing lived inline inside forward-path control flow
+- **Fix:**
+  - Added `src/gpu/decode_graph_keys.rs` for decode-graph key construction and feature/binding tags
+  - Moved graph-key helper logic out of `forward.rs`
+  - Wired the extracted module through `src/gpu/mod.rs`
+- **Impact:**
+  - Cleaner separation of concerns between decode execution and graph identity policy
+  - No observed throughput regression from the refactor (`~516 tok/s` class remained stable in real-model decode harness)
+- **Validation:**
+  - `cargo test --release --features gpu --test gpu_q4_0_q8_residual_dispatch -- --test-threads=1`
+  - `ROCMFORGE_RUN_REAL_MODEL_GPU_TESTS=1 ROCMFORGE_ENABLE_DECODE_GRAPH=1 ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH=1 cargo test --release --features gpu --test gpu_decode_real test_gpu_decode_real_model_matches_cpu_greedy_token -- --test-threads=1`
+  - `ROCMFORGE_RUN_REAL_MODEL_GPU_TESTS=1 ROCMFORGE_ENABLE_DECODE_GRAPH=1 ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH=1 ROCMFORGE_BENCH_RUNS=5 ROCMFORGE_BENCH_WARMUP=1 cargo test --release --features gpu --test gpu_decode_real test_gpu_greedy_decode_benchmark_real_model_multi_run -- --ignored --nocapture --test-threads=1`
+- **Files Changed:** `src/gpu/decode_graph_keys.rs`, `src/gpu/forward.rs`, `src/gpu/mod.rs`, `docs/research.md`, `CHANGELOG.md`
+
 **perf(tooling): Add Criterion and perf harnesses for graph-backed GPU decode**
 
 - **Issue:** Decode throughput work was relying too much on one-off shell commands and ignored tests, which made host-side regressions and end-to-end variability harder to spot

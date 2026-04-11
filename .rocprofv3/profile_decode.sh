@@ -10,6 +10,11 @@ ROCMFORGE_PROMPT="${ROCMFORGE_PROMPT:-Hello}"
 ROCMFORGE_MAX_TOKENS="${ROCMFORGE_MAX_TOKENS:-64}"
 ROCMFORGE_EXTRA_ARGS="${ROCMFORGE_EXTRA_ARGS:-}"
 ROCPROF_OUTDIR="${ROCPROF_OUTDIR:-/tmp/rocprof-${MODE}}"
+ROCPROF_ENABLE_DECODE_GRAPH_DEFAULT="${ROCPROF_ENABLE_DECODE_GRAPH_DEFAULT:-0}"
+ROCPROF_ENABLE_Q8_ACTIVATION_FASTPATH_DEFAULT="${ROCPROF_ENABLE_Q8_ACTIVATION_FASTPATH_DEFAULT:-1}"
+
+export ROCMFORGE_ENABLE_DECODE_GRAPH="${ROCMFORGE_ENABLE_DECODE_GRAPH:-$ROCPROF_ENABLE_DECODE_GRAPH_DEFAULT}"
+export ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH="${ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH:-$ROCPROF_ENABLE_Q8_ACTIVATION_FASTPATH_DEFAULT}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -55,18 +60,39 @@ COMMON_TRACE_ARGS=(
 
 case "${MODE}" in
     runtime)
+        echo "[profile_decode] mode=${MODE}" >&2
+        echo "[profile_decode] ROCMFORGE_ENABLE_DECODE_GRAPH=${ROCMFORGE_ENABLE_DECODE_GRAPH}" >&2
+        echo "[profile_decode] ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH=${ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH}" >&2
         exec "${ROCPROF_BIN}" \
             --runtime-trace \
             "${COMMON_TRACE_ARGS[@]}" \
             -- "${BASE_CMD[@]}"
         ;;
+    runtime-graph)
+        echo "[profile_decode] mode=${MODE}" >&2
+        echo "[profile_decode] ROCMFORGE_ENABLE_DECODE_GRAPH=1" >&2
+        echo "[profile_decode] ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH=1" >&2
+        exec env \
+            ROCMFORGE_ENABLE_DECODE_GRAPH=1 \
+            ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH=1 \
+            "${ROCPROF_BIN}" \
+            --runtime-trace \
+            "${COMMON_TRACE_ARGS[@]}" \
+            -- "${BASE_CMD[@]}"
+        ;;
     system)
+        echo "[profile_decode] mode=${MODE}" >&2
+        echo "[profile_decode] ROCMFORGE_ENABLE_DECODE_GRAPH=${ROCMFORGE_ENABLE_DECODE_GRAPH}" >&2
+        echo "[profile_decode] ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH=${ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH}" >&2
         exec "${ROCPROF_BIN}" \
             --sys-trace \
             "${COMMON_TRACE_ARGS[@]}" \
             -- "${BASE_CMD[@]}"
         ;;
     runtime-gate-up)
+        echo "[profile_decode] mode=${MODE}" >&2
+        echo "[profile_decode] ROCMFORGE_ENABLE_DECODE_GRAPH=${ROCMFORGE_ENABLE_DECODE_GRAPH}" >&2
+        echo "[profile_decode] ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH=${ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH}" >&2
         exec "${ROCPROF_BIN}" \
             --runtime-trace \
             --input "${SCRIPT_DIR}/kernel-filter-gate-up.yml" \
@@ -74,6 +100,9 @@ case "${MODE}" in
             -- "${BASE_CMD[@]}"
         ;;
     runtime-ffn-down)
+        echo "[profile_decode] mode=${MODE}" >&2
+        echo "[profile_decode] ROCMFORGE_ENABLE_DECODE_GRAPH=${ROCMFORGE_ENABLE_DECODE_GRAPH}" >&2
+        echo "[profile_decode] ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH=${ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH}" >&2
         exec "${ROCPROF_BIN}" \
             --runtime-trace \
             --input "${SCRIPT_DIR}/kernel-filter-ffn-down.yml" \
@@ -81,6 +110,9 @@ case "${MODE}" in
             -- "${BASE_CMD[@]}"
         ;;
     pmc-gate-up)
+        echo "[profile_decode] mode=${MODE}" >&2
+        echo "[profile_decode] ROCMFORGE_ENABLE_DECODE_GRAPH=0 (forced for PMC mode)" >&2
+        echo "[profile_decode] ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH=${ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH}" >&2
         echo "PMC mode is experimental on this machine and may abort rocmforge." >&2
         exec env ROCMFORGE_DISABLE_DECODE_GRAPH=1 "${ROCPROF_BIN}" \
             --disable-signal-handlers \
@@ -91,6 +123,9 @@ case "${MODE}" in
             -- "${BASE_CMD[@]}"
         ;;
     pmc-ffn-down)
+        echo "[profile_decode] mode=${MODE}" >&2
+        echo "[profile_decode] ROCMFORGE_ENABLE_DECODE_GRAPH=0 (forced for PMC mode)" >&2
+        echo "[profile_decode] ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH=${ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH}" >&2
         echo "PMC mode is experimental on this machine and may abort rocmforge." >&2
         exec env ROCMFORGE_DISABLE_DECODE_GRAPH=1 "${ROCPROF_BIN}" \
             --disable-signal-handlers \
@@ -102,7 +137,7 @@ case "${MODE}" in
         ;;
     *)
         echo "unknown mode: ${MODE}" >&2
-        echo "modes: runtime, system, runtime-gate-up, runtime-ffn-down, pmc-gate-up, pmc-ffn-down" >&2
+        echo "modes: runtime, runtime-graph, system, runtime-gate-up, runtime-ffn-down, pmc-gate-up, pmc-ffn-down" >&2
         exit 2
         ;;
 esac

@@ -509,14 +509,30 @@ fn gpu_try_greedy_decode_graph(
         }
     }
 
-    if let Some(graph) = scratch.decode_graph() {
-        if graph.launch(device.stream()).is_ok() {
-            gpu_read_greedy_argmax_result(device, scratch, config.vocab_size)?;
-            device.synchronize()?;
-            let index = scratch.argmax_result_index.as_slice::<i32>()[0];
-            return Ok(index as u32);
+    // Check if we have position tracking for decode state updates
+    let next_pos = scratch.decode_state_next_pos();
+
+    if next_pos.is_some() {
+        let has_graph = scratch.decode_graph().is_some();
+
+        if has_graph {
+            // CRITICAL FIX: Upload decode state before graph launch
+            // The graph captures memory pointers but NOT values like position.
+            // We must upload updated decode state before each replay to ensure correctness.
+            let pos = next_pos.unwrap();
+            scratch.upload_decode_state(pos, pos + 1, device.stream())?;
+
+            // Get graph again after upload
+            if let Some(graph) = scratch.decode_graph() {
+                if graph.launch(device.stream()).is_ok() {
+                    gpu_read_greedy_argmax_result(device, scratch, config.vocab_size)?;
+                    device.synchronize()?;
+                    let index = scratch.argmax_result_index.as_slice::<i32>()[0];
+                    return Ok(index as u32);
+                }
+            }
+            scratch.clear_decode_graph();
         }
-        scratch.clear_decode_graph();
     }
 
     gpu_greedy_logits_tail_token(device, gpu_weights, scratch, config)
@@ -1122,6 +1138,8 @@ fn gpu_layer_forward_from_state_on_stream(
         &gpu_layer.ffn_gate_meta,
         &gpu_layer.ffn_up,
         &gpu_layer.ffn_up_meta,
+        None, // w_gate_up_interleaved
+        None, // w_gate_up_interleaved_tile4
         scratch.normed.as_ptr() as *const f32,
         scratch.swiglu.as_ptr() as *mut f32,
         ff_size,
@@ -1402,6 +1420,8 @@ pub fn gpu_layer_forward_hybrid(
             &gpu_layer.ffn_gate_meta,
             &gpu_layer.ffn_up,
             &gpu_layer.ffn_up_meta,
+            None, // w_gate_up_interleaved
+            None, // w_gate_up_interleaved_tile4
             scratch.normed.as_ptr() as *const f32,
             scratch.swiglu.as_ptr() as *mut f32,
             ff_size,

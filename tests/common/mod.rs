@@ -77,6 +77,17 @@ pub fn get_free_vram() -> Option<u64> {
     None
 }
 
+#[allow(dead_code)]
+pub fn real_model_gpu_tests_enabled() -> bool {
+    rocmforge::gpu::real_model_gpu_tests_enabled()
+}
+
+#[allow(dead_code)]
+pub fn experimental_gpu_tests_enabled() -> bool {
+    rocmforge::gpu::run_experimental_gpu_tests_enabled()
+        && rocmforge::gpu::experimental_gpu_kernels_enabled()
+}
+
 /// Macro to skip test if GPU unavailable.
 #[macro_export]
 macro_rules! require_gpu {
@@ -85,6 +96,13 @@ macro_rules! require_gpu {
             eprintln!("Skipping test: No GPU detected");
             return;
         }
+        let _gpu_lock = match crate::common::GpuLock::acquire() {
+            Ok(lock) => lock,
+            Err(err) => {
+                eprintln!("Skipping test: {}", err);
+                return;
+            }
+        };
     };
 }
 
@@ -110,6 +128,46 @@ macro_rules! require_vram {
                 eprintln!("Skipping test: Could not determine VRAM usage");
                 return;
             }
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! require_real_model_gpu_tests {
+    () => {
+        if !crate::common::real_model_gpu_tests_enabled() {
+            eprintln!(
+                "Skipping test: set {}=1 to run real-model GPU tests",
+                rocmforge::gpu::RUN_REAL_MODEL_GPU_TESTS_ENV
+            );
+            return;
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! require_experimental_gpu_tests {
+    () => {
+        if !crate::common::experimental_gpu_tests_enabled() {
+            eprintln!(
+                "Skipping test: set {}=1 and {}=1 to run experimental GPU kernel tests",
+                rocmforge::gpu::RUN_EXPERIMENTAL_GPU_TESTS_ENV,
+                rocmforge::gpu::ENABLE_EXPERIMENTAL_GPU_KERNELS_ENV
+            );
+            return;
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! require_decode_graph_enabled {
+    () => {
+        if !rocmforge::gpu::decode_graph_enabled() {
+            eprintln!(
+                "Skipping test: set {}=1 to enable decode graph replay",
+                rocmforge::gpu::ENABLE_DECODE_GRAPH_ENV
+            );
+            return;
         }
     };
 }

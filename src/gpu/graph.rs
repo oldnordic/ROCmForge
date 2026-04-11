@@ -36,6 +36,7 @@ pub struct DecodeGraphKey {
     lm_head_ptr: usize,
     lm_head_wtype_tag: u8,
     lm_head_role_tag: u8,
+    feature_flags_tag: u8,
     layer_weights_binding_tag: u64,
     kv_binding_tag: u64,
 }
@@ -95,6 +96,7 @@ impl DecodeGraphKey {
             lm_head_ptr,
             lm_head_wtype_tag: ggml_type_tag(lm_head_wtype),
             lm_head_role_tag: tensor_role_tag(lm_head_role),
+            feature_flags_tag: 0,
             layer_weights_binding_tag: 0,
             kv_binding_tag: 0,
         }
@@ -112,6 +114,11 @@ impl DecodeGraphKey {
 
     pub fn with_kv_binding_tag(mut self, tag: u64) -> Self {
         self.kv_binding_tag = tag;
+        self
+    }
+
+    pub fn with_feature_flags_tag(mut self, tag: u8) -> Self {
+        self.feature_flags_tag = tag;
         self
     }
 
@@ -376,5 +383,14 @@ mod tests {
             .with_decode_scope(DecodeGraphScope::FullGreedyDecode);
 
         assert_ne!(tail, full);
+    }
+
+    #[test]
+    fn decode_graph_key_changes_with_feature_flags() {
+        let config = make_test_config();
+        let baseline = DecodeGraphKey::from_parts(0, 32, &config, GpuLogitsMode::GreedyArgmax);
+        let q8_fastpath = baseline.with_feature_flags_tag(0b10);
+
+        assert_ne!(baseline, q8_fastpath);
     }
 }

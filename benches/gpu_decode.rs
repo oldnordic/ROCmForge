@@ -32,6 +32,19 @@ struct DecodeRunStats {
 
 impl DecodeBenchContext {
     fn load() -> Result<Self, String> {
+        if !gpu::run_gpu_benches_enabled() {
+            return Err(format!(
+                "set {}=1 to run real-model GPU benchmarks",
+                gpu::RUN_GPU_BENCHES_ENV
+            ));
+        }
+        if !gpu::decode_graph_enabled() {
+            return Err(format!(
+                "set {}=1 to enable graph-backed GPU decode benchmarks",
+                gpu::ENABLE_DECODE_GRAPH_ENV
+            ));
+        }
+
         let model_path = std::env::var("ROCMFORGE_BENCH_MODEL")
             .unwrap_or_else(|_| DEFAULT_MODEL_PATH.to_string());
         let prompt =
@@ -91,6 +104,7 @@ impl DecodeBenchContext {
         let mut next_token = None;
         for (pos, &token_id) in self.prompt_tokens.iter().enumerate() {
             gpu::gpu_embed_token_hybrid(
+                &self.device,
                 token_id,
                 &self.gpu_weights,
                 &self.cpu_weights,
@@ -118,6 +132,7 @@ impl DecodeBenchContext {
         let decode_start = Instant::now();
         for step in 0..self.decode_tokens {
             gpu::gpu_embed_token_hybrid(
+                &self.device,
                 token,
                 &self.gpu_weights,
                 &self.cpu_weights,

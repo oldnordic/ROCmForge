@@ -52,10 +52,11 @@ __global__ void quantize_q8_0_device(
 
 // ── Dispatch Function (Called from Rust) ───────────────────────────────────────────
 
-extern "C" hipError_t quantize_q8_0_kernel(
+static inline hipError_t quantize_q8_0_launch_impl(
     const float* input,
     void* output,
-    int n
+    int n,
+    hipStream_t stream
 ) {
     // Validate dimensions
     if (n <= 0) {
@@ -71,11 +72,28 @@ extern "C" hipError_t quantize_q8_0_kernel(
         dim3(num_blocks),
         dim3(QK8_0),
         0,  // shared memory
-        0,  // stream
+        stream,
         input,
         output,
         n
     );
 
     return hipGetLastError();
+}
+
+extern "C" hipError_t quantize_q8_0_kernel(
+    const float* input,
+    void* output,
+    int n
+) {
+    return quantize_q8_0_launch_impl(input, output, n, 0);
+}
+
+extern "C" hipError_t quantize_q8_0_on_stream_kernel(
+    const float* input,
+    void* output,
+    int n,
+    hipStream_t stream
+) {
+    return quantize_q8_0_launch_impl(input, output, n, stream);
 }

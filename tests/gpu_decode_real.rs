@@ -96,14 +96,7 @@ fn test_gpu_embed_real_model_matches_cpu_hidden() {
         return;
     }
 
-    let _lock = match common::GpuLock::acquire() {
-        Ok(lock) => lock,
-        Err(err) => {
-            eprintln!("Skipping test: {}", err);
-            return;
-        }
-    };
-
+    require_real_model_gpu_tests!();
     require_gpu!();
     require_vram!(4);
 
@@ -161,14 +154,7 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
         return;
     }
 
-    let _lock = match common::GpuLock::acquire() {
-        Ok(lock) => lock,
-        Err(err) => {
-            eprintln!("Skipping test: {}", err);
-            return;
-        }
-    };
-
+    require_real_model_gpu_tests!();
     require_gpu!();
     require_vram!(4);
 
@@ -430,14 +416,8 @@ fn test_gpu_greedy_decode_populates_cached_graph() {
         return;
     }
 
-    let _lock = match common::GpuLock::acquire() {
-        Ok(lock) => lock,
-        Err(err) => {
-            eprintln!("Skipping test: {}", err);
-            return;
-        }
-    };
-
+    require_real_model_gpu_tests!();
+    require_decode_graph_enabled!();
     require_gpu!();
     require_vram!(4);
 
@@ -505,19 +485,15 @@ fn test_gpu_greedy_decode_profile_real_model() {
         return;
     }
 
-    let _lock = match common::GpuLock::acquire() {
-        Ok(lock) => lock,
-        Err(err) => {
-            eprintln!("Skipping test: {}", err);
-            return;
-        }
-    };
-
+    require_real_model_gpu_tests!();
     require_gpu!();
     require_vram!(4);
 
     gpu::reset_decode_stage_profile();
-    std::env::set_var("ROCMFORGE_PROFILE_DECODE_STAGES", "1");
+    unsafe {
+        std::env::set_var("ROCMFORGE_PROFILE_DECODE_STAGES", "1");
+    }
+    rocmforge::gpu::refresh_runtime_env_flags();
 
     let caps = gpu::detect().expect("GPU should be detected");
     let device = GpuDevice::init(caps.device_id).expect("GPU device should initialize");
@@ -650,7 +626,10 @@ fn test_gpu_greedy_decode_profile_real_model() {
         "stage profiling disables decode graph replay so direct-path timings are meaningful"
     );
 
-    std::env::remove_var("ROCMFORGE_PROFILE_DECODE_STAGES");
+    unsafe {
+        std::env::remove_var("ROCMFORGE_PROFILE_DECODE_STAGES");
+    }
+    rocmforge::gpu::refresh_runtime_env_flags();
 }
 
 #[test]
@@ -662,14 +641,7 @@ fn test_gpu_greedy_decode_benchmark_real_model_multi_run() {
         return;
     }
 
-    let _lock = match common::GpuLock::acquire() {
-        Ok(lock) => lock,
-        Err(err) => {
-            eprintln!("Skipping test: {}", err);
-            return;
-        }
-    };
-
+    require_real_model_gpu_tests!();
     require_gpu!();
     require_vram!(4);
 
@@ -824,14 +796,7 @@ fn test_gpu_prefill_real_model_matches_cpu_greedy_token() {
         return;
     }
 
-    let _lock = match common::GpuLock::acquire() {
-        Ok(lock) => lock,
-        Err(err) => {
-            eprintln!("Skipping test: {}", err);
-            return;
-        }
-    };
-
+    require_real_model_gpu_tests!();
     require_gpu!();
     require_vram!(4);
 
@@ -1103,14 +1068,7 @@ fn test_gpu_ffn_down_real_model_matches_cpu_layer0_projection() {
         return;
     }
 
-    let _lock = match common::GpuLock::acquire() {
-        Ok(lock) => lock,
-        Err(err) => {
-            eprintln!("Skipping test: {}", err);
-            return;
-        }
-    };
-
+    require_real_model_gpu_tests!();
     require_gpu!();
     require_vram!(4);
 

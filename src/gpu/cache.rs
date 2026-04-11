@@ -30,6 +30,8 @@ pub struct GpuKvCache {
     pub kv_size: usize,
     /// Number of layers
     pub num_layers: usize,
+    /// Cached pointer-mix used by decode-graph key construction.
+    decode_binding_tag: u64,
 }
 
 impl GpuKvCache {
@@ -67,12 +69,15 @@ impl GpuKvCache {
             v.push(buf);
         }
 
+        let decode_binding_tag = compute_kv_binding_tag(&k, &v);
+
         Ok(Self {
             k,
             v,
             max_seq_len,
             kv_size,
             num_layers: config.num_layers,
+            decode_binding_tag,
         })
     }
 
@@ -212,6 +217,28 @@ impl GpuKvCache {
         let total_bytes = 2 * self.num_layers * bytes_per_layer; // K + V
         total_bytes
     }
+
+    /// Cached pointer-mix used by decode-graph key construction.
+    #[inline]
+    pub fn binding_tag(&self) -> u64 {
+        self.decode_binding_tag
+    }
+}
+
+#[inline]
+fn mix_binding_tag(tag: u64, ptr: usize) -> u64 {
+    tag.rotate_left(13) ^ (ptr as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+}
+
+fn compute_kv_binding_tag(k: &[GpuBuffer], v: &[GpuBuffer]) -> u64 {
+    let mut tag = 0u64;
+    for buffer in k {
+        tag = mix_binding_tag(tag, buffer.as_ptr() as usize);
+    }
+    for buffer in v {
+        tag = mix_binding_tag(tag, buffer.as_ptr() as usize);
+    }
+    tag
 }
 
 #[cfg(test)]
@@ -271,6 +298,27 @@ mod tests {
         }
         // If allocation failed, test passes (bounds checking exists)
     }
+
+    #[test]
+    fn binding_tag_is_stable_for_same_cache() {
+        let config = make_test_config();
+        let cache = GpuKvCache::new(&config, 256);
+        if let Ok(cache) = cache {
+            let tag_a = cache.binding_tag();
+            let tag_b = cache.binding_tag();
+            assert_eq!(tag_a, tag_b);
+        }
+    }
+
+    #[test]
+    fn binding_tag_differs_for_distinct_allocations() {
+        let config = make_test_config();
+        let first = GpuKvCache::new(&config, 256);
+        let second = GpuKvCache::new(&config, 256);
+        if let (Ok(first), Ok(second)) = (first, second) {
+            assert_ne!(first.binding_tag(), second.binding_tag());
+        }
+    }
 }
 
 // ── Forward Scratch Buffers ───────────────────────────────────────────────────────
@@ -316,6 +364,10 @@ pub struct GpuForwardScratch {
     pub input_hidden_pinned: GpuPinnedBuffer,
     /// Per-token decode state uploaded before full-graph replay: [pos, seq_len]
     decode_state: GpuBuffer,
+    /// Pinned host staging for decode state upload to keep H2D async and tiny.
+    decode_state_host: GpuPinnedBuffer,
+    /// Host-tracked decode position currently resident in `decode_state[0]`.
+    decode_state_next_pos: Option<usize>,
     /// Cached executable graph for repeated decode work.
     captured_decode: Option<CapturedDecodeGraph>,
 }
@@ -430,6 +482,12 @@ impl GpuForwardScratch {
                 reason: format!("decode state allocation failed: {}", e),
             }
         })?;
+        let decode_state_host =
+            GpuPinnedBuffer::alloc(2 * std::mem::size_of::<i32>()).map_err(|e| {
+                GpuError::CacheAllocationFailed {
+                    reason: format!("decode state host allocation failed: {}", e),
+                }
+            })?;
 
         Ok(Self {
             hidden,
@@ -448,6 +506,8 @@ impl GpuForwardScratch {
             argmax_result_index,
             input_hidden_pinned,
             decode_state,
+            decode_state_host,
+            decode_state_next_pos: None,
             captured_decode: None,
         })
     }
@@ -575,11 +635,27 @@ impl GpuForwardScratch {
         unsafe { (self.decode_state.as_ptr() as *const i32).add(1) }
     }
 
+    pub fn decode_state_mut_ptr(&mut self) -> *mut i32 {
+        self.decode_state.as_ptr() as *mut i32
+    }
+
+    pub fn decode_state_matches_pos(&self, pos: usize) -> bool {
+        self.decode_state_next_pos == Some(pos)
+    }
+
+    pub fn mark_decode_state_next_pos(&mut self, pos: usize) {
+        self.decode_state_next_pos = Some(pos);
+    }
+
+    pub fn decode_state_next_pos(&self) -> Option<usize> {
+        self.decode_state_next_pos
+    }
+
     pub fn upload_decode_state(
         &mut self,
         pos: usize,
         seq_len: usize,
-        _stream: hipStream_t,
+        stream: hipStream_t,
     ) -> GpuResult<()> {
         let pos_i32 = i32::try_from(pos).map_err(|_| GpuError::HipApiError {
             code: -1,
@@ -589,11 +665,19 @@ impl GpuForwardScratch {
             code: -1,
             description: format!("decode seq_len {} exceeds i32 range", seq_len),
         })?;
-        let state = [pos_i32, seq_len_i32];
+        let state = self.decode_state_host.as_slice_mut::<i32>();
+        state[0] = pos_i32;
+        state[1] = seq_len_i32;
         let state_bytes: &[u8] = unsafe {
-            std::slice::from_raw_parts(state.as_ptr() as *const u8, std::mem::size_of_val(&state))
+            std::slice::from_raw_parts(
+                self.decode_state_host.as_ptr() as *const u8,
+                2 * std::mem::size_of::<i32>(),
+            )
         };
-        self.decode_state.copy_from_host(state_bytes)
+        self.decode_state
+            .copy_from_host_on_stream(state_bytes, stream)?;
+        self.decode_state_next_pos = Some(pos);
+        Ok(())
     }
 
     pub fn decode_graph(&self) -> Option<&CapturedDecodeGraph> {
@@ -614,6 +698,7 @@ impl GpuForwardScratch {
         &mut self,
         graph: CapturedDecodeGraph,
     ) -> Option<CapturedDecodeGraph> {
+        self.decode_state_next_pos = None;
         self.captured_decode.replace(graph)
     }
 
@@ -622,7 +707,11 @@ impl GpuForwardScratch {
         new_graph: &crate::gpu::graph::HipGraph,
     ) -> GpuResult<bool> {
         if let Some(graph) = &self.captured_decode {
-            graph.update(new_graph)
+            let updated = graph.update(new_graph)?;
+            if updated {
+                self.decode_state_next_pos = None;
+            }
+            Ok(updated)
         } else {
             Ok(false)
         }
@@ -630,6 +719,7 @@ impl GpuForwardScratch {
 
     pub fn clear_decode_graph(&mut self) {
         self.captured_decode = None;
+        self.decode_state_next_pos = None;
     }
 }
 

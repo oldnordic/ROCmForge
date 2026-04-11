@@ -5,6 +5,15 @@
 
 use super::error::GpuResult;
 use super::ffi;
+use super::weights::GpuBuffer;
+use std::sync::Mutex;
+
+const DEFAULT_Q8_WORKSPACE_BYTES: usize = 64 * 1024;
+
+struct Q8Workspace {
+    buffer: Option<GpuBuffer>,
+    size: usize,
+}
 
 /// GPU device handle.
 ///
@@ -15,6 +24,7 @@ pub struct GpuDevice {
     stream: ffi::hipStream_t,
     warp_size: usize,
     max_shared_mem_per_block: usize,
+    q8_workspace: Mutex<Q8Workspace>,
 }
 
 impl GpuDevice {
@@ -33,6 +43,10 @@ impl GpuDevice {
             stream,
             warp_size: info.warp_size,
             max_shared_mem_per_block: info.max_shared_mem_per_block,
+            q8_workspace: Mutex::new(Q8Workspace {
+                buffer: None,
+                size: 0,
+            }),
         })
     }
 
@@ -98,6 +112,47 @@ impl GpuDevice {
     pub fn synchronize(&self) -> GpuResult<()> {
         ffi::hip_stream_synchronize(self.stream)
     }
+
+    /// Get a reusable device-local Q8 workspace of at least `min_bytes`.
+    ///
+    /// The buffer grows on demand and is reused across decode launches to avoid
+    /// per-token allocations in hot paths. Growth is synchronized so in-flight
+    /// kernels never observe a freed workspace.
+    pub fn q8_workspace_ptr(&self, min_bytes: usize) -> GpuResult<*mut u8> {
+        if min_bytes == 0 {
+            return Ok(std::ptr::null_mut());
+        }
+
+        let mut workspace = self
+            .q8_workspace
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+
+        if workspace.size < min_bytes {
+            if workspace.size != 0 {
+                self.synchronize()?;
+            }
+
+            let target_bytes = min_bytes.max(DEFAULT_Q8_WORKSPACE_BYTES);
+            workspace.buffer = Some(GpuBuffer::alloc(target_bytes)?);
+            workspace.size = target_bytes;
+        }
+
+        Ok(workspace
+            .buffer
+            .as_ref()
+            .map(|buf| buf.as_ptr())
+            .unwrap_or(std::ptr::null_mut()))
+    }
+
+    /// Reserve a reusable Q8 workspace before entering a capture-sensitive path.
+    ///
+    /// This keeps lazy `hipMalloc` growth outside HIP graph capture so later
+    /// decode launches can safely reuse the same buffer.
+    pub fn reserve_q8_workspace(&self, min_bytes: usize) -> GpuResult<()> {
+        let _ = self.q8_workspace_ptr(min_bytes)?;
+        Ok(())
+    }
 }
 
 impl Drop for GpuDevice {
@@ -115,6 +170,14 @@ impl std::fmt::Debug for GpuDevice {
             .field("stream", &self.stream)
             .field("warp_size", &self.warp_size)
             .field("max_shared_mem_per_block", &self.max_shared_mem_per_block)
+            .field(
+                "q8_workspace_bytes",
+                &self
+                    .q8_workspace
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .size,
+            )
             .finish()
     }
 }

@@ -7,6 +7,8 @@
 
 pub mod arch;
 pub mod cache;
+mod decode_graph_keys;
+pub mod decode_profile;
 pub mod detect;
 pub mod device;
 pub mod dynamic_loader;
@@ -15,21 +17,25 @@ pub mod ffi;
 pub mod forward;
 pub mod graph;
 pub mod kernels;
+pub mod launch_autotune;
 pub mod ops;
 pub mod quant;
 pub mod quant_wrapper;
+pub mod safety;
 pub mod weights;
 
 pub use arch::GpuArchitecture;
 pub use cache::{GpuForwardScratch, GpuKvCache, GpuPrefillScratch};
+pub use decode_profile::{
+    decode_stage_profile_snapshot, reset_decode_stage_profile, GpuDecodeStageProfileSnapshot,
+};
 pub use detect::GpuCapabilities;
 pub use device::GpuDevice;
 pub use dynamic_loader::{library_info, DynamicLibrary, LibraryInfo};
 pub use error::{GpuError, GpuResult};
 pub use forward::{
-    decode_stage_profile_snapshot, gpu_embed_token_hybrid, gpu_full_forward_hybrid,
-    gpu_layer_forward_hybrid, gpu_prefill_forward_hybrid, gpu_prefill_layer_forward_hybrid,
-    reset_decode_stage_profile, GpuDecodeStageProfileSnapshot, GpuLogitsMode,
+    gpu_embed_token_hybrid, gpu_full_forward_hybrid, gpu_layer_forward_hybrid,
+    gpu_prefill_forward_hybrid, gpu_prefill_layer_forward_hybrid, GpuLogitsMode,
 };
 pub use graph::{CapturedDecodeGraph, DecodeGraphKey, HipGraph, HipGraphExec};
 pub use kernels::{
@@ -47,6 +53,11 @@ pub use kernels::{
     verify_q4_0_accuracy, verify_q4_1_accuracy, verify_q4_k_accuracy, verify_q5_k_accuracy,
     verify_q8_0_accuracy, zero_fill,
 };
+pub use launch_autotune::{
+    launch_autotune_enabled, refresh_launch_autotune_state, select_gate_up_swiglu_q8_variant,
+    select_lm_head_q8_variant, select_q4_0_q8_residual_variant, select_q4_1_residual_variant,
+    select_qkv_variant, select_variant, OpType, ShapeKey, VariantId,
+};
 pub use ops::{
     gpu_dispatch_fused_gate_up, gpu_dispatch_fused_qkv, gpu_dispatch_gemm, gpu_dispatch_gemv,
 };
@@ -56,6 +67,15 @@ pub use quant::{
     QK8_0, QK_K,
 };
 pub use quant_wrapper::GpuQuant;
+pub use safety::{
+    decode_graph_enabled, experimental_ffn_fastpath_enabled, experimental_gpu_kernels_enabled,
+    experimental_q8_activation_fastpath_enabled, gpu_safe_mode_enabled,
+    real_model_gpu_tests_enabled, refresh_runtime_env_flags, run_experimental_gpu_tests_enabled,
+    run_gpu_benches_enabled, DISABLE_DECODE_GRAPH_ENV, ENABLE_DECODE_GRAPH_ENV,
+    ENABLE_EXPERIMENTAL_FFN_FASTPATH_ENV, ENABLE_EXPERIMENTAL_GPU_KERNELS_ENV,
+    ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH_ENV, ENABLE_LAUNCH_AUTOTUNE_ENV, GPU_SAFE_MODE_ENV,
+    RUN_EXPERIMENTAL_GPU_TESTS_ENV, RUN_GPU_BENCHES_ENV, RUN_REAL_MODEL_GPU_TESTS_ENV,
+};
 pub use weights::{GpuBuffer, GpuLayerWeights, GpuModelWeights, TensorRole, WeightMeta};
 
 /// Detect AMD GPU capabilities (safe wrapper).

@@ -13,6 +13,7 @@ Quick start:
 
 ```bash
 ./.rocprofv3/profile_decode.sh runtime
+./.rocprofv3/profile_decode.sh runtime-graph
 ./.rocprofv3/profile_decode.sh runtime-gate-up
 ./.rocprofv3/profile_decode.sh runtime-ffn-down
 ./.rocprofv3/profile_decode.sh system
@@ -20,7 +21,8 @@ Quick start:
 
 Modes:
 
-- `runtime`: full runtime trace with summary and resolved config output
+- `runtime`: full runtime trace with summary and resolved config output (default wrapper flags keep decode graph off)
+- `runtime-graph`: runtime trace with graph-backed decode forced on (`ROCMFORGE_ENABLE_DECODE_GRAPH=1`)
 - `system`: broader system trace
 - `runtime-gate-up`: runtime trace filtered to `gemv_gate_up_swiglu_q4_0_f32_kernel`
 - `runtime-ffn-down`: runtime trace filtered to `gemv_q4_0_f32_residual_wave_parallel_kernel`
@@ -46,11 +48,15 @@ Environment overrides:
 
 - `ROCPROF_BIN`: profiler binary, default `/opt/rocm/bin/rocprofv3`
 - `ROCPROF_OUTDIR`: output directory, default `/tmp/rocprof-<mode>`
+- `ROCPROF_ENABLE_DECODE_GRAPH_DEFAULT`: wrapper default when `ROCMFORGE_ENABLE_DECODE_GRAPH` is unset (`0`)
+- `ROCPROF_ENABLE_Q8_ACTIVATION_FASTPATH_DEFAULT`: wrapper default when `ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH` is unset (`1`)
 - `ROCMFORGE_BIN`: profiled binary, default `./target/release/rocmforge`
 - `ROCMFORGE_MODEL`: model path
 - `ROCMFORGE_PROMPT`: prompt string
 - `ROCMFORGE_MAX_TOKENS`: decode length
 - `ROCMFORGE_EXTRA_ARGS`: extra CLI args appended to `rocmforge`
+- `ROCMFORGE_ENABLE_DECODE_GRAPH`: explicit decode graph toggle for the profiled process
+- `ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH`: explicit decode q8-activation fastpath toggle
 
 Use the ignored throughput harness to validate any code change against the same real model:
 

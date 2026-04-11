@@ -88,6 +88,260 @@ __global__ void gemv_qkv_q4_0_f32_wave_parallel_kernel(
     }
 }
 
+template<int N_WAVES>
+__global__ void gemv_qkv_q4_0_f32_wave_parallel_v2_kernel(
+    const void* __restrict__ w_q,
+    const void* __restrict__ w_k,
+    const void* __restrict__ w_v,
+    const float* __restrict__ bias_q,
+    const float* __restrict__ bias_k,
+    const float* __restrict__ bias_v,
+    const float* __restrict__ input,
+    float* __restrict__ out_q,
+    float* __restrict__ out_k,
+    float* __restrict__ out_v,
+    int n_rows,
+    int n_q,
+    int n_kv
+) {
+    const int tid = threadIdx.x;
+    const int wave_id = tid / 32;
+    const int lane_id = tid % 32;
+    const int col_base = (blockIdx.x * N_WAVES + wave_id) * 2;
+    const int n_blocks_total = n_rows / QK4_0;
+    const int total_cols = n_q + 2 * n_kv;
+
+    if (col_base >= total_cols) return;
+
+    extern __shared__ float s_input[];
+    for (int i = tid; i < n_rows; i += blockDim.x) {
+        s_input[i] = input[i];
+    }
+    __syncthreads();
+
+    const int col0 = col_base;
+    const int col1 = col_base + 1;
+    const bool has_col1 = (col1 < total_cols);
+
+    const void* weights0;
+    const void* weights1 = nullptr;
+    int out_col0;
+    int out_col1 = 0;
+
+    if (col0 < n_q) {
+        weights0 = w_q;
+        out_col0 = col0;
+    } else if (col0 < n_q + n_kv) {
+        weights0 = w_k;
+        out_col0 = col0 - n_q;
+    } else {
+        weights0 = w_v;
+        out_col0 = col0 - n_q - n_kv;
+    }
+
+    if (has_col1) {
+        if (col1 < n_q) {
+            weights1 = w_q;
+            out_col1 = col1;
+        } else if (col1 < n_q + n_kv) {
+            weights1 = w_k;
+            out_col1 = col1 - n_q;
+        } else {
+            weights1 = w_v;
+            out_col1 = col1 - n_q - n_kv;
+        }
+    }
+
+    const Q4_0_block* w_col0 = reinterpret_cast<const Q4_0_block*>(
+        static_cast<const uint8_t*>(weights0) + (out_col0 * n_blocks_total) * Q4_0_BLOCK_SIZE
+    );
+    const Q4_0_block* w_col1 = has_col1 ? reinterpret_cast<const Q4_0_block*>(
+        static_cast<const uint8_t*>(weights1) + (out_col1 * n_blocks_total) * Q4_0_BLOCK_SIZE
+    ) : nullptr;
+
+    float sum0 = 0.0f;
+    float sum1 = 0.0f;
+
+    for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += 32) {
+        const int row_offset = block_idx * QK4_0;
+
+        #pragma unroll
+        for (int i = 0; i < 4; ++i) {
+            float4 in_l = reinterpret_cast<float4*>(&s_input[row_offset + 4 * i])[0];
+            float4 in_h = reinterpret_cast<float4*>(&s_input[row_offset + 4 * i + 16])[0];
+
+            const float d0 = __half2float(w_col0[block_idx].d);
+            const uint32_t q0 = reinterpret_cast<const uint32_t*>(w_col0[block_idx].qs)[i];
+            sum0 += d0 * (static_cast<float>( q0        & 0x0F) - 8.0f) * in_l.x;
+            sum0 += d0 * (static_cast<float>((q0 >>  8) & 0x0F) - 8.0f) * in_l.y;
+            sum0 += d0 * (static_cast<float>((q0 >> 16) & 0x0F) - 8.0f) * in_l.z;
+            sum0 += d0 * (static_cast<float>((q0 >> 24) & 0x0F) - 8.0f) * in_l.w;
+            sum0 += d0 * (static_cast<float>((q0 >>  4) & 0x0F) - 8.0f) * in_h.x;
+            sum0 += d0 * (static_cast<float>((q0 >> 12) & 0x0F) - 8.0f) * in_h.y;
+            sum0 += d0 * (static_cast<float>((q0 >> 20) & 0x0F) - 8.0f) * in_h.z;
+            sum0 += d0 * (static_cast<float>((q0 >> 28) & 0x0F) - 8.0f) * in_h.w;
+
+            if (has_col1) {
+                const float d1 = __half2float(w_col1[block_idx].d);
+                const uint32_t q1 = reinterpret_cast<const uint32_t*>(w_col1[block_idx].qs)[i];
+                sum1 += d1 * (static_cast<float>( q1        & 0x0F) - 8.0f) * in_l.x;
+                sum1 += d1 * (static_cast<float>((q1 >>  8) & 0x0F) - 8.0f) * in_l.y;
+                sum1 += d1 * (static_cast<float>((q1 >> 16) & 0x0F) - 8.0f) * in_l.z;
+                sum1 += d1 * (static_cast<float>((q1 >> 24) & 0x0F) - 8.0f) * in_l.w;
+                sum1 += d1 * (static_cast<float>((q1 >>  4) & 0x0F) - 8.0f) * in_h.x;
+                sum1 += d1 * (static_cast<float>((q1 >> 12) & 0x0F) - 8.0f) * in_h.y;
+                sum1 += d1 * (static_cast<float>((q1 >> 20) & 0x0F) - 8.0f) * in_h.z;
+                sum1 += d1 * (static_cast<float>((q1 >> 28) & 0x0F) - 8.0f) * in_h.w;
+            }
+        }
+    }
+
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        sum0 += __shfl_down(sum0, offset);
+        if (has_col1) {
+            sum1 += __shfl_down(sum1, offset);
+        }
+    }
+
+    if (lane_id == 0) {
+        if (col0 < n_q) {
+            out_q[col0] = sum0 + (bias_q ? bias_q[col0] : 0.0f);
+        } else if (col0 < n_q + n_kv) {
+            const int k_col = col0 - n_q;
+            out_k[k_col] = sum0 + (bias_k ? bias_k[k_col] : 0.0f);
+        } else {
+            const int v_col = col0 - n_q - n_kv;
+            out_v[v_col] = sum0 + (bias_v ? bias_v[v_col] : 0.0f);
+        }
+
+        if (has_col1) {
+            if (col1 < n_q) {
+                out_q[col1] = sum1 + (bias_q ? bias_q[col1] : 0.0f);
+            } else if (col1 < n_q + n_kv) {
+                const int k_col = col1 - n_q;
+                out_k[k_col] = sum1 + (bias_k ? bias_k[k_col] : 0.0f);
+            } else {
+                const int v_col = col1 - n_q - n_kv;
+                out_v[v_col] = sum1 + (bias_v ? bias_v[v_col] : 0.0f);
+            }
+        }
+    }
+}
+
+template<int N_WAVES>
+__global__ void gemv_qkv_q4_0_f32_wave_parallel_v3_kernel(
+    const void* __restrict__ w_q,
+    const void* __restrict__ w_k,
+    const void* __restrict__ w_v,
+    const float* __restrict__ bias_q,
+    const float* __restrict__ bias_k,
+    const float* __restrict__ bias_v,
+    const float* __restrict__ input,
+    float* __restrict__ out_q,
+    float* __restrict__ out_k,
+    float* __restrict__ out_v,
+    int n_rows,
+    int n_q,
+    int n_kv
+) {
+    const int tid = threadIdx.x;
+    const int wave_id = tid / 32;
+    const int lane_id = tid % 32;
+    const int col_base = (blockIdx.x * N_WAVES + wave_id) * 4;
+    const int n_blocks_total = n_rows / QK4_0;
+    const int total_cols = n_q + 2 * n_kv;
+
+    if (col_base >= total_cols) return;
+
+    extern __shared__ float s_input[];
+    for (int i = tid; i < n_rows; i += blockDim.x) {
+        s_input[i] = input[i];
+    }
+    __syncthreads();
+
+    const void* weights_base;
+    int out_col_base;
+    int output_kind;
+    if (col_base < n_q) {
+        weights_base = w_q;
+        out_col_base = col_base;
+        output_kind = 0;
+    } else if (col_base < n_q + n_kv) {
+        weights_base = w_k;
+        out_col_base = col_base - n_q;
+        output_kind = 1;
+    } else {
+        weights_base = w_v;
+        out_col_base = col_base - n_q - n_kv;
+        output_kind = 2;
+    }
+
+    const Q4_0_block* w_cols[4];
+    #pragma unroll
+    for (int c = 0; c < 4; ++c) {
+        w_cols[c] = reinterpret_cast<const Q4_0_block*>(
+            static_cast<const uint8_t*>(weights_base) + ((out_col_base + c) * n_blocks_total) * Q4_0_BLOCK_SIZE
+        );
+    }
+
+    float sums[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+
+    for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += 32) {
+        const int row_offset = block_idx * QK4_0;
+
+        #pragma unroll
+        for (int i = 0; i < 4; ++i) {
+            float4 in_l = reinterpret_cast<float4*>(&s_input[row_offset + 4 * i])[0];
+            float4 in_h = reinterpret_cast<float4*>(&s_input[row_offset + 4 * i + 16])[0];
+
+            #pragma unroll
+            for (int c = 0; c < 4; ++c) {
+                const Q4_0_block* b = &w_cols[c][block_idx];
+                const float d = __half2float(b->d);
+                const uint32_t q = reinterpret_cast<const uint32_t*>(b->qs)[i];
+
+                sums[c] += d * (static_cast<float>( q        & 0x0F) - 8.0f) * in_l.x;
+                sums[c] += d * (static_cast<float>((q >>  8) & 0x0F) - 8.0f) * in_l.y;
+                sums[c] += d * (static_cast<float>((q >> 16) & 0x0F) - 8.0f) * in_l.z;
+                sums[c] += d * (static_cast<float>((q >> 24) & 0x0F) - 8.0f) * in_l.w;
+                sums[c] += d * (static_cast<float>((q >>  4) & 0x0F) - 8.0f) * in_h.x;
+                sums[c] += d * (static_cast<float>((q >> 12) & 0x0F) - 8.0f) * in_h.y;
+                sums[c] += d * (static_cast<float>((q >> 20) & 0x0F) - 8.0f) * in_h.z;
+                sums[c] += d * (static_cast<float>((q >> 28) & 0x0F) - 8.0f) * in_h.w;
+            }
+        }
+    }
+
+    #pragma unroll
+    for (int c = 0; c < 4; ++c) {
+        for (int offset = 16; offset > 0; offset >>= 1) {
+            sums[c] += __shfl_down(sums[c], offset);
+        }
+    }
+
+    if (lane_id == 0) {
+        if (output_kind == 0) {
+            #pragma unroll
+            for (int c = 0; c < 4; ++c) {
+                const int col = out_col_base + c;
+                out_q[col] = sums[c] + (bias_q ? bias_q[col] : 0.0f);
+            }
+        } else if (output_kind == 1) {
+            #pragma unroll
+            for (int c = 0; c < 4; ++c) {
+                const int col = out_col_base + c;
+                out_k[col] = sums[c] + (bias_k ? bias_k[col] : 0.0f);
+            }
+        } else {
+            #pragma unroll
+            for (int c = 0; c < 4; ++c) {
+                const int col = out_col_base + c;
+                out_v[col] = sums[c] + (bias_v ? bias_v[col] : 0.0f);
+            }
+        }
+    }
+}
+
 // ── Wavefront-Parallel Fused Gate/Up + SwiGLU Kernel (Fast Path) ────────────────────
 
 template<int N_WAVES>
@@ -154,6 +408,73 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_kernel(
 
     if (lane_id == 0) {
         out_swiglu[ff_idx] = silu(sum_gate) * sum_up;
+    }
+}
+
+template<int N_WAVES>
+__global__ void gemv_gate_up_q4_0_f32_kernel(
+    const void* __restrict__ w_gate,
+    const void* __restrict__ w_up,
+    const float* __restrict__ input,
+    float* __restrict__ out_gate,
+    float* __restrict__ out_up,
+    int n_rows,
+    int n_ff
+) {
+    const int tid = threadIdx.x;
+    const int wave_id = tid / 32;
+    const int lane_id = tid % 32;
+    const int ff_idx = blockIdx.x * N_WAVES + wave_id;
+    const int n_blocks_total = n_rows / QK4_0;
+
+    if (ff_idx >= n_ff) return;
+
+    extern __shared__ float s_input[];
+    for (int i = tid; i < n_rows; i += blockDim.x) {
+        s_input[i] = input[i];
+    }
+    __syncthreads();
+
+    const Q4_0_block* w_gate_col = reinterpret_cast<const Q4_0_block*>(
+        static_cast<const uint8_t*>(w_gate) + (ff_idx * n_blocks_total) * Q4_0_BLOCK_SIZE
+    );
+    float sum_gate = 0.0f;
+    for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += 32) {
+        const Q4_0_block* b = &w_gate_col[block_idx];
+        const float d = __half2float(b->d);
+        const int row_offset = block_idx * QK4_0;
+        #pragma unroll
+        for (int l = 0; l < 16; ++l) {
+            const uint8_t q = static_cast<uint8_t>(b->qs[l]);
+            sum_gate += d * (static_cast<float>(q & 0x0F) - 8.0f) * s_input[row_offset + l];
+            sum_gate += d * (static_cast<float>(q >> 4) - 8.0f) * s_input[row_offset + l + 16];
+        }
+    }
+
+    const Q4_0_block* w_up_col = reinterpret_cast<const Q4_0_block*>(
+        static_cast<const uint8_t*>(w_up) + (ff_idx * n_blocks_total) * Q4_0_BLOCK_SIZE
+    );
+    float sum_up = 0.0f;
+    for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += 32) {
+        const Q4_0_block* b = &w_up_col[block_idx];
+        const float d = __half2float(b->d);
+        const int row_offset = block_idx * QK4_0;
+        #pragma unroll
+        for (int l = 0; l < 16; ++l) {
+            const uint8_t q = static_cast<uint8_t>(b->qs[l]);
+            sum_up += d * (static_cast<float>(q & 0x0F) - 8.0f) * s_input[row_offset + l];
+            sum_up += d * (static_cast<float>(q >> 4) - 8.0f) * s_input[row_offset + l + 16];
+        }
+    }
+
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        sum_gate += __shfl_down(sum_gate, offset);
+        sum_up += __shfl_down(sum_up, offset);
+    }
+
+    if (lane_id == 0) {
+        out_gate[ff_idx] = sum_gate;
+        out_up[ff_idx] = sum_up;
     }
 }
 
@@ -284,6 +605,70 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_chunked_kernel(
     if (lane_id == 0) out_swiglu[ff_idx] = silu(sum_gate) * sum_up;
 }
 
+template<int N_WAVES>
+__global__ void gemv_gate_up_q4_0_f32_chunked_kernel(
+    const void* __restrict__ w_gate, const void* __restrict__ w_up,
+    const float* __restrict__ input,
+    float* __restrict__ out_gate,
+    float* __restrict__ out_up,
+    int n_rows, int n_ff
+) {
+    const int tid = threadIdx.x;
+    const int wave_id = tid / 32;
+    const int lane_id = tid % 32;
+    const int ff_idx = blockIdx.x * N_WAVES + wave_id;
+    if (ff_idx >= n_ff) return;
+
+    const int n_blocks_total = n_rows / QK4_0;
+    const Q4_0_block* w_gate_col = reinterpret_cast<const Q4_0_block*>(
+        static_cast<const uint8_t*>(w_gate) + (ff_idx * n_blocks_total) * Q4_0_BLOCK_SIZE
+    );
+    const Q4_0_block* w_up_col = reinterpret_cast<const Q4_0_block*>(
+        static_cast<const uint8_t*>(w_up) + (ff_idx * n_blocks_total) * Q4_0_BLOCK_SIZE
+    );
+
+    __shared__ float s_input_chunk[4096];
+    float sum_gate = 0.0f, sum_up = 0.0f;
+
+    for (int chunk_start = 0; chunk_start < n_rows; chunk_start += 4096) {
+        const int chunk_end = min(chunk_start + 4096, n_rows);
+        for (int i = tid; i < (chunk_end - chunk_start); i += blockDim.x)
+            s_input_chunk[i] = input[chunk_start + i];
+        __syncthreads();
+
+        for (int block_idx = (chunk_start/QK4_0) + lane_id; block_idx < (chunk_end/QK4_0); block_idx += 32) {
+            const int lds_off = (block_idx - (chunk_start/QK4_0)) * QK4_0;
+
+            const Q4_0_block* b_g = &w_gate_col[block_idx];
+            const float d_g = __half2float(b_g->d);
+
+            const Q4_0_block* b_u = &w_up_col[block_idx];
+            const float d_u = __half2float(b_u->d);
+
+            #pragma unroll
+            for (int l = 0; l < 16; ++l) {
+                const uint8_t q_g = static_cast<uint8_t>(b_g->qs[l]);
+                sum_gate += d_g * (static_cast<float>(q_g & 0x0F) - 8.0f) * s_input_chunk[lds_off + l];
+                sum_gate += d_g * (static_cast<float>(q_g >> 4) - 8.0f) * s_input_chunk[lds_off + l + 16];
+
+                const uint8_t q_u = static_cast<uint8_t>(b_u->qs[l]);
+                sum_up += d_u * (static_cast<float>(q_u & 0x0F) - 8.0f) * s_input_chunk[lds_off + l];
+                sum_up += d_u * (static_cast<float>(q_u >> 4) - 8.0f) * s_input_chunk[lds_off + l + 16];
+            }
+        }
+        __syncthreads();
+    }
+
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        sum_gate += __shfl_down(sum_gate, offset);
+        sum_up += __shfl_down(sum_up, offset);
+    }
+    if (lane_id == 0) {
+        out_gate[ff_idx] = sum_gate;
+        out_up[ff_idx] = sum_up;
+    }
+}
+
 // ── Dispatch Functions ─────────────────────────────────────────────────────────────
 
 extern "C" hipError_t gemv_qkv_q4_0_f32_launch(
@@ -296,14 +681,77 @@ extern "C" hipError_t gemv_qkv_q4_0_f32_launch(
 ) {
     const int N_WAVES = 8;
     int total_cols = n_q + 2 * n_kv;
-    int n_blocks_x = (total_cols + N_WAVES - 1) / N_WAVES;
+    const bool use_v3 =
+        (n_rows <= 4096) &&
+        ((n_q % 4) == 0) &&
+        ((n_kv % 4) == 0);
 
     if (n_rows * sizeof(float) <= 32768) {
         size_t shared_mem = n_rows * sizeof(float);
-        gemv_qkv_q4_0_f32_wave_parallel_kernel<N_WAVES><<<n_blocks_x, 256, shared_mem, stream>>>(
+        if (use_v3) {
+            int n_blocks_x = (total_cols + (N_WAVES * 4) - 1) / (N_WAVES * 4);
+            gemv_qkv_q4_0_f32_wave_parallel_v3_kernel<N_WAVES><<<n_blocks_x, 256, shared_mem, stream>>>(
+                w_q, w_k, w_v, bias_q, bias_k, bias_v, input, out_q, out_k, out_v, n_rows, n_q, n_kv
+            );
+        } else if (n_rows <= 4096) {
+            int n_blocks_x = (total_cols + (N_WAVES * 2) - 1) / (N_WAVES * 2);
+            gemv_qkv_q4_0_f32_wave_parallel_v2_kernel<N_WAVES><<<n_blocks_x, 256, shared_mem, stream>>>(
+                w_q, w_k, w_v, bias_q, bias_k, bias_v, input, out_q, out_k, out_v, n_rows, n_q, n_kv
+            );
+        } else {
+            int n_blocks_x = (total_cols + N_WAVES - 1) / N_WAVES;
+            gemv_qkv_q4_0_f32_wave_parallel_kernel<N_WAVES><<<n_blocks_x, 256, shared_mem, stream>>>(
+                w_q, w_k, w_v, bias_q, bias_k, bias_v, input, out_q, out_k, out_v, n_rows, n_q, n_kv
+            );
+        }
+    } else {
+        int n_blocks_x = (total_cols + N_WAVES - 1) / N_WAVES;
+        gemv_qkv_q4_0_f32_chunked_kernel<N_WAVES><<<n_blocks_x, 256, 0, stream>>>(
             w_q, w_k, w_v, bias_q, bias_k, bias_v, input, out_q, out_k, out_v, n_rows, n_q, n_kv
         );
+    }
+    return hipGetLastError();
+}
+
+extern "C" hipError_t gemv_qkv_q4_0_f32_variant_launch(
+    const void* w_q, const void* w_k, const void* w_v,
+    const float* bias_q, const float* bias_k, const float* bias_v,
+    const float* input,
+    float* out_q, float* out_k, float* out_v,
+    int n_rows, int n_q, int n_kv,
+    int variant,
+    hipStream_t stream
+) {
+    const int N_WAVES = 8;
+    int total_cols = n_q + 2 * n_kv;
+    // variant=0 keeps the old 0.5B-tuned row cap; variant=1 uses the
+    // broader 7B-friendly cap. Any unknown variant falls back to current.
+    const int max_rows = (variant == 0) ? 1024 : 4096;
+    const bool use_v3 =
+        (n_rows <= max_rows) &&
+        ((n_q % 4) == 0) &&
+        ((n_kv % 4) == 0);
+
+    if (n_rows * sizeof(float) <= 32768) {
+        size_t shared_mem = n_rows * sizeof(float);
+        if (use_v3) {
+            int n_blocks_x = (total_cols + (N_WAVES * 4) - 1) / (N_WAVES * 4);
+            gemv_qkv_q4_0_f32_wave_parallel_v3_kernel<N_WAVES><<<n_blocks_x, 256, shared_mem, stream>>>(
+                w_q, w_k, w_v, bias_q, bias_k, bias_v, input, out_q, out_k, out_v, n_rows, n_q, n_kv
+            );
+        } else if (n_rows <= max_rows) {
+            int n_blocks_x = (total_cols + (N_WAVES * 2) - 1) / (N_WAVES * 2);
+            gemv_qkv_q4_0_f32_wave_parallel_v2_kernel<N_WAVES><<<n_blocks_x, 256, shared_mem, stream>>>(
+                w_q, w_k, w_v, bias_q, bias_k, bias_v, input, out_q, out_k, out_v, n_rows, n_q, n_kv
+            );
+        } else {
+            int n_blocks_x = (total_cols + N_WAVES - 1) / N_WAVES;
+            gemv_qkv_q4_0_f32_wave_parallel_kernel<N_WAVES><<<n_blocks_x, 256, shared_mem, stream>>>(
+                w_q, w_k, w_v, bias_q, bias_k, bias_v, input, out_q, out_k, out_v, n_rows, n_q, n_kv
+            );
+        }
     } else {
+        int n_blocks_x = (total_cols + N_WAVES - 1) / N_WAVES;
         gemv_qkv_q4_0_f32_chunked_kernel<N_WAVES><<<n_blocks_x, 256, 0, stream>>>(
             w_q, w_k, w_v, bias_q, bias_k, bias_v, input, out_q, out_k, out_v, n_rows, n_q, n_kv
         );
@@ -409,6 +857,152 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_vulkan_style_kernel(
             out_swiglu[ff_idx_base + 1] = (sum_gate1 / (1.0f + expf(-sum_gate1))) * sum_up1;
         }
     }
+}
+
+template<int N_WAVES>
+__global__ void gemv_gate_up_q4_0_f32_vulkan_style_kernel(
+    const void* __restrict__ w_gate,
+    const void* __restrict__ w_up,
+    const float* __restrict__ input,
+    float* __restrict__ out_gate,
+    float* __restrict__ out_up,
+    int n_rows,
+    int n_ff
+) {
+    const int tid = threadIdx.x;
+    const int wave_id = tid / 32;
+    const int lane_id = tid % 32;
+    const int ff_idx_base = (blockIdx.x * N_WAVES + wave_id) * 2;
+    const int n_blocks_total = n_rows / QK4_0;
+
+    if (ff_idx_base >= n_ff) return;
+
+    extern __shared__ float s_input[];
+    for (int i = tid; i < n_rows; i += blockDim.x) {
+        s_input[i] = input[i];
+    }
+    __syncthreads();
+
+    const Q4_0_block* w_gate_col0 = reinterpret_cast<const Q4_0_block*>(
+        static_cast<const uint8_t*>(w_gate) + (ff_idx_base * n_blocks_total) * Q4_0_BLOCK_SIZE
+    );
+    const Q4_0_block* w_up_col0 = reinterpret_cast<const Q4_0_block*>(
+        static_cast<const uint8_t*>(w_up) + (ff_idx_base * n_blocks_total) * Q4_0_BLOCK_SIZE
+    );
+
+    bool has_ff1 = (ff_idx_base + 1 < n_ff);
+    const Q4_0_block* w_gate_col1 = has_ff1 ? reinterpret_cast<const Q4_0_block*>(
+        static_cast<const uint8_t*>(w_gate) + ((ff_idx_base + 1) * n_blocks_total) * Q4_0_BLOCK_SIZE
+    ) : nullptr;
+    const Q4_0_block* w_up_col1 = has_ff1 ? reinterpret_cast<const Q4_0_block*>(
+        static_cast<const uint8_t*>(w_up) + ((ff_idx_base + 1) * n_blocks_total) * Q4_0_BLOCK_SIZE
+    ) : nullptr;
+
+    float sum_gate0 = 0.0f, sum_up0 = 0.0f;
+    float sum_gate1 = 0.0f, sum_up1 = 0.0f;
+
+    for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += 32) {
+        const int row_offset = block_idx * QK4_0;
+
+        const float d_gate0 = __half2float(w_gate_col0[block_idx].d);
+        const float d_up0 = __half2float(w_up_col0[block_idx].d);
+
+        float d_gate1 = 0.0f, d_up1 = 0.0f;
+        if (has_ff1) {
+            d_gate1 = __half2float(w_gate_col1[block_idx].d);
+            d_up1 = __half2float(w_up_col1[block_idx].d);
+        }
+
+        const uint32_t* qs_gate0 = reinterpret_cast<const uint32_t*>(w_gate_col0[block_idx].qs);
+        const uint32_t* qs_up0 = reinterpret_cast<const uint32_t*>(w_up_col0[block_idx].qs);
+
+        #pragma unroll
+        for (int i = 0; i < 4; ++i) {
+            float4 in_l = reinterpret_cast<float4*>(&s_input[row_offset + 4*i])[0];
+            float4 in_h = reinterpret_cast<float4*>(&s_input[row_offset + 4*i + 16])[0];
+
+            auto process_nibbles = [&](uint32_t q, float d, float4 il, float4 ih, float& sum) {
+                sum += d * (static_cast<float>( q        & 0x0F) - 8.0f) * il.x;
+                sum += d * (static_cast<float>((q >>  8) & 0x0F) - 8.0f) * il.y;
+                sum += d * (static_cast<float>((q >> 16) & 0x0F) - 8.0f) * il.z;
+                sum += d * (static_cast<float>((q >> 24) & 0x0F) - 8.0f) * il.w;
+                sum += d * (static_cast<float>((q >>  4) & 0x0F) - 8.0f) * ih.x;
+                sum += d * (static_cast<float>((q >> 12) & 0x0F) - 8.0f) * ih.y;
+                sum += d * (static_cast<float>((q >> 20) & 0x0F) - 8.0f) * ih.z;
+                sum += d * (static_cast<float>((q >> 28) & 0x0F) - 8.0f) * ih.w;
+            };
+
+            process_nibbles(qs_gate0[i], d_gate0, in_l, in_h, sum_gate0);
+            process_nibbles(qs_up0[i], d_up0, in_l, in_h, sum_up0);
+            if (has_ff1) {
+                process_nibbles(reinterpret_cast<const uint32_t*>(w_gate_col1[block_idx].qs)[i], d_gate1, in_l, in_h, sum_gate1);
+                process_nibbles(reinterpret_cast<const uint32_t*>(w_up_col1[block_idx].qs)[i], d_up1, in_l, in_h, sum_up1);
+            }
+        }
+    }
+
+    #pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        sum_gate0 += __shfl_down(sum_gate0, offset);
+        sum_up0 += __shfl_down(sum_up0, offset);
+        if (has_ff1) {
+            sum_gate1 += __shfl_down(sum_gate1, offset);
+            sum_up1 += __shfl_down(sum_up1, offset);
+        }
+    }
+
+    if (lane_id == 0) {
+        out_gate[ff_idx_base] = sum_gate0;
+        out_up[ff_idx_base] = sum_up0;
+        if (has_ff1) {
+            out_gate[ff_idx_base + 1] = sum_gate1;
+            out_up[ff_idx_base + 1] = sum_up1;
+        }
+    }
+}
+
+extern "C" hipError_t gemv_gate_up_q4_0_f32_launch(
+    const void* w_gate, const void* w_up,
+    const float* input,
+    float* out_gate, float* out_up,
+    int n_rows, int n_ff,
+    hipStream_t stream
+) {
+    CHECK_NULL(w_gate);
+    CHECK_NULL(w_up);
+    CHECK_NULL(input);
+    CHECK_NULL(out_gate);
+    CHECK_NULL(out_up);
+    if (n_rows <= 0 || n_ff <= 0) {
+        return hipErrorInvalidValue;
+    }
+    if (n_rows % QK4_0 != 0) {
+        return hipErrorInvalidValue;
+    }
+
+    if (n_rows * sizeof(float) <= 32768) {
+        size_t shared_mem = n_rows * sizeof(float);
+        if (n_rows <= 1024) {
+            const int N_WAVES = 4;
+            int n_blocks_x = (n_ff + (N_WAVES * 2) - 1) / (N_WAVES * 2);
+            gemv_gate_up_q4_0_f32_vulkan_style_kernel<N_WAVES><<<n_blocks_x, 128, shared_mem, stream>>>(
+                w_gate, w_up, input, out_gate, out_up, n_rows, n_ff
+            );
+        } else {
+            const int N_WAVES = 8;
+            int n_blocks_x = (n_ff + (N_WAVES * 2) - 1) / (N_WAVES * 2);
+            gemv_gate_up_q4_0_f32_vulkan_style_kernel<N_WAVES><<<n_blocks_x, 256, shared_mem, stream>>>(
+                w_gate, w_up, input, out_gate, out_up, n_rows, n_ff
+            );
+        }
+    } else {
+        const int N_WAVES = 8;
+        int n_blocks_x = (n_ff + N_WAVES - 1) / N_WAVES;
+        gemv_gate_up_q4_0_f32_chunked_kernel<N_WAVES><<<n_blocks_x, 256, 0, stream>>>(
+            w_gate, w_up, input, out_gate, out_up, n_rows, n_ff
+        );
+    }
+    return hipGetLastError();
 }
 
 extern "C" hipError_t gemv_gate_up_swiglu_q4_0_f32_launch(

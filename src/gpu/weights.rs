@@ -398,6 +398,94 @@ fn upload_tensor_bytes(data: &[u8]) -> GpuResult<GpuBuffer> {
     Ok(buf)
 }
 
+fn try_build_q4_0_gate_up_interleaved(
+    gate_data: &[u8],
+    gate_meta: &WeightMeta,
+    up_data: &[u8],
+    up_meta: &WeightMeta,
+) -> Option<Vec<u8>> {
+    const QK4_0: usize = 32;
+    const Q4_0_BLOCK_SIZE: usize = 18;
+
+    if gate_meta.wtype != GgmlType::Q4_0 || up_meta.wtype != GgmlType::Q4_0 {
+        return None;
+    }
+    if gate_meta.dims != up_meta.dims || gate_meta.dims.len() < 2 {
+        return None;
+    }
+
+    let n_rows = gate_meta.dims[0] as usize;
+    let n_ff = gate_meta.dims[1] as usize;
+    if n_rows == 0 || n_ff == 0 || n_rows % QK4_0 != 0 {
+        return None;
+    }
+
+    let n_blocks_total = n_rows / QK4_0;
+    let expected_len = n_ff
+        .checked_mul(n_blocks_total)?
+        .checked_mul(Q4_0_BLOCK_SIZE)?;
+    if gate_data.len() != expected_len || up_data.len() != expected_len {
+        return None;
+    }
+
+    let mut interleaved = Vec::with_capacity(expected_len * 2);
+    for ff_idx in 0..n_ff {
+        for block_idx in 0..n_blocks_total {
+            let offset = (ff_idx * n_blocks_total + block_idx) * Q4_0_BLOCK_SIZE;
+            interleaved.extend_from_slice(&gate_data[offset..offset + Q4_0_BLOCK_SIZE]);
+            interleaved.extend_from_slice(&up_data[offset..offset + Q4_0_BLOCK_SIZE]);
+        }
+    }
+
+    Some(interleaved)
+}
+
+fn try_build_q4_0_gate_up_interleaved_tile4(
+    gate_data: &[u8],
+    gate_meta: &WeightMeta,
+    up_data: &[u8],
+    up_meta: &WeightMeta,
+) -> Option<Vec<u8>> {
+    const QK4_0: usize = 32;
+    const Q4_0_BLOCK_SIZE: usize = 18;
+    const TILE_FF: usize = 4;
+
+    if gate_meta.wtype != GgmlType::Q4_0 || up_meta.wtype != GgmlType::Q4_0 {
+        return None;
+    }
+    if gate_meta.dims != up_meta.dims || gate_meta.dims.len() < 2 {
+        return None;
+    }
+
+    let n_rows = gate_meta.dims[0] as usize;
+    let n_ff = gate_meta.dims[1] as usize;
+    if n_rows == 0 || n_ff == 0 || n_rows % QK4_0 != 0 || n_ff % TILE_FF != 0 {
+        return None;
+    }
+
+    let n_blocks_total = n_rows / QK4_0;
+    let expected_len = n_ff
+        .checked_mul(n_blocks_total)?
+        .checked_mul(Q4_0_BLOCK_SIZE)?;
+    if gate_data.len() != expected_len || up_data.len() != expected_len {
+        return None;
+    }
+
+    let mut interleaved = Vec::with_capacity(expected_len * 2);
+    for ff_base in (0..n_ff).step_by(TILE_FF) {
+        for block_idx in 0..n_blocks_total {
+            for tile_ff in 0..TILE_FF {
+                let ff_idx = ff_base + tile_ff;
+                let offset = (ff_idx * n_blocks_total + block_idx) * Q4_0_BLOCK_SIZE;
+                interleaved.extend_from_slice(&gate_data[offset..offset + Q4_0_BLOCK_SIZE]);
+                interleaved.extend_from_slice(&up_data[offset..offset + Q4_0_BLOCK_SIZE]);
+            }
+        }
+    }
+
+    Some(interleaved)
+}
+
 // ── GPU Layer Weights ─────────────────────────────────────────────────────────────
 
 /// Weights for a single transformer layer, stored in VRAM.
@@ -433,6 +521,10 @@ pub struct GpuLayerWeights {
     /// FFN up projection (quantized)
     pub ffn_up: GpuBuffer,
     pub ffn_up_meta: WeightMeta,
+    /// Optional decode-friendly interleaved Q4_0 layout for fused gate/up kernels.
+    pub ffn_gate_up_interleaved: Option<GpuBuffer>,
+    /// Optional decode-friendly 4-column tiled Q4_0 layout for fused gate/up kernels.
+    pub ffn_gate_up_interleaved_tile4: Option<GpuBuffer>,
     /// FFN down projection (quantized)
     pub ffn_down: GpuBuffer,
     pub ffn_down_meta: WeightMeta,
@@ -558,23 +650,66 @@ impl GpuLayerWeights {
         let ffn_up_name = config.tensor_registry.resolve(TensorName::FfnUp, layer);
         let ffn_down_name = config.tensor_registry.resolve(TensorName::FfnDown, layer);
 
-        let (ffn_gate, ffn_gate_meta) =
+        let (ffn_gate_name_used, ffn_gate, ffn_gate_meta) =
             if matches!(config.tensor_registry.scheme, TensorNamingScheme::GgufMoE) {
                 let ffn_gate_exps_name = config
                     .tensor_registry
                     .resolve(TensorName::FfnGateExps, layer);
-                load_weight_fallback(&[&ffn_gate_exps_name, &ffn_gate_name])?
+                let (buf, meta) = load_weight_fallback(&[&ffn_gate_exps_name, &ffn_gate_name])?;
+                let chosen = if file.has_tensor(&ffn_gate_exps_name) {
+                    ffn_gate_exps_name
+                } else {
+                    ffn_gate_name.clone()
+                };
+                (chosen, buf, meta)
             } else {
-                load_weight(&ffn_gate_name)?
+                let (buf, meta) = load_weight(&ffn_gate_name)?;
+                (ffn_gate_name.clone(), buf, meta)
             };
 
-        let (ffn_up, ffn_up_meta) =
+        let (ffn_up_name_used, ffn_up, ffn_up_meta) =
             if matches!(config.tensor_registry.scheme, TensorNamingScheme::GgufMoE) {
                 let ffn_up_exps_name = config.tensor_registry.resolve(TensorName::FfnUpExps, layer);
-                load_weight_fallback(&[&ffn_up_exps_name, &ffn_up_name])?
+                let (buf, meta) = load_weight_fallback(&[&ffn_up_exps_name, &ffn_up_name])?;
+                let chosen = if file.has_tensor(&ffn_up_exps_name) {
+                    ffn_up_exps_name
+                } else {
+                    ffn_up_name.clone()
+                };
+                (chosen, buf, meta)
             } else {
-                load_weight(&ffn_up_name)?
+                let (buf, meta) = load_weight(&ffn_up_name)?;
+                (ffn_up_name.clone(), buf, meta)
             };
+
+        let ffn_gate_up_interleaved = match (
+            file.tensor(&ffn_gate_name_used).ok().and_then(|t| t),
+            file.tensor(&ffn_up_name_used).ok().and_then(|t| t),
+        ) {
+            (Some(gate_t), Some(up_t)) => try_build_q4_0_gate_up_interleaved(
+                gate_t.data,
+                &ffn_gate_meta,
+                up_t.data,
+                &ffn_up_meta,
+            )
+            .map(|bytes| upload_tensor_bytes(&bytes))
+            .transpose()?,
+            _ => None,
+        };
+        let ffn_gate_up_interleaved_tile4 = match (
+            file.tensor(&ffn_gate_name_used).ok().and_then(|t| t),
+            file.tensor(&ffn_up_name_used).ok().and_then(|t| t),
+        ) {
+            (Some(gate_t), Some(up_t)) => try_build_q4_0_gate_up_interleaved_tile4(
+                gate_t.data,
+                &ffn_gate_meta,
+                up_t.data,
+                &ffn_up_meta,
+            )
+            .map(|bytes| upload_tensor_bytes(&bytes))
+            .transpose()?,
+            _ => None,
+        };
 
         let (ffn_down, ffn_down_meta) =
             if matches!(config.tensor_registry.scheme, TensorNamingScheme::GgufMoE) {
@@ -604,6 +739,8 @@ impl GpuLayerWeights {
             ffn_gate_meta,
             ffn_up,
             ffn_up_meta,
+            ffn_gate_up_interleaved,
+            ffn_gate_up_interleaved_tile4,
             ffn_down,
             ffn_down_meta,
         })
@@ -628,6 +765,8 @@ pub struct GpuModelWeights {
     pub lm_head_meta: WeightMeta,
     /// Whether LM head is tied to token embeddings
     pub lm_head_tied: bool,
+    /// Cached pointer-mix used by decode-graph key construction.
+    decode_binding_tag: u64,
 }
 
 impl GpuModelWeights {
@@ -701,6 +840,8 @@ impl GpuModelWeights {
             layers.push(layer);
         }
 
+        let decode_binding_tag = compute_model_binding_tag(&layers, &output_norm, &lm_head);
+
         Ok(Self {
             layers,
             token_emb,
@@ -709,6 +850,7 @@ impl GpuModelWeights {
             lm_head,
             lm_head_meta,
             lm_head_tied,
+            decode_binding_tag,
         })
     }
 
@@ -716,6 +858,79 @@ impl GpuModelWeights {
     pub fn layer(&self, i: usize) -> &GpuLayerWeights {
         &self.layers[i]
     }
+
+    /// Cached pointer-mix used by decode-graph key construction.
+    #[inline]
+    pub fn binding_tag(&self) -> u64 {
+        self.decode_binding_tag
+    }
+}
+
+#[inline]
+fn mix_binding_tag(tag: u64, ptr: usize) -> u64 {
+    tag.rotate_left(13) ^ (ptr as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+}
+
+fn gpu_layer_weights_binding_tag(layer: &GpuLayerWeights) -> u64 {
+    let mut tag = 0u64;
+    tag = mix_binding_tag(tag, layer.attn_norm.as_ptr() as usize);
+    tag = mix_binding_tag(tag, layer.attn_q.as_ptr() as usize);
+    tag = mix_binding_tag(
+        tag,
+        layer
+            .attn_q_bias
+            .as_ref()
+            .map_or(0usize, |buf| buf.as_ptr() as usize),
+    );
+    tag = mix_binding_tag(tag, layer.attn_k.as_ptr() as usize);
+    tag = mix_binding_tag(
+        tag,
+        layer
+            .attn_k_bias
+            .as_ref()
+            .map_or(0usize, |buf| buf.as_ptr() as usize),
+    );
+    tag = mix_binding_tag(tag, layer.attn_v.as_ptr() as usize);
+    tag = mix_binding_tag(
+        tag,
+        layer
+            .attn_v_bias
+            .as_ref()
+            .map_or(0usize, |buf| buf.as_ptr() as usize),
+    );
+    tag = mix_binding_tag(tag, layer.attn_o.as_ptr() as usize);
+    tag = mix_binding_tag(tag, layer.ffn_norm.as_ptr() as usize);
+    tag = mix_binding_tag(tag, layer.ffn_gate.as_ptr() as usize);
+    tag = mix_binding_tag(tag, layer.ffn_up.as_ptr() as usize);
+    tag = mix_binding_tag(
+        tag,
+        layer
+            .ffn_gate_up_interleaved
+            .as_ref()
+            .map_or(0usize, |buf| buf.as_ptr() as usize),
+    );
+    tag = mix_binding_tag(
+        tag,
+        layer
+            .ffn_gate_up_interleaved_tile4
+            .as_ref()
+            .map_or(0usize, |buf| buf.as_ptr() as usize),
+    );
+    mix_binding_tag(tag, layer.ffn_down.as_ptr() as usize)
+}
+
+fn compute_model_binding_tag(
+    layers: &[GpuLayerWeights],
+    output_norm: &GpuBuffer,
+    lm_head: &GpuBuffer,
+) -> u64 {
+    let mut tag = 0u64;
+    tag = mix_binding_tag(tag, output_norm.as_ptr() as usize);
+    tag = mix_binding_tag(tag, lm_head.as_ptr() as usize);
+    for layer in layers {
+        tag ^= gpu_layer_weights_binding_tag(layer);
+    }
+    tag
 }
 
 #[cfg(test)]

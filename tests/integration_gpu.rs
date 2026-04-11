@@ -759,6 +759,176 @@ fn test_q4_0_gemv_large_shape_matches_cpu_oracle() {
 
 #[test]
 #[serial]
+fn test_q4_0_gate_up_raw_matches_cpu_oracle() {
+    require_gpu!();
+    require_vram!(4);
+
+    use gpu_test_utils::assert_close;
+    use rocmforge::cpu::ops::gemv_q4_0_transposed;
+    use rocmforge::gpu::{detect, GpuBuffer, GpuQuant, Q4_0_BLOCK_SIZE, QK4_0};
+
+    let caps = detect().expect("GPU required for raw Q4_0 gate/up test");
+    let device =
+        rocmforge::gpu::GpuDevice::init(caps.device_id).expect("Failed to initialize GPU device");
+    let gpu_quant = GpuQuant::new(device).expect("Failed to initialize GpuQuant");
+
+    let n_rows = 4096usize;
+    let n_ff = 96usize;
+
+    let gate_weights: Vec<f32> = (0..n_rows * n_ff)
+        .map(|i| {
+            let col = i / n_rows;
+            let row = i % n_rows;
+            ((col as f32) * 0.031 + (row as f32) * 0.010).sin() * 0.58
+                + ((row as f32) * 0.004).cos() * 0.21
+        })
+        .collect();
+    let up_weights: Vec<f32> = (0..n_rows * n_ff)
+        .map(|i| {
+            let col = i / n_rows;
+            let row = i % n_rows;
+            ((col as f32) * 0.017 + (row as f32) * 0.013).cos() * 0.54
+                - ((row as f32) * 0.006).sin() * 0.19
+        })
+        .collect();
+    let input_data: Vec<f32> = (0..n_rows)
+        .map(|i| ((i as f32) * 0.014).sin() * 1.08 - ((i as f32) * 0.003).cos() * 0.12)
+        .collect();
+
+    let mut d_gate_weights = GpuBuffer::alloc(n_rows * n_ff * std::mem::size_of::<f32>())
+        .expect("Failed to allocate gate weights");
+    let mut d_up_weights = GpuBuffer::alloc(n_rows * n_ff * std::mem::size_of::<f32>())
+        .expect("Failed to allocate up weights");
+    let mut d_input =
+        GpuBuffer::alloc(n_rows * std::mem::size_of::<f32>()).expect("Failed to allocate input");
+    let mut d_gate_quantized = GpuBuffer::alloc((n_rows / QK4_0) * n_ff * Q4_0_BLOCK_SIZE)
+        .expect("Failed to allocate quantized gate weights");
+    let mut d_up_quantized = GpuBuffer::alloc((n_rows / QK4_0) * n_ff * Q4_0_BLOCK_SIZE)
+        .expect("Failed to allocate quantized up weights");
+    let d_gate_output = GpuBuffer::alloc(n_ff * std::mem::size_of::<f32>())
+        .expect("Failed to allocate gate output");
+    let d_up_output =
+        GpuBuffer::alloc(n_ff * std::mem::size_of::<f32>()).expect("Failed to allocate up output");
+
+    let gate_bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(
+            gate_weights.as_ptr() as *const u8,
+            n_rows * n_ff * std::mem::size_of::<f32>(),
+        )
+    };
+    d_gate_weights
+        .copy_from_host(gate_bytes)
+        .expect("Failed to upload gate weights");
+
+    let up_bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(
+            up_weights.as_ptr() as *const u8,
+            n_rows * n_ff * std::mem::size_of::<f32>(),
+        )
+    };
+    d_up_weights
+        .copy_from_host(up_bytes)
+        .expect("Failed to upload up weights");
+
+    let input_bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(
+            input_data.as_ptr() as *const u8,
+            n_rows * std::mem::size_of::<f32>(),
+        )
+    };
+    d_input
+        .copy_from_host(input_bytes)
+        .expect("Failed to upload input");
+
+    for col in 0..n_ff {
+        let gate_weights_ptr = unsafe {
+            d_gate_weights
+                .as_ptr()
+                .add(col * n_rows * std::mem::size_of::<f32>())
+        };
+        let gate_quantized_ptr = unsafe {
+            d_gate_quantized
+                .as_ptr()
+                .add(col * (n_rows / QK4_0) * Q4_0_BLOCK_SIZE)
+        };
+        gpu_quant
+            .quantize_q4_0(gate_weights_ptr as *const f32, gate_quantized_ptr, n_rows)
+            .expect("Failed to quantize gate weights");
+
+        let up_weights_ptr = unsafe {
+            d_up_weights
+                .as_ptr()
+                .add(col * n_rows * std::mem::size_of::<f32>())
+        };
+        let up_quantized_ptr = unsafe {
+            d_up_quantized
+                .as_ptr()
+                .add(col * (n_rows / QK4_0) * Q4_0_BLOCK_SIZE)
+        };
+        gpu_quant
+            .quantize_q4_0(up_weights_ptr as *const f32, up_quantized_ptr, n_rows)
+            .expect("Failed to quantize up weights");
+    }
+
+    rocmforge::gpu::kernels::quant::gemv_gate_up_q4_0_f32(
+        d_gate_quantized.as_ptr(),
+        d_up_quantized.as_ptr(),
+        d_input.as_ptr() as *const f32,
+        d_gate_output.as_ptr() as *mut f32,
+        d_up_output.as_ptr() as *mut f32,
+        n_rows,
+        n_ff,
+    )
+    .expect("GPU Q4_0 raw gate/up kernel should succeed");
+
+    let mut gate_quantized_bytes = vec![0u8; (n_rows / QK4_0) * n_ff * Q4_0_BLOCK_SIZE];
+    d_gate_quantized
+        .copy_to_host(&mut gate_quantized_bytes)
+        .expect("Failed to download quantized gate weights");
+    let mut up_quantized_bytes = vec![0u8; (n_rows / QK4_0) * n_ff * Q4_0_BLOCK_SIZE];
+    d_up_quantized
+        .copy_to_host(&mut up_quantized_bytes)
+        .expect("Failed to download quantized up weights");
+
+    let mut gate_output_bytes = vec![0u8; n_ff * std::mem::size_of::<f32>()];
+    d_gate_output
+        .copy_to_host(&mut gate_output_bytes)
+        .expect("Failed to download gate output");
+    let actual_gate: Vec<f32> = unsafe {
+        std::slice::from_raw_parts(gate_output_bytes.as_ptr() as *const f32, n_ff).to_vec()
+    };
+
+    let mut up_output_bytes = vec![0u8; n_ff * std::mem::size_of::<f32>()];
+    d_up_output
+        .copy_to_host(&mut up_output_bytes)
+        .expect("Failed to download up output");
+    let actual_up: Vec<f32> = unsafe {
+        std::slice::from_raw_parts(up_output_bytes.as_ptr() as *const f32, n_ff).to_vec()
+    };
+
+    let mut expected_gate = vec![0.0f32; n_ff];
+    let mut expected_up = vec![0.0f32; n_ff];
+    gemv_q4_0_transposed(
+        &gate_quantized_bytes,
+        &input_data,
+        &mut expected_gate,
+        n_ff,
+        n_rows,
+    );
+    gemv_q4_0_transposed(
+        &up_quantized_bytes,
+        &input_data,
+        &mut expected_up,
+        n_ff,
+        n_rows,
+    );
+
+    assert_close(&expected_gate, &actual_gate, 1e-3);
+    assert_close(&expected_up, &actual_up, 1e-3);
+}
+
+#[test]
+#[serial]
 fn test_q4_0_gemm_matches_cpu_oracle() {
     require_gpu!();
     require_vram!(4);
@@ -1483,6 +1653,318 @@ fn test_q4_1_gemv_large_shape_matches_cpu_oracle() {
     let actual: Vec<f32> = unsafe {
         std::slice::from_raw_parts(output_bytes.as_ptr() as *const f32, ncols_dst).to_vec()
     };
+
+    assert_close(&expected, &actual, 1e-3);
+}
+
+#[test]
+#[serial]
+fn test_q4_1_gemv_residual_in_place_matches_cpu_oracle() {
+    require_gpu!();
+    require_vram!(4);
+
+    use gpu_test_utils::assert_close;
+    use rocmforge::cpu::ops::gemv_q4_1_transposed;
+    use rocmforge::gpu::{detect, GpuBuffer, GpuDevice, GpuQuant, Q4_1_BLOCK_SIZE, QK4_1};
+
+    let caps = detect().expect("GPU required for Q4_1 residual GEMV test");
+    let device = GpuDevice::init(caps.device_id).expect("Failed to initialize GPU device");
+    let gpu_quant = GpuQuant::new(
+        GpuDevice::init(caps.device_id).expect("Failed to initialize quantization device"),
+    )
+    .expect("Failed to initialize GpuQuant");
+
+    let n_rows = 4096usize;
+    let ncols_dst = 96usize;
+
+    let mut weight_data = Vec::with_capacity(n_rows * ncols_dst);
+    for col in 0..ncols_dst {
+        for row in 0..n_rows {
+            let phase = (col as f32) * 0.019 + (row as f32) * 0.008;
+            weight_data.push((phase.sin() * 0.58) - (phase.cos() * 0.22));
+        }
+    }
+
+    let input_data: Vec<f32> = (0..n_rows)
+        .map(|i| ((i as f32) * 0.009).cos() * 1.1 + ((i as f32) * 0.002).sin() * 0.15)
+        .collect();
+    let residual_data: Vec<f32> = (0..ncols_dst)
+        .map(|i| ((i as f32) * 0.031).sin() * 0.4 - ((i as f32) * 0.017).cos() * 0.1)
+        .collect();
+
+    let mut d_weights = GpuBuffer::alloc(n_rows * ncols_dst * std::mem::size_of::<f32>())
+        .expect("Failed to allocate weight buffer");
+    let mut d_input =
+        GpuBuffer::alloc(n_rows * std::mem::size_of::<f32>()).expect("Failed to allocate input");
+    let mut d_quantized = GpuBuffer::alloc((n_rows / QK4_1) * ncols_dst * Q4_1_BLOCK_SIZE)
+        .expect("Failed to allocate quantized buffer");
+    let mut d_output = GpuBuffer::alloc(ncols_dst * std::mem::size_of::<f32>())
+        .expect("Failed to allocate output buffer");
+
+    let weight_bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(
+            weight_data.as_ptr() as *const u8,
+            n_rows * ncols_dst * std::mem::size_of::<f32>(),
+        )
+    };
+    d_weights
+        .copy_from_host(weight_bytes)
+        .expect("Failed to upload weights");
+
+    let input_bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(
+            input_data.as_ptr() as *const u8,
+            n_rows * std::mem::size_of::<f32>(),
+        )
+    };
+    d_input
+        .copy_from_host(input_bytes)
+        .expect("Failed to upload input");
+
+    let residual_bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(
+            residual_data.as_ptr() as *const u8,
+            ncols_dst * std::mem::size_of::<f32>(),
+        )
+    };
+    d_output
+        .copy_from_host(residual_bytes)
+        .expect("Failed to upload residual");
+
+    for col in 0..ncols_dst {
+        let col_weights_ptr = unsafe {
+            d_weights
+                .as_ptr()
+                .add(col * n_rows * std::mem::size_of::<f32>())
+        };
+        let col_quantized_ptr = unsafe {
+            d_quantized
+                .as_ptr()
+                .add(col * (n_rows / QK4_1) * Q4_1_BLOCK_SIZE)
+        };
+        gpu_quant
+            .quantize_q4_1(col_weights_ptr as *const f32, col_quantized_ptr, n_rows)
+            .expect("Failed to quantize test column");
+    }
+
+    rocmforge::gpu::kernels::quant::gemv_q4_1_f32_residual_on_stream(
+        d_quantized.as_ptr(),
+        d_input.as_ptr() as *const f32,
+        d_output.as_ptr() as *const f32,
+        d_output.as_ptr() as *mut f32,
+        n_rows,
+        ncols_dst,
+        device.stream(),
+    )
+    .expect("GPU Q4_1 residual GEMV should succeed");
+    device
+        .synchronize()
+        .expect("Failed to synchronize after residual GEMV");
+
+    let mut quantized_bytes = vec![0u8; (n_rows / QK4_1) * ncols_dst * Q4_1_BLOCK_SIZE];
+    d_quantized
+        .copy_to_host(&mut quantized_bytes)
+        .expect("Failed to download quantized weights");
+
+    let mut expected = vec![0.0f32; ncols_dst];
+    gemv_q4_1_transposed(
+        &quantized_bytes,
+        &input_data,
+        &mut expected,
+        ncols_dst,
+        n_rows,
+    );
+    for (dst, residual) in expected.iter_mut().zip(&residual_data) {
+        *dst += residual;
+    }
+
+    let mut output_bytes = vec![0u8; ncols_dst * std::mem::size_of::<f32>()];
+    d_output
+        .copy_to_host(&mut output_bytes)
+        .expect("Failed to download output");
+    let actual: Vec<f32> = unsafe {
+        std::slice::from_raw_parts(output_bytes.as_ptr() as *const f32, ncols_dst).to_vec()
+    };
+
+    assert_close(&expected, &actual, 1e-3);
+}
+
+#[test]
+#[serial]
+fn test_fused_gate_up_q4_1_fallback_matches_cpu_oracle() {
+    require_gpu!();
+    require_vram!(4);
+
+    use gpu_test_utils::assert_close;
+    use rocmforge::cpu::ops::gemv_q4_1_transposed;
+    use rocmforge::gpu::{
+        detect, GpuBuffer, GpuQuant, TensorRole, WeightMeta, Q4_1_BLOCK_SIZE, QK4_1,
+    };
+    use rocmforge::loader::GgmlType;
+
+    let caps = detect().expect("GPU required for Q4_1 fused fallback test");
+    let device =
+        rocmforge::gpu::GpuDevice::init(caps.device_id).expect("Failed to initialize GPU device");
+    let gpu_quant = GpuQuant::new(
+        rocmforge::gpu::GpuDevice::init(caps.device_id)
+            .expect("Failed to initialize quantization device"),
+    )
+    .expect("Failed to initialize GpuQuant");
+
+    let n_rows = 4096usize;
+    let n_ff = 96usize;
+
+    let gate_weights: Vec<f32> = (0..n_rows * n_ff)
+        .map(|i| {
+            let col = i / n_rows;
+            let row = i % n_rows;
+            ((col as f32) * 0.021 + (row as f32) * 0.007).sin() * 0.47
+                + ((row as f32) * 0.005).cos() * 0.24
+        })
+        .collect();
+    let up_weights: Vec<f32> = (0..n_rows * n_ff)
+        .map(|i| {
+            let col = i / n_rows;
+            let row = i % n_rows;
+            ((col as f32) * 0.015 + (row as f32) * 0.012).cos() * 0.51
+                - ((row as f32) * 0.008).sin() * 0.16
+        })
+        .collect();
+    let input_data: Vec<f32> = (0..n_rows)
+        .map(|i| ((i as f32) * 0.019).cos() * 1.03 + ((i as f32) * 0.006).sin() * 0.09)
+        .collect();
+
+    let mut d_gate_weights = GpuBuffer::alloc(n_rows * n_ff * std::mem::size_of::<f32>())
+        .expect("Failed to allocate gate weights");
+    let mut d_up_weights = GpuBuffer::alloc(n_rows * n_ff * std::mem::size_of::<f32>())
+        .expect("Failed to allocate up weights");
+    let mut d_input =
+        GpuBuffer::alloc(n_rows * std::mem::size_of::<f32>()).expect("Failed to allocate input");
+    let mut d_gate_quantized = GpuBuffer::alloc((n_rows / QK4_1) * n_ff * Q4_1_BLOCK_SIZE)
+        .expect("Failed to allocate quantized gate weights");
+    let mut d_up_quantized = GpuBuffer::alloc((n_rows / QK4_1) * n_ff * Q4_1_BLOCK_SIZE)
+        .expect("Failed to allocate quantized up weights");
+    let d_output =
+        GpuBuffer::alloc(n_ff * std::mem::size_of::<f32>()).expect("Failed to allocate output");
+
+    let gate_bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(
+            gate_weights.as_ptr() as *const u8,
+            n_rows * n_ff * std::mem::size_of::<f32>(),
+        )
+    };
+    d_gate_weights
+        .copy_from_host(gate_bytes)
+        .expect("Failed to upload gate weights");
+
+    let up_bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(
+            up_weights.as_ptr() as *const u8,
+            n_rows * n_ff * std::mem::size_of::<f32>(),
+        )
+    };
+    d_up_weights
+        .copy_from_host(up_bytes)
+        .expect("Failed to upload up weights");
+
+    let input_bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(
+            input_data.as_ptr() as *const u8,
+            n_rows * std::mem::size_of::<f32>(),
+        )
+    };
+    d_input
+        .copy_from_host(input_bytes)
+        .expect("Failed to upload input");
+
+    for col in 0..n_ff {
+        let gate_weights_ptr = unsafe {
+            d_gate_weights
+                .as_ptr()
+                .add(col * n_rows * std::mem::size_of::<f32>())
+        };
+        let gate_quantized_ptr = unsafe {
+            d_gate_quantized
+                .as_ptr()
+                .add(col * (n_rows / QK4_1) * Q4_1_BLOCK_SIZE)
+        };
+        gpu_quant
+            .quantize_q4_1(gate_weights_ptr as *const f32, gate_quantized_ptr, n_rows)
+            .expect("Failed to quantize gate weights");
+
+        let up_weights_ptr = unsafe {
+            d_up_weights
+                .as_ptr()
+                .add(col * n_rows * std::mem::size_of::<f32>())
+        };
+        let up_quantized_ptr = unsafe {
+            d_up_quantized
+                .as_ptr()
+                .add(col * (n_rows / QK4_1) * Q4_1_BLOCK_SIZE)
+        };
+        gpu_quant
+            .quantize_q4_1(up_weights_ptr as *const f32, up_quantized_ptr, n_rows)
+            .expect("Failed to quantize up weights");
+    }
+
+    let meta = WeightMeta {
+        wtype: GgmlType::Q4_1,
+        dims: vec![n_rows as u64, n_ff as u64],
+        needs_transpose: false,
+        role: TensorRole::Generic,
+    };
+
+    rocmforge::gpu::ops::gpu_dispatch_fused_gate_up_on_stream(
+        &device,
+        &d_gate_quantized,
+        &meta,
+        &d_up_quantized,
+        &meta,
+        d_input.as_ptr() as *const f32,
+        d_output.as_ptr() as *mut f32,
+        n_ff,
+        n_rows,
+        device.stream(),
+    )
+    .expect("Q4_1 fused gate/up fallback should succeed");
+
+    let mut gate_quantized_bytes = vec![0u8; (n_rows / QK4_1) * n_ff * Q4_1_BLOCK_SIZE];
+    d_gate_quantized
+        .copy_to_host(&mut gate_quantized_bytes)
+        .expect("Failed to download quantized gate weights");
+    let mut up_quantized_bytes = vec![0u8; (n_rows / QK4_1) * n_ff * Q4_1_BLOCK_SIZE];
+    d_up_quantized
+        .copy_to_host(&mut up_quantized_bytes)
+        .expect("Failed to download quantized up weights");
+
+    let mut output_bytes = vec![0u8; n_ff * std::mem::size_of::<f32>()];
+    d_output
+        .copy_to_host(&mut output_bytes)
+        .expect("Failed to download output");
+    let actual: Vec<f32> =
+        unsafe { std::slice::from_raw_parts(output_bytes.as_ptr() as *const f32, n_ff).to_vec() };
+
+    let mut expected_gate = vec![0.0f32; n_ff];
+    let mut expected_up = vec![0.0f32; n_ff];
+    gemv_q4_1_transposed(
+        &gate_quantized_bytes,
+        &input_data,
+        &mut expected_gate,
+        n_ff,
+        n_rows,
+    );
+    gemv_q4_1_transposed(
+        &up_quantized_bytes,
+        &input_data,
+        &mut expected_up,
+        n_ff,
+        n_rows,
+    );
+    let mut expected = vec![0.0f32; n_ff];
+    cpu_silu(&expected_gate, &mut expected);
+    for i in 0..n_ff {
+        expected[i] *= expected_up[i];
+    }
 
     assert_close(&expected, &actual, 1e-3);
 }

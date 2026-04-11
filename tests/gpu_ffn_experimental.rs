@@ -5,7 +5,7 @@ mod common;
 use rocmforge::config::{detect_chat_template, ModelConfig};
 use rocmforge::cpu::{
     cache::{CpuForwardScratch, CpuKvCache},
-    forward::cpu_embed_token,
+    forward::{cpu_embed_token, cpu_full_forward, cpu_layer_forward},
     ops::{
         add_bias, dispatch_gemv as cpu_dispatch_gemv, flash_attn_decode, residual_add, rms_norm,
         rope, silu_fuse,
@@ -61,7 +61,7 @@ where
 fn prepare_layer0_ffn_inputs(
     cpu_weights: &CpuModelWeights,
     config: &ModelConfig,
-) -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>) {
+) -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>) {
     let file = GgufFile::open(MODEL_PATH).expect("Failed to reopen GGUF file");
     let tok = BpeTokenizer::from_gguf(file.tokenizer_data());
     let template =
@@ -194,6 +194,7 @@ fn prepare_layer0_ffn_inputs(
     )
     .expect("CPU up projection");
 
+    let normed = scratch.normed.clone();
     let gate = scratch.gate.clone();
     let up = scratch.swiglu.clone();
     silu_fuse(&scratch.gate, &mut scratch.swiglu);
@@ -210,7 +211,77 @@ fn prepare_layer0_ffn_inputs(
     )
     .expect("CPU ffn_down projection");
 
-    (gate, up, scratch.swiglu, reference)
+    (normed, gate, up, scratch.swiglu, reference)
+}
+
+#[test]
+#[serial]
+fn test_gpu_experimental_gate_up_q4_0_layer0_real_model_matches_cpu() {
+    if skip_if_model_missing() {
+        eprintln!("Skipping test: model file not found at {}", MODEL_PATH);
+        return;
+    }
+
+    require_experimental_gpu_tests!();
+    require_gpu!();
+    require_vram!(4);
+
+    let caps = gpu::detect().expect("GPU should be detected");
+    let device = GpuDevice::init(caps.device_id).expect("GPU device should initialize");
+
+    let file = GgufFile::open(MODEL_PATH).expect("Failed to open GGUF file");
+    let config = ModelConfig::from_gguf(&file).expect("Failed to parse model config");
+    let cpu_weights = CpuModelWeights::load(&file, &config).expect("CPU weights should load");
+    let gpu_weights = gpu::GpuModelWeights::load(&file, &config).expect("GPU weights should load");
+    let layer = gpu_weights.layer(0);
+
+    assert_eq!(
+        layer.ffn_gate_meta.wtype,
+        GgmlType::Q4_0,
+        "expected layer-0 ffn_gate to be Q4_0 for this experiment"
+    );
+    assert_eq!(
+        layer.ffn_up_meta.wtype,
+        GgmlType::Q4_0,
+        "expected layer-0 ffn_up to be Q4_0 for this experiment"
+    );
+
+    let (normed, cpu_gate, cpu_up, _, _) = prepare_layer0_ffn_inputs(&cpu_weights, &config);
+    let ff_size = config.intermediate_size;
+    let hidden_size = config.hidden_size;
+
+    let d_normed = upload_f32(&normed);
+    let d_gate = GpuBuffer::alloc(ff_size * std::mem::size_of::<f32>()).expect("alloc gate");
+    let d_up = GpuBuffer::alloc(ff_size * std::mem::size_of::<f32>()).expect("alloc up");
+
+    gpu::kernels::quant::gemv_gate_up_q4_0_f32_on_stream(
+        layer.ffn_gate.as_ptr(),
+        layer.ffn_up.as_ptr(),
+        d_normed.as_ptr() as *const f32,
+        d_gate.as_ptr() as *mut f32,
+        d_up.as_ptr() as *mut f32,
+        hidden_size,
+        ff_size,
+        device.stream(),
+    )
+    .expect("raw gate/up kernel");
+    device.synchronize().expect("gate/up synchronize");
+
+    let gpu_gate = download_f32(&d_gate, ff_size);
+    let gpu_up = download_f32(&d_up, ff_size);
+    let gate_err = max_abs_error(&cpu_gate, &gpu_gate);
+    let up_err = max_abs_error(&cpu_up, &gpu_up);
+
+    assert!(
+        gate_err <= 1e-3,
+        "layer-0 raw gate mismatch: max_abs_error={}",
+        gate_err
+    );
+    assert!(
+        up_err <= 1e-3,
+        "layer-0 raw up mismatch: max_abs_error={}",
+        up_err
+    );
 }
 
 #[test]
@@ -222,14 +293,7 @@ fn test_gpu_experimental_ffn_down_swiglu_q4_1_layer0_real_model() {
         return;
     }
 
-    let _lock = match common::GpuLock::acquire() {
-        Ok(lock) => lock,
-        Err(err) => {
-            eprintln!("Skipping test: {}", err);
-            return;
-        }
-    };
-
+    require_experimental_gpu_tests!();
     require_gpu!();
     require_vram!(4);
 
@@ -248,7 +312,7 @@ fn test_gpu_experimental_ffn_down_swiglu_q4_1_layer0_real_model() {
         "expected layer-0 ffn_down to be Q4_1 for this experiment"
     );
 
-    let (gate, up, swiglu, cpu_reference) = prepare_layer0_ffn_inputs(&cpu_weights, &config);
+    let (_, gate, up, swiglu, cpu_reference) = prepare_layer0_ffn_inputs(&cpu_weights, &config);
     let ff_size = config.intermediate_size;
     let hidden_size = config.hidden_size;
 
@@ -336,5 +400,208 @@ fn test_gpu_experimental_ffn_down_swiglu_q4_1_layer0_real_model() {
         cross_err <= 1e-4,
         "baseline and experimental FFN paths diverged: max_abs_error={}",
         cross_err
+    );
+}
+
+#[test]
+#[serial]
+fn test_gpu_experimental_full_ffn_block_q4_1_layer0_real_model_matches_cpu() {
+    if skip_if_model_missing() {
+        eprintln!("Skipping test: model file not found at {}", MODEL_PATH);
+        return;
+    }
+
+    require_experimental_gpu_tests!();
+    require_gpu!();
+    require_vram!(4);
+
+    let caps = gpu::detect().expect("GPU should be detected");
+    let device = GpuDevice::init(caps.device_id).expect("GPU device should initialize");
+
+    let file = GgufFile::open(MODEL_PATH).expect("Failed to open GGUF file");
+    let config = ModelConfig::from_gguf(&file).expect("Failed to parse model config");
+    let cpu_weights = CpuModelWeights::load(&file, &config).expect("CPU weights should load");
+    let gpu_weights = gpu::GpuModelWeights::load(&file, &config).expect("GPU weights should load");
+    let layer = gpu_weights.layer(0);
+
+    assert_eq!(
+        layer.ffn_gate_meta.wtype,
+        GgmlType::Q4_0,
+        "expected layer-0 ffn_gate to be Q4_0 for this experiment"
+    );
+    assert_eq!(
+        layer.ffn_up_meta.wtype,
+        GgmlType::Q4_0,
+        "expected layer-0 ffn_up to be Q4_0 for this experiment"
+    );
+    assert_eq!(
+        layer.ffn_down_meta.wtype,
+        GgmlType::Q4_1,
+        "expected layer-0 ffn_down to be Q4_1 for this experiment"
+    );
+
+    let (normed, _, _, _, cpu_reference) = prepare_layer0_ffn_inputs(&cpu_weights, &config);
+    let ff_size = config.intermediate_size;
+    let hidden_size = config.hidden_size;
+
+    let d_normed = upload_f32(&normed);
+    let d_gate = GpuBuffer::alloc(ff_size * std::mem::size_of::<f32>()).expect("alloc gate");
+    let d_up = GpuBuffer::alloc(ff_size * std::mem::size_of::<f32>()).expect("alloc up");
+    let d_output =
+        GpuBuffer::alloc(hidden_size * std::mem::size_of::<f32>()).expect("alloc output");
+
+    gpu::kernels::quant::gemv_gate_up_q4_0_f32_on_stream(
+        layer.ffn_gate.as_ptr(),
+        layer.ffn_up.as_ptr(),
+        d_normed.as_ptr() as *const f32,
+        d_gate.as_ptr() as *mut f32,
+        d_up.as_ptr() as *mut f32,
+        hidden_size,
+        ff_size,
+        device.stream(),
+    )
+    .expect("raw gate/up kernel");
+    gpu::kernels::quant::gemv_ffn_down_swiglu_q4_1_f32_experimental_on_stream(
+        layer.ffn_down.as_ptr(),
+        d_gate.as_ptr() as *const f32,
+        d_up.as_ptr() as *const f32,
+        d_output.as_ptr() as *mut f32,
+        ff_size,
+        hidden_size,
+        device.stream(),
+    )
+    .expect("experimental full FFN block");
+    device.synchronize().expect("full FFN synchronize");
+
+    let experimental = download_f32(&d_output, hidden_size);
+    let experimental_err = max_abs_error(&cpu_reference, &experimental);
+
+    assert!(
+        experimental_err <= 1e-3,
+        "experimental full layer-0 FFN mismatch: max_abs_error={}",
+        experimental_err
+    );
+}
+
+#[test]
+#[serial]
+fn test_gpu_experimental_full_ffn_block_prompt_tail_matches_cpu_across_eligible_layers() {
+    if skip_if_model_missing() {
+        eprintln!("Skipping test: model file not found at {}", MODEL_PATH);
+        return;
+    }
+
+    require_experimental_gpu_tests!();
+    require_gpu!();
+    require_vram!(4);
+
+    let caps = gpu::detect().expect("GPU should be detected");
+    let device = GpuDevice::init(caps.device_id).expect("GPU device should initialize");
+
+    let file = GgufFile::open(MODEL_PATH).expect("Failed to open GGUF file");
+    let config = ModelConfig::from_gguf(&file).expect("Failed to parse model config");
+    let cpu_weights = CpuModelWeights::load(&file, &config).expect("CPU weights should load");
+    let gpu_weights = gpu::GpuModelWeights::load(&file, &config).expect("GPU weights should load");
+    let tok = BpeTokenizer::from_gguf(file.tokenizer_data());
+    let template =
+        detect_chat_template(&config.architecture, file.tokenizer_data().model.as_deref());
+    let prompt = template.apply("Hello");
+    let prompt_tokens = tok.encode(&prompt, false);
+    assert!(!prompt_tokens.is_empty(), "prompt should tokenize");
+
+    let target_pos = prompt_tokens.len() - 1;
+    let ff_size = config.intermediate_size;
+    let hidden_size = config.hidden_size;
+
+    let mut cpu_kv = CpuKvCache::new(&config, prompt_tokens.len());
+    let mut cpu_scratch = CpuForwardScratch::new(&config);
+    let mut hidden = vec![0.0f32; hidden_size];
+
+    for (pos, &token_id) in prompt_tokens[..target_pos].iter().enumerate() {
+        cpu_embed_token(token_id, &cpu_weights, &mut hidden, &config);
+        cpu_full_forward(
+            &mut hidden,
+            &cpu_weights,
+            &mut cpu_kv,
+            &mut cpu_scratch,
+            pos,
+            &config,
+        )
+        .expect("CPU prefill should succeed");
+    }
+
+    cpu_embed_token(
+        prompt_tokens[target_pos],
+        &cpu_weights,
+        &mut hidden,
+        &config,
+    );
+
+    let mut checked_layers = 0usize;
+    for layer_idx in 0..config.num_layers {
+        cpu_layer_forward(
+            &mut hidden,
+            cpu_weights.layer(layer_idx),
+            &mut cpu_kv,
+            &mut cpu_scratch,
+            layer_idx,
+            target_pos,
+            &config,
+            false,
+        )
+        .expect("CPU layer forward should succeed");
+
+        let gpu_layer = gpu_weights.layer(layer_idx);
+        if gpu_layer.ffn_gate_meta.wtype != GgmlType::Q4_0
+            || gpu_layer.ffn_up_meta.wtype != GgmlType::Q4_0
+            || gpu_layer.ffn_down_meta.wtype != GgmlType::Q4_1
+        {
+            continue;
+        }
+
+        checked_layers += 1;
+        let d_normed = upload_f32(&cpu_scratch.normed);
+        let d_gate = GpuBuffer::alloc(ff_size * std::mem::size_of::<f32>()).expect("alloc gate");
+        let d_up = GpuBuffer::alloc(ff_size * std::mem::size_of::<f32>()).expect("alloc up");
+        let d_output =
+            GpuBuffer::alloc(hidden_size * std::mem::size_of::<f32>()).expect("alloc output");
+
+        gpu::kernels::quant::gemv_gate_up_q4_0_f32_on_stream(
+            gpu_layer.ffn_gate.as_ptr(),
+            gpu_layer.ffn_up.as_ptr(),
+            d_normed.as_ptr() as *const f32,
+            d_gate.as_ptr() as *mut f32,
+            d_up.as_ptr() as *mut f32,
+            hidden_size,
+            ff_size,
+            device.stream(),
+        )
+        .expect("raw gate/up kernel");
+        gpu::kernels::quant::gemv_ffn_down_swiglu_q4_1_f32_experimental_on_stream(
+            gpu_layer.ffn_down.as_ptr(),
+            d_gate.as_ptr() as *const f32,
+            d_up.as_ptr() as *const f32,
+            d_output.as_ptr() as *mut f32,
+            ff_size,
+            hidden_size,
+            device.stream(),
+        )
+        .expect("experimental full FFN block");
+        device.synchronize().expect("layer synchronize");
+
+        let actual = download_f32(&d_output, hidden_size);
+        let err = max_abs_error(&cpu_scratch.layer_out, &actual);
+        assert!(
+            err <= 1e-3,
+            "experimental FFN mismatch at layer {} pos {}: max_abs_error={}",
+            layer_idx,
+            target_pos,
+            err
+        );
+    }
+
+    assert!(
+        checked_layers > 0,
+        "expected at least one eligible Q4_0/Q4_0/Q4_1 FFN layer"
     );
 }

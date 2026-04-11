@@ -62,14 +62,7 @@ fn test_gpu_vulkan_style_q4_k_gemv() {
         return;
     }
 
-    let _lock = match common::GpuLock::acquire() {
-        Ok(lock) => lock,
-        Err(err) => {
-            eprintln!("Skipping test: {}", err);
-            return;
-        }
-    };
-
+    require_experimental_gpu_tests!();
     require_gpu!();
     require_vram!(4);
 

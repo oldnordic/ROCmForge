@@ -60,14 +60,7 @@ fn test_gpu_vulkan_style_gate_up_interleaved_q4_0() {
         return;
     }
 
-    let _lock = match common::GpuLock::acquire() {
-        Ok(lock) => lock,
-        Err(err) => {
-            eprintln!("Skipping test: {}", err);
-            return;
-        }
-    };
-
+    require_experimental_gpu_tests!();
     require_gpu!();
     require_vram!(4);
 

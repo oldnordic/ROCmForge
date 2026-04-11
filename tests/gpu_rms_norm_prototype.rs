@@ -43,14 +43,7 @@ where
 #[test]
 #[serial]
 fn test_gpu_rms_norm_vulkan_style_shuffles() {
-    let _lock = match common::GpuLock::acquire() {
-        Ok(lock) => lock,
-        Err(err) => {
-            eprintln!("Skipping test: {}", err);
-            return;
-        }
-    };
-
+    require_experimental_gpu_tests!();
     require_gpu!();
     require_vram!(1);
 

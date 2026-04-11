@@ -29,6 +29,7 @@ mod gpu_build {
 
         let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set");
         let hipcc = hip_path.join("bin/hipcc");
+        let hip_include = hip_path.join("include");
 
         if !hipcc.exists() {
             println!(
@@ -59,7 +60,8 @@ mod gpu_build {
                 .arg("-c")
                 .arg("-fPIC")
                 .arg("-O3")
-                .arg("--amdgpu-target=gfx1100")
+                .arg("--offload-arch=gfx1100")
+                .arg(format!("-I{}", hip_include.display()))
                 .status();
 
             match compile_status {
@@ -104,15 +106,16 @@ mod gpu_build {
         let cmake = cmake.as_deref().unwrap_or(Path::new("cmake"));
 
         // Quantization kernel paths
-        let quant_src = Path::new("hip_kernels/quant");
-        let quant_build = Path::new("hip_kernels/quant/build");
-
         let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set");
         let lib_dest = Path::new(&out_dir);
+        let quant_src = Path::new("hip_kernels/quant");
+        let quant_build = PathBuf::from(&out_dir).join("quant-cmake-build");
+        let rocm_path = find_rocm_path().unwrap_or_else(|| PathBuf::from("/opt/rocm"));
+        let hip_dir = rocm_path.join("lib/cmake/hip");
 
         // Create build directory if it doesn't exist
         if !quant_build.exists() {
-            if let Err(e) = std::fs::create_dir_all(quant_build) {
+            if let Err(e) = std::fs::create_dir_all(&quant_build) {
                 println!(
                     "cargo:warning=Failed to create quant build directory: {}",
                     e
@@ -128,13 +131,21 @@ mod gpu_build {
             .arg("-S")
             .arg(quant_src)
             .arg("-B")
-            .arg(quant_build)
+            .arg(&quant_build)
+            .arg("-DCMAKE_BUILD_TYPE=Release")
+            .arg(format!("-DCMAKE_PREFIX_PATH={}", rocm_path.display()))
+            .arg(format!("-Dhip_DIR={}", hip_dir.display()))
             .status();
 
         match config_status {
             Ok(s) if s.success() => {
                 // Build the project
-                let build_status = Command::new(cmake).arg("--build").arg(quant_build).status();
+                let build_status = Command::new(cmake)
+                    .arg("--build")
+                    .arg(&quant_build)
+                    .arg("--config")
+                    .arg("Release")
+                    .status();
 
                 match build_status {
                     Ok(_) => {
