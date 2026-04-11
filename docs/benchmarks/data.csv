@@ -1,3 +1,0 @@
-timestamp,benchmark_name,kernel_type,quantization,operation,dimension,throughput_ms,speedup_vs_baseline,git_commit
-2026-03-27T11:11:18Z,gemv_q4k_q8,AVX2,Q4_K,gemv,896x896,0.045,2.91,75b21e9
-2026-03-27T11:11:18Z,gemv_q4k_q8,Scalar,Q4_K,gemv,896x896,0.131,1.00,75b21e9

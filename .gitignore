@@ -22,11 +22,16 @@ hip_kernels/quant/build/
 # Planning and development documents
 PERFORMANCE.md
 PLAN.md
+docs/
 docs/superpowers/
 DOCS/
 # Local agent guidance files
 GEMINI.md
 AGENTS.md
 CLAUDE.md
+.claude/
+.gemini/
+.cursor/
+.roo/
 *.mirage.md
 .worktrees/
