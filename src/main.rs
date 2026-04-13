@@ -507,7 +507,7 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 
     eprint!("Loading GPU weights... ");
     let t_gpu_load = Instant::now();
-    let gpu_weights = gpu::GpuModelWeights::load(&file, &config)
+    let gpu_weights = gpu::GpuModelWeights::load_for_device(&file, &config, gpu_caps.device_id)
         .map_err(|e| format!("gpu weight load: {}", e))?;
     eprintln!("done in {:.1}s", t_gpu_load.elapsed().as_secs_f64());
 

@@ -23,6 +23,8 @@ pub enum GpuError {
         requested: usize,
         /// Available VRAM in bytes
         available: usize,
+        /// Human-readable hint about the error
+        hint: String,
     },
 
     /// Kernel launch failed (compilation or execution error)
@@ -48,7 +50,14 @@ pub enum GpuError {
     },
 
     /// Model does not fit in available VRAM
-    ModelTooLarge { required: usize, available: usize },
+    ModelTooLarge {
+        /// Total model size in bytes
+        required: usize,
+        /// Available VRAM in bytes
+        available: usize,
+        /// Human-readable hint about the error
+        hint: String,
+    },
 
     /// Position index is out of bounds for KV cache
     InvalidSequencePosition { pos: usize, max: usize },
@@ -69,12 +78,14 @@ impl std::fmt::Display for GpuError {
             GpuError::OutOfMemory {
                 requested,
                 available,
+                hint,
             } => {
                 write!(
                     f,
-                    "Out of GPU memory: requested {} MB, available {} MB",
+                    "Out of GPU memory: requested {} MB, available {} MB. {}",
                     requested / (1024 * 1024),
-                    available / (1024 * 1024)
+                    available / (1024 * 1024),
+                    hint
                 )
             }
             GpuError::KernelLaunchFailed { kernel } => {
@@ -106,12 +117,14 @@ impl std::fmt::Display for GpuError {
             GpuError::ModelTooLarge {
                 required,
                 available,
+                hint,
             } => {
                 write!(
                     f,
-                    "model too large for GPU: requires {} MB, available {} MB",
+                    "Model too large for GPU: requires {} MB, available {} MB. {}",
                     required / (1024 * 1024),
-                    available / (1024 * 1024)
+                    available / (1024 * 1024),
+                    hint
                 )
             }
             GpuError::InvalidSequencePosition { pos, max } => {
@@ -152,10 +165,12 @@ mod tests {
         let e = GpuError::OutOfMemory {
             requested: 1024 * 1024 * 1024, // 1 GB
             available: 512 * 1024 * 1024,  // 512 MB
+            hint: "Test hint".to_string(),
         };
         let s = e.to_string();
         assert!(s.contains("1024 MB"));
         assert!(s.contains("512 MB"));
+        assert!(s.contains("Test hint"));
     }
 
     #[test]

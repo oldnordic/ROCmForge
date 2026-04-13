@@ -64,7 +64,7 @@ __global__ void gemv_ffn_down_swiglu_q4_1_f32_experimental_kernel(
         sum += vec_dot_q4_1_swiglu(&w_col[block_idx], gate, up, block_idx * QK4_1);
     }
 
-    for (int offset = WARP_SIZE_COMPTIME / 2; offset > 0; offset >>= 1) {
+    for (int offset = 16; offset > 0; offset >>= 1) {
         sum += __shfl_down(sum, offset);
     }
 

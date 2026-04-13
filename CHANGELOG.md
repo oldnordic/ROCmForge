@@ -4,6 +4,66 @@
 
 ### [GPU Backend]
 
+**fix(gpu): VRAM safety hardening to prevent compositor crashes**
+
+- **Date:** April 11, 2026
+- **Issues Fixed:**
+  1. **Compositor crash from VRAM exhaustion**: Wayland compositor crashed (DC: pipe_idx syncd with disabled master pipe) when ROCmForge allocations stole memory needed for display
+  2. **Unsafe VRAM allocation**: GPU buffers allocated without checking available VRAM, competing with desktop processes
+  3. **Aggressive test VRAM limits**: Tests allowed up to 10GB allocation regardless of desktop usage
+  4. **No cumulative VRAM tracking**: Model loading didn't track total VRAM usage during layer-by-layer allocation
+  5. **Poor error context**: OutOfMemory errors didn't indicate desktop VRAM usage or safe allocation limits
+- **Root Causes:**
+  - `GpuBuffer::alloc()` directly called `hip_malloc()` without checking available VRAM
+  - `MAX_TEST_VRAM_GB = 10.0` didn't account for desktop/compositor VRAM usage (2-4GB for multi-monitor setups)
+  - `GpuModelWeights::load()` allocated all layers without tracking cumulative VRAM usage
+  - No desktop VRAM reservation or safety margins
+  - Error messages lacked context about desktop VRAM competition
+- **Fixes:**
+  - **VRAM reservation constants** (`src/gpu/weights.rs:16-26`):
+    - `DESKTOP_VRAM_RESERVATION_BYTES = 4 GB` for multi-monitor desktop setups
+    - `VRAM_SAFETY_MARGIN_RATIO = 10%` for allocation safety margin
+  - **Safe VRAM allocation** (`src/gpu/weights.rs`, `src/gpu/ffi.rs`, `src/gpu/device.rs`):
+    - active HIP device is now selected explicitly before stream creation, VRAM queries, and guarded allocations
+    - guarded allocations now fail closed if VRAM safety queries fail instead of silently proceeding without protection
+    - allocation checks account for desktop reservation and safety margin on the selected device
+  - **Pre-allocation model load budgeting** (`src/gpu/weights.rs`):
+    - `GpuModelWeights::load_for_device()` now budgets top-level tensors and each layer before the corresponding GPU allocations
+    - model loading rejects oversize loads before the dangerous `hipMalloc` calls that previously could spike VRAM usage
+    - error messages now report guarded limits and device context
+  - **Layer VRAM estimation** (`src/gpu/weights.rs:791-820`):
+    - Added `GpuLayerWeights::estimate_vram_usage()` method
+    - Calculates total VRAM usage for all layer buffers
+  - **Enhanced test safety** (`tests/gpu_test_utils.rs:14-21`):
+    - Reduced `MAX_TEST_VRAM_GB` from 10.0 to 4.0 GB
+    - Added `DESKTOP_VRAM_RESERVATION_GB = 4.0 GB` constant
+    - Updated `check_vram_available()` to account for desktop reservation
+  - **Better error messages** (`src/gpu/error.rs:21-57`):
+    - Added `hint` field to `OutOfMemory` and `ModelTooLarge` errors
+    - Error messages now show desktop VRAM usage context and safe allocation limits
+  - **Device helper methods** (`src/gpu/device.rs:13-67, 158-207`):
+    - Added `VramStats` struct for detailed VRAM usage information
+    - Added `GpuDevice::can_allocate()` for safe allocation checking
+    - Added `GpuDevice::vram_stats()` for VRAM statistics
+  - **Test configuration** (`Cargo.toml:37-42`):
+    - Added documentation about single-threaded test execution
+    - Specified recommended test commands with `--test-threads=1`
+- **Impact:**
+  - **Safety**: substantially lowers the chance of display-attached GPU resets by refusing guarded allocations earlier and on the intended device
+  - **User Experience**: Clear error messages explain VRAM constraints and desktop usage
+  - **Testing**: test utilities now use a more conservative desktop-aware VRAM gate, and GPU tests are still recommended with `--test-threads=1`
+  - **Compatibility**: if VRAM safety queries fail, GPU allocation now errors instead of silently disabling the guard rails
+  - **Developer Experience**: New helper methods for VRAM checking and statistics
+- **Validation:**
+  - ✅ `cargo build --lib --features gpu` - compiles successfully
+  - ✅ `cargo test --lib --features gpu gpu::error::tests::display_out_of_memory -- --exact` - test passes
+  - ✅ **Graph analysis checked** using Magellan with `.magellan/rocmforge.db` to keep the GPU allocation changes scoped
+- **Files Changed:** `src/gpu/weights.rs`, `src/gpu/error.rs`, `src/gpu/device.rs`, `tests/gpu_test_utils.rs`, `Cargo.toml`
+- **Technical Notes:**
+  - The VRAM allocation system now refuses unsafe or unverified allocations with informative errors instead of silently dropping the safety checks
+  - Model loading provides feedback before large guarded allocations are attempted
+  - Tests should always be run with `--test-threads=1` to prevent VRAM conflicts
+
 **fix(gpu): critical decode graph and Q8_0 kernel memory corruption bugs**
 
 - **Date:** April 11, 2026

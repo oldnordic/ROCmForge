@@ -4,7 +4,7 @@ namespace {
 
 constexpr float kNegInf = -3.402823466e+38f;
 constexpr int kDecodeScoreCapacity = 2048;
-constexpr int kDecodeReductionScratch = MAX_BLOCK_SIZE / WARP_SIZE_COMPTIME;
+constexpr int kDecodeReductionScratch = MAX_BLOCK_SIZE / 32;
 
 __device__ inline float warp_reduce_sum(float value) {
     #pragma unroll

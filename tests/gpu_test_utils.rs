@@ -11,8 +11,15 @@ use std::process::Command;
 /// Tolerance for floating point comparison (1e-4 allows for GPU precision differences)
 pub const F32_TOLERANCE: f32 = 1e-4;
 
-/// Maximum VRAM allocation for tests (10 GB to avoid system hangs)
-pub const MAX_TEST_VRAM_GB: f64 = 10.0;
+/// Maximum VRAM allocation for tests (4 GB to avoid interfering with desktop)
+/// Accounts for desktop usage (compositor, windows, etc.)
+pub const MAX_TEST_VRAM_GB: f64 = 4.0;
+
+/// VRAM reserved for desktop processes (compositor, terminals, etc.)
+pub const DESKTOP_VRAM_RESERVATION_GB: f64 = 4.0;
+
+/// Total safe VRAM for tests (leaves room for desktop)
+pub const SAFE_TEST_VRAM_GB: f64 = MAX_TEST_VRAM_GB; // Already accounts for desktop
 
 /// Check available VRAM before test.
 /// Returns Err if insufficient VRAM or rocm-smi unavailable.
@@ -56,10 +63,15 @@ pub fn check_vram_available(required_gb: f64) -> Result<(), String> {
 
     if total_bytes > 0 && used_bytes > 0 {
         let free_gb = (total_bytes - used_bytes) as f64 / (1024.0 * 1024.0 * 1024.0);
-        if free_gb < required_gb {
+
+        // Account for desktop reservation
+        let safely_allocatable_gb = free_gb - DESKTOP_VRAM_RESERVATION_GB;
+
+        if safely_allocatable_gb < required_gb {
             return Err(format!(
-                "Insufficient VRAM: {:.1} GB free, {:.1} GB required",
-                free_gb, required_gb
+                "Insufficient safe VRAM: {:.1} GB safely allocatable ({:.1} GB free - {:.1} GB desktop reservation), {:.1} GB required. \
+                 Try closing GPU-intensive applications or use a smaller model.",
+                safely_allocatable_gb, free_gb, DESKTOP_VRAM_RESERVATION_GB, required_gb
             ));
         }
         Ok(())

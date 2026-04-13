@@ -45,7 +45,14 @@
 
 constexpr int BLOCK_SIZE = 256;
 constexpr int MAX_BLOCK_SIZE = 1024;
-constexpr int WARP_SIZE = 64;
+
+// Wave size is now a compile-time template parameter
+// Default to 64 for backward compatibility, but build.rs overrides this
+#ifndef WARP_SIZE
+#define WARP_SIZE 64
+#endif
+
+constexpr int WARP_SIZE_COMPTIME = WARP_SIZE;
 
 // ── Utility Functions ───────────────────────────────────────────────────────────────
 

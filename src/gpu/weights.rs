@@ -13,6 +13,79 @@ use crate::cpu::transpose::compute_transpose_flag;
 use crate::loader::{GgmlType, GgufFile, TensorDesc};
 use std::ptr::NonNull;
 
+// ── VRAM Safety Constants ────────────────────────────────────────────────────────
+
+/// VRAM reserved for desktop/compositor (multi-monitor setups).
+/// This prevents allocations from stealing memory needed for display.
+/// 4 GB is typical for multi-monitor 4K setups with desktop compositors.
+const DESKTOP_VRAM_RESERVATION_BYTES: usize = 4 * 1024 * 1024 * 1024; // 4 GB
+
+/// Safety margin for VRAM allocations (10% of free VRAM).
+/// This prevents allocating 100% of available VRAM which could cause issues.
+const VRAM_SAFETY_MARGIN_RATIO: f64 = 0.1;
+
+/// Additional guardrail for full model loads.
+///
+/// Model loading performs many allocations back-to-back, so keep a larger
+/// buffer than the one-off allocation guard.
+const MODEL_LOAD_SAFE_RATIO: f64 = 0.7;
+
+#[derive(Clone, Copy, Debug)]
+struct VramBudget {
+    device_id: i32,
+    free_vram: usize,
+    total_vram: usize,
+    safe_allocation_size: usize,
+    safe_model_load_limit: usize,
+}
+
+fn query_vram_budget(device_id: i32) -> GpuResult<VramBudget> {
+    let (free_vram, total_vram) =
+        ffi::hip_get_mem_info(device_id).map_err(|e| GpuError::HipApiError {
+            code: -1,
+            description: format!(
+                "VRAM safety query failed for device {}: {}. Refusing unsafe GPU allocation.",
+                device_id, e
+            ),
+        })?;
+    let usable_vram = free_vram.saturating_sub(DESKTOP_VRAM_RESERVATION_BYTES);
+    Ok(VramBudget {
+        device_id,
+        free_vram,
+        total_vram,
+        safe_allocation_size: (usable_vram as f64 * (1.0 - VRAM_SAFETY_MARGIN_RATIO)) as usize,
+        safe_model_load_limit: (usable_vram as f64 * MODEL_LOAD_SAFE_RATIO) as usize,
+    })
+}
+
+fn active_or_default_device_id() -> i32 {
+    ffi::hip_get_device().unwrap_or(0)
+}
+
+fn check_model_load_headroom(
+    budget: VramBudget,
+    current_usage: usize,
+    next_allocation: usize,
+) -> GpuResult<()> {
+    let projected = current_usage.saturating_add(next_allocation);
+    if projected > budget.safe_model_load_limit {
+        return Err(GpuError::ModelTooLarge {
+            required: projected,
+            available: budget.safe_model_load_limit,
+            hint: format!(
+                "Projected GPU weight load on device {} would use {} MB, exceeding the guarded load budget of {} MB ({} MB free, {} MB reserved for desktop, {} MB total VRAM).",
+                budget.device_id,
+                projected / (1024 * 1024),
+                budget.safe_model_load_limit / (1024 * 1024),
+                budget.free_vram / (1024 * 1024),
+                DESKTOP_VRAM_RESERVATION_BYTES / (1024 * 1024),
+                budget.total_vram / (1024 * 1024)
+            ),
+        });
+    }
+    Ok(())
+}
+
 // ── Weight Metadata ────────────────────────────────────────────────────────────
 
 /// Metadata for a weight tensor on GPU.
@@ -110,9 +183,33 @@ impl GpuBuffer {
     /// Allocate GPU memory with safety checking.
     ///
     /// Returns error if allocation fails (OutOfMemory).
+    /// Checks available VRAM before allocation to prevent stealing memory from desktop.
     pub fn alloc(size: usize) -> GpuResult<Self> {
+        Self::alloc_for_device(size, active_or_default_device_id())
+    }
+
+    /// Allocate GPU memory on a specific device with safety checking.
+    pub fn alloc_for_device(size: usize, device_id: i32) -> GpuResult<Self> {
         if size == 0 {
             return Ok(Self { ptr: None, size: 0 });
+        }
+
+        ffi::hip_set_device(device_id)?;
+        let budget = query_vram_budget(device_id)?;
+        if size > budget.safe_allocation_size {
+            return Err(GpuError::OutOfMemory {
+                requested: size,
+                available: budget.safe_allocation_size,
+                hint: format!(
+                    "Device {} only has {} MB safely allocatable ({} MB free, {} MB reserved for desktop, {}% safety margin, {} MB total VRAM).",
+                    device_id,
+                    budget.safe_allocation_size / (1024 * 1024),
+                    budget.free_vram / (1024 * 1024),
+                    DESKTOP_VRAM_RESERVATION_BYTES / (1024 * 1024),
+                    (VRAM_SAFETY_MARGIN_RATIO * 100.0) as u32,
+                    budget.total_vram / (1024 * 1024)
+                ),
+            });
         }
 
         let ptr = ffi::hip_malloc(size)?;
@@ -121,6 +218,7 @@ impl GpuBuffer {
         let nn = NonNull::new(ptr).ok_or_else(|| GpuError::OutOfMemory {
             requested: size,
             available: 0,
+            hint: "hipMalloc returned null pointer".to_string(),
         })?;
 
         Ok(Self {
@@ -233,6 +331,7 @@ impl GpuPinnedBuffer {
         let nn = NonNull::new(ptr).ok_or_else(|| GpuError::OutOfMemory {
             requested: size,
             available: 0,
+            hint: "hipHostMalloc returned null pointer".to_string(),
         })?;
 
         Ok(Self {
@@ -398,6 +497,12 @@ fn upload_tensor_bytes(data: &[u8]) -> GpuResult<GpuBuffer> {
     Ok(buf)
 }
 
+fn upload_tensor_bytes_for_device(data: &[u8], device_id: i32) -> GpuResult<GpuBuffer> {
+    let mut buf = GpuBuffer::alloc_for_device(data.len(), device_id)?;
+    buf.copy_from_host(data)?;
+    Ok(buf)
+}
+
 fn try_build_q4_0_gate_up_interleaved(
     gate_data: &[u8],
     gate_meta: &WeightMeta,
@@ -536,6 +641,15 @@ impl GpuLayerWeights {
     /// Returns error if any allocation or transfer fails.
     /// On error, all allocated memory is freed via Drop.
     pub fn load(file: &GgufFile, layer: usize, config: &ModelConfig) -> GpuResult<Self> {
+        Self::load_for_device(file, layer, config, active_or_default_device_id())
+    }
+
+    pub fn load_for_device(
+        file: &GgufFile,
+        layer: usize,
+        config: &ModelConfig,
+        device_id: i32,
+    ) -> GpuResult<Self> {
         // Helper to load weight into GPU buffer with metadata
         let load_weight = |name: &str| -> GpuResult<(GpuBuffer, WeightMeta)> {
             let t = file
@@ -550,7 +664,7 @@ impl GpuLayerWeights {
                 })?;
 
             let meta = build_matrix_meta(name, t.dims, t.ggml_type, config, false, false)?;
-            let buf = upload_tensor_bytes(t.data)?;
+            let buf = upload_tensor_bytes_for_device(t.data, device_id)?;
 
             Ok((buf, meta))
         };
@@ -562,7 +676,7 @@ impl GpuLayerWeights {
                     Ok(Some(t)) => {
                         let meta =
                             build_matrix_meta(name, t.dims, t.ggml_type, config, false, false)?;
-                        let buf = upload_tensor_bytes(t.data)?;
+                        let buf = upload_tensor_bytes_for_device(t.data, device_id)?;
                         return Ok((buf, meta));
                     }
                     Ok(None) => {}
@@ -594,7 +708,7 @@ impl GpuLayerWeights {
                 })?;
 
             let data = t.data;
-            let mut buf = GpuBuffer::alloc(data.len())?;
+            let mut buf = GpuBuffer::alloc_for_device(data.len(), device_id)?;
             buf.copy_from_host(data)?;
             Ok(buf)
         };
@@ -603,7 +717,7 @@ impl GpuLayerWeights {
         let load_f32_opt = |name: &str| -> GpuResult<Option<GpuBuffer>> {
             match file.tensor(name) {
                 Ok(Some(t)) => {
-                    let mut buf = GpuBuffer::alloc(t.data.len())?;
+                    let mut buf = GpuBuffer::alloc_for_device(t.data.len(), device_id)?;
                     buf.copy_from_host(t.data)?;
                     Ok(Some(buf))
                 }
@@ -692,7 +806,7 @@ impl GpuLayerWeights {
                 up_t.data,
                 &ffn_up_meta,
             )
-            .map(|bytes| upload_tensor_bytes(&bytes))
+            .map(|bytes| upload_tensor_bytes_for_device(&bytes, device_id))
             .transpose()?,
             _ => None,
         };
@@ -706,7 +820,7 @@ impl GpuLayerWeights {
                 up_t.data,
                 &ffn_up_meta,
             )
-            .map(|bytes| upload_tensor_bytes(&bytes))
+            .map(|bytes| upload_tensor_bytes_for_device(&bytes, device_id))
             .transpose()?,
             _ => None,
         };
@@ -745,6 +859,202 @@ impl GpuLayerWeights {
             ffn_down_meta,
         })
     }
+
+    fn estimate_vram_usage_from_file(
+        file: &GgufFile,
+        layer: usize,
+        config: &ModelConfig,
+    ) -> GpuResult<usize> {
+        let tensor_bytes = |name: &str| -> GpuResult<usize> {
+            let t = file
+                .tensor(name)
+                .map_err(|e| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor lookup failed: {}", e),
+                })?
+                .ok_or_else(|| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor not found: {}", name),
+                })?;
+            Ok(t.data.len())
+        };
+        let tensor_bytes_optional = |name: &str| -> GpuResult<usize> {
+            if name.is_empty() {
+                return Ok(0);
+            }
+            Ok(file
+                .tensor(name)
+                .map_err(|e| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor lookup failed: {}", e),
+                })?
+                .map(|t| t.data.len())
+                .unwrap_or(0))
+        };
+        let choose_ffn_tensor = |primary: &str, fallback: &str| -> GpuResult<(String, usize)> {
+            if file.has_tensor(primary) {
+                Ok((primary.to_string(), tensor_bytes(primary)?))
+            } else {
+                Ok((fallback.to_string(), tensor_bytes(fallback)?))
+            }
+        };
+
+        let attn_norm_name = config.tensor_registry.resolve(TensorName::AttnNorm, layer);
+        let attn_q_name = config.tensor_registry.resolve(TensorName::AttnQ, layer);
+        let attn_k_name = config.tensor_registry.resolve(TensorName::AttnK, layer);
+        let attn_v_name = config.tensor_registry.resolve(TensorName::AttnV, layer);
+        let attn_o_name = config
+            .tensor_registry
+            .resolve(TensorName::AttnOutput, layer);
+        let ffn_norm_name = config.tensor_registry.resolve(TensorName::FfnNorm, layer);
+        let ffn_gate_name = config.tensor_registry.resolve(TensorName::FfnGate, layer);
+        let ffn_up_name = config.tensor_registry.resolve(TensorName::FfnUp, layer);
+        let ffn_down_name = config.tensor_registry.resolve(TensorName::FfnDown, layer);
+
+        let (ffn_gate_name_used, ffn_gate_bytes) =
+            if matches!(config.tensor_registry.scheme, TensorNamingScheme::GgufMoE) {
+                let primary = config
+                    .tensor_registry
+                    .resolve(TensorName::FfnGateExps, layer);
+                choose_ffn_tensor(&primary, &ffn_gate_name)?
+            } else {
+                (ffn_gate_name.clone(), tensor_bytes(&ffn_gate_name)?)
+            };
+        let (ffn_up_name_used, ffn_up_bytes) =
+            if matches!(config.tensor_registry.scheme, TensorNamingScheme::GgufMoE) {
+                let primary = config.tensor_registry.resolve(TensorName::FfnUpExps, layer);
+                choose_ffn_tensor(&primary, &ffn_up_name)?
+            } else {
+                (ffn_up_name.clone(), tensor_bytes(&ffn_up_name)?)
+            };
+        let ffn_down_bytes = if matches!(config.tensor_registry.scheme, TensorNamingScheme::GgufMoE)
+        {
+            let primary = config
+                .tensor_registry
+                .resolve(TensorName::FfnDownExps, layer);
+            choose_ffn_tensor(&primary, &ffn_down_name)?.1
+        } else {
+            tensor_bytes(&ffn_down_name)?
+        };
+
+        let gate_tensor = file
+            .tensor(&ffn_gate_name_used)
+            .map_err(|e| GpuError::HipApiError {
+                code: -1,
+                description: format!("tensor lookup failed: {}", e),
+            })?
+            .ok_or_else(|| GpuError::HipApiError {
+                code: -1,
+                description: format!("tensor not found: {}", ffn_gate_name_used),
+            })?;
+        let up_tensor = file
+            .tensor(&ffn_up_name_used)
+            .map_err(|e| GpuError::HipApiError {
+                code: -1,
+                description: format!("tensor lookup failed: {}", e),
+            })?
+            .ok_or_else(|| GpuError::HipApiError {
+                code: -1,
+                description: format!("tensor not found: {}", ffn_up_name_used),
+            })?;
+        let ffn_gate_meta = build_matrix_meta(
+            &ffn_gate_name_used,
+            gate_tensor.dims,
+            gate_tensor.ggml_type,
+            config,
+            false,
+            false,
+        )?;
+        let ffn_up_meta = build_matrix_meta(
+            &ffn_up_name_used,
+            up_tensor.dims,
+            up_tensor.ggml_type,
+            config,
+            false,
+            false,
+        )?;
+        let interleaved_bytes = try_build_q4_0_gate_up_interleaved(
+            gate_tensor.data,
+            &ffn_gate_meta,
+            up_tensor.data,
+            &ffn_up_meta,
+        )
+        .map_or(0, |bytes| bytes.len());
+        let interleaved_tile4_bytes = try_build_q4_0_gate_up_interleaved_tile4(
+            gate_tensor.data,
+            &ffn_gate_meta,
+            up_tensor.data,
+            &ffn_up_meta,
+        )
+        .map_or(0, |bytes| bytes.len());
+
+        Ok(tensor_bytes(&attn_norm_name)?
+            + tensor_bytes(&attn_q_name)?
+            + tensor_bytes_optional(
+                &config
+                    .tensor_registry
+                    .resolve_optional(TensorName::AttnQBias, layer)
+                    .unwrap_or_default(),
+            )?
+            + tensor_bytes(&attn_k_name)?
+            + tensor_bytes_optional(
+                &config
+                    .tensor_registry
+                    .resolve_optional(TensorName::AttnKBias, layer)
+                    .unwrap_or_default(),
+            )?
+            + tensor_bytes(&attn_v_name)?
+            + tensor_bytes_optional(
+                &config
+                    .tensor_registry
+                    .resolve_optional(TensorName::AttnVBias, layer)
+                    .unwrap_or_default(),
+            )?
+            + tensor_bytes(&attn_o_name)?
+            + tensor_bytes(&ffn_norm_name)?
+            + ffn_gate_bytes
+            + ffn_up_bytes
+            + interleaved_bytes
+            + interleaved_tile4_bytes
+            + ffn_down_bytes)
+    }
+
+    /// Estimate total VRAM usage for this layer in bytes.
+    ///
+    /// This is a conservative estimate that sums all buffer sizes.
+    pub fn estimate_vram_usage(&self) -> usize {
+        let mut total = 0;
+
+        // Mandatory buffers
+        total += self.attn_norm.size();
+        total += self.attn_q.size();
+        total += self.attn_k.size();
+        total += self.attn_v.size();
+        total += self.attn_o.size();
+        total += self.ffn_norm.size();
+        total += self.ffn_gate.size();
+        total += self.ffn_up.size();
+        total += self.ffn_down.size();
+
+        // Optional buffers
+        if let Some(ref buf) = self.attn_q_bias {
+            total += buf.size();
+        }
+        if let Some(ref buf) = self.attn_k_bias {
+            total += buf.size();
+        }
+        if let Some(ref buf) = self.attn_v_bias {
+            total += buf.size();
+        }
+        if let Some(ref buf) = self.ffn_gate_up_interleaved {
+            total += buf.size();
+        }
+        if let Some(ref buf) = self.ffn_gate_up_interleaved_tile4 {
+            total += buf.size();
+        }
+
+        total
+    }
 }
 
 // ── GPU Model Weights ─────────────────────────────────────────────────────────────
@@ -774,33 +1084,64 @@ impl GpuModelWeights {
     ///
     /// Returns error if any allocation or transfer fails.
     /// On error, all allocated memory is freed via Drop.
+    /// Includes cumulative VRAM tracking to prevent model from exceeding safe limits.
     pub fn load(file: &GgufFile, config: &ModelConfig) -> GpuResult<Self> {
+        Self::load_for_device(file, config, active_or_default_device_id())
+    }
+
+    pub fn load_for_device(
+        file: &GgufFile,
+        config: &ModelConfig,
+        device_id: i32,
+    ) -> GpuResult<Self> {
         let n = config.num_layers;
+        ffi::hip_set_device(device_id)?;
+        let budget = query_vram_budget(device_id)?;
 
-        // Helper to load tensor into GPU buffer
-        let load_tensor =
-            |name: &str, is_lm_head: bool, is_tied: bool| -> GpuResult<(GpuBuffer, WeightMeta)> {
-                let t = file
-                    .tensor(name)
-                    .map_err(|e| GpuError::HipApiError {
-                        code: -1,
-                        description: format!("tensor lookup failed: {}", e),
-                    })?
-                    .ok_or_else(|| GpuError::HipApiError {
-                        code: -1,
-                        description: format!("tensor not found: {}", name),
-                    })?;
+        // Helper to load tensor into GPU buffer without VRAM tracking (done separately)
+        fn load_tensor_no_track(
+            file: &GgufFile,
+            name: &str,
+            config: &ModelConfig,
+            is_lm_head: bool,
+            is_tied: bool,
+            device_id: i32,
+        ) -> GpuResult<(GpuBuffer, WeightMeta)> {
+            let t = file
+                .tensor(name)
+                .map_err(|e| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor lookup failed: {}", e),
+                })?
+                .ok_or_else(|| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor not found: {}", name),
+                })?;
 
-                let meta =
-                    build_matrix_meta(name, t.dims, t.ggml_type, config, is_lm_head, is_tied)?;
-                let buf = upload_tensor_bytes(t.data)?;
+            let meta = build_matrix_meta(name, t.dims, t.ggml_type, config, is_lm_head, is_tied)?;
+            let buf = upload_tensor_bytes_for_device(t.data, device_id)?;
 
-                Ok((buf, meta))
-            };
+            Ok((buf, meta))
+        }
+
+        let mut estimated_vram_used = 0usize;
 
         // Load token embeddings using registry
         let token_emb_name = config.tensor_registry.resolve(TensorName::TokenEmb, 0);
-        let (token_emb, token_emb_meta) = load_tensor(&token_emb_name, false, false)?;
+        let token_emb_view = file
+            .tensor(&token_emb_name)
+            .map_err(|e| GpuError::HipApiError {
+                code: -1,
+                description: format!("tensor lookup failed: {}", e),
+            })?
+            .ok_or_else(|| GpuError::HipApiError {
+                code: -1,
+                description: format!("tensor not found: {}", token_emb_name),
+            })?;
+        check_model_load_headroom(budget, estimated_vram_used, token_emb_view.data.len())?;
+        let (token_emb, token_emb_meta) =
+            load_tensor_no_track(file, &token_emb_name, config, false, false, device_id)?;
+        estimated_vram_used += token_emb.size();
 
         // Load output norm using registry
         let output_norm_name = config.tensor_registry.resolve(TensorName::OutputNorm, 0);
@@ -809,18 +1150,37 @@ impl GpuModelWeights {
             .map_err(|_| GpuError::WeightTransferFailed { layer: 0 })?
             .ok_or_else(|| GpuError::WeightTransferFailed { layer: 0 })?;
 
-        let mut output_norm = GpuBuffer::alloc(output_norm_view.data.len())?;
+        check_model_load_headroom(budget, estimated_vram_used, output_norm_view.data.len())?;
+        let mut output_norm = GpuBuffer::alloc_for_device(output_norm_view.data.len(), device_id)?;
         output_norm.copy_from_host(output_norm_view.data)?;
+        estimated_vram_used += output_norm.size();
 
         // LM head: use lm_head.weight if present, otherwise tie to embeddings
         let lm_head_name = config.tensor_registry.resolve(TensorName::LmHead, 0);
         let (lm_head, lm_head_meta, lm_head_tied) = if file.has_tensor(&lm_head_name) {
-            let (buf, meta) = load_tensor(&lm_head_name, true, false)?;
+            let lm_head_view = file
+                .tensor(&lm_head_name)
+                .map_err(|e| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor lookup failed: {}", e),
+                })?
+                .ok_or_else(|| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor not found: {}", lm_head_name),
+                })?;
+            check_model_load_headroom(budget, estimated_vram_used, lm_head_view.data.len())?;
+            let (buf, meta) =
+                load_tensor_no_track(file, &lm_head_name, config, true, false, device_id)?;
+            estimated_vram_used += buf.size();
             (buf, meta, false)
         } else {
             // Materialize a second GPU buffer for the tied head.
             // This keeps the decode path simple while preserving explicit tied metadata.
-            let (buf, _) = load_tensor(&token_emb_name, false, false)?;
+            check_model_load_headroom(budget, estimated_vram_used, token_emb_view.data.len())?;
+            let (buf, _) =
+                load_tensor_no_track(file, &token_emb_name, config, false, false, device_id)?;
+            estimated_vram_used += buf.size();
+
             let tied_meta = build_matrix_meta(
                 &lm_head_name,
                 &token_emb_meta.dims,
@@ -836,11 +1196,20 @@ impl GpuModelWeights {
         let mut layers = Vec::with_capacity(n);
         for i in 0..n {
             eprintln!("[GPU weights] Loading layer {}/{}", i + 1, n);
-            let layer = GpuLayerWeights::load(file, i, config)?;
+            let layer_vram = GpuLayerWeights::estimate_vram_usage_from_file(file, i, config)?;
+            check_model_load_headroom(budget, estimated_vram_used, layer_vram)?;
+            let layer = GpuLayerWeights::load_for_device(file, i, config, device_id)?;
+            estimated_vram_used += layer_vram;
+
             layers.push(layer);
         }
 
         let decode_binding_tag = compute_model_binding_tag(&layers, &output_norm, &lm_head);
+
+        eprintln!(
+            "[GPU weights] Total estimated VRAM usage: {} MB",
+            estimated_vram_used / (1024 * 1024)
+        );
 
         Ok(Self {
             layers,

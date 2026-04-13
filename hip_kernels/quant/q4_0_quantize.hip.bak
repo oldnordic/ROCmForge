@@ -25,7 +25,7 @@ __global__ void quantize_q4_0_device(
     float max_signed = val;
 
     #pragma unroll
-    for (int offset = WARP_SIZE_COMPTIME / 2; offset > 0; offset >>= 1) {
+    for (int offset = 16; offset > 0; offset >>= 1) {
         // Get other thread's abs value
         float other_abs = __shfl_down(max_abs, offset);
         // Get other thread's signed value (the one that corresponds to other_abs)
@@ -53,7 +53,7 @@ __global__ void quantize_q4_0_device(
     q = (q < 0) ? 0 : (q > 15) ? 15 : q;
 
     // Pack into shared memory: each thread writes its slot, then threads 0-15 each pack one byte
-    __shared__ uint8_t s_q[QK4_0];        // WARP_SIZE_COMPTIME slots (one per thread)
+    __shared__ uint8_t s_q[QK4_0];        // 32 slots (one per thread)
     __shared__ uint8_t s_qs[QK4_0 / 2];   // 16 packed bytes
     s_q[threadIdx.x] = (uint8_t)q;
     __syncthreads();

@@ -40,6 +40,13 @@ serial_test = "3"
 criterion = "0.5"
 clap = { version = "4.5", features = ["derive"] }
 
+# Test configuration notes:
+# - GPU tests should ALWAYS be run with: --test-threads=1
+# - This prevents VRAM conflicts between concurrent tests
+# - Example: cargo test --features gpu -- --test-threads=1
+# - The serial_test crate ensures test-level serialization, but single-threaded
+#   execution provides additional safety for VRAM management
+
 [[bin]]
 name = "rocmforge"
 path = "src/main.rs"

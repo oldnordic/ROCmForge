@@ -18,6 +18,12 @@ mod gpu_build {
             .map(|p| p.as_path())
             .unwrap_or(Path::new("/opt/rocm"));
 
+        // Detect wave size for target architecture
+        let target_arch = "gfx1100"; // RX 7900 XT (RDNA3)
+        let wave_size = detect_wave_size_for_arch(target_arch);
+
+        println!("cargo:warning=Target arch: {} (wave size: {})", target_arch, wave_size);
+
         let kernels = [
             ("norm", "hip_kernels/norm.hip"),
             ("norm_vulkan_style", "hip_kernels/norm_vulkan_style.hip"),
@@ -52,7 +58,7 @@ mod gpu_build {
 
             println!("cargo:warning=Compiling HIP kernel: {}", name);
 
-            // Compile to object file
+            // Compile to object file with wave size specialization
             let compile_status = Command::new(&hipcc)
                 .arg(source_file)
                 .arg("-o")
@@ -60,7 +66,8 @@ mod gpu_build {
                 .arg("-c")
                 .arg("-fPIC")
                 .arg("-O3")
-                .arg("--offload-arch=gfx1100")
+                .arg(format!("--offload-arch={}", target_arch))
+                .arg(format!("-DWARP_SIZE={}", wave_size))
                 .arg(format!("-I{}", hip_include.display()))
                 .status();
 
@@ -97,6 +104,16 @@ mod gpu_build {
         }
     }
 
+    fn detect_wave_size_for_arch(arch: &str) -> usize {
+        match arch {
+            "gfx1100" | "gfx1101" | "gfx1102" => 32, // RDNA3
+            "gfx1030" | "gfx1031" | "gfx1032" => 32, // RDNA2
+            "gfx1010" | "gfx1011" | "gfx1012" => 32, // RDNA1
+            "gfx900" | "gfx906" | "gfx908" | "gfx90a" | "gfx90c" | "gfx942" => 64, // CDNA
+            _ => 32, // Conservative default for RDNA
+        }
+    }
+
     pub fn compile_quant_kernels() {
         use std::path::Path;
         use std::process::Command;
@@ -126,6 +143,11 @@ mod gpu_build {
 
         println!("cargo:warning=Compiling quantization kernels with CMake");
 
+        // Detect wave size for target architecture
+        let target_arch = "gfx1100"; // RX 7900 XT (RDNA3)
+        let wave_size = detect_wave_size_for_arch(target_arch);
+        println!("cargo:warning=Quant kernels wave size: {}", wave_size);
+
         // Configure with CMake
         let config_status = Command::new(cmake)
             .arg("-S")
@@ -135,6 +157,8 @@ mod gpu_build {
             .arg("-DCMAKE_BUILD_TYPE=Release")
             .arg(format!("-DCMAKE_PREFIX_PATH={}", rocm_path.display()))
             .arg(format!("-Dhip_DIR={}", hip_dir.display()))
+            .arg(format!("-DCMAKE_CXX_FLAGS=-DWARP_SIZE={}", wave_size))
+            .arg(format!("-DHIP_COMPILER_FLAGS=-DWARP_SIZE={}", wave_size))
             .status();
 
         match config_status {

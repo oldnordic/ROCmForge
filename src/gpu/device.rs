@@ -10,9 +10,51 @@ use std::sync::Mutex;
 
 const DEFAULT_Q8_WORKSPACE_BYTES: usize = 64 * 1024;
 
+// VRAM reservation for desktop/compositor (4 GB for multi-monitor setups)
+const DESKTOP_VRAM_RESERVATION_BYTES: usize = 4 * 1024 * 1024 * 1024;
+
 struct Q8Workspace {
     buffer: Option<GpuBuffer>,
     size: usize,
+}
+
+/// VRAM usage statistics for a device.
+///
+/// Provides detailed information about current VRAM usage and safe allocation limits.
+#[derive(Debug, Clone)]
+pub struct VramStats {
+    /// Total VRAM on the device in bytes
+    pub total_vram: usize,
+    /// Currently free VRAM in bytes
+    pub free_vram: usize,
+    /// Currently used VRAM in bytes
+    pub used_vram: usize,
+    /// VRAM reserved for desktop processes in bytes
+    pub desktop_reserved: usize,
+    /// Safely allocatable VRAM (free minus desktop reservation) in bytes
+    pub safely_allocatable: usize,
+}
+
+impl VramStats {
+    /// Get total VRAM in GB.
+    pub fn total_vram_gb(&self) -> f64 {
+        self.total_vram as f64 / (1024.0 * 1024.0 * 1024.0)
+    }
+
+    /// Get free VRAM in GB.
+    pub fn free_vram_gb(&self) -> f64 {
+        self.free_vram as f64 / (1024.0 * 1024.0 * 1024.0)
+    }
+
+    /// Get used VRAM in GB.
+    pub fn used_vram_gb(&self) -> f64 {
+        self.used_vram as f64 / (1024.0 * 1024.0 * 1024.0)
+    }
+
+    /// Get safely allocatable VRAM in GB.
+    pub fn safely_allocatable_gb(&self) -> f64 {
+        self.safely_allocatable as f64 / (1024.0 * 1024.0 * 1024.0)
+    }
 }
 
 /// GPU device handle.
@@ -32,6 +74,8 @@ impl GpuDevice {
     ///
     /// Returns error if device ID invalid or HIP not available.
     pub fn init(device_id: i32) -> GpuResult<Self> {
+        ffi::hip_set_device(device_id)?;
+
         // Verify device exists
         let info = ffi::hip_get_device_info(device_id)?;
 
@@ -134,7 +178,7 @@ impl GpuDevice {
             }
 
             let target_bytes = min_bytes.max(DEFAULT_Q8_WORKSPACE_BYTES);
-            workspace.buffer = Some(GpuBuffer::alloc(target_bytes)?);
+            workspace.buffer = Some(GpuBuffer::alloc_for_device(target_bytes, self.device_id)?);
             workspace.size = target_bytes;
         }
 
@@ -152,6 +196,47 @@ impl GpuDevice {
     pub fn reserve_q8_workspace(&self, min_bytes: usize) -> GpuResult<()> {
         let _ = self.q8_workspace_ptr(min_bytes)?;
         Ok(())
+    }
+
+    /// Check if allocation of given size is safe for this device.
+    ///
+    /// Returns error if allocation would exceed safe VRAM limits.
+    /// Accounts for desktop VRAM reservation and safety margin.
+    pub fn can_allocate(&self, size: usize) -> GpuResult<()> {
+        let (free_vram, _) = ffi::hip_get_mem_info(self.device_id)?;
+        let usable_vram = free_vram.saturating_sub(DESKTOP_VRAM_RESERVATION_BYTES);
+        let safe_size = (usable_vram as f64 * 0.9) as usize; // 90% of usable VRAM
+
+        if size > safe_size {
+            return Err(super::error::GpuError::OutOfMemory {
+                requested: size,
+                available: safe_size,
+                hint: format!(
+                    "Allocation would exceed safe VRAM limit on device {} ({} MB requested, {} MB safely allocatable)",
+                    self.device_id,
+                    size / (1024 * 1024),
+                    safe_size / (1024 * 1024)
+                ),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Get current VRAM usage statistics for this device.
+    ///
+    /// Returns detailed information about VRAM usage including safe allocation limits.
+    pub fn vram_stats(&self) -> GpuResult<VramStats> {
+        let (free_vram, total_vram) = ffi::hip_get_mem_info(self.device_id)?;
+        let used_vram = total_vram - free_vram;
+
+        Ok(VramStats {
+            total_vram,
+            free_vram,
+            used_vram,
+            desktop_reserved: DESKTOP_VRAM_RESERVATION_BYTES,
+            safely_allocatable: free_vram.saturating_sub(DESKTOP_VRAM_RESERVATION_BYTES),
+        })
     }
 }
 

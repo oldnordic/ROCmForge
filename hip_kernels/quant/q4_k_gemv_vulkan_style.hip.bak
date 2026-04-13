@@ -33,8 +33,8 @@ __device__ inline float vec_dot_q4_k_vulkan(const void* block_ptr, const float* 
     for (int l = 0; l < 4; ++l) {
         int iqs_div2 = tid * 4 + l; // 0..127
         
-        uint n = iqs_div2 / WARP_SIZE_COMPTIME;                   // 0,1,2,3
-        uint b = (iqs_div2 % WARP_SIZE_COMPTIME) / 16;            // 0,1
+        uint n = iqs_div2 / 32;                   // 0,1,2,3
+        uint b = (iqs_div2 % 32) / 16;            // 0,1
         uint is = 2 * n + b;                      // 0..7
         uint qsi = n * 32 + (iqs_div2 % 16) * 2;  // 0,2,4..126
         
@@ -78,8 +78,8 @@ __global__ void gemv_q4_k_f32_multi_row_kernel(
     int ncols_dst
 ) {
     const int tid = threadIdx.x;
-    const int wave_id = tid / WARP_SIZE_COMPTIME;
-    const int lane_id = tid % WARP_SIZE_COMPTIME;
+    const int wave_id = tid / 32;
+    const int lane_id = tid % 32;
     
     // Each wave processes 4 output columns (NUM_ROWS = 4)
     const int col_base = (blockIdx.x * N_WAVES + wave_id) * 4;
@@ -123,8 +123,8 @@ __global__ void gemv_q4_k_f32_multi_row_kernel(
         for (int l = 0; l < 4; ++l) {
             int iqs_div2 = lane_id * 4 + l; // 0..127
             
-            uint n = iqs_div2 / WARP_SIZE_COMPTIME;
-            uint b = (iqs_div2 % WARP_SIZE_COMPTIME) / 16;
+            uint n = iqs_div2 / 32;
+            uint b = (iqs_div2 % 32) / 16;
             uint is = 2 * n + b;
             uint qsi = n * 32 + (iqs_div2 % 16) * 2;
             
@@ -169,7 +169,7 @@ __global__ void gemv_q4_k_f32_multi_row_kernel(
 
     #pragma unroll
     for (int c = 0; c < 4; ++c) {
-        for (int offset = WARP_SIZE_COMPTIME / 2; offset > 0; offset >>= 1) {
+        for (int offset = 16; offset > 0; offset >>= 1) {
             sums[c] += __shfl_down(sums[c], offset);
         }
     }

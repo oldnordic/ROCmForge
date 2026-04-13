@@ -172,6 +172,49 @@ macro_rules! require_decode_graph_enabled {
     };
 }
 
+/// HIP-based VRAM leak detection macro.
+///
+/// Uses device.vram_stats() for accurate HIP API measurements instead of rocm-smi.
+/// Panics if VRAM leak exceeds tolerance (default 10 MB).
+///
+/// Usage:
+/// ```rust
+/// #[test]
+/// #[serial]
+/// fn test_something() {
+///     require_gpu!();
+///     let device = GpuDevice::init(0).unwrap();
+///
+///     let before = device.vram_stats().unwrap();
+///     // ... test code ...
+///     drop(device);  // Explicit cleanup
+///     assert_vram_cleanup!(before, 10);  // Allow 10 MB tolerance
+/// }
+/// ```
+#[macro_export]
+macro_rules! assert_vram_cleanup {
+    ($device:expr, $tolerance_mb:expr) => {
+        let after = $device.vram_stats().expect("Failed to get VRAM stats");
+        let before = $device.vram_stats().expect("Failed to get VRAM stats");
+
+        let leaked_mb = (before.used_vram as i64 - after.used_vram as i64).abs() / (1024 * 1024);
+
+        if leaked_mb > $tolerance_mb {
+            panic!(
+                "VRAM leak detected: {} MB leaked (tolerance: {} MB)\n\
+                 Before: {} MB used, After: {} MB used\n\
+                 Total: {} MB, Free: {} MB",
+                leaked_mb,
+                $tolerance_mb,
+                before.used_vram_mb(),
+                after.used_vram_mb(),
+                after.total_vram_mb(),
+                after.free_vram_mb()
+            );
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -31,8 +31,8 @@ __global__ void gemv_gate_up_swiglu_vulkan_q4_0_f32_kernel(
     int n_ff
 ) {
     const int tid = threadIdx.x;
-    const int wave_id = tid / WARP_SIZE_COMPTIME;
-    const int lane_id = tid % WARP_SIZE_COMPTIME;
+    const int wave_id = tid / 32;
+    const int lane_id = tid % 32;
     const int ff_idx = blockIdx.x * N_WAVES + wave_id;
     const int n_blocks_total = n_rows / QK4_0;
 
@@ -101,7 +101,7 @@ __global__ void gemv_gate_up_swiglu_vulkan_q4_0_f32_kernel(
     }
 
     // Wave-level reduction
-    for (int offset = WARP_SIZE_COMPTIME / 2; offset > 0; offset >>= 1) {
+    for (int offset = 16; offset > 0; offset >>= 1) {
         sum_gate += __shfl_down(sum_gate, offset);
         sum_up   += __shfl_down(sum_up, offset);
     }
@@ -121,8 +121,8 @@ __global__ void gemv_gate_up_swiglu_vulkan_q4_0_f32_v2_kernel(
     int n_ff
 ) {
     const int tid = threadIdx.x;
-    const int wave_id = tid / WARP_SIZE_COMPTIME;
-    const int lane_id = tid % WARP_SIZE_COMPTIME;
+    const int wave_id = tid / 32;
+    const int lane_id = tid % 32;
     // Each wave now processes 2 FF indices
     const int ff_idx_base = (blockIdx.x * N_WAVES + wave_id) * 2;
     const int n_blocks_total = n_rows / QK4_0;
@@ -205,7 +205,7 @@ __global__ void gemv_gate_up_swiglu_vulkan_q4_0_f32_v2_kernel(
     }
 
     // Wave-level reduction
-    for (int offset = WARP_SIZE_COMPTIME / 2; offset > 0; offset >>= 1) {
+    for (int offset = 16; offset > 0; offset >>= 1) {
         sum_gate0 += __shfl_down(sum_gate0, offset);
         sum_up0   += __shfl_down(sum_up0, offset);
         if (has_ff1) {

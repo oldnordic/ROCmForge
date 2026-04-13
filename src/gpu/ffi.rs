@@ -31,6 +31,7 @@ fn hip_check(code: hipError_t) -> GpuResult<()> {
         hipError_t::hipErrorOutOfMemory => GpuError::OutOfMemory {
             requested: 0, // Call site should fill this
             available: 0,
+            hint: "HIP runtime reported out of memory".to_string(),
         },
         hipError_t::hipErrorInvalidDevice => GpuError::InvalidDevice { device_id: -1 },
         _ => GpuError::HipApiError {
@@ -106,6 +107,24 @@ pub fn hip_get_device_info(device_id: i32) -> GpuResult<DeviceInfo> {
             arch_name: String::from("unknown"), // Placeholder - will query from HIP in next task
             max_shared_mem_per_block: props.sharedMemPerBlock as usize,
         })
+    }
+}
+
+/// Get the currently active HIP device.
+pub fn hip_get_device() -> GpuResult<i32> {
+    unsafe {
+        let mut device = 0i32;
+        let code = hipGetDevice(&mut device);
+        hip_check(code)?;
+        Ok(device)
+    }
+}
+
+/// Set the currently active HIP device.
+pub fn hip_set_device(device_id: i32) -> GpuResult<()> {
+    unsafe {
+        let code = hipSetDevice(device_id);
+        hip_check(code)
     }
 }
 
@@ -222,13 +241,24 @@ pub fn hip_host_free(ptr: *mut u8) -> GpuResult<()> {
 
 /// Get free and total VRAM in bytes.
 pub fn hip_get_mem_info(device_id: i32) -> GpuResult<(usize, usize)> {
-    unsafe {
+    let previous_device = hip_get_device()?;
+    if previous_device != device_id {
+        hip_set_device(device_id)?;
+    }
+
+    let result = unsafe {
         let mut free = 0usize;
         let mut total = 0usize;
         let code = hipMemGetInfo(&mut free, &mut total);
         hip_check(code)?;
         Ok((free, total))
+    };
+
+    if previous_device != device_id {
+        let _ = hip_set_device(previous_device);
     }
+
+    result
 }
 
 /// Query HIP driver version.
@@ -614,6 +644,8 @@ pub struct hipKernelNodeParams {
 extern "C" {
     fn hipGetDeviceCount(count: *mut i32) -> hipError_t;
     fn hipGetDeviceProperties(props: *mut hipDeviceProp_t, device: i32) -> hipError_t;
+    fn hipGetDevice(device: *mut i32) -> hipError_t;
+    fn hipSetDevice(device: i32) -> hipError_t;
     fn hipMalloc(ptr: *mut *mut u8, size: usize) -> hipError_t;
     fn hipFree(ptr: *mut u8) -> hipError_t;
     fn hipHostMalloc(ptr: *mut *mut c_void, size: usize, flags: u32) -> hipError_t;
