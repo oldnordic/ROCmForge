@@ -194,6 +194,11 @@ mod gpu_build {
                             ("libq5_k_dequantize.a", "q5_k_dequantize"),
                             ("libq5_k_verify.a", "q5_k_verify"),
                             ("libq5_k_gemv.a", "q5_k_gemv"),
+                            // Q6_K libraries
+                            ("libq6_k_quantize.a", "q6_k_quantize"),
+                            ("libq6_k_dequantize.a", "q6_k_dequantize"),
+                            ("libq6_k_verify.a", "q6_k_verify"),
+                            ("libq6_k_gemv.a", "q6_k_gemv"),
                             // Q4_0 libraries
                             ("libq4_0_quantize.a", "q4_0_quantize"),
                             ("libq4_0_dequantize.a", "q4_0_dequantize"),
@@ -215,6 +220,7 @@ mod gpu_build {
                             ("libq8_0_gemm.a", "q8_0_gemm"),
                             ("libq4_k_gemm.a", "q4_k_gemm"),
                             ("libq5_k_gemm.a", "q5_k_gemm"),
+                            ("libq6_k_gemm.a", "q6_k_gemm"),
                         ];
 
                         for (lib_name, link_name) in libs_to_copy {
