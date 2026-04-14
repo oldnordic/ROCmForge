@@ -338,6 +338,22 @@ set_target_properties(q6_k_test PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
 
+# Q6_K vectorized kernel (Phase 2: Vectorized bit extraction)
+add_library(q6_k_vectorized STATIC
+    q6_k_vectorized.hip
+)
+
+# Link common library to Q6_K vectorized kernel
+target_link_libraries(q6_k_vectorized
+    quant_common
+)
+
+# Set output directory to match Cargo expectations
+set_target_properties(q6_k_vectorized PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
 # Test kernel library (for Phase 1 verification)
 add_library(test_quant STATIC
     test_kernel.hip

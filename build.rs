@@ -201,6 +201,7 @@ mod gpu_build {
                             ("libq6_k_gemv.a", "q6_k_gemv"),
                             ("libq6_k_test.a", "q6_k_test"),
                             ("libq6_k_tile.a", "q6_k_tile"),
+                            ("libq6_k_vectorized.a", "q6_k_vectorized"),
                             // Q4_0 libraries
                             ("libq4_0_quantize.a", "q4_0_quantize"),
                             ("libq4_0_dequantize.a", "q4_0_dequantize"),
