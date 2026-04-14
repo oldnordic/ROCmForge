@@ -7,6 +7,7 @@ pub use types::{
     Q4_0Block,
     Q4_1Block,
     Q5KBlock,
+    Q6KBlock,
     Q8_0Block,
     K_SCALE_SIZE,
     Q4_0_BLOCK_SIZE,
@@ -14,6 +15,8 @@ pub use types::{
     Q4_K_BLOCK_SIZE,
     // Q5_K types
     Q5_K_BLOCK_SIZE,
+    // Q6_K types
+    Q6_K_BLOCK_SIZE,
     Q8_0_BLOCK_SIZE,
     Q8_0_MAX,
     // Q4_0 types

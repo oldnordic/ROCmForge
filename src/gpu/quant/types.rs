@@ -54,6 +54,28 @@ pub struct Q5KBlock {
     pub qs: [u8; 128],    // quants, low 4 bits (128 bytes)
 }
 
+/// Q6_K: 256 elements per block, 210 bytes (128 ql + 64 qh + 16 scales + 2 d)
+///
+/// Q6_K block format (from llama.cpp ggml-common.h):
+/// - ql[128]: low 4-bit quantized weights (2 elements per byte)
+/// - qh[64]: high 2-bit quantized weights (4 elements per byte)
+/// - scales[16]: signed 8-bit scales (int8_t)
+/// - d: f16 super-block scale (2 bytes, AT THE END!)
+///
+/// Each weight is 6 bits: low 4 bits from ql, high 2 bits from qh
+/// Total: 210 bytes for 256 values (~6.56 bits per weight)
+pub const Q6_K_BLOCK_SIZE: usize = 128 + 64 + 16 + 2; // ql + qh + scales + d
+
+/// Rust-owned Q6_K block matching C layout in HIP kernels
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
+pub struct Q6KBlock {
+    pub ql: [u8; 128],   // quants, low 4 bits
+    pub qh: [u8; 64],    // quants, high 2 bits
+    pub scales: [i8; 16], // signed scales (int8_t)
+    pub d: half::f16,     // super-block scale
+}
+
 impl Default for Q5KBlock {
     fn default() -> Self {
         Self {

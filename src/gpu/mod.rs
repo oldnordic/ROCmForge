@@ -62,8 +62,8 @@ pub use ops::{
     gpu_dispatch_fused_gate_up, gpu_dispatch_fused_qkv, gpu_dispatch_gemm, gpu_dispatch_gemv,
 };
 pub use quant::{
-    Q4KBlock, Q4_0Block, Q4_1Block, Q5KBlock, Q8_0Block, K_SCALE_SIZE, Q4_0_BLOCK_SIZE,
-    Q4_1_BLOCK_SIZE, Q4_K_BLOCK_SIZE, Q5_K_BLOCK_SIZE, Q8_0_BLOCK_SIZE, Q8_0_MAX, QK4_0, QK4_1,
+    Q4KBlock, Q4_0Block, Q4_1Block, Q5KBlock, Q6KBlock, Q8_0Block, K_SCALE_SIZE, Q4_0_BLOCK_SIZE,
+    Q4_1_BLOCK_SIZE, Q4_K_BLOCK_SIZE, Q5_K_BLOCK_SIZE, Q6_K_BLOCK_SIZE, Q8_0_BLOCK_SIZE, Q8_0_MAX, QK4_0, QK4_1,
     QK8_0, QK_K,
 };
 pub use quant_wrapper::GpuQuant;
