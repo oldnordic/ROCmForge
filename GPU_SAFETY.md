@@ -1,12 +1,109 @@
 # GPU Safety Protocols - ROCmForge Project
 
-## 🚨 CRITICAL: All GPU operations are protected by safety hooks
+## 🚨 CRITICAL: All GPU code creation is protected by safety hooks
 
 **DO NOT bypass these safety measures.** They exist to prevent GPU crashes and hardware damage.
 
 ---
 
-## Automatic Protections (Enforced by Claude Code hooks)
+## Automatic Code Quality Protections (Enforced by Claude Code hooks)
+
+**The hooks prevent WRITING unsafe GPU code, not just running it.** When you create or modify GPU kernels or tests, the hooks verify:
+
+### 1. **Kernel Safety Checks** (`.hip` and `.cpp` files)
+- ✅ **Early bounds check required:** `if (col >= ncols_dst) return;`
+- ✅ **Parameter validation required:** `CHECK_NULL(weights/input/output)`
+- ✅ **Q6_K linear processing required:** No nested loops, no pointer arithmetic
+
+**What gets blocked:**
+```cpp
+// ❌ BLOCKED: Missing bounds check
+__global__ void unsafe_kernel(...) {
+    const int col = blockIdx.x;
+    // No bounds check - will crash GPU!
+    sum += data[col];
+}
+
+// ✅ ALLOWED: Safe kernel with bounds check
+__global__ void safe_kernel(...) {
+    const int col = blockIdx.x;
+    if (col >= ncols_dst) return;  // Required safety check
+    sum += data[col];
+}
+```
+
+### 2. **Launch Function Safety** (`.hip` and `.cpp` files)
+- ✅ **Parameter validation:** `if (n_rows <= 0 || ncols_dst <= 0) return hipErrorInvalidValue;`
+- ✅ **Null pointer checks:** `CHECK_NULL(weights); CHECK_NULL(input); CHECK_NULL(output);`
+
+**What gets blocked:**
+```cpp
+// ❌ BLOCKED: Missing parameter validation
+extern "C" hipError_t unsafe_launch(...) {
+    // No validation - will crash GPU on invalid input!
+    kernel<<<...>>>(...);
+    return hipSuccess;
+}
+
+// ✅ ALLOWED: Safe launch with validation
+extern "C" hipError_t safe_launch(...) {
+    if (n_rows <= 0 || ncols_dst <= 0) return hipErrorInvalidValue;
+    CHECK_NULL(weights);
+    CHECK_NULL(input);
+    CHECK_NULL(output);
+    kernel<<<...>>>(...);
+    return hipGetLastError();
+}
+```
+
+### 3. **Q6_K Linear Processing** (`q6_k*.hip` files)
+- ✅ **Linear processing only:** `for (int l = 0; l < 8; ++l) { const int i = tid * 8 + l; ... }`
+- ❌ **Nested loops blocked:** `for (int n = 0; n < QK_K; n += 128) { for (int l = 0; l < 32; ++l) { ... } }`
+- ❌ **Pointer arithmetic blocked:** `ql += 64; qh += 32; scales += 8;`
+
+**What gets blocked:**
+```cpp
+// ❌ BLOCKED: Nested loops with pointer arithmetic
+for (int n = 0; n < QK_K; n += 128) {
+    for (int l = 0; l < 32; ++l) {
+        ql += 64;  // Pointer arithmetic - fails graph capture
+        // ...
+    }
+}
+
+// ✅ ALLOWED: Linear processing
+for (int l = 0; l < 8; ++l) {
+    const int i = tid * 8 + l;  // Linear calculation
+    // Direct array access only
+}
+```
+
+### 4. **Test Safety Measures** (`test*gpu*.rs` files)
+- ✅ **Q6_K tests must disable graph:** `ROCMFORGE_DISABLE_DECODE_GRAPH=1`
+- ✅ **Timeout required:** `timeout 30 <command>`
+- ✅ **Token limits required:** `--max-tokens 10`
+
+**What gets blocked:**
+```rust
+// ❌ BLOCKED: GPU test without safety measures
+#[test]
+fn test_gpu_unsafe() {
+    // No graph disable, no timeout, no token limits - will crash GPU!
+    run_gpu_test();
+}
+
+// ✅ ALLOWED: Safe GPU test
+#[test]
+fn test_gpu_safe() {
+    // ROCMFORGE_DISABLE_DECODE_GRAPH=1 for Q6_K
+    // timeout to prevent hangs
+    // --max-tokens to prevent unbounded execution
+}
+```
+
+---
+
+## How The Hooks Work
 
 The following safety checks are **automatically enforced** before any GPU command runs:
 
