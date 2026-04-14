@@ -111,4 +111,76 @@ extern "C" __global__ void q6_k_dequant_optimized(
     }
 }
 
+// ── Vector Intrinsic Tests (Phase 1: Zero Risk) ───────────────────────────────────────
+
+/// Test get_int_b2() against scalar byte reads
+/// Verifies that 32-bit reads match 4 individual byte reads
+extern "C" __global__ void test_get_int_b2(
+    const uint8_t* __restrict__ input,
+    int* __restrict__ errors,
+    int n_elements
+) {
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= n_elements / 4) return;
+
+    // Test: Read 4 bytes as 32-bit integer
+    const int vector_result = get_int_b2(input, tid);
+
+    // Compare against scalar byte reads
+    int scalar_result = 0;
+    #pragma unroll
+    for (int i = 0; i < 4; i++) {
+        scalar_result |= (input[tid * 4 + i] << (i * 8));
+    }
+
+    // Report error if mismatch
+    if (vector_result != scalar_result) {
+        atomicAdd(errors, 1);
+    }
+}
+
+/// Test __vsubss4_gpu() against scalar subtraction
+/// Verifies vector subtract with saturation produces correct results
+extern "C" __global__ void test_vsubss4(
+    const int* __restrict__ input_a,
+    const int* __restrict__ input_b,
+    int* __restrict__ errors,
+    int n_elements
+) {
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= n_elements) return;
+
+    const int a = input_a[tid];
+    const int b = input_b[tid];
+
+    // Test: Vector subtract with saturation (4 int8 values)
+    const int vector_result = __vsubss4_gpu(a, b);
+
+    // Compare against scalar byte-by-byte subtraction with saturation
+    int scalar_result = 0;
+    #pragma unroll
+    for (int i = 0; i < 4; i++) {
+        // Extract each byte
+        const int byte_a = (a >> (i * 8)) & 0xFF;
+        const int byte_b = (b >> (i * 8)) & 0xFF;
+
+        // Reinterpret as signed int8
+        const int8_t signed_a = static_cast<int8_t>(byte_a);
+        const int8_t signed_b = static_cast<int8_t>(byte_b);
+
+        // Subtract with saturation
+        int16_t result = static_cast<int16_t>(signed_a) - static_cast<int16_t>(signed_b);
+        if (result < -128) result = -128;
+        if (result > 127) result = 127;
+
+        // Pack back into result
+        scalar_result |= (static_cast<uint8_t>(result) << (i * 8));
+    }
+
+    // Report error if mismatch
+    if (vector_result != scalar_result) {
+        atomicAdd(errors, 1);
+    }
+}
+
 #endif // ROCMFORGE_Q6_K_TEST_HIP

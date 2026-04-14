@@ -146,4 +146,49 @@ __device__ inline int get_warp_id() {
     return threadIdx.x >> 5;
 }
 
+// ── Vector Intrinsics (from llama.cpp) ────────────────────────────────────────────────
+
+/// Read 32-bit integer from byte array
+/// Matches llama.cpp's get_int_b2() for optimized memory access
+/// Safety: Read-only operation, no side effects
+__device__ inline int get_int_b2(const uint8_t* p, const int i) {
+    return *(const int*)(p + i * sizeof(int));
+}
+
+/// Vector subtract with saturation (4 int8 values at once)
+/// Matches llama.cpp's __vsubss4() for Q6_K dequantization
+/// Subtracts b from a, saturating at int8 min/max for each of 4 bytes
+/// Safety: Read-only operation, pure computation
+__device__ inline int __vsubss4_gpu(const int a, const int b) {
+    // Portable implementation that works on both AMD and NVIDIA
+    // Processes 4 int8 values in parallel using bit operations
+    // This should be optimized by the compiler to use vector instructions
+
+    int result = 0;
+
+    // Process each byte separately
+    #pragma unroll
+    for (int i = 0; i < 4; i++) {
+        // Extract each byte
+        const int byte_a = (a >> (i * 8)) & 0xFF;
+        const int byte_b = (b >> (i * 8)) & 0xFF;
+
+        // Reinterpret as signed int8
+        const int8_t signed_a = static_cast<int8_t>(byte_a);
+        const int8_t signed_b = static_cast<int8_t>(byte_b);
+
+        // Subtract with saturation
+        int16_t sub_result = static_cast<int16_t>(signed_a) - static_cast<int16_t>(signed_b);
+
+        // Saturate to int8 range
+        if (sub_result < -128) sub_result = -128;
+        if (sub_result > 127) sub_result = 127;
+
+        // Pack back into result
+        result |= (static_cast<int>(static_cast<uint8_t>(sub_result)) << (i * 8));
+    }
+
+    return result;
+}
+
 #endif // ROCMFORGE_QUANT_COMMON_HIP
