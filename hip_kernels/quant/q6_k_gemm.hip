@@ -268,6 +268,14 @@ extern "C" hipError_t gemm_q6_k_f32_launch_dispatch(
             gemm_q6_k_f32_kernel_templated<8><<<grid, block, 0, stream>>>(
                 weights_q6_k, input, output, n_rows, seq_len);
             break;
+        case 4096:
+            gemm_q6_k_f32_kernel_templated<4096><<<grid, block, 0, stream>>>(
+                weights_q6_k, input, output, n_rows, seq_len);
+            break;
+        case 8192:
+            gemm_q6_k_f32_kernel_templated<8192><<<grid, block, 0, stream>>>(
+                weights_q6_k, input, output, n_rows, seq_len);
+            break;
         default:
             // Fall back to generic kernel for uncommon ncols_dst
             gemm_q6_k_f32_kernel_generic<<<grid, block, 0, stream>>>(
