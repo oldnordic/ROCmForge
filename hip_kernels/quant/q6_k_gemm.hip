@@ -4,6 +4,7 @@
 #define QK_K 256
 #define Q6_K_BLOCK_SIZE 210
 
+__launch_bounds__(32, 1)
 __global__ void gemm_q6_k_f32_kernel(
     const void* __restrict__ weights_q6_k,
     const float* __restrict__ input,
