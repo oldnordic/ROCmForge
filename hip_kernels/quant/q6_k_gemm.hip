@@ -190,9 +190,9 @@ __global__ void gemm_q6_k_f32_kernel_generic(
 /// Small problems may not benefit from the shared memory overhead
 inline bool should_use_tile_processing(int n_rows, int ncols_dst) {
     // Tile processing beneficial when:
-    // - Enough blocks to amortize shared memory load (>= 4 blocks)
-    // - Not too small that overhead dominates
-    return (n_rows / QK_K >= 4) && (ncols_dst >= 4);
+    // - Enough blocks to amortize shared memory load (>= 2 blocks)
+    // - For testing: allow ncols_dst >= 1 to validate tile kernel works
+    return (n_rows / QK_K >= 2) && (ncols_dst >= 1);
 }
 
 extern "C" hipError_t gemm_q6_k_f32_launch(
