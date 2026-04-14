@@ -1234,6 +1234,35 @@ impl GpuModelWeights {
     pub fn binding_tag(&self) -> u64 {
         self.decode_binding_tag
     }
+
+    /// Check if any weights use Q6_K quantization (incompatible with HIP graph capture)
+    pub fn uses_q6_k_quantization(&self) -> bool {
+        // Check token embedding
+        if self.token_emb_meta.wtype == GgmlType::Q6_K {
+            return true;
+        }
+
+        // Check output layer
+        if self.lm_head_meta.wtype == GgmlType::Q6_K {
+            return true;
+        }
+
+        // Check all layers
+        for layer in &self.layers {
+            if layer.attn_q_meta.wtype == GgmlType::Q6_K
+                || layer.attn_k_meta.wtype == GgmlType::Q6_K
+                || layer.attn_v_meta.wtype == GgmlType::Q6_K
+                || layer.attn_o_meta.wtype == GgmlType::Q6_K
+                || layer.ffn_gate_meta.wtype == GgmlType::Q6_K
+                || layer.ffn_up_meta.wtype == GgmlType::Q6_K
+                || layer.ffn_down_meta.wtype == GgmlType::Q6_K
+            {
+                return true;
+            }
+        }
+
+        false
+    }
 }
 
 #[inline]

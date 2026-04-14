@@ -128,8 +128,10 @@ fn parse_decode_profile_env_flag(value: Option<String>, default: bool) -> bool {
     }
 }
 
-fn decode_graph_disabled() -> bool {
-    decode_stage_profiling_enabled() || decode_graph_disabled_override_requested()
+fn decode_graph_disabled(gpu_weights: &GpuModelWeights) -> bool {
+    decode_stage_profiling_enabled()
+        || decode_graph_disabled_override_requested()
+        || gpu_weights.uses_q6_k_quantization()
 }
 
 fn record_decode_stage(stage: DecodeStage, elapsed_ns: u128) {
@@ -493,7 +495,7 @@ fn gpu_try_greedy_decode_graph(
     scratch: &mut GpuForwardScratch,
     config: &ModelConfig,
 ) -> GpuResult<u32> {
-    if decode_graph_disabled() {
+    if decode_graph_disabled(gpu_weights) {
         return gpu_greedy_logits_tail_token(device, gpu_weights, scratch, config);
     }
 
@@ -1240,7 +1242,7 @@ fn gpu_try_full_greedy_decode_graph(
     pos: usize,
     config: &ModelConfig,
 ) -> GpuResult<Option<u32>> {
-    if decode_graph_disabled() {
+    if decode_graph_disabled(gpu_weights) {
         return Ok(None);
     }
 
