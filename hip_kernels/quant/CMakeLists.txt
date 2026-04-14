@@ -306,6 +306,22 @@ add_library(q6_k_gemm STATIC q6_k_gemm.hip)
 target_link_libraries(q6_k_gemm quant_common)
 set_target_properties(q6_k_gemm PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
+# Q6_K tile-based kernel (shared memory optimization)
+add_library(q6_k_tile STATIC
+    q6_k_tile.hip
+)
+
+# Link common library to Q6_K tile kernel
+target_link_libraries(q6_k_tile
+    quant_common
+)
+
+# Set output directory to match Cargo expectations
+set_target_properties(q6_k_tile PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
 # Q6_K test library (for numerical accuracy validation)
 add_library(q6_k_test STATIC
     q6_k_test.hip

@@ -61,8 +61,8 @@ constexpr int QI6_K = 4;            // Quantization indices per block for Q6_K
 constexpr int TILE_Y = WARP_SIZE;  // Number of rows in tile (one per thread)
 
 /// Padded tile size to avoid shared memory bank conflicts
-/// llama.cpp research shows padding with (WARP_SIZE/8 + 7) avoids conflicts
-constexpr int TILE_SIZE_PADDED = WARP_SIZE + WARP_SIZE/8 + 7;
+/// Padding ensures 4 mod 8 alignment for bank conflict avoidance
+constexpr int TILE_SIZE_PADDED = WARP_SIZE + WARP_SIZE/8 + 8;  // 44 = 4 mod 8
 
 /// Static assertion to verify padding is correct (4 mod 8 ensures bank alignment)
 static_assert(TILE_SIZE_PADDED % 8 == 4, "Tile size must be 4 mod 8 for bank alignment");
@@ -80,7 +80,7 @@ namespace q6_k_tile {
     constexpr int TILE_SC = WARP_SIZE / 8 + TILE_Y / 8;
 
     // Total tile size (with padding)
-    constexpr int TILE_X_K_Q6_K = 2 * WARP_SIZE + WARP_SIZE / QI6_K + WARP_SIZE / 8 + 7;
+    constexpr int TILE_X_K_Q6_K = 2 * WARP_SIZE + WARP_SIZE / QI6_K + WARP_SIZE / 8 + 8;  // 84 = 4 mod 8
 
     static_assert(TILE_X_K_Q6_K % 8 == 4, "Q6_K tile size must be 4 mod 8");
 }
