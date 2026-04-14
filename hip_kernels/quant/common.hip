@@ -50,6 +50,60 @@ constexpr int WARP_SIZE = 32;      // Warp size for wavefront programming
 constexpr int WARP_SIZE_COMPTIME = WARP_SIZE;  // Compile-time warp size
 constexpr int MAX_SHARED_MEM = 64 * 1024; // Maximum shared memory per block
 
+// ── Architecture Detection Macros ────────────────────────────────────────────────
+
+/// Detect AMD GPU architecture from compute capability
+/// Returns: 900 (RDNA1), 906 (RDNA2), 1100 (RDNA3), 80x/90x (CDNA)
+#if defined(__HIP_PLATFORM_AMD__)
+    #define ROCMFORGE_IS_AMD 1
+
+    // Runtime architecture detection (set during kernel launch)
+    // Default to RDNA3 for compilation
+    #ifndef ROCMFORGE_ARCH
+        #define ROCMFORGE_ARCH 1100
+    #endif
+
+    #define ROCMFORGE_IS_RDNA1 (ROCMFORGE_ARCH == 900)
+    #define ROCMFORGE_IS_RDNA2 (ROCMFORGE_ARCH == 906)
+    #define ROCMFORGE_IS_RDNA3 (ROCMFORGE_ARCH == 1100)
+    #define ROCMFORGE_IS_CDNA ((ROCMFORGE_ARCH >= 800 && ROCMFORGE_ARCH < 900) || \
+                               (ROCMFORGE_ARCH >= 900 && ROCMFORGE_ARCH < 1000))
+
+    // Feature detection
+    #if defined(__has_builtin)
+        #if __has_builtin(__builtin_amdgcn_sudot4)
+            #define ROCMFORGE_HAS_SUDOT4 1
+        #endif
+        #if __has_builtin(__builtin_amdgcn_sdot4)
+            #define ROCMFORGE_HAS_SDOT4 1
+        #endif
+        #if __has_builtin(__builtin_elementwise_sub_sat)
+            #define ROCMFORGE_HAS_SUB_SAT 1
+        #endif
+    #endif
+
+    // Default to 0 if builtin detection not available
+    #ifndef ROCMFORGE_HAS_SUDOT4
+        #define ROCMFORGE_HAS_SUDOT4 0
+    #endif
+    #ifndef ROCMFORGE_HAS_SDOT4
+        #define ROCMFORGE_HAS_SDOT4 0
+    #endif
+    #ifndef ROCMFORGE_HAS_SUB_SAT
+        #define ROCMFORGE_HAS_SUB_SAT 0
+    #endif
+
+#else
+    #define ROCMFORGE_IS_AMD 0
+    #define ROCMFORGE_IS_RDNA1 0
+    #define ROCMFORGE_IS_RDNA2 0
+    #define ROCMFORGE_IS_RDNA3 0
+    #define ROCMFORGE_IS_CDNA 0
+    #define ROCMFORGE_HAS_SUDOT4 0
+    #define ROCMFORGE_HAS_SDOT4 0
+    #define ROCMFORGE_HAS_SUB_SAT 0
+#endif
+
 // ─── Type Aliases ───────────────────────────────────────────────────────────────────
 
 typedef unsigned char uint8_t;
