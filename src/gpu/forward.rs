@@ -9,6 +9,7 @@ use super::device::GpuDevice;
 use super::error::{GpuError, GpuResult};
 use super::ffi;
 use super::graph::{DecodeGraphKey, DecodeGraphScope, HipGraph};
+use super::safety::decode_graph_disabled_override_requested;
 use super::kernels::attention::{
     flash_attn_decode_strided_multi_head_from_state_on_stream,
     flash_attn_decode_strided_multi_head_on_stream, flash_attn_prefill_strided,
@@ -116,11 +117,19 @@ fn decode_stage_profile_store() -> &'static Mutex<GpuDecodeStageProfileSnapshot>
 }
 
 fn decode_stage_profiling_enabled() -> bool {
-    std::env::var_os("ROCMFORGE_PROFILE_DECODE_STAGES").is_some()
+    parse_decode_profile_env_flag(std::env::var("ROCMFORGE_PROFILE_DECODE_STAGES").ok(), false)
+}
+
+/// Parse env flag value for decode profiling, matching safety.rs behavior.
+fn parse_decode_profile_env_flag(value: Option<String>, default: bool) -> bool {
+    match value.map(|value| value.trim().to_ascii_lowercase()) {
+        Some(value) => matches!(value.as_str(), "1" | "true" | "yes" | "on"),
+        None => default,
+    }
 }
 
 fn decode_graph_disabled() -> bool {
-    decode_stage_profiling_enabled() || std::env::var_os("ROCMFORGE_DISABLE_DECODE_GRAPH").is_some()
+    decode_stage_profiling_enabled() || decode_graph_disabled_override_requested()
 }
 
 fn record_decode_stage(stage: DecodeStage, elapsed_ns: u128) {
@@ -513,13 +522,13 @@ fn gpu_try_greedy_decode_graph(
     let next_pos = scratch.decode_state_next_pos();
 
     if next_pos.is_some() {
+        let pos = next_pos.unwrap();
         let has_graph = scratch.decode_graph().is_some();
 
         if has_graph {
             // CRITICAL FIX: Upload decode state before graph launch
             // The graph captures memory pointers but NOT values like position.
             // We must upload updated decode state before each replay to ensure correctness.
-            let pos = next_pos.unwrap();
             scratch.upload_decode_state(pos, pos + 1, device.stream())?;
 
             // Get graph again after upload
@@ -1438,8 +1447,8 @@ pub fn gpu_layer_forward_hybrid(
             scratch.swiglu.as_ptr() as *const f32,
             scratch.hidden.as_ptr() as *const f32,
             scratch.hidden.as_ptr() as *mut f32,
-            h,
-            ff_size,
+            ff_size,  // CORRECT: in_dim (input dimension = swiglu size)
+            h,        // CORRECT: out_dim (output dimension = hidden size)
             device.stream(),
         )
     })?;
@@ -1538,6 +1547,12 @@ pub fn gpu_full_forward_hybrid(
             pos,
             config,
         )?;
+
+        // CRITICAL: Synchronize between layers to prevent buffer reuse race condition
+        // All layers share the same scratch buffers (hidden, normed, q, k, v, etc.)
+        // Without synchronization, layer N+1 can start writing to these buffers before
+        // layer N's kernels finish reading from them, causing corruption.
+        device.synchronize()?;
     }
 
     if matches!(logits_mode, GpuLogitsMode::Skip) {
