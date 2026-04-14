@@ -5,49 +5,54 @@
 #define Q6_K_BLOCK_SIZE 210
 
 __device__ inline float vec_dot_q6_k(const void* block_ptr, const float* vec, int offset) {
+    const int tid = threadIdx.x;
     const uint8_t* block_bytes = static_cast<const uint8_t*>(block_ptr);
 
-    // Use the EXACT reference implementation pattern - fully serialized
-    const uint8_t* ql = &block_bytes[0];
-    const uint8_t* qh = &block_bytes[128];
-    const int8_t* scales = reinterpret_cast<const int8_t*>(&block_bytes[192]);
-
+    // Extract scale d (fp16 at bytes 208-209)
     half d_half;
     memcpy(&d_half, &block_bytes[208], sizeof(half));
     const float d = __half2float(d_half);
 
+    // Pointer to scales (int8_t at bytes 192-207)
+    const int8_t* scales = reinterpret_cast<const int8_t*>(&block_bytes[192]);
+
     float sum = 0.0f;
 
-    // Process 256 elements in 2 groups of 128 - FULLY SERIALIZED like reference
-    for (int n = 0; n < QK_K; n += 128) {
-        // Inner loop: process all 32 values (SERIAL in reference)
-        for (int l = 0; l < 32; ++l) {
-            const int is = l / 16;
+    // Linear processing: each thread handles 8 elements (32 threads * 8 = 256)
+    for (int l = 0; l < 8; ++l) {
+        const int i = tid * 8 + l;  // Linear index 0-255
 
-            const uint8_t ql_0 = ql[l + 0];
-            const uint8_t ql_32 = ql[l + 32];
-            const uint8_t qh_0 = qh[l];
+        // Compute group (0 or 1) and position within group
+        const int group = i / 128;           // Which group of 128
+        const int pos_in_group = i % 128;    // 0-127
+        const int l_base = pos_in_group % 32; // 0-31
+        const int quadrant = pos_in_group / 32; // 0, 1, 2, or 3
 
-            const int8_t q1 = (int8_t)((ql_0 & 0xF) | (((qh_0 >> 0) & 3) << 4)) - 32;
-            const int8_t q2 = (int8_t)((ql_32 & 0xF) | (((qh_0 >> 2) & 3) << 4)) - 32;
-            const int8_t q3 = (int8_t)((ql_0 >> 4) | (((qh_0 >> 4) & 3) << 4)) - 32;
-            const int8_t q4 = (int8_t)((ql_32 >> 4) | (((qh_0 >> 6) & 3) << 4)) - 32;
+        // Compute scale index: group * 8 + is * 2 + quadrant
+        const int is = l_base / 16;  // 0 or 1
+        const int scale_idx = group * 8 + is * 2 + quadrant;
+        const float scale = d * (float)scales[scale_idx];
 
-            const float d1 = d * (float)scales[is + 0];
-            const float d2 = d * (float)scales[is + 2];
-            const float d3 = d * (float)scales[is + 4];
-            const float d4 = d * (float)scales[is + 6];
+        // Compute ql offset
+        const int ql_offset = group * 64 + (l_base % 16) + (l_base / 16) * 32;
+        const uint8_t ql_byte = block_bytes[ql_offset];
 
-            sum += vec[offset + l + 0 + n] * (d1 * (float)q1);
-            sum += vec[offset + l + 32 + n] * (d2 * (float)q2);
-            sum += vec[offset + l + 64 + n] * (d3 * (float)q3);
-            sum += vec[offset + l + 96 + n] * (d4 * (float)q4);
-        }
+        // Compute qh offset
+        const int qh_offset = 128 + group * 32 + l_base;
+        const uint8_t qh_byte = block_bytes[qh_offset];
 
-        // Advance pointers AFTER inner loop completes
-        ql += 64;
-        qh += 32;
-        scales += 8;
+        // Determine which pair and which value in pair
+        const int pair_idx = pos_in_group % 32;  // 0-31
+        const int is_low_half = (pair_idx < 16) ? 0 : 1;
+        const int shift = is_low_half ? 0 : 4;
+
+        // Unpack Q6_K value (6 bits: 4 from ql, 2 from qh)
+        const uint8_t ql_4bits = (ql_byte >> shift) & 0x0F;
+        const uint8_t qh_2bits = (qh_byte >> (is_low_half ? 0 : 2)) & 0x03;
+        const int8_t q = (int8_t)(ql_4bits | (qh_2bits << 4)) - 32;
+
+        // Direct memory access - no computed offsets in array indexing
+        sum += vec[offset + i] * (scale * (float)q);
     }
 
     return sum;
