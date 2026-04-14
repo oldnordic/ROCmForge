@@ -106,9 +106,10 @@ mod gpu_build {
 
     fn detect_wave_size_for_arch(arch: &str) -> usize {
         match arch {
-            "gfx1100" | "gfx1101" | "gfx1102" => 32, // RDNA3
-            "gfx1030" | "gfx1031" | "gfx1032" => 32, // RDNA2
-            "gfx1010" | "gfx1011" | "gfx1012" => 32, // RDNA1
+            "gfx1201" => 32,                            // RDNA4
+            "gfx1100" | "gfx1101" | "gfx1102" => 32,    // RDNA3
+            "gfx1030" | "gfx1031" | "gfx1032" => 32,    // RDNA2
+            "gfx1010" | "gfx1011" | "gfx1012" => 32,    // RDNA1
             "gfx900" | "gfx906" | "gfx908" | "gfx90a" | "gfx90c" | "gfx942" => 64, // CDNA
             _ => 32, // Conservative default for RDNA
         }
