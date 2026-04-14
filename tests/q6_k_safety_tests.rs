@@ -436,6 +436,42 @@ fn test_q6_k_decode_graph_env_check() {
     assert!(true);
 }
 
+#[test]
+fn test_gpu_temperature_safe() {
+    use std::process::Command;
+
+    let output = Command::new("rocm-smi")
+        .arg("--showtemp")
+        .output()
+        .expect("Failed to check GPU temperature - is rocm-smi installed?");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Parse junction temperature
+    for line in stdout.lines() {
+        if line.contains("Temperature (Sensor junction)") {
+            // Format: "GPU[0]		: Temperature (Sensor junction) (C): 61.0"
+            let temp_str: Vec<&str> = line.split(':').collect();
+            if let Some(temp_field) = temp_str.get(2) {
+                let temp_clean = temp_field.trim().trim_end_matches('C');
+                if let Ok(temp) = temp_clean.parse::<f32>() {
+                    assert!(
+                        temp < 85.0,
+                        "GPU temperature too high: {}°C - please wait for cooldown before running benchmarks",
+                        temp
+                    );
+                    eprintln!("✓ GPU temperature safe: {}°C", temp);
+                    return;
+                }
+            }
+        }
+    }
+
+    // If we can't read temperature, log warning but don't fail
+    eprintln!("⚠️  Could not read GPU temperature, skipping check");
+    assert!(true);
+}
+
 // ============================================================================
 // Documentation: How to Run These Tests
 // ============================================================================
