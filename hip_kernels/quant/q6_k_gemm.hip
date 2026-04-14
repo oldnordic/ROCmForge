@@ -62,19 +62,22 @@ __global__ void gemm_q6_k_f32_kernel_templated(
             // Compute ql offset
             const int ql_local_idx = l_base + quadrant * 32;
             const int ql_offset = group * 64 + ql_local_idx;
-            const uint8_t ql_byte = block[ql_offset];
+            // === OPTIMIZED: Use get_int_b2() for 4-byte read (Phase 3) ===
+            const int ql_packed = get_int_b2(block, ql_offset);
 
             // Compute qh offset
             const int qh_offset = 128 + group * 32 + l_base;
-            const uint8_t qh_byte = block[qh_offset];
+            // === OPTIMIZED: Use get_int_b2() for 4-byte read (Phase 3) ===
+            const int qh_packed = get_int_b2(block, qh_offset);
 
             // Unpack Q6_K value
             const int is_low_half = (quadrant < 2) ? 0 : 1;
             const int shift = is_low_half ? 0 : 4;
             const int qh_shift = is_low_half ? (quadrant % 2) * 2 : (quadrant % 2) * 2 + 4;
 
-            const uint8_t ql_4bits = (ql_byte >> shift) & 0x0F;
-            const uint8_t qh_2bits = (qh_byte >> qh_shift) & 0x03;
+            // Extract from packed integers (same logic, just different source)
+            const uint8_t ql_4bits = (ql_packed >> shift) & 0x0F;
+            const uint8_t qh_2bits = (qh_packed >> qh_shift) & 0x03;
             const int8_t q = (int8_t)(ql_4bits | (qh_2bits << 4)) - 32;
 
             // Access input with batch offset
@@ -151,19 +154,22 @@ __global__ void gemm_q6_k_f32_kernel_generic(
             // Compute ql offset
             const int ql_local_idx = l_base + quadrant * 32;
             const int ql_offset = group * 64 + ql_local_idx;
-            const uint8_t ql_byte = block[ql_offset];
+            // === OPTIMIZED: Use get_int_b2() for 4-byte read (Phase 3) ===
+            const int ql_packed = get_int_b2(block, ql_offset);
 
             // Compute qh offset
             const int qh_offset = 128 + group * 32 + l_base;
-            const uint8_t qh_byte = block[qh_offset];
+            // === OPTIMIZED: Use get_int_b2() for 4-byte read (Phase 3) ===
+            const int qh_packed = get_int_b2(block, qh_offset);
 
             // Unpack Q6_K value
             const int is_low_half = (quadrant < 2) ? 0 : 1;
             const int shift = is_low_half ? 0 : 4;
             const int qh_shift = is_low_half ? (quadrant % 2) * 2 : (quadrant % 2) * 2 + 4;
 
-            const uint8_t ql_4bits = (ql_byte >> shift) & 0x0F;
-            const uint8_t qh_2bits = (qh_byte >> qh_shift) & 0x03;
+            // Extract from packed integers (same logic, just different source)
+            const uint8_t ql_4bits = (ql_packed >> shift) & 0x0F;
+            const uint8_t qh_2bits = (qh_packed >> qh_shift) & 0x03;
             const int8_t q = (int8_t)(ql_4bits | (qh_2bits << 4)) - 32;
 
             // Access input with batch offset
