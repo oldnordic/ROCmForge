@@ -81,6 +81,7 @@ __global__ void gemm_q6_k_f32_kernel(
     }
 
     // Warp reduction (32 threads = 1 wavefront on RDNA)
+    #pragma unroll
     for (int offset = 16; offset > 0; offset >>= 1) {
         sum += __shfl_down(sum, offset);
     }
