@@ -6,6 +6,8 @@
 /// AMD GPU architecture identifiers for ROCm-Forge
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GpuArchitecture {
+    /// RDNA4 (RX 9000 series, 9070 XT) - gfx1201
+    Gfx1201,
     /// RDNA3 (RX 7000 series, W7900, 7900XTX) - gfx1100
     Gfx1100,
     /// RDNA2 (RX 6000 series) - gfx1030
@@ -24,7 +26,7 @@ impl GpuArchitecture {
     /// Maximum threads per block for this architecture
     pub fn max_threads_per_block(&self) -> u32 {
         match self {
-            Self::Gfx1100 | Self::Gfx1030 => 1024,
+            Self::Gfx1201 | Self::Gfx1100 | Self::Gfx1030 => 1024,
             Self::Gfx90a | Self::Gfx908 => 1024,
             Self::Gfx900 => 1024,
             Self::Unknown(_) => 256, // Conservative default
@@ -34,7 +36,7 @@ impl GpuArchitecture {
     /// Warp size (wavefront size) for this architecture
     pub fn warp_size(&self) -> u32 {
         match self {
-            Self::Gfx1100 | Self::Gfx1030 => 32,              // RDNA
+            Self::Gfx1201 | Self::Gfx1100 | Self::Gfx1030 => 32,              // RDNA
             Self::Gfx90a | Self::Gfx908 | Self::Gfx900 => 64, // CDNA/Vega
             Self::Unknown(_) => 32,
         }
@@ -43,7 +45,7 @@ impl GpuArchitecture {
     /// Shared memory per block (bytes)
     pub fn shared_mem_per_block(&self) -> usize {
         match self {
-            Self::Gfx1100 | Self::Gfx1030 => 64 * 1024,
+            Self::Gfx1201 | Self::Gfx1100 | Self::Gfx1030 => 64 * 1024,
             Self::Gfx90a | Self::Gfx908 => 64 * 1024,
             Self::Gfx900 => 64 * 1024,
             Self::Unknown(_) => 32 * 1024,
@@ -52,12 +54,13 @@ impl GpuArchitecture {
 
     /// Parse from device name string (e.g., "gfx1100")
     pub fn from_name(name: &str) -> Option<Self> {
-        // Handle format: "gfx1100" or "gfx1100_architecture" or similar
+        // Handle format: "gfx1201" or "gfx1201_architecture" or similar
         let name_lower = name.to_lowercase();
         let gfx_name = name_lower.split('_').next()?.trim_start_matches("gfx");
 
         let arch_id = u32::from_str_radix(gfx_name, 16).ok()?;
         Some(match arch_id {
+            0x1201 => Self::Gfx1201,
             0x1100 => Self::Gfx1100,
             0x1030 => Self::Gfx1030,
             0x90a => Self::Gfx90a,
@@ -71,6 +74,15 @@ impl GpuArchitecture {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_gfx1201() {
+        let arch = GpuArchitecture::from_name("gfx1201").unwrap();
+        assert_eq!(arch, GpuArchitecture::Gfx1201);
+        assert_eq!(arch.warp_size(), 32); // RDNA4 has 32-wide wavefronts
+        assert_eq!(arch.max_threads_per_block(), 1024);
+        assert_eq!(arch.shared_mem_per_block(), 64 * 1024);
+    }
 
     #[test]
     fn test_parse_gfx1100() {
