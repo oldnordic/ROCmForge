@@ -261,6 +261,19 @@ set_target_properties(q4_k_gemv_vulkan_style PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
 
+# Q6_K GEMV kernel (Q6_K × f32 matrix-vector multiplication)
+add_library(q6_k_gemv STATIC
+    q6_k_gemv.hip
+)
+
+target_link_libraries(q6_k_gemv
+    quant_common
+)
+
+set_target_properties(q6_k_gemv PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
 # GEMM Kernels (Batched)
 add_library(q4_0_gemm STATIC q4_0_gemm.hip)
 target_link_libraries(q4_0_gemm quant_common)
@@ -288,6 +301,10 @@ set_target_properties(q4_k_gemm PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BIN
 add_library(q5_k_gemm STATIC q5_k_gemm.hip)
 target_link_libraries(q5_k_gemm quant_common)
 set_target_properties(q5_k_gemm PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+
+add_library(q6_k_gemm STATIC q6_k_gemm.hip)
+target_link_libraries(q6_k_gemm quant_common)
+set_target_properties(q6_k_gemm PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
 # Test kernel library (for Phase 1 verification)
 add_library(test_quant STATIC
@@ -375,6 +392,45 @@ target_link_libraries(q5_k_gemv
 set_target_properties(q5_k_gemv PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
+# Q6_K quantization kernel
+add_library(q6_k_quantize STATIC
+    q6_k_quantize.hip
+)
+
+target_link_libraries(q6_k_quantize
+    quant_common
+)
+
+set_target_properties(q6_k_quantize PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
+# Q6_K dequantization kernel
+add_library(q6_k_dequantize STATIC
+    q6_k_dequantize.hip
+)
+
+target_link_libraries(q6_k_dequantize
+    quant_common
+)
+
+set_target_properties(q6_k_dequantize PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
+# Q6_K verification kernel
+add_library(q6_k_verify STATIC
+    q6_k_verify.hip
+)
+
+target_link_libraries(q6_k_verify
+    quant_common
+)
+
+set_target_properties(q6_k_verify PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
 
 # Print build info
