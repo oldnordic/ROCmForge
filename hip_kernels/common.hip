@@ -46,10 +46,25 @@
 constexpr int BLOCK_SIZE = 256;
 constexpr int MAX_BLOCK_SIZE = 1024;
 
-// Wave size is now a compile-time template parameter
-// Default to 64 for backward compatibility, but build.rs overrides this
+// ── AMD GPU Architecture Wavefront Sizes ─────────────────────────────────────────────
+// Wavefront size is the SIMD unit size (similar to CUDA warp size)
+// - RDNA1/2/3/4: 32 threads per wavefront (gfx1010+, gfx1030+, gfx1100+, gfx1201+)
+// - CDNA1/2/3: 64 threads per wavefront (gfx908+, gfx90a+, gfx942+)
+// - Vega: 64 threads per wavefront (gfx900)
+//
+// build.rs detects the target architecture and sets WARP_SIZE correctly.
+// This default is only used if detection fails (conservative RDNA default).
+//
+// IMPORTANT: Always use runtime warpSize in device code, not this constant!
+// The runtime value is correct for the actual device, this is just build-time.
+// ────────────────────────────────────────────────────────────────────────────────────
+
+// Wavefront size (compile-time, build.rs sets this correctly)
+// RDNA (gfx1100+, gfx1030+, gfx1201+): 32 threads per wavefront
+// CDNA/Vega (gfx900+): 64 threads per wavefront
+// Default to 32 (RDNA) as conservative fallback
 #ifndef WARP_SIZE
-#define WARP_SIZE 64
+#define WARP_SIZE 32
 #endif
 
 constexpr int WARP_SIZE_COMPTIME = WARP_SIZE;
