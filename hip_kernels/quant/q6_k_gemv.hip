@@ -5,10 +5,9 @@
 #define Q6_K_BLOCK_SIZE 210
 
 __device__ inline float vec_dot_q6_k(const void* block_ptr, const float* vec, int offset) {
-    const int tid = threadIdx.x;
     const uint8_t* block_bytes = static_cast<const uint8_t*>(block_ptr);
 
-    // Use the EXACT reference implementation pattern
+    // Use the EXACT reference implementation pattern - fully serialized
     const uint8_t* ql = &block_bytes[0];
     const uint8_t* qh = &block_bytes[128];
     const int8_t* scales = reinterpret_cast<const int8_t*>(&block_bytes[192]);
@@ -19,31 +18,33 @@ __device__ inline float vec_dot_q6_k(const void* block_ptr, const float* vec, in
 
     float sum = 0.0f;
 
-    // Process 256 elements in 2 groups of 128, exactly as in reference
+    // Process 256 elements in 2 groups of 128 - FULLY SERIALIZED like reference
     for (int n = 0; n < QK_K; n += 128) {
-        const int l = tid;  // Each thread handles one l value
-        const int is = l / 16;
+        // Inner loop: process all 32 values (SERIAL in reference)
+        for (int l = 0; l < 32; ++l) {
+            const int is = l / 16;
 
-        const uint8_t ql_0 = ql[l + 0];
-        const uint8_t ql_32 = ql[l + 32];
-        const uint8_t qh_0 = qh[l];
+            const uint8_t ql_0 = ql[l + 0];
+            const uint8_t ql_32 = ql[l + 32];
+            const uint8_t qh_0 = qh[l];
 
-        const int8_t q1 = (int8_t)((ql_0 & 0xF) | (((qh_0 >> 0) & 3) << 4)) - 32;
-        const int8_t q2 = (int8_t)((ql_32 & 0xF) | (((qh_0 >> 2) & 3) << 4)) - 32;
-        const int8_t q3 = (int8_t)((ql_0 >> 4) | (((qh_0 >> 4) & 3) << 4)) - 32;
-        const int8_t q4 = (int8_t)((ql_32 >> 4) | (((qh_0 >> 6) & 3) << 4)) - 32;
+            const int8_t q1 = (int8_t)((ql_0 & 0xF) | (((qh_0 >> 0) & 3) << 4)) - 32;
+            const int8_t q2 = (int8_t)((ql_32 & 0xF) | (((qh_0 >> 2) & 3) << 4)) - 32;
+            const int8_t q3 = (int8_t)((ql_0 >> 4) | (((qh_0 >> 4) & 3) << 4)) - 32;
+            const int8_t q4 = (int8_t)((ql_32 >> 4) | (((qh_0 >> 6) & 3) << 4)) - 32;
 
-        const float d1 = d * (float)scales[is + 0];
-        const float d2 = d * (float)scales[is + 2];
-        const float d3 = d * (float)scales[is + 4];
-        const float d4 = d * (float)scales[is + 6];
+            const float d1 = d * (float)scales[is + 0];
+            const float d2 = d * (float)scales[is + 2];
+            const float d3 = d * (float)scales[is + 4];
+            const float d4 = d * (float)scales[is + 6];
 
-        sum += vec[offset + l + 0 + n] * (d1 * (float)q1);
-        sum += vec[offset + l + 32 + n] * (d2 * (float)q2);
-        sum += vec[offset + l + 64 + n] * (d3 * (float)q3);
-        sum += vec[offset + l + 96 + n] * (d4 * (float)q4);
+            sum += vec[offset + l + 0 + n] * (d1 * (float)q1);
+            sum += vec[offset + l + 32 + n] * (d2 * (float)q2);
+            sum += vec[offset + l + 64 + n] * (d3 * (float)q3);
+            sum += vec[offset + l + 96 + n] * (d4 * (float)q4);
+        }
 
-        // Advance pointers exactly as in reference
+        // Advance pointers AFTER inner loop completes
         ql += 64;
         qh += 32;
         scales += 8;
