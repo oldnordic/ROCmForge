@@ -4,6 +4,31 @@
 
 ### [GPU Backend]
 
+**feat(gpu): refactor Q6_K device function to linear processing for HIP graph compatibility**
+
+- **Date:** April 14, 2026
+- **Task:** #63 - Refactor Q6_K kernel for HIP graph compatibility
+- **Changes:**
+  - Refactored `vec_dot_q6_k` device function from nested loops to single linear loop
+  - Removed Q6_K from graph disabled detection in forward pass
+  - Updated safety tests to work with graph capture enabled
+- **Performance (qwen2-0.5b-instruct-q6_k.gguf):**
+  - Single-token decode: ~118 tok/s (graph enabled)
+  - Multi-token prefill: ~129 tok/s (graph enabled)
+  - Minimal performance impact (-0.8% from baseline)
+- **Validation:**
+  - ✅ All 4 Q6_K safety tests pass with graph enabled
+  - ✅ Graph capture works for single and multi-token prompts
+  - ✅ No GPU crashes or HIP error 901
+  - ✅ VRAM leak detection verified (5 cycles)
+- **Key Changes:**
+  - Before: `for (int group = 0; group < 2; ++group) { for (int s = 0; s < 4; ++s) { ... } }`
+  - After: `for (int l = 0; l < 8; ++l) { const int i = tid * 8 + l; ... }`
+- **Q6_K Status:** ✅ PRODUCTION READY with HIP graph capture support
+- **Files Changed:** `hip_kernels/quant/q6_k_gemv.hip`, `src/gpu/forward.rs`, `tests/q6_k_safety_tests.rs`
+- **Documentation:** `docs/q6_k_linear_refactoring_validation.md`, `docs/q6_k_performance_after_linear_refactor.txt`
+
+
 **feat(gpu): add Q6_K quantization support with graph capture compatibility**
 
 - **Date:** April 14, 2026
