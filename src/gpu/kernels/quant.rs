@@ -590,41 +590,6 @@ pub fn verify_q6_k_accuracy(
     Ok(())
 }
 
-/// Finalize Q6_K accuracy metrics.
-///
-/// Computes final metrics from intermediate error values.
-///
-/// # Arguments
-/// * `errors` - GPU pointer to intermediate error array [4]
-/// * `metrics` - GPU pointer to final metrics [3]: [max_error, mse, relative_error]
-/// * `n` - Number of elements (for MSE normalization)
-///
-/// # Returns
-/// Ok(()) on success, Err if kernel launch fails
-///
-/// # Safety
-/// - All memory pointers must be valid GPU pointers
-/// - Bounds are validated on CPU before kernel launch
-pub fn finalize_q6_k_metrics(errors: *const f32, metrics: *mut f32, n: usize) -> GpuResult<()> {
-    if n == 0 {
-        return Err(GpuError::HipApiError {
-            code: -1,
-            description: "finalize_q6_k_metrics: n cannot be zero".to_string(),
-        });
-    }
-
-    let result = unsafe { finalize_q6_k_metrics_launch(errors, metrics, n as c_int, hipStream_t::null()) };
-
-    if result != hipError_t::hipSuccess {
-        return Err(GpuError::HipApiError {
-            code: result as i32,
-            description: format!("finalize_q6_k_metrics kernel failed: {:?}", result),
-        });
-    }
-
-    Ok(())
-}
-
 // ── FFI Declarations ─────────────────────────────────────────────────────────────
 
 /// FFI declarations - will be linked from compiled HIP kernels
@@ -2243,12 +2208,14 @@ unsafe extern "C" {
         input: *const f32,
         output: *mut u8,
         n: c_int,
+        stream: hipStream_t,
     ) -> hipError_t;
 
     fn dequantize_q6_k_launch(
         input: *const u8,
         output: *mut f32,
         n: c_int,
+        stream: hipStream_t,
     ) -> hipError_t;
 
     fn dequantize_q6_k_batched_launch(
@@ -2256,13 +2223,15 @@ unsafe extern "C" {
         output: *mut f32,
         n: c_int,
         batch_size: c_int,
+        stream: hipStream_t,
     ) -> hipError_t;
 
-    fn verify_q6_k_accuracy_kernel(
+    fn verify_q6_k_launch(
         original: *const f32,
         quantized: *const u8,
         errors: *mut f32,
         n: c_int,
+        stream: hipStream_t,
     ) -> hipError_t;
 
     fn gemv_q6_k_f32_launch(
