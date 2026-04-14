@@ -419,6 +419,212 @@ pub fn finalize_q5_k_metrics(errors: *const f32, metrics: *mut f32, n: usize) ->
     Ok(())
 }
 
+/// Quantize f32 data to Q6_K format.
+///
+/// # Arguments
+/// * `input` - GPU pointer to f32 input data [n]
+/// * `output` - GPU pointer to Q6_K output data [n/256 * 210]
+/// * `n` - Total number of elements
+///
+/// # Returns
+/// Ok(()) on success, Err if kernel launch fails
+///
+/// # Safety
+/// - All memory pointers must be valid GPU pointers
+/// - Bounds are validated on CPU before kernel launch
+pub fn quantize_q6_k(input: *const f32, output: *mut u8, n: usize) -> GpuResult<()> {
+    if n == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "quantize_q6_k: n cannot be zero".to_string(),
+        });
+    }
+
+    let num_blocks = (n + 255) / 256;
+    if num_blocks == 0 {
+        return Ok(());
+    }
+
+    let result = unsafe { quantize_q6_k_launch(input, output, n as c_int, hipStream_t::null()) };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("quantize_q6_k kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+/// Dequantize Q6_K data to f32.
+///
+/// # Arguments
+/// * `input` - GPU pointer to Q6_K input data [n/256 * 210]
+/// * `output` - GPU pointer to f32 output data [n]
+/// * `n` - Total number of elements
+///
+/// # Returns
+/// Ok(()) on success, Err if kernel launch fails
+///
+/// # Safety
+/// - All memory pointers must be valid GPU pointers
+/// - Bounds are validated on CPU before kernel launch
+pub fn dequantize_q6_k(input: *const u8, output: *mut f32, n: usize) -> GpuResult<()> {
+    if n == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "dequantize_q6_k: n cannot be zero".to_string(),
+        });
+    }
+
+    let num_blocks = (n + 255) / 256;
+    if num_blocks == 0 {
+        return Ok(());
+    }
+
+    let result = unsafe { dequantize_q6_k_launch(input, output, n as c_int, hipStream_t::null()) };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("dequantize_q6_k kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+/// Batched dequantize Q6_K data to f32.
+///
+/// # Arguments
+/// * `input` - GPU pointer to Q6_K input data [batch_size][n/256 * 210]
+/// * `output` - GPU pointer to f32 output data [batch_size][n]
+/// * `n` - Number of elements per batch
+/// * `batch_size` - Number of batches
+///
+/// # Returns
+/// Ok(()) on success, Err if kernel launch fails
+///
+/// # Safety
+/// - All memory pointers must be valid GPU pointers
+/// - Bounds are validated on CPU before kernel launch
+pub fn dequantize_q6_k_batched(
+    input: *const u8,
+    output: *mut f32,
+    n: usize,
+    batch_size: usize,
+) -> GpuResult<()> {
+    if n == 0 || batch_size == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "dequantize_q6_k_batched: n and batch_size cannot be zero".to_string(),
+        });
+    }
+
+    let num_blocks = (n + 255) / 256;
+    if num_blocks == 0 {
+        return Ok(());
+    }
+
+    let result = unsafe {
+        dequantize_q6_k_batched_launch(
+            input,
+            output,
+            n as c_int,
+            batch_size as c_int,
+            hipStream_t::null(),
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("dequantize_q6_k_batched kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+/// Verify Q6_K quantization accuracy.
+///
+/// Compares original f32 data with quantize-dequantize round-trip.
+///
+/// # Arguments
+/// * `original` - GPU pointer to original f32 data [n]
+/// * `quantized` - GPU pointer to Q6_K quantized data [n/256 * 210]
+/// * `errors` - GPU pointer to error array [4] (intermediate results)
+/// * `n` - Number of elements
+///
+/// Must be followed by `finalize_q6_k_metrics` to get final metrics.
+///
+/// # Returns
+/// Ok(()) on success, Err if kernel launch fails
+///
+/// # Safety
+/// - All memory pointers must be valid GPU pointers
+/// - Bounds are validated on CPU before kernel launch
+pub fn verify_q6_k_accuracy(
+    original: *const f32,
+    quantized: *const u8,
+    errors: *mut f32,
+    n: usize,
+) -> GpuResult<()> {
+    if n == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "verify_q6_k_accuracy: n cannot be zero".to_string(),
+        });
+    }
+
+    let result = unsafe { verify_q6_k_launch(original, quantized, errors, n as c_int, hipStream_t::null()) };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("verify_q6_k_accuracy kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+/// Finalize Q6_K accuracy metrics.
+///
+/// Computes final metrics from intermediate error values.
+///
+/// # Arguments
+/// * `errors` - GPU pointer to intermediate error array [4]
+/// * `metrics` - GPU pointer to final metrics [3]: [max_error, mse, relative_error]
+/// * `n` - Number of elements (for MSE normalization)
+///
+/// # Returns
+/// Ok(()) on success, Err if kernel launch fails
+///
+/// # Safety
+/// - All memory pointers must be valid GPU pointers
+/// - Bounds are validated on CPU before kernel launch
+pub fn finalize_q6_k_metrics(errors: *const f32, metrics: *mut f32, n: usize) -> GpuResult<()> {
+    if n == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "finalize_q6_k_metrics: n cannot be zero".to_string(),
+        });
+    }
+
+    let result = unsafe { finalize_q6_k_metrics_launch(errors, metrics, n as c_int, hipStream_t::null()) };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("finalize_q6_k_metrics kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
 // ── FFI Declarations ─────────────────────────────────────────────────────────────
 
 /// FFI declarations - will be linked from compiled HIP kernels
@@ -2781,6 +2987,50 @@ pub fn gemm_q5_k_f32(
     Ok(())
 }
 
+/// Batched GEMM for Q6_K quantized weights.
+pub fn gemm_q6_k_f32(
+    weights_q6_k: *const u8,
+    input: *const f32,
+    output: *mut f32,
+    n_rows: usize,
+    ncols_dst: usize,
+    batch_size: usize,
+) -> GpuResult<()> {
+    if n_rows == 0 || ncols_dst == 0 || batch_size == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "gemm_q6_k_f32: dimensions cannot be zero".to_string(),
+        });
+    }
+    if n_rows % 256 != 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!(
+                "gemm_q6_k_f32: n_rows must be multiple of 256, got {}",
+                n_rows
+            ),
+        });
+    }
+    let result = unsafe {
+        gemm_q6_k_f32_launch(
+            weights_q6_k,
+            input,
+            output,
+            n_rows as c_int,
+            ncols_dst as c_int,
+            batch_size as c_int,
+            hipStream_t::null(),
+        )
+    };
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("gemm_q6_k_f32 kernel failed: {:?}", result),
+        });
+    }
+    Ok(())
+}
+
 /// Q4_K × f32 GEMV: quantized matrix-vector multiplication
 ///
 /// Computes output = weights_q4_k × input where:
@@ -2999,6 +3249,120 @@ pub fn gemv_q5_k_f32_on_stream(
         return Err(GpuError::HipApiError {
             code: result as i32,
             description: format!("gemv_q5_k_f32 kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+/// Q6_K × f32 GEMV: quantized matrix-vector multiplication
+///
+/// Computes output = weights_q6_k × input where:
+/// - weights_q6_k is Q6_K quantized weight matrix [n_rows × ncols_dst]
+/// - input is f32 activation vector [n_rows]
+/// - output is f32 result vector [ncols_dst]
+///
+/// # Arguments
+/// * `weights_q6_k` - GPU pointer to Q6_K quantized weights [n_rows/256 * ncols_dst * 210]
+/// * `input` - GPU pointer to f32 input vector [n_rows]
+/// * `output` - GPU pointer to f32 output vector [ncols_dst] (will be written)
+/// * `n_rows` - Number of rows (input dimension, must be multiple of 256)
+/// * `ncols_dst` - Number of columns (output dimension)
+///
+/// # Returns
+/// Ok(()) on success
+///
+/// # Errors
+/// - n_rows or ncols_dst is zero
+/// - n_rows is not a multiple of 256
+/// - Any pointer is null
+/// - Kernel launch fails
+///
+/// # Safety
+/// - All memory pointers must be valid GPU pointers
+/// - n_rows must be aligned to QK_K (256)
+/// - Bounds are validated on CPU before kernel launch
+pub fn gemv_q6_k_f32(
+    weights_q6_k: *const u8,
+    input: *const f32,
+    output: *mut f32,
+    n_rows: usize,
+    ncols_dst: usize,
+) -> GpuResult<()> {
+    gemv_q6_k_f32_on_stream(
+        weights_q6_k,
+        input,
+        output,
+        n_rows,
+        ncols_dst,
+        hipStream_t::null(),
+    )
+}
+
+pub fn gemv_q6_k_f32_on_stream(
+    weights_q6_k: *const u8,
+    input: *const f32,
+    output: *mut f32,
+    n_rows: usize,
+    ncols_dst: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    if n_rows == 0 || ncols_dst == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "gemv_q6_k_f32: n_rows and ncols_dst cannot be zero".to_string(),
+        });
+    }
+
+    // n_rows must be aligned to QK_K
+    if n_rows % 256 != 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!(
+                "gemv_q6_k_f32: n_rows must be multiple of 256, got {}",
+                n_rows
+            ),
+        });
+    }
+
+    // Validate pointers
+    if weights_q6_k.is_null() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "gemv_q6_k_f32: weights_q6_k pointer is null".to_string(),
+        });
+    }
+
+    if input.is_null() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "gemv_q6_k_f32: input pointer is null".to_string(),
+        });
+    }
+
+    if output.is_null() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "gemv_q6_k_f32: output pointer is null".to_string(),
+        });
+    }
+
+    // Call kernel launch function
+    let result = unsafe {
+        gemv_q6_k_f32_launch(
+            weights_q6_k,
+            input,
+            output,
+            n_rows as c_int,
+            ncols_dst as c_int,
+            stream,
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("gemv_q6_k_f32 kernel failed: {:?}", result),
         });
     }
 
