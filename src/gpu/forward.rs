@@ -131,7 +131,8 @@ fn parse_decode_profile_env_flag(value: Option<String>, default: bool) -> bool {
 fn decode_graph_disabled(gpu_weights: &GpuModelWeights) -> bool {
     decode_stage_profiling_enabled()
         || decode_graph_disabled_override_requested()
-        || gpu_weights.uses_q6_k_quantization()
+        // Q6_K now compatible with HIP graph capture after linear refactoring
+        // || gpu_weights.uses_q6_k_quantization()  // REMOVED: Task #63 completed
 }
 
 fn record_decode_stage(stage: DecodeStage, elapsed_ns: u128) {

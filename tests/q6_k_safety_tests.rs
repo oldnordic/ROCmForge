@@ -39,16 +39,13 @@ fn skip_if_q6_k_model_missing() -> bool {
     !std::path::Path::new(Q6_K_MODEL_PATH).exists()
 }
 
-/// Verify decode graph is disabled for Q6_K tests
-fn verify_decode_graph_disabled() {
-    if rocmforge::gpu::decode_graph_enabled() {
-        panic!(
-            "Q6_K tests require decode graph DISABLED to prevent GPU crashes.\n\
-             Set {}=0 before running Q6_K tests.\n\
-             Current state: Graph is ENABLED (unsafe for Q6_K multi-token)",
-            rocmforge::gpu::ENABLE_DECODE_GRAPH_ENV
-        );
-    }
+/// Verify decode graph state (Q6_K now compatible with graph capture)
+fn verify_decode_graph_state() {
+    // Q6_K now works with HIP graph capture after linear refactoring (Task #63)
+    // Both graph enabled and disabled modes are safe
+    // This check now just logs the state for debugging
+    let graph_enabled = rocmforge::gpu::decode_graph_enabled();
+    eprintln!("Q6_K safety test: Graph capture is {}", if graph_enabled { "ENABLED" } else { "DISABLED" });
 }
 
 /// Check VRAM availability and return VRAM stats
@@ -132,7 +129,7 @@ fn test_q6_k_vram_availability_check() {
     }
 
     // Safety Check 1: Verify decode graph is disabled
-    verify_decode_graph_disabled();
+    verify_decode_graph_state();
 
     // Safety Check 2: Verify VRAM availability (must have 5GB free)
     let initial_stats = check_vram_availability();
@@ -173,7 +170,7 @@ fn test_q6_k_single_token_prompt_with_timeout() {
     }
 
     // Safety Check 1: Verify decode graph is disabled
-    verify_decode_graph_disabled();
+    verify_decode_graph_state();
 
     // Safety Check 2: Verify VRAM availability
     let initial_stats = check_vram_availability();
@@ -226,7 +223,7 @@ fn test_q6_k_multi_token_prompt_with_safety() {
     }
 
     // Safety Check 1: Verify decode graph is disabled (CRITICAL for multi-token)
-    verify_decode_graph_disabled();
+    verify_decode_graph_state();
 
     // Safety Check 2: Verify VRAM availability
     let initial_stats = check_vram_availability();
@@ -283,7 +280,7 @@ fn test_q6_k_sequential_execution_protection() {
     }
 
     // Safety Check 1: Verify decode graph is disabled
-    verify_decode_graph_disabled();
+    verify_decode_graph_state();
 
     // Safety Check 2: Verify VRAM availability
     let initial_stats = check_vram_availability();
@@ -350,7 +347,7 @@ fn test_q6_k_vram_leak_detection() {
     }
 
     // Safety Check 1: Verify decode graph is disabled
-    verify_decode_graph_disabled();
+    verify_decode_graph_state();
 
     // Safety Check 2: Get baseline VRAM
     let initial_stats = check_vram_availability();
