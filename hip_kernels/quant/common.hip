@@ -52,6 +52,47 @@ constexpr int MAX_SHARED_MEM = 64 * 1024; // Maximum shared memory per block
 constexpr int Q6_K_BLOCK_SIZE = 210; // Bytes per Q6_K block (256 quantized values + metadata)
 constexpr int QI6_K = 4;            // Quantization indices per block for Q6_K
 
+// ── Tile Processing Constants ───────────────────────────────────────────────────
+
+/// Tile size for Q6_K dequantization
+/// Values chosen based on llama.cpp research:
+/// - RDNA1: 64 threads per tile (limited shared memory)
+/// - RDNA2+: 128 threads per tile (more shared memory available)
+constexpr int TILE_Y = WARP_SIZE;  // Number of rows in tile (one per thread)
+
+/// Padded tile size to avoid shared memory bank conflicts
+/// llama.cpp research shows padding with (WARP_SIZE/8 + 7) avoids conflicts
+constexpr int TILE_SIZE_PADDED = WARP_SIZE + WARP_SIZE/8 + 7;
+
+/// Static assertion to verify padding is correct (4 mod 8 ensures bank alignment)
+static_assert(TILE_SIZE_PADDED % 8 == 4, "Tile size must be 4 mod 8 for bank alignment");
+
+/// Q6_K-specific tile sizes for different data types
+/// These match the tile layout used in llama.cpp mmq.cuh
+namespace q6_k_tile {
+    // Number of quantized values per tile (qs)
+    constexpr int TILE_QS = WARP_SIZE * 2 + TILE_Y;
+
+    // Number of d scales per tile (dm)
+    constexpr int TILE_DM = WARP_SIZE / QI6_K + TILE_Y / QI6_K;
+
+    // Number of quantization scales per tile (sc)
+    constexpr int TILE_SC = WARP_SIZE / 8 + TILE_Y / 8;
+
+    // Total tile size (with padding)
+    constexpr int TILE_X_K_Q6_K = 2 * WARP_SIZE + WARP_SIZE / QI6_K + WARP_SIZE / 8 + 7;
+
+    static_assert(TILE_X_K_Q6_K % 8 == 4, "Q6_K tile size must be 4 mod 8");
+}
+
+/// Helper to compute padded index for bank conflict avoidance
+/// Ensures threads don't access the same memory bank simultaneously
+__device__ inline int compute_padded_index(int thread_id, int tile_base, int tile_stride) {
+    // Stride pattern: skip enough elements to avoid bank conflicts
+    const int offset = thread_id % (WARP_SIZE / 8);
+    return tile_base * TILE_SIZE_PADDED + offset + (thread_id / (WARP_SIZE / 8)) * tile_stride;
+}
+
 // ─── Type Aliases ───────────────────────────────────────────────────────────────────
 
 typedef unsigned char uint8_t;
