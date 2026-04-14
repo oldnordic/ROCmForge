@@ -23,6 +23,20 @@ fn skip_if_model_missing() -> bool {
     !std::path::Path::new(MODEL_PATH).exists()
 }
 
+fn download_gpu_f32(buf: &gpu::GpuBuffer, len: usize) -> Vec<f32> {
+    let mut bytes = vec![0u8; len * std::mem::size_of::<f32>()];
+    buf.copy_to_host(&mut bytes)
+        .expect("GPU buffer should download");
+    unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const f32, len).to_vec() }
+}
+
+fn max_abs_error(a: &[f32], b: &[f32]) -> f32 {
+    a.iter()
+        .zip(b.iter())
+        .map(|(x, y)| (x - y).abs())
+        .fold(0.0f32, f32::max)
+}
+
 #[test]
 #[serial]
 #[ignore = "Requires real GPU and model - run with: cargo test -- --ignored"]
@@ -55,6 +69,7 @@ fn test_ffn_down_dimensions_correct_in_hybrid_forward() {
 
     let h = config.hidden_size;
     let ff_size = config.intermediate_size;
+    let layer_idx = 2; // Layer with Q4_0 FFN down
 
     eprintln!("=== FFN Down Dimension Regression Test ===");
     eprintln!("hidden_size (h): {}", h);
@@ -70,50 +85,55 @@ fn test_ffn_down_dimensions_correct_in_hybrid_forward() {
     let mut cpu_kv = CpuKvCache::new(&config, 1);
     let mut cpu_scratch = CpuForwardScratch::new(&config);
 
-    let cpu_layer_idx = 2;
-    let cpu_result = cpu_layer_forward(
-        &cpu_weights,
+    cpu_layer_forward(
+        &mut cpu_hidden,
+        cpu_weights.layer(layer_idx),
         &mut cpu_kv,
         &mut cpu_scratch,
-        cpu_layer_idx,
+        layer_idx,
+        0, // pos
         &config,
-        &cpu_hidden.clone(),
-    );
-
-    assert!(cpu_result.is_ok(), "CPU forward should succeed");
+        false, // debug
+    )
+    .expect("CPU forward should succeed");
 
     // GPU test with stage profiling (the buggy path)
     let mut gpu_kv = GpuKvCache::new(&config, 1).expect("Failed to create GPU KV cache");
-    let mut gpu_scratch = GpuForwardScratch::new(&config);
+    let mut gpu_scratch = GpuForwardScratch::new(&config).expect("Failed to create GPU scratch");
+
+    // Upload initial hidden state
+    gpu_scratch
+        .hidden
+        .copy_from_host(unsafe {
+            std::slice::from_raw_parts(
+                cpu_hidden.as_ptr() as *const u8,
+                h * std::mem::size_of::<f32>(),
+            )
+        })
+        .expect("Failed to upload hidden state");
 
     // Enable decode stage profiling to trigger the buggy code path
     gpu::reset_decode_stage_profile();
 
-    let gpu_layer_idx = 2;
-    let gpu_result = gpu_layer_forward_hybrid(
+    gpu_layer_forward_hybrid(
         &device,
-        gpu_weights.layer(gpu_layer_idx),
+        gpu_weights.layer(layer_idx),
         &mut gpu_kv,
         &mut gpu_scratch,
-        gpu_layer_idx,
+        layer_idx,
+        0, // pos
         &config,
-        &cpu_hidden,
-    );
-
-    assert!(gpu_result.is_ok(), "GPU forward should succeed without memory fault");
+    )
+    .expect("GPU forward should succeed without memory fault");
 
     // Download GPU result
-    let gpu_hidden = gpu_scratch.hidden.download().expect("Failed to download GPU result");
+    let gpu_hidden = download_gpu_f32(&gpu_scratch.hidden, h);
 
     // Verify dimensions match
     assert_eq!(gpu_hidden.len(), h, "Output dimension should match hidden_size");
 
     // Verify values match CPU (with some tolerance for quantization)
-    let max_error = cpu_hidden
-        .iter()
-        .zip(gpu_hidden.iter())
-        .map(|(c, g)| (c - g).abs())
-        .fold(0.0f32, f32::max);
+    let max_error = max_abs_error(&cpu_hidden, &gpu_hidden);
 
     eprintln!("Max error between CPU and GPU: {}", max_error);
 
