@@ -36,26 +36,35 @@ __global__ void gemm_q6_k_f32_kernel(
         memcpy(&d_half, &block[208], sizeof(half));
         const float d = __half2float(d_half);
 
-        // Accumulate across block (same logic as GEMV)
-        for (int n = 0; n < 2; n++) {
-            for (int l = tid; l < 32; l += 32) {
-                const int is = l / 16;
-                const int8_t q1 = (int8_t)((ql[l + 0] & 0xF) | (((qh[l] >> 0) & 3) << 4)) - 32;
-                const int8_t q2 = (int8_t)((ql[l + 32] & 0xF) | (((qh[l] >> 2) & 3) << 4)) - 32;
-                const int8_t q3 = (int8_t)(((ql[l + 0] >> 4) & 0xF) | (((qh[l] >> 4) & 3) << 4)) - 32;
-                const int8_t q4 = (int8_t)(((ql[l + 32] >> 4) & 0xF) | (((qh[l] >> 6) & 3) << 4)) - 32;
+        // Replicate the reference dequantization pattern exactly
+        for (int n = 0; n < QK_K; n += 128) {
+            const int l = tid;
+            const int is = l / 16;
 
-                const int base = n * 128;
-                const float d1 = d * (float)scales[is + 0];
-                const float d2 = d * (float)scales[is + 2];
-                const float d3 = d * (float)scales[is + 4];
-                const float d4 = d * (float)scales[is + 6];
+            const uint8_t ql_0 = ql[l + 0];
+            const uint8_t ql_32 = ql[l + 32];
+            const uint8_t qh_0 = qh[l];
 
-                sum += input[block_idx * QK_K + base + l + 0] * (d1 * (float)q1);
-                sum += input[block_idx * QK_K + base + l + 32] * (d2 * (float)q2);
-                sum += input[block_idx * QK_K + base + l + 64] * (d3 * (float)q3);
-                sum += input[block_idx * QK_K + base + l + 96] * (d4 * (float)q4);
-            }
+            const int8_t q1 = (int8_t)((ql_0 & 0xF) | (((qh_0 >> 0) & 3) << 4)) - 32;
+            const int8_t q2 = (int8_t)((ql_32 & 0xF) | (((qh_0 >> 2) & 3) << 4)) - 32;
+            const int8_t q3 = (int8_t)((ql_0 >> 4) | (((qh_0 >> 4) & 3) << 4)) - 32;
+            const int8_t q4 = (int8_t)((ql_32 >> 4) | (((qh_0 >> 6) & 3) << 4)) - 32;
+
+            const float d1 = d * (float)scales[is + 0];
+            const float d2 = d * (float)scales[is + 2];
+            const float d3 = d * (float)scales[is + 4];
+            const float d4 = d * (float)scales[is + 6];
+
+            const int vec_offset = block_idx * QK_K + n;
+            sum += input[vec_offset + l + 0] * (d1 * (float)q1);
+            sum += input[vec_offset + l + 32] * (d2 * (float)q2);
+            sum += input[vec_offset + l + 64] * (d3 * (float)q3);
+            sum += input[vec_offset + l + 96] * (d4 * (float)q4);
+
+            // Advance pointers for next 128-element group
+            ql += 64;
+            qh += 32;
+            scales += 8;
         }
     }
 
@@ -78,15 +87,21 @@ extern "C" hipError_t gemm_q6_k_f32_launch(
     int seq_len,
     hipStream_t stream
 ) {
+    // Validate all parameters
     if (n_rows <= 0 || ncols_dst <= 0 || seq_len <= 0) return hipErrorInvalidValue;
     if (n_rows % QK_K != 0) return hipErrorInvalidValue;
 
-    dim3 blockDim(32, 4); // 32 threads x 4 rows per block
+    CHECK_NULL(weights_q6_k);
+    CHECK_NULL(input);
+    CHECK_NULL(output);
+
+    dim3 blockDim(32, 4);
     dim3 gridDim(ncols_dst, (n_rows + blockDim.y - 1) / blockDim.y);
 
     gemm_q6_k_f32_kernel<<<gridDim, blockDim, 0, stream>>>(
         weights_q6_k, input, output, n_rows, ncols_dst, seq_len
     );
 
-    return hipGetLastError();
+    CHECK_HIP(hipGetLastError());
+    return hipSuccess;
 }
