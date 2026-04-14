@@ -306,6 +306,22 @@ add_library(q6_k_gemm STATIC q6_k_gemm.hip)
 target_link_libraries(q6_k_gemm quant_common)
 set_target_properties(q6_k_gemm PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
+# Q6_K test library (for numerical accuracy validation)
+add_library(q6_k_test STATIC
+    q6_k_test.hip
+)
+
+# Link common library to Q6_K test kernel
+target_link_libraries(q6_k_test
+    quant_common
+)
+
+# Set output directory to match Cargo expectations
+set_target_properties(q6_k_test PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
 # Test kernel library (for Phase 1 verification)
 add_library(test_quant STATIC
     test_kernel.hip

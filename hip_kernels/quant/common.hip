@@ -49,6 +49,8 @@ constexpr int BLOCK_SIZE = 256;    // Default CUDA/HIP block size
 constexpr int WARP_SIZE = 32;      // Warp size for wavefront programming
 constexpr int WARP_SIZE_COMPTIME = WARP_SIZE;  // Compile-time warp size
 constexpr int MAX_SHARED_MEM = 64 * 1024; // Maximum shared memory per block
+constexpr int Q6_K_BLOCK_SIZE = 210; // Bytes per Q6_K block (256 quantized values + metadata)
+constexpr int QI6_K = 4;            // Quantization indices per block for Q6_K
 
 // ─── Type Aliases ───────────────────────────────────────────────────────────────────
 
