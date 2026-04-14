@@ -48,10 +48,12 @@ for (int n = 0; n < QK_K; n += 128) {
 ### Known Incompatibilities
 
 **Q6_K Quantization:**
-- **Status:** Incompatible with HIP graph capture
-- **Reason:** Complex 2D data layout (256 elements in non-linear pattern) requires nested loops with pointer arithmetic
-- **Solution:** Automatic detection disables graph capture for Q6_K models
-- **Performance:** Still achieves ~10 tok/s without graph capture
+- **Status:** Partially compatible with HIP graph capture (works for single-token prompts, crashes with multi-token prompts)
+- **Root Cause:** Complex interleaved data layout (256 elements in non-linear pattern: T, T+32, T+64, T+96 per thread)
+- **Kernel Rewrite (2026-04-14):** Eliminated nested loops and pointer arithmetic, now uses linear processing with interleaved element distribution
+- **Remaining Issue:** Graph capture works for single-token prompts (~82 tok/s) but crashes with memory access fault on multi-token prompts
+- **Current Solution:** Automatic detection disables graph capture for Q6_K models until multi-token issue is resolved
+- **Performance:** ~95 tok/s without graph capture (still efficient)
 
 **Implementation:**
 ```rust
@@ -80,7 +82,7 @@ Should not see HIP error 901 or graph capture failures.
 Graph capture provides ~30-50% performance improvement for compatible kernels:
 - **Q4_K:** ~15 tok/s with graph, ~10 tok/s without
 - **Q8_0:** ~12 tok/s with graph, ~8 tok/s without
-- **Q6_K:** ~10 tok/s (graph incompatible, but still efficient)
+- **Q6_K:** ~82 tok/s with graph (single-token only), ~95 tok/s without graph (graph disabled due to multi-token crash)
 
 ### Adding New Quantization Types
 
