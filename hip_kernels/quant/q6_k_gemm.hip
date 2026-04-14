@@ -1,5 +1,6 @@
 #include "common.hip"
 #include <hip/hip_fp16.h>
+#include "q6_k_tile.hip"
 
 #define QK_K 256
 #define Q6_K_BLOCK_SIZE 210
@@ -182,6 +183,18 @@ __global__ void gemm_q6_k_f32_kernel_generic(
     }
 }
 
+// ── Dispatch: Tile vs Direct Access ───────────────────────────────────────────────
+
+/// Decide whether to use tile-based kernel based on problem size
+/// Tile-based processing is beneficial for larger problems
+/// Small problems may not benefit from the shared memory overhead
+inline bool should_use_tile_processing(int n_rows, int ncols_dst) {
+    // Tile processing beneficial when:
+    // - Enough blocks to amortize shared memory load (>= 4 blocks)
+    // - Not too small that overhead dominates
+    return (n_rows / QK_K >= 4) && (ncols_dst >= 4);
+}
+
 extern "C" hipError_t gemm_q6_k_f32_launch(
     const void* weights_q6_k,
     const float* input,
@@ -199,14 +212,25 @@ extern "C" hipError_t gemm_q6_k_f32_launch(
     CHECK_NULL(input);
     CHECK_NULL(output);
 
-    // Q4_K pattern: 32 threads per block (1 warp), grid dimensions (ncols_dst, batch_size)
+    // Choose kernel based on problem size
+    bool use_tiles = should_use_tile_processing(n_rows, ncols_dst);
+
     const int block_size = 32;
     const dim3 gridDim(ncols_dst, seq_len);
     const dim3 blockDim(block_size, 1);
 
-    gemm_q6_k_f32_kernel_generic<<<gridDim, blockDim, 0, stream>>>(
-        weights_q6_k, input, output, n_rows, ncols_dst, seq_len
-    );
+    if (use_tiles) {
+        // Use tile-based kernel with shared memory optimization
+        gemm_q6_k_f32_kernel_tiled<1><<<gridDim, blockDim, 0, stream>>>(
+            weights_q6_k, input, output, n_rows, seq_len);
+
+        // For now, only support ncols_dst=1 with tile kernel
+        // TODO: Implement full tile kernel with template specialization
+    } else {
+        // Use direct access kernel (current implementation)
+        gemm_q6_k_f32_kernel_generic<<<gridDim, blockDim, 0, stream>>>(
+            weights_q6_k, input, output, n_rows, ncols_dst, seq_len);
+    }
 
     CHECK_HIP(hipGetLastError());
     return hipSuccess;
