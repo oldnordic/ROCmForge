@@ -204,10 +204,78 @@ extern "C" hipError_t gemm_q6_k_f32_launch(
     const dim3 gridDim(ncols_dst, seq_len);
     const dim3 blockDim(block_size, 1);
 
-    gemm_q6_k_f32_kernel<<<gridDim, blockDim, 0, stream>>>(
+    gemm_q6_k_f32_kernel_generic<<<gridDim, blockDim, 0, stream>>>(
         weights_q6_k, input, output, n_rows, ncols_dst, seq_len
     );
 
     CHECK_HIP(hipGetLastError());
     return hipSuccess;
 }
+
+// ── Dispatch Wrapper for Template Specialization ─────────────────────────────
+
+extern "C" hipError_t gemm_q6_k_f32_launch_dispatch(
+    const void* weights_q6_k,
+    const float* input,
+    float* output,
+    int n_rows,
+    int ncols_dst,
+    int seq_len,
+    hipStream_t stream
+) {
+    // Validate parameters
+    if (n_rows <= 0 || ncols_dst <= 0 || seq_len <= 0) return hipErrorInvalidValue;
+    if (n_rows % QK_K != 0) return hipErrorInvalidValue;
+
+    CHECK_NULL(weights_q6_k);
+    CHECK_NULL(input);
+    CHECK_NULL(output);
+
+    dim3 grid(ncols_dst, seq_len);
+    dim3 block(32, 1);
+
+    // Dispatch templated kernel for common ncols_dst values
+    switch (ncols_dst) {
+        case 1:
+            gemm_q6_k_f32_kernel_templated<1><<<grid, block, 0, stream>>>(
+                weights_q6_k, input, output, n_rows, seq_len);
+            break;
+        case 2:
+            gemm_q6_k_f32_kernel_templated<2><<<grid, block, 0, stream>>>(
+                weights_q6_k, input, output, n_rows, seq_len);
+            break;
+        case 3:
+            gemm_q6_k_f32_kernel_templated<3><<<grid, block, 0, stream>>>(
+                weights_q6_k, input, output, n_rows, seq_len);
+            break;
+        case 4:
+            gemm_q6_k_f32_kernel_templated<4><<<grid, block, 0, stream>>>(
+                weights_q6_k, input, output, n_rows, seq_len);
+            break;
+        case 5:
+            gemm_q6_k_f32_kernel_templated<5><<<grid, block, 0, stream>>>(
+                weights_q6_k, input, output, n_rows, seq_len);
+            break;
+        case 6:
+            gemm_q6_k_f32_kernel_templated<6><<<grid, block, 0, stream>>>(
+                weights_q6_k, input, output, n_rows, seq_len);
+            break;
+        case 7:
+            gemm_q6_k_f32_kernel_templated<7><<<grid, block, 0, stream>>>(
+                weights_q6_k, input, output, n_rows, seq_len);
+            break;
+        case 8:
+            gemm_q6_k_f32_kernel_templated<8><<<grid, block, 0, stream>>>(
+                weights_q6_k, input, output, n_rows, seq_len);
+            break;
+        default:
+            // Fall back to generic kernel for uncommon ncols_dst
+            gemm_q6_k_f32_kernel_generic<<<grid, block, 0, stream>>>(
+                weights_q6_k, input, output, n_rows, ncols_dst, seq_len);
+            break;
+    }
+
+    CHECK_HIP(hipGetLastError());
+    return hipSuccess;
+}
+
