@@ -20,8 +20,11 @@ __global__ void rms_norm_vulkan_style_kernel(
     const int wave_id = tid / WARP_SIZE_COMPTIME;
     const int lane_id = tid % WARP_SIZE_COMPTIME;
 
-    // Static shared memory for cross-wave reduction (max 32 waves/block for wave32)
-    __shared__ float s_reduction[WARP_SIZE_COMPTIME];
+    // Shared memory for cross-wave reduction
+    // Number of waves = blockDim.x / WARP_SIZE_COMPTIME
+    // For wave32 (block_size=256): 256 / 32 = 8 waves
+    constexpr int kWavesPerBlock = 256 / 32;
+    __shared__ float s_reduction[kWavesPerBlock];
 
     float sum_sq = 0.0f;
 

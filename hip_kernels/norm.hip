@@ -23,10 +23,14 @@ __global__ void rms_norm_kernel(
     const float eps
 ) {
     const int tid = threadIdx.x;
-    const int wave_id = tid / 32;
-    const int lane_id = tid % 32;
-    
-    __shared__ float s_reduction[32];
+    const int wave_id = tid / WARP_SIZE_COMPTIME;
+    const int lane_id = tid % WARP_SIZE_COMPTIME;
+
+    // Shared memory for cross-wave reduction
+    // Number of waves = blockDim.x / WARP_SIZE_COMPTIME
+    // For wave32 (block_size=256): 256 / 32 = 8 waves
+    constexpr int kWavesPerBlock = 256 / 32;
+    __shared__ float s_reduction[kWavesPerBlock];
 
     float sum_sq = 0.0f;
 
@@ -43,9 +47,10 @@ __global__ void rms_norm_kernel(
         sum_sq += val * val;
     }
 
+    // Wave-level reduction
     #pragma unroll
-    for (int offset = 16; offset > 0; offset >>= 1) {
-        sum_sq += __shfl_down(sum_sq, offset);
+    for (int offset = WARP_SIZE_COMPTIME / 2; offset > 0; offset >>= 1) {
+        sum_sq += __shfl_down(sum_sq, offset, WARP_SIZE_COMPTIME);
     }
 
     if (lane_id == 0) {
@@ -53,11 +58,12 @@ __global__ void rms_norm_kernel(
     }
     __syncthreads();
 
-    float final_sum_sq = (tid < (blockDim.x / 32)) ? s_reduction[tid] : 0.0f;
+    // Cross-wave reduction
+    float final_sum_sq = (tid < (blockDim.x / WARP_SIZE_COMPTIME)) ? s_reduction[tid] : 0.0f;
     if (wave_id == 0) {
         #pragma unroll
-        for (int offset = 16; offset > 0; offset >>= 1) {
-            final_sum_sq += __shfl_down(final_sum_sq, offset);
+        for (int offset = WARP_SIZE_COMPTIME / 2; offset > 0; offset >>= 1) {
+            final_sum_sq += __shfl_down(final_sum_sq, offset, WARP_SIZE_COMPTIME);
         }
         if (tid == 0) {
             s_reduction[0] = final_sum_sq;

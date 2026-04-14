@@ -4,28 +4,30 @@ namespace {
 
 constexpr float kNegInf = -3.402823466e+38f;
 constexpr int kDecodeScoreCapacity = 2048;
-constexpr int kDecodeReductionScratch = MAX_BLOCK_SIZE / WARP_SIZE_COMPTIME;
+// Scratch buffer for cross-wave reduction
+// Decode kernels use block_size=256: 256 / 32 = 8 warps for wave32
+constexpr int kDecodeReductionScratch = 256 / 32;
 
 __device__ inline float warp_reduce_sum(float value) {
     #pragma unroll
-    for (int delta = warpSize / 2; delta > 0; delta >>= 1) {
-        value += __shfl_down(value, delta);
+    for (int delta = WARP_SIZE_COMPTIME / 2; delta > 0; delta >>= 1) {
+        value += __shfl_down(value, delta, WARP_SIZE_COMPTIME);
     }
     return value;
 }
 
 __device__ inline float warp_reduce_max(float value) {
     #pragma unroll
-    for (int delta = warpSize / 2; delta > 0; delta >>= 1) {
-        value = fmaxf(value, __shfl_down(value, delta));
+    for (int delta = WARP_SIZE_COMPTIME / 2; delta > 0; delta >>= 1) {
+        value = fmaxf(value, __shfl_down(value, delta, WARP_SIZE_COMPTIME));
     }
     return value;
 }
 
 __device__ inline float block_reduce_sum(float value, float* scratch) {
-    const int lane = threadIdx.x % warpSize;
-    const int warp_id = threadIdx.x / warpSize;
-    const int warp_count = (blockDim.x + warpSize - 1) / warpSize;
+    const int lane = threadIdx.x % WARP_SIZE_COMPTIME;
+    const int warp_id = threadIdx.x / WARP_SIZE_COMPTIME;
+    const int warp_count = (blockDim.x + WARP_SIZE_COMPTIME - 1) / WARP_SIZE_COMPTIME;
 
     value = warp_reduce_sum(value);
     if (lane == 0) {
@@ -34,6 +36,7 @@ __device__ inline float block_reduce_sum(float value, float* scratch) {
     __syncthreads();
 
     if (warp_id == 0) {
+        // Only lanes 0 to warp_count-1 have valid data in scratch
         value = (lane < warp_count) ? scratch[lane] : 0.0f;
         value = warp_reduce_sum(value);
         if (lane == 0) {
@@ -45,9 +48,9 @@ __device__ inline float block_reduce_sum(float value, float* scratch) {
 }
 
 __device__ inline float block_reduce_max(float value, float* scratch) {
-    const int lane = threadIdx.x % warpSize;
-    const int warp_id = threadIdx.x / warpSize;
-    const int warp_count = (blockDim.x + warpSize - 1) / warpSize;
+    const int lane = threadIdx.x % WARP_SIZE_COMPTIME;
+    const int warp_id = threadIdx.x / WARP_SIZE_COMPTIME;
+    const int warp_count = (blockDim.x + WARP_SIZE_COMPTIME - 1) / WARP_SIZE_COMPTIME;
 
     value = warp_reduce_max(value);
     if (lane == 0) {
@@ -56,6 +59,7 @@ __device__ inline float block_reduce_max(float value, float* scratch) {
     __syncthreads();
 
     if (warp_id == 0) {
+        // Only lanes 0 to warp_count-1 have valid data in scratch
         value = (lane < warp_count) ? scratch[lane] : kNegInf;
         value = warp_reduce_max(value);
         if (lane == 0) {

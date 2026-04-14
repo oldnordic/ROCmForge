@@ -61,12 +61,20 @@ fn decode_stage_profile_store() -> &'static Mutex<GpuDecodeStageProfileSnapshot>
 
 static PROFILE_DECODE_STAGES_FLAG: AtomicU8 = AtomicU8::new(ENV_UNKNOWN);
 
+/// Parse env flag value, matching safety.rs CachedEnvFlag behavior.
+fn parse_env_flag(value: Option<String>, default: bool) -> bool {
+    match value.map(|value| value.trim().to_ascii_lowercase()) {
+        Some(value) => matches!(value.as_str(), "1" | "true" | "yes" | "on"),
+        None => default,
+    }
+}
+
 pub(crate) fn decode_stage_profiling_enabled() -> bool {
     match PROFILE_DECODE_STAGES_FLAG.load(Ordering::Relaxed) {
         ENV_DISABLED => false,
         ENV_ENABLED => true,
         _ => {
-            let enabled = std::env::var_os(PROFILE_DECODE_STAGES_ENV).is_some();
+            let enabled = parse_env_flag(std::env::var(PROFILE_DECODE_STAGES_ENV).ok(), false);
             PROFILE_DECODE_STAGES_FLAG.store(
                 if enabled { ENV_ENABLED } else { ENV_DISABLED },
                 Ordering::Relaxed,

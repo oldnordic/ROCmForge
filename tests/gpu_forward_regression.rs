@@ -37,21 +37,19 @@ fn max_abs_error(a: &[f32], b: &[f32]) -> f32 {
         .fold(0.0f32, f32::max)
 }
 
+// Regression test for FFN down dimension swap bug (April 2026)
+//
+// BUG: gpu_layer_forward_hybrid with stage profiling had swapped dimensions
+// for the FFN down projection, causing:
+// - Reading only 896 of 4864 input elements
+// - Writing 4864 values into 896-element buffer
+// - GPU memory access fault
+//
+// This test ensures the dimensions are correct and the output matches CPU.
 #[test]
 #[serial]
 #[ignore = "Requires real GPU and model - run with: cargo test -- --ignored"]
 fn test_ffn_down_dimensions_correct_in_hybrid_forward() {
-    /*!
-    Regression test for FFN down dimension swap bug (April 2026)
-
-    BUG: gpu_layer_forward_hybrid with stage profiling had swapped dimensions
-    for the FFN down projection, causing:
-    - Reading only 896 of 4864 input elements
-    - Writing 4864 values into 896-element buffer
-    - GPU memory access fault
-
-    This test ensures the dimensions are correct and the output matches CPU.
-    */
 
     if skip_if_model_missing() {
         return;
