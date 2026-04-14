@@ -2032,6 +2032,52 @@ unsafe extern "C" {
         stream: hipStream_t,
     ) -> hipError_t;
 
+    // Q6_K kernels
+    fn quantize_q6_k_launch(
+        input: *const f32,
+        output: *mut u8,
+        n: c_int,
+    ) -> hipError_t;
+
+    fn dequantize_q6_k_launch(
+        input: *const u8,
+        output: *mut f32,
+        n: c_int,
+    ) -> hipError_t;
+
+    fn dequantize_q6_k_batched_launch(
+        input: *const u8,
+        output: *mut f32,
+        n: c_int,
+        batch_size: c_int,
+    ) -> hipError_t;
+
+    fn verify_q6_k_accuracy_kernel(
+        original: *const f32,
+        quantized: *const u8,
+        errors: *mut f32,
+        n: c_int,
+    ) -> hipError_t;
+
+    fn gemv_q6_k_f32_launch(
+        weights_q6_k: *const u8,
+        input: *const f32,
+        output: *mut f32,
+        n_rows: c_int,
+        ncols_dst: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
+    fn gemm_q6_k_f32_launch(
+        weights_q6_k: *const u8,
+        input: *const f32,
+        output: *mut f32,
+        n_rows: c_int,
+        ncols_dst: c_int,
+        seq_len: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
     // Fused kernels
     fn gemv_qkv_q4_0_f32_launch(
         w_q: *const u8,
