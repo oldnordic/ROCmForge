@@ -35,3 +35,4 @@ CLAUDE.md
 .roo/
 *.mirage.md
 .worktrees/
+.claude/settings.json

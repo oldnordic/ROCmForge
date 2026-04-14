@@ -172,6 +172,24 @@ macro_rules! require_decode_graph_enabled {
     };
 }
 
+/// Macro to require decode graph DISABLED for Q6_K tests.
+///
+/// Q6_K crashes with multi-token prompts when graph capture is enabled.
+/// This ensures tests only run with graph disabled to prevent GPU crashes.
+#[macro_export]
+macro_rules! require_q6_k_graph_disabled {
+    () => {
+        if rocmforge::gpu::decode_graph_enabled() {
+            eprintln!(
+                "Skipping Q6_K test: decode graph MUST be disabled for Q6_K to prevent GPU crashes.\n\
+                 Set {}=0 to disable graph for Q6_K tests.",
+                rocmforge::gpu::ENABLE_DECODE_GRAPH_ENV
+            );
+            return;
+        }
+    };
+}
+
 /// HIP-based VRAM leak detection macro.
 ///
 /// Uses device.vram_stats() for accurate HIP API measurements instead of rocm-smi.

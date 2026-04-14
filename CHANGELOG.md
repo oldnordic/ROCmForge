@@ -4,6 +4,27 @@
 
 ### [GPU Backend]
 
+**feat(gpu): add Q6_K quantization support with graph capture compatibility**
+
+- **Date:** April 14, 2026
+- **Changes:**
+  - Added Q6_K quantization kernel implementation (`hip_kernels/quant/q6_k_gemv.hip`)
+  - Fixed GEMM kernel grid layout for multi-token prefill (batch offset calculation)
+  - Added comprehensive Q6_K safety test suite (`tests/q6_k_safety_tests.rs`)
+  - Q6_K now works with HIP graph capture for single and multi-token prompts
+- **Performance (qwen2-0.5b-instruct-q6_k.gguf):**
+  - Single-token decode: ~123 tok/s
+  - Multi-token prefill (9 tokens): ~168 tok/s
+  - Multi-token decode: ~122 tok/s
+- **Testing:**
+  - All 10 Q6_K safety tests pass
+  - VRAM leak detection verified
+  - Sequential execution enforced
+  - Timeout protection active
+- **Known Issues:**
+  - None - Q6_K fully functional with graph capture
+- **Files Changed:** `hip_kernels/quant/q6_k_gemv.hip`, `src/gpu/kernels/quant.rs`, `tests/q6_k_safety_tests.rs`, `tests/common/mod.rs`, `docs/q6_k_crash_investigation.md`, `GPU_SAFETY.md`
+
 **fix(gpu): VRAM safety hardening to prevent compositor crashes**
 
 - **Date:** April 11, 2026

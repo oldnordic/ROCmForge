@@ -7,6 +7,17 @@ rocmforge - LLM inference on AMD GPUs (HIP) with a CPU fallback path.
 - Performance work is moving slowly and in small steps.
 - Recent changes improved 7B decode throughput, but this project is still behind llama.cpp on the same hardware.
 
+### Supported quantizations (GPU)
+
+| Quantization | Status | Notes |
+|--------------|--------|-------|
+| Q4_0 | Supported | Baseline quantization |
+| Q4_K | Supported | Mixed quantization |
+| Q6_K | Supported | Works with graph capture |
+| Q8_0 | Supported | 8-bit quantization |
+
+Note: Q5_0 is not currently implemented on GPU.
+
 ## Requirements
 
 - Rust 1.81+

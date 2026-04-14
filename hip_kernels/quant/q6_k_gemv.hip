@@ -13,6 +13,9 @@ __device__ inline float vec_dot_q6_k(const void* block_ptr, const float* vec, in
     memcpy(&d_half, &block_bytes[208], sizeof(half));
     const float d = __half2float(d_half);
 
+    // Q4_K safety: check for denormal d
+    if (fabsf(d) < 1e-7f) return 0.0f;
+
     // Pointer to scales (int8_t at bytes 192-207)
     const int8_t* scales = reinterpret_cast<const int8_t*>(&block_bytes[192]);
 
@@ -60,7 +63,8 @@ __device__ inline float vec_dot_q6_k(const void* block_ptr, const float* vec, in
             const uint8_t qh_2bits = (qh_byte >> qh_shift) & 0x03;
             const int8_t q = (int8_t)(ql_4bits | (qh_2bits << 4)) - 32;
 
-            // Direct memory access - actual element index
+            // Q4_K safety: simple linear access without complex validation
+            // The Q4_K pattern proves this works: just access the memory directly
             sum += vec[offset + vec_offset] * (scale * (float)q);
         }
     }

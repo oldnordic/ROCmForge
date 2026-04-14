@@ -5,6 +5,7 @@
 use super::super::device::GpuDevice;
 use super::super::error::{GpuError, GpuResult};
 use super::super::ffi::{hipError_t, hipStream_t};
+use super::super::safety::{decode_graph_disabled_override_requested, decode_graph_enabled};
 use std::os::raw::{c_int, c_void};
 
 pub use super::q8_gemv::{
@@ -3315,6 +3316,7 @@ pub fn gemv_q6_k_f32_on_stream(
             description: "gemv_q6_k_f32: output pointer is null".to_string(),
         });
     }
+
 
     // Call kernel launch function
     let result = unsafe {
