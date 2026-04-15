@@ -70,6 +70,7 @@ __device__ inline float vec_dot_q4_k_vulkan(const void* block_ptr, const float* 
 }
 
 template<int N_WAVES>
+__launch_bounds__(256, 1)
 __global__ void gemv_q4_k_f32_multi_row_kernel(
     const void* __restrict__ weights_q4_k,
     const float* __restrict__ input,

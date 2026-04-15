@@ -27,6 +27,7 @@ __device__ inline float vec_dot_q4_k(const void* block_ptr, const float* vec, in
     return sum;
 }
 
+__launch_bounds__(32, 1)
 __global__ void gemv_q4_k_f32_kernel(
     const void* __restrict__ weights_q4_k,
     const float* __restrict__ input,
@@ -49,7 +50,7 @@ __global__ void gemv_q4_k_f32_kernel(
 
     // Warp reduction
     for (int offset = 16; offset > 0; offset >>= 1) {
-        sum += __shfl_down(sum, offset);
+        sum += __shfl_down(sum, offset, 32);
     }
 
     if (tid == 0) {

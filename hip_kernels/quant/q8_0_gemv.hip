@@ -23,6 +23,7 @@ __device__ inline float vec_dot_q8_0(const Q8_0_block* block, const float* vec, 
     return d * sum;
 }
 
+__launch_bounds__(256, 1)
 __global__ void gemv_q8_0_f32_kernel(
     const void* __restrict__ weights_q8_0,
     const float* __restrict__ input,
@@ -84,6 +85,7 @@ static inline int select_lm_head_block_size(int n_rows) {
 }
 
 template<int N_SUBWAVES>
+__launch_bounds__(256, 1)
 __global__ void gemv_q8_0_f32_lm_head_multi_row_kernel(
     const void* __restrict__ weights_q8_0,
     const float* __restrict__ input,
@@ -168,6 +170,7 @@ __global__ void gemv_q8_0_f32_lm_head_multi_row_kernel(
 }
 
 template<int N_SUBWAVES>
+__launch_bounds__(256, 1)
 __global__ void gemv_q8_0_f32_lm_head_multi_row_v2_kernel(
     const void* __restrict__ weights_q8_0,
     const float* __restrict__ input,

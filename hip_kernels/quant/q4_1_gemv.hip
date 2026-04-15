@@ -33,6 +33,7 @@ __device__ inline float vec_dot_q4_1(const Q4_1_block* block, const float* vec, 
 }
 
 template<bool ADD_RESIDUAL>
+__launch_bounds__(256, 1)
 __global__ void gemv_q4_1_f32_legacy_kernel(
     const void* __restrict__ weights_q4_1,
     const float* __restrict__ input,
@@ -77,6 +78,7 @@ __global__ void gemv_q4_1_f32_legacy_kernel(
 }
 
 template<int N_WAVES, bool ADD_RESIDUAL>
+__launch_bounds__(256, 1)
 __global__ void gemv_q4_1_f32_multi_row_kernel(
     const void* __restrict__ weights_q4_1,
     const float* __restrict__ input,
@@ -148,7 +150,7 @@ __global__ void gemv_q4_1_f32_multi_row_kernel(
     #pragma unroll
     for (int c = 0; c < Q4_1_MULTI_ROW_COLS; ++c) {
         for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
-            sums[c] += __shfl_down(sums[c], offset);
+            sums[c] += __shfl_down(sums[c], offset, 32);
         }
     }
 

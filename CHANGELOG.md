@@ -4,6 +4,62 @@
 
 ### [GPU Backend]
 
+**feat(gpu): enforce AMD HIP standards across all quantization kernels**
+
+- **Date:** April 15, 2026
+- **Changes:**
+  - Added `__launch_bounds__` to all kernels in Q4_1, Q4_K, Q4_K_vulkan_style, Q5_K, Q6_K, Q8_0
+  - Fixed numerical precision bug in `__shfl_down()` calls (missing explicit `32` parameter)
+  - All quantization kernels now comply with AMD HIP optimization standards
+- **Files Modified:**
+  - `q4_1_gemv.hip`: Added `__launch_bounds__(256, 1)` to 2 kernels
+  - `q4_k_gemv.hip`: Added `__launch_bounds__(32, 1)`, fixed `__shfl_down(sum, offset, 32)`
+  - `q4_k_gemv_vulkan_style.hip`: Added `__launch_bounds__(256, 1)` 
+  - `q5_k_gemv.hip`: Added `__launch_bounds__(32, 1)`, fixed `__shfl_down(sum, offset, 32)`
+  - `q6_k_gemv.hip`: Added `__launch_bounds__(32, 1)`, fixed `__shfl_down(sum, offset, 32)`
+  - `q8_0_gemv.hip`: Added `__launch_bounds__(256, 1)` to 3 kernels
+- **Numerical Precision Fixes:**
+  - **Critical Bug Found**: Q4_K, Q5_K, Q6_K, Q4_1 were using `__shfl_down(sum, offset)` instead of `__shfl_down(sum, offset, 32)`
+  - This bug causes incorrect warp reduction and produces incoherent model output
+  - Fixed in 4 quantization formats
+- **AMD HIP Standards Compliance:**
+  - ✅ All 6 quantization formats now have `__launch_bounds__` for register optimization
+  - ✅ All `__shfl_down` calls use explicit warp size parameter (32)
+  - ✅ All kernels compile without errors
+- **Testing:**
+  - ✅ Q4_0: Tested and working (253-511 tok/s, coherent output)
+  - ⚠️ Q6_K: `__shfl_down` bug fixed, but still shows incoherent output (needs further investigation)
+  - ⚠️ Q4_K, Q5_K: Fixed but not tested (no compatible model files available)
+  - ⚠️ Q4_1, Q8_0: Fixed but not tested
+- **Known Issues:**
+  - Q6_K produces incoherent output despite `__shfl_down` fix - may have additional numerical issues
+  - Some mixed quantization models (e.g., Q4_K_M with Q5_0 weights) are not supported
+
+**feat(gpu): remove Q4_0 dead code and enforce AMD HIP standards**
+
+- **Date:** April 15, 2026
+- **Changes:**
+  - Removed unused `gemv_q4_0_f32_wave_parallel_kernel` and `gemv_q4_0_f32_residual_wave_parallel_kernel` (dead code)
+  - Added `__launch_bounds__(Q4_0_THREADS_PER_BLOCK, 1)` to both chunked kernels for AMD HIP compliance
+  - Verified all production Q4_0 kernels follow AMD HIP standards
+- **Production Kernels (after cleanup):**
+  - `gemv_q4_0_f32_multi_row_kernel` ✅ Has `__launch_bounds__`, uses float4 vectorized loads
+  - `gemv_q4_0_f32_chunked_kernel` ✅ Now has `__launch_bounds__`
+  - `gemv_q4_0_f32_residual_multi_row_kernel` ✅ Has `__launch_bounds__`, uses float4 vectorized loads
+  - `gemv_q4_0_f32_residual_chunked_kernel` ✅ Now has `__launch_bounds__`
+- **Removed Kernels:**
+  - `gemv_q4_0_f32_wave_parallel_kernel` ❌ Not used by dispatch (dead code)
+  - `gemv_q4_0_f32_residual_wave_parallel_kernel` ❌ Not used by dispatch (dead code)
+- **Dispatch Logic:**
+  - Small matrices (≤48KB shared memory): Uses multi_row kernels
+  - Large matrices (>48KB shared memory): Falls back to chunked kernels
+- **Validation:**
+  - ✅ Kernels compile successfully
+  - ✅ Model output coherent: "Yes, Paris is the capital of France."
+  - ✅ All kernels now follow AMD HIP best practices
+- **Files Changed:** `hip_kernels/quant/q4_0_gemv.hip`
+- **Lines Removed:** ~100 lines of dead code
+
 **feat(gpu): refactor Q6_K device function to linear processing for HIP graph compatibility**
 
 - **Date:** April 14, 2026

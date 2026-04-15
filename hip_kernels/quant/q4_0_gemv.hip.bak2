@@ -68,10 +68,111 @@ __device__ __forceinline__ int q4_0_q8_0_block_dot(
     return block_sum;
 }
 
+// ── Wavefront-Parallel Multi-Column GEMV (Fast Path) ──────────────────────────────
+
+template<int N_WAVES>
+__global__ void gemv_q4_0_f32_wave_parallel_kernel(
+    const void* __restrict__ weights_q4_0,
+    const float* __restrict__ input,
+    float* __restrict__ output,
+    int n_rows,
+    int ncols_dst
+) {
+    const int tid = threadIdx.x;
+    const int wave_id = tid / WARP_SIZE;
+    const int lane_id = tid % WARP_SIZE;
+    const int col = blockIdx.x * N_WAVES + wave_id;
+    const int n_blocks_total = n_rows / QK4_0;
+
+    if (col >= ncols_dst) return;
+
+    extern __shared__ float s_input[];
+    for (int i = tid; i < n_rows; i += blockDim.x) {
+        s_input[i] = input[i];
+    }
+    __syncthreads();
+
+    const Q4_0_block* w_col = reinterpret_cast<const Q4_0_block*>(
+        static_cast<const uint8_t*>(weights_q4_0) + (col * n_blocks_total) * Q4_0_BLOCK_SIZE
+    );
+
+    float sum = 0.0f;
+    for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += WARP_SIZE) {
+        const Q4_0_block* b = &w_col[block_idx];
+        const float d = __half2float(b->d);
+        const int row_offset = block_idx * QK4_0;
+        
+        #pragma unroll
+        for (int l = 0; l < 16; ++l) {
+            const uint8_t q = static_cast<uint8_t>(b->qs[l]);
+            sum += d * (static_cast<float>(q & 0x0F) - 8.0f) * s_input[row_offset + l];
+            sum += d * (static_cast<float>(q >> 4) - 8.0f) * s_input[row_offset + l + 16];
+        }
+    }
+
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
+        sum += __shfl_down(sum, offset, 32);
+    }
+
+    if (lane_id == 0) {
+        output[col] = sum;
+    }
+}
+
+template<int N_WAVES>
+__global__ void gemv_q4_0_f32_residual_wave_parallel_kernel(
+    const void* __restrict__ weights_q4_0,
+    const float* __restrict__ input,
+    const float* __restrict__ residual,
+    float* __restrict__ output,
+    int n_rows,
+    int ncols_dst
+) {
+    const int tid = threadIdx.x;
+    const int wave_id = tid / WARP_SIZE;
+    const int lane_id = tid % WARP_SIZE;
+    const int col = blockIdx.x * N_WAVES + wave_id;
+    const int n_blocks_total = n_rows / QK4_0;
+
+    if (col >= ncols_dst) return;
+
+    extern __shared__ float s_input[];
+    for (int i = tid; i < n_rows; i += blockDim.x) {
+        s_input[i] = input[i];
+    }
+    __syncthreads();
+
+    const Q4_0_block* w_col = reinterpret_cast<const Q4_0_block*>(
+        static_cast<const uint8_t*>(weights_q4_0) + (col * n_blocks_total) * Q4_0_BLOCK_SIZE
+    );
+
+    float sum = 0.0f;
+    for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += WARP_SIZE) {
+        const Q4_0_block* b = &w_col[block_idx];
+        const float d = __half2float(b->d);
+        const int row_offset = block_idx * QK4_0;
+
+        #pragma unroll
+        for (int l = 0; l < 16; ++l) {
+            const uint8_t q = static_cast<uint8_t>(b->qs[l]);
+            sum += d * (static_cast<float>(q & 0x0F) - 8.0f) * s_input[row_offset + l];
+            sum += d * (static_cast<float>(q >> 4) - 8.0f) * s_input[row_offset + l + 16];
+        }
+    }
+
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
+        sum += __shfl_down(sum, offset, 32);
+    }
+
+    if (lane_id == 0) {
+        output[col] = sum + residual[col];
+    }
+}
+
+// ── Chunked GEMV for Large Input Vectors (Fallback Path) ──────────────────────────
 
 // Loads input in 4096-element (16KB) chunks to stay within LDS limits.
 template<int N_WAVES>
-__launch_bounds__(Q4_0_THREADS_PER_BLOCK, 1)
 __global__ void gemv_q4_0_f32_chunked_kernel(
     const void* __restrict__ weights_q4_0,
     const float* __restrict__ input,
@@ -133,7 +234,6 @@ __global__ void gemv_q4_0_f32_chunked_kernel(
 }
 
 template<int N_WAVES>
-__launch_bounds__(Q4_0_THREADS_PER_BLOCK, 1)
 __global__ void gemv_q4_0_f32_residual_chunked_kernel(
     const void* __restrict__ weights_q4_0,
     const float* __restrict__ input,
