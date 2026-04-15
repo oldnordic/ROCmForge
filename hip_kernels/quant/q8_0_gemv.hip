@@ -154,7 +154,7 @@ __global__ void gemv_q8_0_f32_lm_head_multi_row_kernel(
     #pragma unroll
     for (int c = 0; c < Q8_0_LM_HEAD_COLS; ++c) {
         for (int offset = WARP_SIZE_COMPTIME / 2; offset > 0; offset >>= 1) {
-            sums[c] += __shfl_down(sums[c], offset);
+            sums[c] += __shfl_down(sums[c], offset, 32);
         }
     }
 
@@ -233,7 +233,7 @@ __global__ void gemv_q8_0_f32_lm_head_multi_row_v2_kernel(
     #pragma unroll
     for (int c = 0; c < Q8_0_LM_HEAD_COLS_V2; ++c) {
         for (int offset = WARP_SIZE_COMPTIME / 2; offset > 0; offset >>= 1) {
-            sums[c] += __shfl_down(sums[c], offset);
+            sums[c] += __shfl_down(sums[c], offset, 32);
         }
     }
 
