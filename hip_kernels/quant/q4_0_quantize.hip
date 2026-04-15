@@ -27,9 +27,9 @@ __global__ void quantize_q4_0_device(
     #pragma unroll
     for (int offset = WARP_SIZE_COMPTIME / 2; offset > 0; offset >>= 1) {
         // Get other thread's abs value
-        float other_abs = __shfl_down(max_abs, offset);
+        float other_abs = __shfl_down(max_abs, offset, 32);
         // Get other thread's signed value (the one that corresponds to other_abs)
-        float other_signed = __shfl_down(max_signed, offset);
+        float other_signed = __shfl_down(max_signed, offset, 32);
 
         // If other thread has larger abs value, take BOTH their abs AND signed value
         if (other_abs > max_abs) {

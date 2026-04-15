@@ -102,8 +102,8 @@ __global__ void gemv_gate_up_swiglu_vulkan_q4_0_f32_kernel(
 
     // Wave-level reduction
     for (int offset = WARP_SIZE_COMPTIME / 2; offset > 0; offset >>= 1) {
-        sum_gate += __shfl_down(sum_gate, offset);
-        sum_up   += __shfl_down(sum_up, offset);
+        sum_gate += __shfl_down(sum_gate, offset, 32);
+        sum_up   += __shfl_down(sum_up, offset, 32);
     }
 
     if (lane_id == 0) {

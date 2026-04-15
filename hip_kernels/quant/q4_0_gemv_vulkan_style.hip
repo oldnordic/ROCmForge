@@ -86,7 +86,7 @@ __global__ void gemv_q4_0_f32_multi_row_vulkan_style_kernel(
     #pragma unroll
     for (int c = 0; c < 4; ++c) {
         for (int offset = WARP_SIZE_COMPTIME / 2; offset > 0; offset >>= 1) {
-            sums[c] += __shfl_down(sums[c], offset);
+            sums[c] += __shfl_down(sums[c], offset, 32);
         }
     }
 

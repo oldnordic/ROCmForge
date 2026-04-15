@@ -111,7 +111,7 @@ __global__ void gemv_q4_0_f32_wave_parallel_kernel(
     }
 
     for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
-        sum += __shfl_down(sum, offset);
+        sum += __shfl_down(sum, offset, 32);
     }
 
     if (lane_id == 0) {
@@ -161,7 +161,7 @@ __global__ void gemv_q4_0_f32_residual_wave_parallel_kernel(
     }
 
     for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
-        sum += __shfl_down(sum, offset);
+        sum += __shfl_down(sum, offset, 32);
     }
 
     if (lane_id == 0) {
@@ -225,7 +225,7 @@ __global__ void gemv_q4_0_f32_chunked_kernel(
     }
 
     for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
-        sum += __shfl_down(sum, offset);
+        sum += __shfl_down(sum, offset, 32);
     }
 
     if (lane_id == 0) {
@@ -285,7 +285,7 @@ __global__ void gemv_q4_0_f32_residual_chunked_kernel(
     }
 
     for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
-        sum += __shfl_down(sum, offset);
+        sum += __shfl_down(sum, offset, 32);
     }
 
     if (lane_id == 0) {
@@ -362,7 +362,7 @@ __global__ void gemv_q4_0_f32_multi_row_kernel(
     #pragma unroll
     for (int c = 0; c < 4; ++c) {
         for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
-            sums[c] += __shfl_down(sums[c], offset);
+            sums[c] += __shfl_down(sums[c], offset, 32);
         }
     }
 
@@ -443,7 +443,7 @@ __global__ void gemv_q4_0_f32_residual_multi_row_kernel(
     #pragma unroll
     for (int c = 0; c < 4; ++c) {
         for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
-            sums[c] += __shfl_down(sums[c], offset);
+            sums[c] += __shfl_down(sums[c], offset, 32);
         }
     }
 
@@ -519,7 +519,7 @@ __global__ void gemv_q4_0_q8_0_residual_multi_row_kernel(
     #pragma unroll
     for (int c = 0; c < 4; ++c) {
         for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
-            sums[c] += __shfl_down(sums[c], offset);
+            sums[c] += __shfl_down(sums[c], offset, 32);
         }
     }
 
@@ -560,7 +560,7 @@ __global__ void gemv_q4_0_f32_q8_inline_residual_multi_row_kernel(
 
         #pragma unroll
         for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
-            max_val = fmaxf(max_val, __shfl_down(max_val, offset));
+            max_val = fmaxf(max_val, __shfl_down(max_val, offset, 32));
         }
 
         const float scale = fmaxf(__shfl(max_val, 0, WARP_SIZE) / 127.0f, 1e-30f);
@@ -609,7 +609,7 @@ __global__ void gemv_q4_0_f32_q8_inline_residual_multi_row_kernel(
     #pragma unroll
     for (int c = 0; c < 4; ++c) {
         for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
-            sums[c] += __shfl_down(sums[c], offset);
+            sums[c] += __shfl_down(sums[c], offset, 32);
         }
     }
 
@@ -684,7 +684,7 @@ __global__ void gemv_q4_0_q8_0_multi_row_kernel(
     #pragma unroll
     for (int c = 0; c < 4; ++c) {
         for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
-            sums[c] += __shfl_down(sums[c], offset);
+            sums[c] += __shfl_down(sums[c], offset, 32);
         }
     }
 

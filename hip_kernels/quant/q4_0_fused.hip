@@ -73,7 +73,7 @@ __global__ void gemv_qkv_q4_0_f32_wave_parallel_kernel(
         }
     }
 
-    for (int offset = 16; offset > 0; offset >>= 1) sum += __shfl_down(sum, offset);
+    for (int offset = 16; offset > 0; offset >>= 1) sum += __shfl_down(sum, offset, 32);
 
     if (lane_id == 0) {
         if (col < n_q) {
@@ -197,9 +197,9 @@ __global__ void gemv_qkv_q4_0_f32_wave_parallel_v2_kernel(
     }
 
     for (int offset = 16; offset > 0; offset >>= 1) {
-        sum0 += __shfl_down(sum0, offset);
+        sum0 += __shfl_down(sum0, offset, 32);
         if (has_col1) {
-            sum1 += __shfl_down(sum1, offset);
+            sum1 += __shfl_down(sum1, offset, 32);
         }
     }
 
@@ -315,7 +315,7 @@ __global__ void gemv_qkv_q4_0_f32_wave_parallel_v3_kernel(
     #pragma unroll
     for (int c = 0; c < 4; ++c) {
         for (int offset = 16; offset > 0; offset >>= 1) {
-            sums[c] += __shfl_down(sums[c], offset);
+            sums[c] += __shfl_down(sums[c], offset, 32);
         }
     }
 
@@ -402,8 +402,8 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_kernel(
     }
 
     for (int offset = 16; offset > 0; offset >>= 1) {
-        sum_gate += __shfl_down(sum_gate, offset);
-        sum_up += __shfl_down(sum_up, offset);
+        sum_gate += __shfl_down(sum_gate, offset, 32);
+        sum_up += __shfl_down(sum_up, offset, 32);
     }
 
     if (lane_id == 0) {
@@ -468,8 +468,8 @@ __global__ void gemv_gate_up_q4_0_f32_kernel(
     }
 
     for (int offset = 16; offset > 0; offset >>= 1) {
-        sum_gate += __shfl_down(sum_gate, offset);
-        sum_up += __shfl_down(sum_up, offset);
+        sum_gate += __shfl_down(sum_gate, offset, 32);
+        sum_up += __shfl_down(sum_up, offset, 32);
     }
 
     if (lane_id == 0) {
@@ -531,7 +531,7 @@ __global__ void gemv_qkv_q4_0_f32_chunked_kernel(
         __syncthreads();
     }
 
-    for (int offset = 16; offset > 0; offset >>= 1) sum += __shfl_down(sum, offset);
+    for (int offset = 16; offset > 0; offset >>= 1) sum += __shfl_down(sum, offset, 32);
     if (lane_id == 0) {
         if (col < n_q) {
             out_q[col] = sum + (bias_q ? bias_q[col] : 0.0f);
@@ -599,8 +599,8 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_chunked_kernel(
     }
 
     for (int offset = 16; offset > 0; offset >>= 1) {
-        sum_gate += __shfl_down(sum_gate, offset);
-        sum_up += __shfl_down(sum_up, offset);
+        sum_gate += __shfl_down(sum_gate, offset, 32);
+        sum_up += __shfl_down(sum_up, offset, 32);
     }
     if (lane_id == 0) out_swiglu[ff_idx] = silu(sum_gate) * sum_up;
 }
@@ -660,8 +660,8 @@ __global__ void gemv_gate_up_q4_0_f32_chunked_kernel(
     }
 
     for (int offset = 16; offset > 0; offset >>= 1) {
-        sum_gate += __shfl_down(sum_gate, offset);
-        sum_up += __shfl_down(sum_up, offset);
+        sum_gate += __shfl_down(sum_gate, offset, 32);
+        sum_up += __shfl_down(sum_up, offset, 32);
     }
     if (lane_id == 0) {
         out_gate[ff_idx] = sum_gate;

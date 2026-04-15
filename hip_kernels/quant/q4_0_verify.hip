@@ -85,9 +85,9 @@ __global__ void verify_q4_0_accuracy_device(
     // Warp reduction (32 threads = 1 RDNA wavefront)
     #pragma unroll
     for (int offset = WARP_SIZE_COMPTIME / 2; offset > 0; offset >>= 1) {
-        float other_max = __shfl_down(local_max_error, offset);
-        float other_mse = __shfl_down(local_mse, offset);
-        float other_sum_orig = __shfl_down(local_sum_original, offset);
+        float other_max = __shfl_down(local_max_error, offset, 32);
+        float other_mse = __shfl_down(local_mse, offset, 32);
+        float other_sum_orig = __shfl_down(local_sum_original, offset, 32);
         float other_sum_err = __shfl_down(local_sum_error, offset);
 
         local_max_error = fmaxf(local_max_error, other_max);
