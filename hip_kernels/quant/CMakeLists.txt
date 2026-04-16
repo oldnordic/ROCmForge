@@ -189,6 +189,22 @@ set_target_properties(q4_0_gemv PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
 
+# GQA QKV Fusion kernel (Q4_0 GQA-aware QKV projection + RoPE)
+add_library(q4_0_fused_qkv_rope_gqa STATIC
+    q4_0_fused_qkv_rope_gqa.hip
+)
+
+# Link common library to GQA QKV fusion kernel
+target_link_libraries(q4_0_fused_qkv_rope_gqa
+    quant_common
+)
+
+# Set output directory to match Cargo expectations
+set_target_properties(q4_0_fused_qkv_rope_gqa PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
 # Q4_1 GEMV kernel (Q4_1 × f32 matrix-vector multiplication)
 add_library(q4_1_gemv STATIC
     q4_1_gemv.hip
@@ -219,47 +235,9 @@ set_target_properties(q4_1_ffn_experimental PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
 
-# Vulkan-style FFN microkernel (interleaved, vectorized)
-add_library(q4_0_vulkan_style STATIC
-    q4_0_vulkan_style.hip
-)
+# REMOVED: Vulkan-style GEMV (moved to old/ folder - not AMD HIP compliant)
 
-target_link_libraries(q4_0_vulkan_style
-    quant_common
-)
-
-set_target_properties(q4_0_vulkan_style PROPERTIES
-    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
-)
-
-# Vulkan-style GEMV (Multi-row reuse)
-add_library(q4_0_gemv_vulkan_style STATIC
-    q4_0_gemv_vulkan_style.hip
-)
-
-target_link_libraries(q4_0_gemv_vulkan_style
-    quant_common
-)
-
-set_target_properties(q4_0_gemv_vulkan_style PROPERTIES
-    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
-)
-
-# Vulkan-style Q4_K GEMV
-add_library(q4_k_gemv_vulkan_style STATIC
-    q4_k_gemv_vulkan_style.hip
-)
-
-target_link_libraries(q4_k_gemv_vulkan_style
-    quant_common
-)
-
-set_target_properties(q4_k_gemv_vulkan_style PROPERTIES
-    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
-)
+# REMOVED: Vulkan-style Q4_K GEMV (moved to old/ folder - not AMD HIP compliant)
 
 # Q6_K GEMV kernel (Q6_K × f32 matrix-vector multiplication)
 add_library(q6_k_gemv STATIC
@@ -279,12 +257,7 @@ add_library(q4_0_gemm STATIC q4_0_gemm.hip)
 target_link_libraries(q4_0_gemm quant_common)
 set_target_properties(q4_0_gemm PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
-add_library(q4_0_fused STATIC
-    q4_0_fused.hip
-    q4_0_fused_q8.hip
-)
-target_link_libraries(q4_0_fused quant_common)
-set_target_properties(q4_0_fused PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+# REMOVED: Vulkan-style Q4_0 fused kernels (moved to old/ folder - not AMD HIP compliant)
 
 add_library(q4_1_gemm STATIC q4_1_gemm.hip)
 target_link_libraries(q4_1_gemm quant_common)

@@ -38,9 +38,43 @@ __device__ float vec_dot_q4_0(const block_q4_0* __restrict__ blocks, const float
     return sum;
 }
 
+// RoPE computation for single element
+__device__ void rope_single(
+    float* __restrict__ x,
+    float* __restrict__ y,
+    const int pos,
+    const int head_dim,
+    const float theta,
+    const bool neox
+) {
+    const int tid = threadIdx.x;
+    const int half_dim = head_dim / 2;
+
+    if (tid >= half_dim) return;
+
+    const float freq = theta * __int2float_rn(tid);
+    const float cos_val = cosf(pos * freq);
+    const float sin_val = sinf(pos * freq);
+
+    const int x_idx = tid;
+    const int y_idx = tid + half_dim;
+
+    if (neox) {
+        // Neox style: rotate pairs within each half
+        const float x_val = x[x_idx];
+        const float y_val = y[y_idx];
+        x[x_idx] = x_val * cos_val - y_val * sin_val;
+        y[y_idx] = x_val * sin_val + y_val * cos_val;
+    } else {
+        // GPT-J style: rotate across halves
+        x[x_idx] = x[x_idx] * cos_val - y[y_idx] * sin_val;
+        y[y_idx] = x[x_idx] * sin_val + y[y_idx] * cos_val;
+    }
+}
+
 // Basic GQA QKV kernel (without RoPE)
 __launch_bounds__(256, 1)
-__global__ void fused_qkv_q4_0_gqa_kernel(
+__global__ void fused_qkv_rope_q4_0_gqa_kernel(
     const void* __restrict__ w_q,
     const void* __restrict__ w_k,
     const void* __restrict__ w_v,
@@ -48,9 +82,12 @@ __global__ void fused_qkv_q4_0_gqa_kernel(
     float* __restrict__ out_q,
     float* __restrict__ out_k,
     float* __restrict__ out_v,
+    const int pos,
     const int n_heads,
     const int n_kv_heads,
     const int head_dim,
+    const float rope_theta,
+    const bool rope_neox,
     const int hidden_size
 ) {
     const int kv_head_idx = blockIdx.x;  // Which KV head this block processes
@@ -75,6 +112,10 @@ __global__ void fused_qkv_q4_0_gqa_kernel(
 
     // K projection (n_kv_heads * head_dim outputs)
     const int k_idx = kv_head_idx * head_dim;
+
+    // Shared memory for K output (1 KV head × 128 dim)
+    __shared__ float s_k[128];
+
     if (tid < head_dim) {
         float k_sum = 0.0f;
         for (int block_idx = 0; block_idx < (hidden_size + QK4_0 - 1) / QK4_0; ++block_idx) {
@@ -86,12 +127,31 @@ __global__ void fused_qkv_q4_0_gqa_kernel(
         for (int offset = 16; offset > 0; offset >>= 1) {
             k_sum += __shfl_down(k_sum, offset, 32);
         }
+
+        // Store temporarily in shared memory
         if (tid % 32 == 0) {
-            out_k[k_idx + tid / 32] = k_sum;
+            s_k[tid / 32] = k_sum;
         }
     }
 
-    // V projection (n_kv_heads * head_dim outputs)
+    __syncthreads();
+
+    // Apply RoPE to K output
+    if (tid < head_dim) {
+        float* k_x = s_k;
+        float* k_y = k_x + head_dim / 2;
+        rope_single(k_x, k_y, pos, head_dim, rope_theta, rope_neox);
+
+        // Write to global memory
+        out_k[k_idx + tid] = k_x[tid];
+        if (tid + head_dim / 2 < head_dim) {
+            out_k[k_idx + tid + head_dim / 2] = k_y[tid];
+        }
+    }
+
+    __syncthreads();
+
+    // V projection (n_kv_heads * head_dim outputs) - no RoPE
     if (tid < head_dim) {
         float v_sum = 0.0f;
         for (int block_idx = 0; block_idx < (hidden_size + QK4_0 - 1) / QK4_0; ++block_idx) {
@@ -113,6 +173,9 @@ __global__ void fused_qkv_q4_0_gqa_kernel(
     // Process Q projections for heads_per_kv query heads (7 heads)
     const block_q4_0* blocks_q = reinterpret_cast<const block_q4_0*>(w_q);
 
+    // Shared memory for Q outputs (7 heads × 128 dim)
+    __shared__ float s_q[7 * 128];
+
     for (int head_offset = 0; head_offset < heads_per_kv; ++head_offset) {
         const int q_head_idx = q_head_start + head_offset;
         const int q_idx = q_head_idx * head_dim;
@@ -128,15 +191,37 @@ __global__ void fused_qkv_q4_0_gqa_kernel(
             for (int offset = 16; offset > 0; offset >>= 1) {
                 q_sum += __shfl_down(q_sum, offset, 32);
             }
+
+            // Store temporarily in shared memory
             if (tid % 32 == 0) {
-                out_q[q_idx + tid / 32] = q_sum;
+                s_q[head_offset * head_dim + tid / 32] = q_sum;
+            }
+        }
+    }
+
+    __syncthreads();
+
+    // Apply RoPE to Q outputs
+    for (int head_offset = 0; head_offset < heads_per_kv; ++head_offset) {
+        const int q_head_idx = q_head_start + head_offset;
+        const int q_idx = q_head_idx * head_dim;
+
+        if (tid < head_dim) {
+            float* q_x = s_q + head_offset * head_dim;
+            float* q_y = q_x + head_dim / 2;
+            rope_single(q_x, q_y, pos, head_dim, rope_theta, rope_neox);
+
+            // Write to global memory
+            out_q[q_idx + tid] = q_x[tid];
+            if (tid + head_dim / 2 < head_dim) {
+                out_q[q_idx + tid + head_dim / 2] = q_y[tid];
             }
         }
     }
 }
 
 // Kernel launch wrapper
-extern "C" hipError_t fused_qkv_q4_0_gqa_launch(
+extern "C" hipError_t fused_qkv_rope_q4_0_gqa_launch(
     const void* w_q,
     const void* w_k,
     const void* w_v,
@@ -144,9 +229,12 @@ extern "C" hipError_t fused_qkv_q4_0_gqa_launch(
     float* out_q,
     float* out_k,
     float* out_v,
+    const int pos,
     const int n_heads,
     const int n_kv_heads,
     const int head_dim,
+    const float rope_theta,
+    const bool rope_neox,
     const int hidden_size,
     hipStream_t stream
 ) {
@@ -154,13 +242,13 @@ extern "C" hipError_t fused_qkv_q4_0_gqa_launch(
     const int threads_per_block = 256;
 
     hipLaunchKernelGGL(
-        HIP_KERNEL_NAME(fused_qkv_q4_0_gqa_kernel),
+        HIP_KERNEL_NAME(fused_qkv_rope_q4_0_gqa_kernel),
         dim3(n_kv_heads_launch),  // grid dims
         dim3(threads_per_block),  // block dims
         nullptr,  // shared memory
         stream,   // HIP stream
         w_q, w_k, w_v, input, out_q, out_k, out_v,
-        n_heads, n_kv_heads, head_dim, hidden_size
+        pos, n_heads, n_kv_heads, head_dim, rope_theta, rope_neox, hidden_size
     );
 
     return hipGetLastError();
