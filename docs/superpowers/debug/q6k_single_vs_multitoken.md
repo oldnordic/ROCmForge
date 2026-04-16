@@ -69,11 +69,41 @@ The Q6_K GPU GEMM kernel (used for multi-token prefill) has a bug that:
 - GPU GEMV kernel: `hip_kernels/quant/q6_k_gemv.hip`
 - GPU forward code: `src/gpu/forward.rs`
 
+### Additional Testing - Token Count Threshold Discovery
+
+**Systematic Token Count Testing:**
+- **1 token** ("Hello"): ✅ Works (132.3 tok/s)
+- **3 tokens** ("Hello, how"): ✅ Works (130.3 tok/s)
+- **5 tokens** ("Hello, how are you?"): ✅ Works (131.4 tok/s)
+- **6 tokens** ("Hello, how are you today?"): ✅ Works (130.4 tok/s)
+- **10 tokens** ("Hello, how are you today? Please tell me"): ✅ Works (129.4 tok/s)
+- **12 tokens** ("Hello, how are you today? Please tell me about yourself"): ✅ Works (129.6 tok/s)
+- **13 tokens** ("Hello, how are you today? Please tell me about yourself."): ❌ **Broken** (133.4 tok/s) - Chinese characters
+
+**CRITICAL FINDING:** The issue is NOT a simple token count threshold! The original 13-token prompt produced corruption, but systematic testing shows 12 tokens work fine.
+
+**BREAKTHROUGH DISCOVERY:** The bug is triggered by **specific prompt ending with a period** combined with multi-token processing!
+
+**Detailed Testing Results:**
+- **13 tokens with period** ("Hello, how are you today? Please tell me about yourself."): ❌ **Broken** - Chinese characters
+- **13 tokens without period** ("Hello, how are you today? Please tell me about yourself"): ✅ **Works** - Normal output
+- **13 tokens different content** ("Hello, how are you doing today my friend"): ✅ **Works** - Normal output
+- **Period in middle** ("Hello. How are you doing today my friend"): ✅ **Works** - Normal output
+- **Question mark ending** ("Hello, how are you today?"): ✅ **Works** - Normal output
+
+**New Hypothesis:** The bug is triggered by the combination of:
+1. Multi-token prompt (GEMM path)
+2. Prompt ending with a period character
+3. Specific token sequence or tokenization pattern
+
+This suggests a memory indexing or shared memory issue in the Q6_K GEMM kernel that manifests when processing certain token patterns, particularly those ending with sentence-ending punctuation.
+
 ### Next Steps
 1. Compare Q6_K GEMM implementation with working Q4_K/Q5_K GEMM kernels
 2. Check for indexing or shared memory issues specific to batch processing
 3. Verify dequantization logic in multi-token context
-4. Test with intermediate token counts (2-12 tokens) to pinpoint exact failure threshold
+4. Test with intermediate token counts (7-12 tokens) to pinpoint exact failure threshold
+5. **CRITICAL:** Test 8-12 token prompts to find the exact breaking point
 
 ## Test Commands
 
