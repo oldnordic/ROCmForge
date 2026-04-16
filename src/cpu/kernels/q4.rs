@@ -165,6 +165,8 @@ impl BlockQ4K {
 
     /// Dequantize Q4_K block back to f32.
     ///
+    /// Reference: llama.cpp ggml_quants.c dequantize_row_q4_K
+    ///
     /// # Arguments
     ///
     /// * `output` - Output array of 256 f32 values
@@ -175,102 +177,79 @@ impl BlockQ4K {
             "output must have 256 elements"
         );
 
-        const SUBBLOCK_SIZE: usize = 32;
-        const NUM_SUBBLOCKS: usize = 8;
-
         // Parse overall scales from f16
         let d = Half16::from_le_bytes(self.d).to_f32();
-        let dmin = Half16::from_le_bytes(self.dmin).to_f32();
+        let min = Half16::from_le_bytes(self.dmin).to_f32();
 
-        // For each sub-block
-        for sb in 0..NUM_SUBBLOCKS {
-            let start = sb * SUBBLOCK_SIZE;
-            let end = start + SUBBLOCK_SIZE;
+        let mut out_idx = 0;
+        let mut qs = &self.qs[..]; // Start at beginning of qs array
+        let mut is = 0;
 
-            // Extract scale and min from packed 6-bit values
-            // Each sub-block uses 12 bits for scale and 12 bits for min
-            let scale_idx = sb * 12 / 8;
-            let scale_bit_offset = (sb * 12) % 8;
+        // Process 4 iterations of 64 values each (256 total)
+        // Each iteration processes 32 values from lower 4 bits and 32 from upper 4 bits
+        for _j in 0..4 {
+            // Get scale and min for first 32 values (lower 4 bits)
+            let (sc, m) = Self::get_scale_min_k4(is, self.scales);
+            let d1 = d * (sc as f32);
+            let m1 = min * (m as f32);
 
-            // Extract 6-bit scale value
-            let scale_6bit: u8 = if scale_bit_offset == 0 {
-                // First 6 bits at position scale_idx
-                self.scales[scale_idx] & 0x3F
-            } else if scale_bit_offset == 2 {
-                // Next 6 bits (byte split)
-                ((self.scales[scale_idx] >> 6) & 0x3F)
-            } else if scale_bit_offset == 4 {
-                // Combined: lower 2 bits of current + upper 4 bits of next
-                let low = (self.scales[scale_idx] >> 4) & 0x03;
-                let high = if scale_idx + 1 < 12 {
-                    (self.scales[scale_idx + 1] & 0x0F) << 2
-                } else {
-                    0
-                };
-                (low | (high >> 2)) as u8
+            // Get scale and min for second 32 values (upper 4 bits)
+            let (sc, m) = Self::get_scale_min_k4(is + 1, self.scales);
+            let d2 = d * (sc as f32);
+            let m2 = min * (m as f32);
+
+            // Process lower 4 bits (first 32 values)
+            for l in 0..32 {
+                let q4 = qs[l] & 0xF;
+                output[out_idx + l] = d1 * (q4 as f32) - m1;
+            }
+
+            // Process upper 4 bits (second 32 values)
+            for l in 0..32 {
+                let q4 = qs[l] >> 4;
+                output[out_idx + 32 + l] = d2 * (q4 as f32) - m2;
+            }
+
+            qs = &qs[32..]; // Advance 32 bytes in qs array
+            out_idx += 64; // Advanced 64 values in output
+            is += 2;
+        }
+    }
+
+    /// Extract scale and minimum for sub-block j from Q4_K scales array.
+    ///
+    /// Reference: llama.cpp ggml_quants.c get_scale_min_k4
+    ///
+    /// # Arguments
+    ///
+    /// * `j` - Sub-block index (0-7)
+    /// * `scales` - 12-byte scales array
+    ///
+    /// # Returns
+    ///
+    /// Tuple of (scale, min) as 6-bit values
+    pub fn get_scale_min_k4(j: usize, scales: [u8; 12]) -> (u8, u8) {
+        let (d, m);
+        if j < 4 {
+            d = scales[j] & 63;
+            m = scales[j + 4] & 63;
+        } else {
+            // For j >= 4, we need to be careful about array bounds
+            // j+4 can be 8, 9, 10, 11 for j = 4, 5, 6, 7
+            // j-4 can be 0, 1, 2, 3 for j = 4, 5, 6, 7
+            let j_plus_4 = j + 4;
+            let j_minus_4 = j - 4;
+
+            if j_plus_4 < 12 {
+                d = (scales[j_plus_4] & 0xF) | ((scales[j_minus_4] >> 6) << 4);
+                m = (scales[j_plus_4] >> 4) | ((scales[j] >> 6) << 4);
             } else {
-                // Upper 4 bits of second byte + lower 2 bits of third byte
-                let low = (self.scales[scale_idx] >> 2) & 0x0F;
-                let high = if scale_idx + 1 < 12 {
-                    ((self.scales[scale_idx + 1] & 0xC0) >> 6) as u8
-                } else {
-                    0
-                };
-                low | high
-            };
-
-            // Similar extraction for min value
-            let min_idx = sb * 12 / 8 + 2; // Offset by 2 bytes (16 bits) for scale
-            let min_bit_offset = (sb * 12 + 16) % 8;
-
-            let min_6bit: u8 = if min_idx < 12 {
-                if min_bit_offset == 0 {
-                    self.scales[min_idx] & 0x3F
-                } else if min_bit_offset == 2 {
-                    (self.scales[min_idx] >> 6) & 0x3F
-                } else if min_bit_offset == 4 {
-                    let low = (self.scales[min_idx] >> 4) & 0x03;
-                    let high = if min_idx + 1 < 12 {
-                        ((self.scales[min_idx + 1] & 0x0F) << 2)
-                    } else {
-                        0
-                    };
-                    (low | (high >> 2)) as u8
-                } else {
-                    let low = (self.scales[min_idx] >> 2) & 0x0F;
-                    let high = if min_idx + 1 < 12 {
-                        ((self.scales[min_idx + 1] & 0xC0) >> 6) as u8
-                    } else {
-                        0
-                    };
-                    low | high
-                }
-            } else {
-                32 // Fallback: middle of 6-bit range
-            };
-
-            // Scale values: 6-bit packed, interpret as value / 32.0
-            let scale_val = (scale_6bit as f32 / 32.0) * d;
-            let min_val = (min_6bit as f32 / 32.0) * dmin;
-
-            let range = scale_val.max(1e-7);
-
-            // Dequantize each weight
-            for i in start..end {
-                let byte_idx = i / 2;
-                let bit_offset = i % 2;
-
-                let qi = if bit_offset == 0 {
-                    self.qs[byte_idx] & 0x0F
-                } else {
-                    (self.qs[byte_idx] >> 4) & 0x0F
-                };
-
-                // Dequantize: w = min + qi * (scale / 15)
-                let dequantized = min_val + (qi as f32) * (range / 15.0);
-                output[i] = dequantized;
+                // Fallback for safety
+                d = 0;
+                m = 0;
             }
         }
+        (d, m)
     }
 
     /// Dequantize Q4_K block into f32 array with scaling.
