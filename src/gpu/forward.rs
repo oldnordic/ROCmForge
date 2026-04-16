@@ -13,7 +13,7 @@ use super::graph::HipGraph;
 use super::kernels::attention::{
     flash_attn_decode_strided_multi_head_from_state_on_stream,
     flash_attn_decode_strided_multi_head_on_stream, flash_attn_prefill_strided,
-    kv_write_rope_from_state_on_stream, kv_write_rope_on_stream,
+    kv_write_from_state_on_stream, kv_write_rope_from_state_on_stream, kv_write_rope_on_stream,
 };
 use super::kernels::elementwise::{
     add, add_batched, add_on_stream, argmax_f32, argmax_f32_on_stream, embed_q8_0_batch,
@@ -24,7 +24,7 @@ use super::kernels::rope::{
     rope_heads_batched, rope_heads_from_state_on_stream, rope_heads_on_stream,
 };
 use super::ops::{
-    gpu_dispatch_fused_gate_up_on_stream, gpu_dispatch_fused_qkv_on_stream, gpu_dispatch_gemm,
+    gpu_dispatch_fused_gate_up_on_stream, gpu_dispatch_fused_qkv_gqa_on_stream, gpu_dispatch_fused_qkv_on_stream, gpu_dispatch_gemm,
     gpu_dispatch_gemv, gpu_dispatch_gemv_on_stream, gpu_dispatch_gemv_residual_on_stream,
     gpu_dispatch_rms_norm,
 };
@@ -980,48 +980,92 @@ fn gpu_layer_forward_from_state_on_stream(
         device.stream(),
     )?;
 
-    gpu_dispatch_fused_qkv_on_stream(
-        device,
-        &gpu_layer.attn_q,
-        &gpu_layer.attn_q_meta,
-        gpu_layer.attn_q_bias.as_ref(),
-        &gpu_layer.attn_k,
-        &gpu_layer.attn_k_meta,
-        gpu_layer.attn_k_bias.as_ref(),
-        &gpu_layer.attn_v,
-        &gpu_layer.attn_v_meta,
-        gpu_layer.attn_v_bias.as_ref(),
-        scratch.normed.as_ptr() as *const f32,
-        scratch.q.as_ptr() as *mut f32,
-        scratch.k.as_ptr() as *mut f32,
-        scratch.v.as_ptr() as *mut f32,
-        q_size,
-        kv_size,
-        h,
-        device.stream(),
-    )?;
+    // Dispatch GQA-aware fused QKV if compatible, else use separate kernels
+    if q_size == kv_size {
+        // MHA: use existing fused QKV
+        gpu_dispatch_fused_qkv_on_stream(
+            device,
+            &gpu_layer.attn_q,
+            &gpu_layer.attn_q_meta,
+            gpu_layer.attn_q_bias.as_ref(),
+            &gpu_layer.attn_k,
+            &gpu_layer.attn_k_meta,
+            gpu_layer.attn_k_bias.as_ref(),
+            &gpu_layer.attn_v,
+            &gpu_layer.attn_v_meta,
+            gpu_layer.attn_v_bias.as_ref(),
+            scratch.normed.as_ptr() as *const f32,
+            scratch.q.as_ptr() as *mut f32,
+            scratch.k.as_ptr() as *mut f32,
+            scratch.v.as_ptr() as *mut f32,
+            q_size,
+            kv_size,
+            h,
+            device.stream(),
+        )?;
 
-    rope_heads_from_state_on_stream(
-        scratch.q.as_ptr() as *mut f32,
-        scratch.decode_pos_ptr(),
-        config.num_heads,
-        config.head_dim,
-        config.rope_theta,
-        config.rope_neox,
-        device.stream(),
-    )?;
-    kv_write_rope_from_state_on_stream(
-        kv.k_ptr(layer_idx)?,
-        kv.v_ptr(layer_idx)?,
-        scratch.k.as_ptr() as *const f32,
-        scratch.v.as_ptr() as *const f32,
-        scratch.decode_pos_ptr(),
-        config.num_kv_heads,
-        config.head_dim,
-        config.rope_theta,
-        config.rope_neox,
-        device.stream(),
-    )?;
+        // Apply RoPE separately for MHA
+        rope_heads_from_state_on_stream(
+            scratch.q.as_ptr() as *mut f32,
+            scratch.decode_pos_ptr(),
+            config.num_heads,
+            config.head_dim,
+            config.rope_theta,
+            config.rope_neox,
+            device.stream(),
+        )?;
+
+        kv_write_rope_from_state_on_stream(
+            kv.k_ptr(layer_idx)?,
+            kv.v_ptr(layer_idx)?,
+            scratch.k.as_ptr() as *const f32,
+            scratch.v.as_ptr() as *const f32,
+            scratch.decode_pos_ptr(),
+            config.num_kv_heads,
+            config.head_dim,
+            config.rope_theta,
+            config.rope_neox,
+            device.stream(),
+        )?;
+    } else {
+        // GQA: use new GQA-aware fusion (includes RoPE)
+        let pos = scratch.decode_state_next_pos().unwrap_or(0);
+        gpu_dispatch_fused_qkv_gqa_on_stream(
+            device,
+            &gpu_layer.attn_q,
+            &gpu_layer.attn_q_meta,
+            gpu_layer.attn_q_bias.as_ref(),
+            &gpu_layer.attn_k,
+            &gpu_layer.attn_k_meta,
+            gpu_layer.attn_k_bias.as_ref(),
+            &gpu_layer.attn_v,
+            &gpu_layer.attn_v_meta,
+            gpu_layer.attn_v_bias.as_ref(),
+            scratch.normed.as_ptr() as *const f32,
+            scratch.q.as_ptr() as *mut f32,
+            scratch.k.as_ptr() as *mut f32,
+            scratch.v.as_ptr() as *mut f32,
+            q_size,
+            kv_size,
+            h,
+            pos,
+            device.stream(),
+        )?;
+
+        // KV-write without RoPE (already applied in fusion)
+        kv_write_from_state_on_stream(
+            kv.k_ptr(layer_idx)?,
+            kv.v_ptr(layer_idx)?,
+            scratch.k.as_ptr() as *const f32,
+            scratch.v.as_ptr() as *const f32,
+            scratch.decode_pos_ptr(),
+            config.num_kv_heads,
+            config.head_dim,
+            device.stream(),
+        )?;
+    }
+
+    // Note: RoPE and KV-write are now handled inside the conditional blocks above
 
     gpu_attention_decode_from_state(device, scratch, kv, layer_idx, config)?;
 

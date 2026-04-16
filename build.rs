@@ -22,7 +22,10 @@ mod gpu_build {
         let target_arch = "gfx1100"; // RX 7900 XT (RDNA3)
         let wave_size = detect_wave_size_for_arch(target_arch);
 
-        println!("cargo:warning=Target arch: {} (wave size: {})", target_arch, wave_size);
+        println!(
+            "cargo:warning=Target arch: {} (wave size: {})",
+            target_arch, wave_size
+        );
 
         let kernels = [
             ("norm", "hip_kernels/norm.hip"),
@@ -106,10 +109,10 @@ mod gpu_build {
 
     fn detect_wave_size_for_arch(arch: &str) -> usize {
         match arch {
-            "gfx1201" => 32,                            // RDNA4
-            "gfx1100" | "gfx1101" | "gfx1102" => 32,    // RDNA3
-            "gfx1030" | "gfx1031" | "gfx1032" => 32,    // RDNA2
-            "gfx1010" | "gfx1011" | "gfx1012" => 32,    // RDNA1
+            "gfx1201" => 32,                                                       // RDNA4
+            "gfx1100" | "gfx1101" | "gfx1102" => 32,                               // RDNA3
+            "gfx1030" | "gfx1031" | "gfx1032" => 32,                               // RDNA2
+            "gfx1010" | "gfx1011" | "gfx1012" => 32,                               // RDNA1
             "gfx900" | "gfx906" | "gfx908" | "gfx90a" | "gfx90c" | "gfx942" => 64, // CDNA
             _ => 32, // Conservative default for RDNA
         }
@@ -207,6 +210,7 @@ mod gpu_build {
                             ("libq4_0_dequantize.a", "q4_0_dequantize"),
                             ("libq4_0_verify.a", "q4_0_verify"),
                             ("libq4_0_gemv.a", "q4_0_gemv"),
+                            ("libq4_0_fused_qkv_rope_gqa.a", "q4_0_fused_qkv_rope_gqa"),
                             // Q4_1 libraries
                             ("libq4_1_quantize.a", "q4_1_quantize"),
                             ("libq4_1_dequantize.a", "q4_1_dequantize"),
