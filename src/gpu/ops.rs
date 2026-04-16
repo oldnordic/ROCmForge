@@ -18,15 +18,17 @@ use super::kernels::{
     gemv_q4_0_q8_0_residual_on_stream, gemv_q4_1_f32_on_stream_unchecked,
     gemv_q4_1_f32_residual_on_stream_unchecked, gemv_q4_1_f32_residual_on_stream_variant_unchecked,
     gemv_q4_k_f32_on_stream, gemv_q5_k_f32_on_stream, gemv_q6_k_f32_on_stream,
-    gemv_q8_0_f32_lm_head_on_stream, gemv_q8_0_f32_lm_head_on_stream_variant, gemv_q8_0_f32_on_stream,
-    gemv_qkv_q4_0_f32_on_stream, gemv_qkv_q4_0_f32_on_stream_variant, mul_on_stream,
-    q8_0_workspace_bytes, quantize_q8_0_on_stream, rms_norm_on_stream, rms_norm_vulkan_style,
-    silu_on_stream,
+    gemv_q8_0_f32_lm_head_on_stream, gemv_q8_0_f32_lm_head_on_stream_variant,
+    gemv_q8_0_f32_on_stream, gemv_qkv_q4_0_f32_on_stream, gemv_qkv_q4_0_f32_on_stream_variant,
+    fused_qkv_rope_q4_0_gqa_on_stream,
+    mul_on_stream, q8_0_workspace_bytes, quantize_q8_0_on_stream, rms_norm_on_stream,
+    rms_norm_vulkan_style, silu_on_stream,
 };
 use super::launch_autotune::{
     lookup_gate_up_swiglu_q8_variant, lookup_lm_head_q8_variant, lookup_q4_0_q8_residual_variant,
-    select_gate_up_swiglu_q8_variant, select_lm_head_q8_variant, select_q4_0_q8_residual_variant,
-    select_q4_1_residual_variant, select_qkv_variant, VariantId,
+    lookup_q4_1_residual_variant, lookup_qkv_variant, select_gate_up_swiglu_q8_variant,
+    select_lm_head_q8_variant, select_q4_0_q8_residual_variant, select_q4_1_residual_variant,
+    select_qkv_variant, VariantId,
 };
 use super::safety::{
     disable_q8_activation_fastpath_runtime, experimental_gpu_kernels_enabled,
@@ -37,7 +39,12 @@ use crate::loader::GgmlType;
 fn supports_gemv_type(wtype: GgmlType) -> bool {
     matches!(
         wtype,
-        GgmlType::Q4_0 | GgmlType::Q4_1 | GgmlType::Q8_0 | GgmlType::Q4_K | GgmlType::Q5_K | GgmlType::Q6_K
+        GgmlType::Q4_0
+            | GgmlType::Q4_1
+            | GgmlType::Q8_0
+            | GgmlType::Q4_K
+            | GgmlType::Q5_K
+            | GgmlType::Q6_K
     )
 }
 
@@ -526,6 +533,19 @@ pub fn gpu_dispatch_gemv_residual_on_stream(
                                         )
                                     }
                                     VariantId::Variant2 => {
+                                        // New 16-wave variant for improved parallelism
+                                        gemv_q4_0_f32_q8_inline_residual_on_stream_variant(
+                                            weights.as_ptr() as *const u8,
+                                            input,
+                                            residual,
+                                            output,
+                                            in_dim,
+                                            out_dim,
+                                            v as i32,
+                                            stream,
+                                        )
+                                    }
+                                    VariantId::Variant3 => {
                                         try_q4_0_q8_0_residual_fastpath_prequantized(
                                             device, weights, input, residual, output, in_dim,
                                             out_dim, stream,
@@ -539,7 +559,7 @@ pub fn gpu_dispatch_gemv_residual_on_stream(
 
                         // Execute selected (or cached) fastpath variant and keep fallback behavior on failures.
                         let selected_result = match variant {
-                            VariantId::Baseline | VariantId::Variant1 => {
+                            VariantId::Baseline | VariantId::Variant1 | VariantId::Variant2 => {
                                 gemv_q4_0_f32_q8_inline_residual_on_stream_variant(
                                     weights.as_ptr() as *const u8,
                                     input,
@@ -551,7 +571,7 @@ pub fn gpu_dispatch_gemv_residual_on_stream(
                                     stream,
                                 )
                             }
-                            VariantId::Variant2 => try_q4_0_q8_0_residual_fastpath_prequantized(
+                            VariantId::Variant3 => try_q4_0_q8_0_residual_fastpath_prequantized(
                                 device, weights, input, residual, output, in_dim, out_dim, stream,
                             ),
                         };
@@ -592,24 +612,28 @@ pub fn gpu_dispatch_gemv_residual_on_stream(
                         | Ok(hipStreamCaptureStatus::hipStreamCaptureStatusInvalidated)
                 );
 
-                // Autotune-aware dispatch for Q4_1 residual (skip if capturing)
-                if launch_autotune_enabled() && !capture_active {
-                    let variant = select_q4_1_residual_variant(in_dim, out_dim, |v| {
-                        let result = unsafe {
-                            gemv_q4_1_f32_residual_on_stream_variant_unchecked(
-                                weights.as_ptr() as *const u8,
-                                input,
-                                residual,
-                                output,
-                                in_dim,
-                                out_dim,
-                                v as i32,
-                                stream,
-                            )
-                        };
-                        hip_stream_synchronize(stream)?;
-                        result
-                    });
+                // Reuse cached variant during capture so decode graphs keep the tuned launch.
+                if launch_autotune_enabled() {
+                    let variant = if capture_active {
+                        lookup_q4_1_residual_variant(in_dim, out_dim).unwrap_or(VariantId::Baseline)
+                    } else {
+                        select_q4_1_residual_variant(in_dim, out_dim, |v| {
+                            let result = unsafe {
+                                gemv_q4_1_f32_residual_on_stream_variant_unchecked(
+                                    weights.as_ptr() as *const u8,
+                                    input,
+                                    residual,
+                                    output,
+                                    in_dim,
+                                    out_dim,
+                                    v as i32,
+                                    stream,
+                                )
+                            };
+                            hip_stream_synchronize(stream)?;
+                            result
+                        })
+                    };
 
                     // Execute with selected variant
                     unsafe {
@@ -678,31 +702,35 @@ pub fn gpu_dispatch_fused_qkv_on_stream(
                 | Ok(hipStreamCaptureStatus::hipStreamCaptureStatusInvalidated)
         );
 
-        // Autotune-aware dispatch for QKV fused (skip if capturing)
-        if launch_autotune_enabled() && !capture_active {
-            let variant = select_qkv_variant(h, q_size, kv_size, |v| {
-                let result = unsafe {
-                    gemv_qkv_q4_0_f32_on_stream_variant(
-                        w_q.as_ptr() as *const u8,
-                        w_k.as_ptr() as *const u8,
-                        w_v.as_ptr() as *const u8,
-                        q_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32),
-                        k_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32),
-                        v_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32),
-                        input,
-                        out_q,
-                        out_k,
-                        out_v,
-                        h,
-                        q_size,
-                        kv_size,
-                        stream,
-                        v as i32,
-                    )
-                };
-                hip_stream_synchronize(stream)?;
-                result
-            });
+        // Reuse cached variant during capture so decode graphs keep the tuned launch.
+        if launch_autotune_enabled() {
+            let variant = if capture_active {
+                lookup_qkv_variant(h, q_size, kv_size).unwrap_or(VariantId::Baseline)
+            } else {
+                select_qkv_variant(h, q_size, kv_size, |v| {
+                    let result = unsafe {
+                        gemv_qkv_q4_0_f32_on_stream_variant(
+                            w_q.as_ptr() as *const u8,
+                            w_k.as_ptr() as *const u8,
+                            w_v.as_ptr() as *const u8,
+                            q_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32),
+                            k_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32),
+                            v_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32),
+                            input,
+                            out_q,
+                            out_k,
+                            out_v,
+                            h,
+                            q_size,
+                            kv_size,
+                            stream,
+                            v as i32,
+                        )
+                    };
+                    hip_stream_synchronize(stream)?;
+                    result
+                })
+            };
 
             // Execute with selected variant
             unsafe {
@@ -771,6 +799,90 @@ pub fn gpu_dispatch_fused_qkv_on_stream(
     }
 
     Ok(())
+}
+
+/// Dispatch GQA-aware fused QKV with RoPE on an explicit HIP stream.
+///
+/// This is the GQA-compatible version of fused QKV that handles grouped query attention
+/// where n_kv_heads divides n_heads evenly (e.g., 14 query heads, 2 KV heads).
+///
+/// # GQA Compatibility
+/// Works when n_kv_heads > 0 and n_heads % n_kv_heads == 0.
+/// For MHA (n_heads == n_kv_heads), use gpu_dispatch_fused_qkv_on_stream instead.
+pub fn gpu_dispatch_fused_qkv_gqa_on_stream(
+    device: &GpuDevice,
+    w_q: &GpuBuffer,
+    q_meta: &WeightMeta,
+    q_bias: Option<&GpuBuffer>,
+    w_k: &GpuBuffer,
+    k_meta: &WeightMeta,
+    k_bias: Option<&GpuBuffer>,
+    w_v: &GpuBuffer,
+    v_meta: &WeightMeta,
+    v_bias: Option<&GpuBuffer>,
+    input: *const f32,
+    out_q: *mut f32,
+    out_k: *mut f32,
+    out_v: *mut f32,
+    q_size: usize,
+    kv_size: usize,
+    h: usize,
+    pos: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    // Validate GQA compatibility
+    if q_size % kv_size != 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!(
+                "GQA requires q_size divisible by kv_size ({} % {} != 0)",
+                q_size, kv_size
+            ),
+        });
+    }
+
+    let n_heads = q_size / h;
+    let n_kv_heads = kv_size / h;
+
+    if n_heads % n_kv_heads != 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!(
+                "GQA requires n_heads divisible by n_kv_heads ({} % {} != 0)",
+                n_heads, n_kv_heads
+            ),
+        });
+    }
+
+    // Get RoPE parameters from model config
+    let rope_theta = 10000.0f32;  // Standard for Qwen2
+    let rope_neox = true;          // Qwen2 uses Neox-style RoPE
+
+    // Bias not supported in initial version
+    if q_bias.is_some() || k_bias.is_some() || v_bias.is_some() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "GQA QKV fusion does not support bias yet".to_string(),
+        });
+    }
+
+    fused_qkv_rope_q4_0_gqa_on_stream(
+        device,
+        w_q.as_ptr() as *const u8,
+        w_k.as_ptr() as *const u8,
+        w_v.as_ptr() as *const u8,
+        input,
+        out_q,
+        out_k,
+        out_v,
+        pos,
+        n_heads,
+        n_kv_heads,
+        h,
+        rope_theta,
+        rope_neox,
+        stream,
+    )
 }
 
 /// Dispatch a fused QKV GEMV with bias on an explicit HIP stream (decode-strict).
