@@ -5,11 +5,11 @@
 //! may still use the existing CPU implementation.
 
 use super::cache::{GpuForwardScratch, GpuKvCache, GpuPrefillScratch};
+use super::decode_graph_keys::{gpu_full_decode_graph_key, gpu_greedy_logits_graph_key};
 use super::device::GpuDevice;
 use super::error::{GpuError, GpuResult};
 use super::ffi;
-use super::graph::{DecodeGraphKey, DecodeGraphScope, HipGraph};
-use super::safety::decode_graph_disabled_override_requested;
+use super::graph::HipGraph;
 use super::kernels::attention::{
     flash_attn_decode_strided_multi_head_from_state_on_stream,
     flash_attn_decode_strided_multi_head_on_stream, flash_attn_prefill_strided,
@@ -28,6 +28,7 @@ use super::ops::{
     gpu_dispatch_gemv, gpu_dispatch_gemv_on_stream, gpu_dispatch_gemv_residual_on_stream,
     gpu_dispatch_rms_norm,
 };
+use super::safety::decode_graph_disabled_override_requested;
 use super::weights::{GpuBuffer, GpuLayerWeights, GpuModelWeights, WeightMeta};
 use crate::config::ModelConfig;
 use crate::cpu::cache::CpuForwardScratch;
@@ -129,10 +130,9 @@ fn parse_decode_profile_env_flag(value: Option<String>, default: bool) -> bool {
 }
 
 fn decode_graph_disabled(gpu_weights: &GpuModelWeights) -> bool {
-    decode_stage_profiling_enabled()
-        || decode_graph_disabled_override_requested()
-        // Q6_K now compatible with HIP graph capture after linear refactoring
-        // || gpu_weights.uses_q6_k_quantization()  // REMOVED: Task #63 completed
+    decode_stage_profiling_enabled() || decode_graph_disabled_override_requested()
+    // Q6_K now compatible with HIP graph capture after linear refactoring
+    // || gpu_weights.uses_q6_k_quantization()  // REMOVED: Task #63 completed
 }
 
 fn record_decode_stage(stage: DecodeStage, elapsed_ns: u128) {
@@ -308,6 +308,16 @@ fn gpu_greedy_argmax_token(
     Ok(index as u32)
 }
 
+fn gpu_launch_greedy_logits_tail_with_readback_on_stream(
+    device: &GpuDevice,
+    gpu_weights: &GpuModelWeights,
+    scratch: &mut GpuForwardScratch,
+    config: &ModelConfig,
+) -> GpuResult<()> {
+    gpu_launch_greedy_logits_tail_on_stream(device, gpu_weights, scratch, config)?;
+    gpu_read_greedy_argmax_result(device, scratch, config.vocab_size)
+}
+
 fn gpu_launch_greedy_logits_tail_on_stream(
     device: &GpuDevice,
     gpu_weights: &GpuModelWeights,
@@ -357,102 +367,6 @@ fn gpu_launch_greedy_logits_tail_on_stream(
     })
 }
 
-fn gpu_greedy_logits_graph_key(
-    device: &GpuDevice,
-    gpu_weights: &GpuModelWeights,
-    config: &ModelConfig,
-) -> DecodeGraphKey {
-    DecodeGraphKey::from_parts_with_bindings(
-        device.device_id(),
-        device.warp_size(),
-        config,
-        GpuLogitsMode::GreedyArgmax,
-        gpu_weights.output_norm.as_ptr() as usize,
-        gpu_weights.lm_head.as_ptr() as usize,
-        gpu_weights.lm_head_meta.wtype,
-        gpu_weights.lm_head_meta.role,
-    )
-    .with_decode_scope(DecodeGraphScope::GreedyTail)
-}
-
-fn mix_binding_tag(tag: u64, ptr: usize) -> u64 {
-    tag.rotate_left(13) ^ (ptr as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
-}
-
-fn gpu_layer_weights_binding_tag(layer: &GpuLayerWeights) -> u64 {
-    let mut tag = 0u64;
-    tag = mix_binding_tag(tag, layer.attn_norm.as_ptr() as usize);
-    tag = mix_binding_tag(tag, layer.attn_q.as_ptr() as usize);
-    tag = mix_binding_tag(
-        tag,
-        layer
-            .attn_q_bias
-            .as_ref()
-            .map_or(0usize, |buf| buf.as_ptr() as usize),
-    );
-    tag = mix_binding_tag(tag, layer.attn_k.as_ptr() as usize);
-    tag = mix_binding_tag(
-        tag,
-        layer
-            .attn_k_bias
-            .as_ref()
-            .map_or(0usize, |buf| buf.as_ptr() as usize),
-    );
-    tag = mix_binding_tag(tag, layer.attn_v.as_ptr() as usize);
-    tag = mix_binding_tag(
-        tag,
-        layer
-            .attn_v_bias
-            .as_ref()
-            .map_or(0usize, |buf| buf.as_ptr() as usize),
-    );
-    tag = mix_binding_tag(tag, layer.attn_o.as_ptr() as usize);
-    tag = mix_binding_tag(tag, layer.ffn_norm.as_ptr() as usize);
-    tag = mix_binding_tag(tag, layer.ffn_gate.as_ptr() as usize);
-    tag = mix_binding_tag(tag, layer.ffn_up.as_ptr() as usize);
-    mix_binding_tag(tag, layer.ffn_down.as_ptr() as usize)
-}
-
-fn gpu_model_weights_binding_tag(gpu_weights: &GpuModelWeights) -> u64 {
-    let mut tag = 0u64;
-    tag = mix_binding_tag(tag, gpu_weights.output_norm.as_ptr() as usize);
-    tag = mix_binding_tag(tag, gpu_weights.lm_head.as_ptr() as usize);
-    for layer in &gpu_weights.layers {
-        tag ^= gpu_layer_weights_binding_tag(layer);
-    }
-    tag
-}
-
-fn gpu_kv_binding_tag(kv: &GpuKvCache) -> GpuResult<u64> {
-    let mut tag = 0u64;
-    for layer_idx in 0..kv.num_layers {
-        tag = mix_binding_tag(tag, kv.k_ptr(layer_idx)? as usize);
-        tag = mix_binding_tag(tag, kv.v_ptr(layer_idx)? as usize);
-    }
-    Ok(tag)
-}
-
-fn gpu_full_decode_graph_key(
-    device: &GpuDevice,
-    gpu_weights: &GpuModelWeights,
-    kv: &GpuKvCache,
-    config: &ModelConfig,
-) -> GpuResult<DecodeGraphKey> {
-    Ok(DecodeGraphKey::from_parts_with_bindings(
-        device.device_id(),
-        device.warp_size(),
-        config,
-        GpuLogitsMode::GreedyArgmax,
-        gpu_weights.output_norm.as_ptr() as usize,
-        gpu_weights.lm_head.as_ptr() as usize,
-        gpu_weights.lm_head_meta.wtype,
-        gpu_weights.lm_head_meta.role,
-    )
-    .with_decode_scope(DecodeGraphScope::FullGreedyDecode)
-    .with_layer_weights_binding_tag(gpu_model_weights_binding_tag(gpu_weights))
-    .with_kv_binding_tag(gpu_kv_binding_tag(kv)?))
-}
-
 fn gpu_capture_greedy_decode_graph(
     device: &GpuDevice,
     gpu_weights: &GpuModelWeights,
@@ -462,7 +376,7 @@ fn gpu_capture_greedy_decode_graph(
     let key = gpu_greedy_logits_graph_key(device, gpu_weights, config);
     device.begin_capture(ffi::hipStreamCaptureMode::hipStreamCaptureModeGlobal)?;
     let capture_result =
-        gpu_launch_greedy_logits_tail_on_stream(device, gpu_weights, scratch, config);
+        gpu_launch_greedy_logits_tail_with_readback_on_stream(device, gpu_weights, scratch, config);
     let end_capture_result = device.end_capture();
 
     match capture_result {
@@ -537,7 +451,8 @@ fn gpu_try_greedy_decode_graph(
             // Get graph again after upload
             if let Some(graph) = scratch.decode_graph() {
                 if graph.launch(device.stream()).is_ok() {
-                    gpu_read_greedy_argmax_result(device, scratch, config.vocab_size)?;
+                    // Captured graph already includes the fixed argmax D2H readback.
+                    // Keep the stream sync before reading pinned host memory.
                     device.synchronize()?;
                     let index = scratch.argmax_result_index.as_slice::<i32>()[0];
                     return Ok(index as u32);
@@ -1208,6 +1123,17 @@ fn gpu_launch_full_greedy_decode_on_stream(
     gpu_launch_greedy_logits_tail_on_stream(device, gpu_weights, scratch, config)
 }
 
+fn gpu_launch_full_greedy_decode_with_readback_on_stream(
+    device: &GpuDevice,
+    gpu_weights: &GpuModelWeights,
+    kv: &mut GpuKvCache,
+    scratch: &mut GpuForwardScratch,
+    config: &ModelConfig,
+) -> GpuResult<()> {
+    gpu_launch_full_greedy_decode_on_stream(device, gpu_weights, kv, scratch, config)?;
+    gpu_read_greedy_argmax_result(device, scratch, config.vocab_size)
+}
+
 fn gpu_capture_full_greedy_decode_graph(
     device: &GpuDevice,
     gpu_weights: &GpuModelWeights,
@@ -1219,8 +1145,13 @@ fn gpu_capture_full_greedy_decode_graph(
     scratch.upload_decode_state(0, 1, device.stream())?;
     device.synchronize()?;
     device.begin_capture(ffi::hipStreamCaptureMode::hipStreamCaptureModeGlobal)?;
-    let capture_result =
-        gpu_launch_full_greedy_decode_on_stream(device, gpu_weights, kv, scratch, config);
+    let capture_result = gpu_launch_full_greedy_decode_with_readback_on_stream(
+        device,
+        gpu_weights,
+        kv,
+        scratch,
+        config,
+    );
     let end_capture_result = device.end_capture();
 
     match capture_result {
@@ -1249,10 +1180,7 @@ fn gpu_try_full_greedy_decode_graph(
 
     let key = gpu_full_decode_graph_key(device, gpu_weights, kv, config)?;
     if !scratch.has_decode_graph_for(key) {
-        // Try updating existing graph if it matches top-level key
-        // (This part is simplified for prototype, true llama.cpp logic
-        // would keep the executable graph alive and just patch pointers)
-
+        // First time: capture and instantiate the graph
         let capture_status = match device.stream_capture_status() {
             Ok(status) => status,
             Err(_) => return Ok(None),
@@ -1261,29 +1189,30 @@ fn gpu_try_full_greedy_decode_graph(
             return Ok(None);
         }
 
-        // Capture a new graph temporarily to see if we can update the executable one
+        // Capture graph with initial decode state
         scratch.upload_decode_state(0, 1, device.stream())?;
         device.begin_capture(ffi::hipStreamCaptureMode::hipStreamCaptureModeGlobal)?;
-        let capture_res =
-            gpu_launch_full_greedy_decode_on_stream(device, gpu_weights, kv, scratch, config);
+        let capture_res = gpu_launch_full_greedy_decode_with_readback_on_stream(
+            device,
+            gpu_weights,
+            kv,
+            scratch,
+            config,
+        );
         let raw_graph = device.end_capture()?;
         capture_res?;
 
         let new_graph = HipGraph::from_raw(raw_graph);
-        if scratch.try_update_decode_graph(&new_graph)? {
-            // Update successful! No need to instantiate a new Executable graph.
-        } else {
-            // Topology changed or no existing graph, instantiate new one
-            let captured = super::graph::CapturedDecodeGraph::from_captured_graph(new_graph, key)?;
-            scratch.replace_decode_graph(captured);
-        }
+        let captured = super::graph::CapturedDecodeGraph::from_captured_graph(new_graph, key)?;
+        scratch.replace_decode_graph(captured);
     }
 
+    // For each token: upload new decode state and launch the graph
     scratch.upload_decode_state(pos, pos + 1, device.stream())?;
     if let Some(graph) = scratch.decode_graph() {
         if graph.launch(device.stream()).is_ok() {
-            // Wait for completion and read result safely
-            gpu_read_greedy_argmax_result(device, scratch, config.vocab_size)?;
+            // Captured graph already includes the fixed argmax D2H readback.
+            // Keep the stream sync before reading pinned host memory.
             device.synchronize()?;
             let token = scratch.argmax_result_index.as_slice::<i32>()[0];
             return Ok(Some(token as u32));
@@ -1450,8 +1379,8 @@ pub fn gpu_layer_forward_hybrid(
             scratch.swiglu.as_ptr() as *const f32,
             scratch.hidden.as_ptr() as *const f32,
             scratch.hidden.as_ptr() as *mut f32,
-            ff_size,  // CORRECT: in_dim (input dimension = swiglu size)
-            h,        // CORRECT: out_dim (output dimension = hidden size)
+            ff_size, // CORRECT: in_dim (input dimension = swiglu size)
+            h,       // CORRECT: out_dim (output dimension = hidden size)
             device.stream(),
         )
     })?;
