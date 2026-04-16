@@ -29,67 +29,76 @@ __global__ void gemm_q6_k_f32_kernel_templated(
     float sum = 0.0f;
     const uint8_t* col_base = weights + col * n_blocks * Q6_K_BLOCK_SIZE;
 
-    // CRITICAL: Offset input by batch_idx for multi-token prefill
-    const float* input_batch = input + batch_idx * n_rows;
+    // CRITICAL FIX: Do NOT offset input by batch_idx
+    // The input pointer already points to the correct token's data
+    // const float* input_batch = input + batch_idx * n_rows;  // WRONG
+    const float* input_batch = input;  // CORRECT
 
     for (int block_idx = 0; block_idx < n_blocks; ++block_idx) {
         const uint8_t* block = col_base + block_idx * Q6_K_BLOCK_SIZE;
+        const int offset = block_idx * QK_K;
 
-        // Unpack Q6_K block
-        const uint8_t* ql = &block[0];
-        const uint8_t* qh = &block[128];
-        const int8_t* scales = reinterpret_cast<const int8_t*>(&block[192]);
-
+        // Extract scale d (fp16 at bytes 208-209)
         half d_half;
         memcpy(&d_half, &block[208], sizeof(half));
         const float d = __half2float(d_half);
 
-        // Process all 256 elements using 32 threads
-        for (int l = 0; l < 8; ++l) {
-            const int i = tid * 8 + l;
+        // Q4_K safety: check for denormal d
+        if (fabsf(d) < 1e-7f) continue;
 
-            // Map linear index 0-255 to Q6_K interleaved pattern
-            const int pos_in_group = i % 128;
-            const int group = i / 128;
-            const int l_base = pos_in_group % 32;
-            const int quadrant = pos_in_group / 32;
-            const int is = l_base / 16;
+        // Pointer to scales (int8_t at bytes 192-207)
+        const int8_t* scales = reinterpret_cast<const int8_t*>(&block[192]);
 
-            // Compute scale index
-            const int scale_idx = group * 8 + is * 2 + quadrant;
-            const float scale = d * (float)scales[scale_idx];
+        // Each thread processes ONE l value (0-31) - matches llama.cpp pattern exactly
+        const int l = tid;
 
-            // Compute ql offset
-            const int ql_local_idx = l_base + quadrant * 32;
-            const int ql_offset = group * 64 + ql_local_idx;
-            // === OPTIMIZED: Use get_int_b2() for 4-byte read (Phase 3) ===
-            const int ql_packed = get_int_b2(block, ql_offset);
+        // Process group 0 (elements 0-127)
+        {
+            const uint8_t* ql = &block[0];
+            const uint8_t* qh = &block[128];
+            const int8_t* sc = &scales[0];
 
-            // Compute qh offset
-            const int qh_offset = 128 + group * 32 + l_base;
-            // === OPTIMIZED: Use get_int_b2() for 4-byte read (Phase 3) ===
-            const int qh_packed = get_int_b2(block, qh_offset);
+            const int is = l / 16;
 
-            // Unpack Q6_K value
-            const int is_low_half = (quadrant < 2) ? 0 : 1;
-            const int shift = is_low_half ? 0 : 4;
-            const int qh_shift = is_low_half ? (quadrant % 2) * 2 : (quadrant % 2) * 2 + 4;
+            // Extract 4 values exactly like llama.cpp
+            const int8_t q1 = (int8_t)((ql[l + 0] & 0xF) | (((qh[l] >> 0) & 3) << 4)) - 32;
+            const int8_t q2 = (int8_t)((ql[l + 32] & 0xF) | (((qh[l] >> 2) & 3) << 4)) - 32;
+            const int8_t q3 = (int8_t)((ql[l + 0] >> 4) | (((qh[l] >> 4) & 3) << 4)) - 32;
+            const int8_t q4 = (int8_t)((ql[l + 32] >> 4) | (((qh[l] >> 6) & 3) << 4)) - 32;
 
-            // Extract from packed integers (same logic, just different source)
-            const uint8_t ql_4bits = (ql_packed >> shift) & 0x0F;
-            const uint8_t qh_2bits = (qh_packed >> qh_shift) & 0x03;
-            const int8_t q = (int8_t)(ql_4bits | (qh_2bits << 4)) - 32;
+            // Use correct output positions (matching llama.cpp)
+            sum += input_batch[offset + l + 0] * (d * (float)sc[is + 0] * q1);
+            sum += input_batch[offset + l + 32] * (d * (float)sc[is + 2] * q2);
+            sum += input_batch[offset + l + 64] * (d * (float)sc[is + 4] * q3);
+            sum += input_batch[offset + l + 96] * (d * (float)sc[is + 6] * q4);
+        }
 
-            // Access input with batch offset
-            const int vec_offset = block_idx * QK_K + i;
-            sum += input_batch[vec_offset] * (scale * (float)q);
+        // Process group 1 (elements 128-255) - same pattern with pointer arithmetic
+        {
+            const uint8_t* ql = &block[64];
+            const uint8_t* qh = &block[160];
+            const int8_t* sc = &scales[8];
+
+            const int is = l / 16;
+
+            // Extract 4 values exactly like llama.cpp (second iteration)
+            const int8_t q1 = (int8_t)((ql[l + 0] & 0xF) | (((qh[l] >> 0) & 3) << 4)) - 32;
+            const int8_t q2 = (int8_t)((ql[l + 32] & 0xF) | (((qh[l] >> 2) & 3) << 4)) - 32;
+            const int8_t q3 = (int8_t)((ql[l + 0] >> 4) | (((qh[l] >> 4) & 3) << 4)) - 32;
+            const int8_t q4 = (int8_t)((ql[l + 32] >> 4) | (((qh[l] >> 6) & 3) << 4)) - 32;
+
+            // Use correct output positions (matching llama.cpp)
+            sum += input_batch[offset + l + 128] * (d * (float)sc[is + 0] * q1);
+            sum += input_batch[offset + l + 160] * (d * (float)sc[is + 2] * q2);
+            sum += input_batch[offset + l + 192] * (d * (float)sc[is + 4] * q3);
+            sum += input_batch[offset + l + 224] * (d * (float)sc[is + 6] * q4);
         }
     }
 
     // Warp reduction with unroll
     #pragma unroll
     for (int offset = 16; offset > 0; offset >>= 1) {
-        sum += __shfl_down(sum, offset);
+        sum += __shfl_down(sum, offset, 32);
     }
 
     if (tid == 0) {
@@ -120,68 +129,76 @@ __global__ void gemm_q6_k_f32_kernel_generic(
     float sum = 0.0f;
     const uint8_t* col_base = weights + col * n_blocks * Q6_K_BLOCK_SIZE;
 
-    // CRITICAL FIX: Offset input by batch_idx for multi-token prefill
-    const float* input_batch = input + batch_idx * n_rows;
+    // CRITICAL FIX: Do NOT offset input by batch_idx
+    // The input pointer already points to the correct token's data
+    // const float* input_batch = input + batch_idx * n_rows;  // WRONG
+    const float* input_batch = input;  // CORRECT
 
     for (int block_idx = 0; block_idx < n_blocks; ++block_idx) {
         const uint8_t* block = col_base + block_idx * Q6_K_BLOCK_SIZE;
+        const int offset = block_idx * QK_K;
 
-        // Unpack Q6_K block
-        const uint8_t* ql = &block[0];
-        const uint8_t* qh = &block[128];
-        const int8_t* scales = reinterpret_cast<const int8_t*>(&block[192]);
-
+        // Extract scale d (fp16 at bytes 208-209)
         half d_half;
         memcpy(&d_half, &block[208], sizeof(half));
         const float d = __half2float(d_half);
 
-        // Process all 256 elements using 32 threads (matching Q4_K pattern)
-        // Each thread processes 8 elements: tid*8, tid*8+1, ..., tid*8+7
-        for (int l = 0; l < 8; ++l) {
-            const int i = tid * 8 + l;
+        // Q4_K safety: check for denormal d
+        if (fabsf(d) < 1e-7f) continue;
 
-            // Map linear index 0-255 to Q6_K interleaved pattern
-            const int pos_in_group = i % 128;
-            const int group = i / 128;
-            const int l_base = pos_in_group % 32;
-            const int quadrant = pos_in_group / 32;
-            const int is = l_base / 16;
+        // Pointer to scales (int8_t at bytes 192-207)
+        const int8_t* scales = reinterpret_cast<const int8_t*>(&block[192]);
 
-            // Compute scale index: group * 8 + is * 2 + quadrant
-            const int scale_idx = group * 8 + is * 2 + quadrant;
-            const float scale = d * (float)scales[scale_idx];
+        // Each thread processes ONE l value (0-31) - matches llama.cpp pattern exactly
+        const int l = tid;
 
-            // Compute ql offset
-            const int ql_local_idx = l_base + quadrant * 32;
-            const int ql_offset = group * 64 + ql_local_idx;
-            // === OPTIMIZED: Use get_int_b2() for 4-byte read (Phase 3) ===
-            const int ql_packed = get_int_b2(block, ql_offset);
+        // Process group 0 (elements 0-127)
+        {
+            const uint8_t* ql = &block[0];
+            const uint8_t* qh = &block[128];
+            const int8_t* sc = &scales[0];
 
-            // Compute qh offset
-            const int qh_offset = 128 + group * 32 + l_base;
-            // === OPTIMIZED: Use get_int_b2() for 4-byte read (Phase 3) ===
-            const int qh_packed = get_int_b2(block, qh_offset);
+            const int is = l / 16;
 
-            // Unpack Q6_K value
-            const int is_low_half = (quadrant < 2) ? 0 : 1;
-            const int shift = is_low_half ? 0 : 4;
-            const int qh_shift = is_low_half ? (quadrant % 2) * 2 : (quadrant % 2) * 2 + 4;
+            // Extract 4 values exactly like llama.cpp
+            const int8_t q1 = (int8_t)((ql[l + 0] & 0xF) | (((qh[l] >> 0) & 3) << 4)) - 32;
+            const int8_t q2 = (int8_t)((ql[l + 32] & 0xF) | (((qh[l] >> 2) & 3) << 4)) - 32;
+            const int8_t q3 = (int8_t)((ql[l + 0] >> 4) | (((qh[l] >> 4) & 3) << 4)) - 32;
+            const int8_t q4 = (int8_t)((ql[l + 32] >> 4) | (((qh[l] >> 6) & 3) << 4)) - 32;
 
-            // Extract from packed integers (same logic, just different source)
-            const uint8_t ql_4bits = (ql_packed >> shift) & 0x0F;
-            const uint8_t qh_2bits = (qh_packed >> qh_shift) & 0x03;
-            const int8_t q = (int8_t)(ql_4bits | (qh_2bits << 4)) - 32;
+            // Use correct output positions (matching llama.cpp)
+            sum += input_batch[offset + l + 0] * (d * (float)sc[is + 0] * q1);
+            sum += input_batch[offset + l + 32] * (d * (float)sc[is + 2] * q2);
+            sum += input_batch[offset + l + 64] * (d * (float)sc[is + 4] * q3);
+            sum += input_batch[offset + l + 96] * (d * (float)sc[is + 6] * q4);
+        }
 
-            // Access input with batch offset
-            const int vec_offset = block_idx * QK_K + i;
-            sum += input_batch[vec_offset] * (scale * (float)q);
+        // Process group 1 (elements 128-255) - same pattern with pointer arithmetic
+        {
+            const uint8_t* ql = &block[64];
+            const uint8_t* qh = &block[160];
+            const int8_t* sc = &scales[8];
+
+            const int is = l / 16;
+
+            // Extract 4 values exactly like llama.cpp (second iteration)
+            const int8_t q1 = (int8_t)((ql[l + 0] & 0xF) | (((qh[l] >> 0) & 3) << 4)) - 32;
+            const int8_t q2 = (int8_t)((ql[l + 32] & 0xF) | (((qh[l] >> 2) & 3) << 4)) - 32;
+            const int8_t q3 = (int8_t)((ql[l + 0] >> 4) | (((qh[l] >> 4) & 3) << 4)) - 32;
+            const int8_t q4 = (int8_t)((ql[l + 32] >> 4) | (((qh[l] >> 6) & 3) << 4)) - 32;
+
+            // Use correct output positions (matching llama.cpp)
+            sum += input_batch[offset + l + 128] * (d * (float)sc[is + 0] * q1);
+            sum += input_batch[offset + l + 160] * (d * (float)sc[is + 2] * q2);
+            sum += input_batch[offset + l + 192] * (d * (float)sc[is + 4] * q3);
+            sum += input_batch[offset + l + 224] * (d * (float)sc[is + 6] * q4);
         }
     }
 
     // Warp reduction (32 threads = 1 wavefront on RDNA)
     #pragma unroll
     for (int offset = 16; offset > 0; offset >>= 1) {
-        sum += __shfl_down(sum, offset);
+        sum += __shfl_down(sum, offset, 32);
     }
 
     if (tid == 0) {
