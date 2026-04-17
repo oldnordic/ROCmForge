@@ -22,6 +22,7 @@ hip_kernels/quant/build/
 # Planning and development documents
 PERFORMANCE.md
 PLAN.md
+docs/
 docs/superpowers/
 DOCS/
 # Local agent guidance files
