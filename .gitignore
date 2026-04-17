@@ -35,3 +35,8 @@ CLAUDE.md
 *.mirage.md
 .worktrees/
 .claude/settings.json
+
+# Temporary session continuation files
+*this-session-is-being-continued-from-a-previous-c.txt
+detailed_test_output.txt
+model_scan_output.txt
