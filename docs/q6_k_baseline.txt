@@ -1,0 +1,37 @@
+# Q6_K Performance Baseline
+
+**Date:** 2026-04-14
+**Model:** qwen2-0.5b-instruct-q6_k.gguf (483MB, 0.5B parameters)
+**Hardware:** AMD GPU with 20GB VRAM
+
+## Baseline Performance
+
+**Decode Throughput:** 130.3 tok/s
+- Command: `ROCMFORGE_ENABLE_DECODE_GRAPH=1 ./target/release/rocmforge --gpu --model /home/feanor/Projects/Memoria/models/qwen2-0.5b-instruct-q6_k.gguf --prompt "Hello" --max-tokens 64 --no-template`
+- Result: 64 tokens in 491.2ms = 130.3 tok/s
+
+**Comparison:**
+- Q6_K: 130.3 tok/s
+- Q4_K: 527 tok/s
+- **Performance gap: 4.0x slower**
+
+## Safety Validation
+
+All 10 Q6_K safety tests pass:
+- ✅ test_gpu_lock_acquire_works
+- ✅ test_gpu_lock_blocks_when_held
+- ✅ test_q6_k_decode_graph_env_check
+- ✅ test_q6_k_vram_availability_check
+- ✅ test_q6_k_vram_leak_detection
+- ✅ test_q6_k_multi_token_prompt_with_safety
+- ✅ test_q6_k_sequential_execution_protection
+- ✅ test_q6_k_single_token_prompt_with_timeout
+
+## Next Steps
+
+Apply optimizations from Q4_K kernel:
+1. `__launch_bounds__(32, 1)` specification
+2. `#pragma unroll` on warp reduction
+3. Template specialization for ncols_dst
+
+Target: Close the 4x performance gap while maintaining safety.
