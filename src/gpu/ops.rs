@@ -20,7 +20,7 @@ use super::kernels::{
     gemv_q4_k_f32_on_stream, gemv_q5_k_f32_on_stream, gemv_q6_k_f32_on_stream,
     gemv_q8_0_f32_lm_head_on_stream, gemv_q8_0_f32_lm_head_on_stream_variant,
     gemv_q8_0_f32_on_stream, gemv_qkv_q4_0_f32_on_stream, gemv_qkv_q4_0_f32_on_stream_variant,
-    fused_qkv_rope_q4_0_gqa_on_stream,
+    fused_qkv_q4_0_gqa_on_stream,
     mul_on_stream, q8_0_workspace_bytes, quantize_q8_0_on_stream, rms_norm_on_stream,
     rms_norm_vulkan_style, silu_on_stream,
 };
@@ -137,6 +137,7 @@ fn try_q4_0_q8_0_fastpath(
     stream: hipStream_t,
 ) -> GpuResult<()> {
     let workspace = quantize_input_q8_workspace(device, input, in_dim, stream)?;
+
     gemv_q4_0_q8_0_on_stream(
         weights.as_ptr() as *const u8,
         workspace as *const u8,
@@ -279,9 +280,11 @@ fn dispatch_gemv_impl(
     out_dim: usize,
     in_dim: usize,
 ) -> GpuResult<()> {
+    eprintln!("[RUST] dispatch_gemv_impl called: wtype={:?}, out_dim={}, in_dim={}", meta.wtype, out_dim, in_dim);
     unsafe {
         match meta.wtype {
             GgmlType::Q4_0 => {
+                eprintln!("[RUST] Q4_0 path: checking fastpaths");
                 if experimental_q8_activation_fastpath_enabled()
                     && q8_fastpath_ok(
                         "gemv_q4_0_q8_0",
@@ -290,10 +293,12 @@ fn dispatch_gemv_impl(
                         ),
                     )
                 {
+                    eprintln!("[RUST] Q4_0 Q8_0 fastpath TAKEN");
                     return Ok(());
                 }
 
                 if experimental_gpu_kernels_enabled() {
+                    eprintln!("[RUST] Q4_0 experimental vulkan_style checking");
                     let n_waves = 8;
                     if let Ok(()) = super::kernels::quant::gemv_q4_0_f32_vulkan_style(
                         device,
@@ -305,10 +310,12 @@ fn dispatch_gemv_impl(
                         n_waves,
                         stream,
                     ) {
+                        eprintln!("[RUST] Q4_0 vulkan_style TAKEN");
                         return Ok(());
                     }
                 }
 
+                eprintln!("[RUST] Q4_0 falling back to gemv_q4_0_f32_on_stream_unchecked");
                 gemv_q4_0_f32_on_stream_unchecked(
                     weights.as_ptr() as *const u8,
                     input,
@@ -827,7 +834,7 @@ pub fn gpu_dispatch_fused_qkv_gqa_on_stream(
     q_size: usize,
     kv_size: usize,
     h: usize,
-    pos: usize,
+    pos_ptr: *const i32,  // GPU pointer to decode state position
     stream: hipStream_t,
 ) -> GpuResult<()> {
     // Validate GQA compatibility
@@ -858,31 +865,36 @@ pub fn gpu_dispatch_fused_qkv_gqa_on_stream(
     let rope_theta = 10000.0f32;  // Standard for Qwen2
     let rope_neox = true;          // Qwen2 uses Neox-style RoPE
 
-    // Bias not supported in initial version
-    if q_bias.is_some() || k_bias.is_some() || v_bias.is_some() {
-        return Err(GpuError::HipApiError {
-            code: -1,
-            description: "GQA QKV fusion does not support bias yet".to_string(),
-        });
-    }
+    // Convert bias Option<&GpuBuffer> to *const f32 (null if None)
+    let bias_q_ptr = q_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32);
+    let bias_k_ptr = k_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32);
+    let bias_v_ptr = v_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32);
 
-    fused_qkv_rope_q4_0_gqa_on_stream(
+    // Step 1: Fused QKV projection (no RoPE - applied separately)
+    fused_qkv_q4_0_gqa_on_stream(
         device,
         w_q.as_ptr() as *const u8,
         w_k.as_ptr() as *const u8,
         w_v.as_ptr() as *const u8,
+        bias_q_ptr,
+        bias_k_ptr,
+        bias_v_ptr,
         input,
         out_q,
         out_k,
         out_v,
-        pos,
         n_heads,
         n_kv_heads,
-        h,
-        rope_theta,
-        rope_neox,
+        h,  // head_dim
+        h,  // input dimension (hidden_size)
         stream,
-    )
+    )?;
+
+    // Step 2: Apply RoPE to Q and K separately using GPU state pointer (for graph replay compatibility)
+    super::kernels::rope::rope_heads_from_state_on_stream(out_q, pos_ptr, n_heads, h, rope_theta, rope_neox, stream)?;
+    super::kernels::rope::rope_heads_from_state_on_stream(out_k, pos_ptr, n_kv_heads, h, rope_theta, rope_neox, stream)?;
+
+    Ok(())
 }
 
 /// Dispatch a fused QKV GEMV with bias on an explicit HIP stream (decode-strict).

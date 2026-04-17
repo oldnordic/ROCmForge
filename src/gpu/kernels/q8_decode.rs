@@ -10,7 +10,7 @@ use std::os::raw::{c_int, c_void};
 
 const QK4_0: usize = 32;
 const QK8_0: usize = 32;
-const Q8_0_BLOCK_SIZE: usize = 34;
+const Q8_0_BLOCK_SIZE: usize = 36;  // Changed from 34 to 36 (4 bytes float + 32 bytes qs)
 
 pub fn q8_0_workspace_bytes(n: usize) -> usize {
     n.div_ceil(QK8_0) * Q8_0_BLOCK_SIZE

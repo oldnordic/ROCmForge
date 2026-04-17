@@ -70,8 +70,8 @@ pub const Q6_K_BLOCK_SIZE: usize = 128 + 64 + 16 + 2; // ql + qh + scales + d
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct Q6KBlock {
-    pub ql: [u8; 128],   // quants, low 4 bits
-    pub qh: [u8; 64],    // quants, high 2 bits
+    pub ql: [u8; 128],    // quants, low 4 bits
+    pub qh: [u8; 64],     // quants, high 2 bits
     pub scales: [i8; 16], // signed scales (int8_t)
     pub d: half::f16,     // super-block scale
 }
@@ -92,14 +92,14 @@ impl Default for Q5KBlock {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct Q8_0Block {
-    pub d: half::f16, // scale (2 bytes)
+    pub d: f32,      // scale (4 bytes) - changed from f16 to fix conversion bug
     pub qs: [i8; 32], // quantized values (32 bytes)
 }
 
 impl Default for Q8_0Block {
     fn default() -> Self {
         Self {
-            d: half::f16::from_f32(1.0),
+            d: 1.0f32,  // Changed from f16 to f32
             qs: [0; 32],
         }
     }

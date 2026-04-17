@@ -3,22 +3,51 @@
 // Q4_0 constants
 #define QK4_0 32
 #define Q4_0_BLOCK_SIZE 18
-#define Q8_0_BLOCK_SIZE 34
+#define Q8_0_BLOCK_SIZE 36  // Changed from 34 to 36 (4 bytes float + 32 bytes qs)
 constexpr int Q4_0_MULTI_ROW_COLS = 4;
 constexpr int Q4_0_MULTI_ROW_SHARED_MEM_LIMIT = 32 * 1024;
 constexpr int Q4_0_SMALL_WAVES = 4;
 constexpr int Q4_0_FIXED_WAVES = 8;
+constexpr int Q4_0_HIGH_WAVES = 16;
 constexpr int Q4_0_THREADS_PER_BLOCK = Q4_0_FIXED_WAVES * WARP_SIZE;
+constexpr float LAUNCH_MARKER_VALUE = 999999.0f;  // OBVIOUS marker for launch function
+
+// Global counter to track launch function calls
+__device__ int launch_call_counter = 0;
 
 struct Q4_0_block {
     half d;
-    int8_t qs[16];
+    uint8_t qs[16];
 };
 
 struct Q8_0_block {
-    half d;
+    float d;  // Changed from half to float to fix conversion bug
     int8_t qs[QK4_0];
 };
+
+__device__ void debug_q4_0_block(const Q4_0_block* block, int block_idx, int thread_id) {
+    if (block_idx == 0 && thread_id == 0) {
+        // Read the scale as __half first, then convert
+        const __half d_half = block->d;
+        const float d = __half2float(d_half);
+
+        printf("[GPU KERNEL] Block 0 scale (__half raw): 0x%04x\n", *(reinterpret_cast<const uint16_t*>(&d_half)));
+        printf("[GPU KERNEL] Block 0 scale (converted): %f\n", d);
+
+        // Print first 8 bytes of qs array
+        printf("[GPU KERNEL] First 8 QS bytes: %02x %02x %02x %02x %02x %02x %02x %02x\n",
+               block->qs[0], block->qs[1], block->qs[2], block->qs[3],
+               block->qs[4], block->qs[5], block->qs[6], block->qs[7]);
+
+        // Dequantize first value manually
+        const uint8_t q0 = block->qs[0];
+        const float val0_lo = d * (static_cast<float>(q0 & 0x0F) - 8.0f);
+        const float val0_hi = d * (static_cast<float>((q0 >> 4) & 0x0F) - 8.0f);
+
+        printf("[GPU KERNEL] First Q[0] (lo): quant=%d, dequant=%f\n", q0 & 0x0F, val0_lo);
+        printf("[GPU KERNEL] First Q[1] (hi): quant=%d, dequant=%f\n", (q0 >> 4) & 0x0F, val0_hi);
+    }
+}
 
 static inline int select_multi_row_waves_q4_0(int /* ncols_dst */) {
     // The last documented fast decode baseline on this tree used the
@@ -87,6 +116,11 @@ __global__ void gemv_q4_0_f32_chunked_kernel(
 
     if (col >= ncols_dst) return;
 
+    // DIAGNOSTIC: Write marker to output to confirm kernel execution
+    if (col == 0 && lane_id == 0) {
+        output[col] = -88888.0f;  // Unique marker for chunked kernel
+    }
+
     const Q4_0_block* w_col = reinterpret_cast<const Q4_0_block*>(
         static_cast<const uint8_t*>(weights_q4_0) + (col * n_blocks_total) * Q4_0_BLOCK_SIZE
     );
@@ -128,6 +162,10 @@ __global__ void gemv_q4_0_f32_chunked_kernel(
     }
 
     if (lane_id == 0) {
+        // DIAGNOSTIC: Add marker to confirm chunked kernel execution
+        if (col == 0) {
+            sum += 200000.0f;  // Unique marker
+        }
         output[col] = sum;
     }
 }
@@ -207,10 +245,29 @@ __global__ void gemv_q4_0_f32_multi_row_kernel(
     const int tid = threadIdx.x;
     const int wave_id = tid / WARP_SIZE;
     const int lane_id = tid % WARP_SIZE;
-    
+
     // Each wave processes 4 output columns
     const int col_base = (blockIdx.x * N_WAVES + wave_id) * 4;
     const int n_blocks_total = n_rows / QK4_0;
+
+    // CRITICAL TEST: Write OBVIOUS pattern to ENTIRE output buffer
+    // ALL threads participate to ensure complete overwrite
+    if (blockIdx.x == 0 && wave_id == 0 && lane_id == 0) {
+        // First thread writes entire buffer
+        for (int i = 0; i < ncols_dst && i < 10; ++i) {
+            output[i] = 77777.0f + i;  // OBVIOUS pattern: 77777, 77778, 77779, ...
+        }
+    }
+    __syncthreads();  // Ensure marker is written
+    if (blockIdx.x == 0) return;  // ALL threads in first block return after marker
+    if (col_base >= ncols_dst) return;
+
+    // DIAGNOSTIC: Write marker to output to confirm kernel execution
+    if (blockIdx.x == 0 && wave_id == 0 && lane_id == 0) {
+        if (col_base < ncols_dst) {
+            output[col_base] = -99999.0f;  // Unique marker for multi-row kernel
+        }
+    }
 
     if (col_base >= ncols_dst) return;
 
@@ -270,6 +327,10 @@ __global__ void gemv_q4_0_f32_multi_row_kernel(
         #pragma unroll
         for (int c = 0; c < 4; ++c) {
             if (col_base + c < ncols_dst) {
+                // DIAGNOSTIC: Add marker to confirm multi-row kernel execution
+                if (col_base + c == 0) {
+                    sums[c] += 100000.0f;  // Unique marker
+                }
                 output[col_base + c] = sums[c];
             }
         }
@@ -399,7 +460,7 @@ __global__ void gemv_q4_0_q8_0_residual_multi_row_kernel(
 
     for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += WARP_SIZE) {
         const Q8_0_block* x_block = &s_input_q8[block_idx];
-        const float x_scale = __half2float(x_block->d);
+        const float x_scale = x_block->d;  // Now float32, no conversion needed
         const int8_t* x_qs = x_block->qs;
 
         #pragma unroll
@@ -489,7 +550,7 @@ __global__ void gemv_q4_0_f32_q8_inline_residual_multi_row_kernel(
 
     for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += WARP_SIZE) {
         const Q8_0_block* x_block = &s_input_q8[block_idx];
-        const float x_scale = __half2float(x_block->d);
+        const float x_scale = x_block->d;  // Now float32, no conversion needed
         const int8_t* x_qs = x_block->qs;
 
         #pragma unroll
@@ -564,7 +625,7 @@ __global__ void gemv_q4_0_q8_0_multi_row_kernel(
 
     for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += WARP_SIZE) {
         const Q8_0_block* x_block = &s_input_q8[block_idx];
-        const float x_scale = __half2float(x_block->d);
+        const float x_scale = x_block->d;  // Now float32, no conversion needed
         const int8_t* x_qs = x_block->qs;
 
         #pragma unroll
@@ -606,6 +667,12 @@ extern "C" hipError_t gemv_q4_0_f32_launch(
     int ncols_dst,
     hipStream_t stream
 ) {
+    // CRITICAL: Write OBVIOUS pattern to ALL output values
+    if (ncols_dst >= 10) {
+        float markers[10] = {11111.0f, 22222.0f, 33333.0f, 44444.0f, 55555.0f, 66666.0f, 77777.0f, 88888.0f, 99999.0f, 101010.0f};
+        hipMemcpyAsync(output, markers, 10 * sizeof(float), hipMemcpyHostToDevice, stream);
+    }
+
     if (n_rows <= 0 || ncols_dst <= 0) return hipErrorInvalidValue;
 
     const int n_waves = select_multi_row_waves_q4_0(ncols_dst);
@@ -738,17 +805,23 @@ extern "C" hipError_t gemv_q4_0_f32_q8_inline_residual_variant_launch(
         return hipErrorInvalidValue;
     }
 
-    // variant 0 = heuristic select, variant 1 = force Q4_0_SMALL_WAVES
-    if (variant != 0 && variant != 1) {
+    // variant 0 = heuristic select, variant 1 = force Q4_0_SMALL_WAVES, variant 2 = force Q4_0_HIGH_WAVES
+    if (variant != 0 && variant != 1 && variant != 2) {
         return hipErrorInvalidValue;
     }
-    const int n_waves = (variant == 1) ? Q4_0_SMALL_WAVES : select_multi_row_waves_q4_0_q8(n_blocks_total);
+    const int n_waves = (variant == 1) ? Q4_0_SMALL_WAVES :
+                        (variant == 2) ? Q4_0_HIGH_WAVES :
+                        select_multi_row_waves_q4_0_q8(n_blocks_total);
     const int threads_per_block = n_waves * WARP_SIZE;
     const int n_blocks_x =
         (ncols_dst + (n_waves * Q4_0_MULTI_ROW_COLS) - 1) / (n_waves * Q4_0_MULTI_ROW_COLS);
 
     if (n_waves == Q4_0_SMALL_WAVES) {
         gemv_q4_0_f32_q8_inline_residual_multi_row_kernel<Q4_0_SMALL_WAVES><<<n_blocks_x, threads_per_block, shared_mem, stream>>>(
+            weights_q4_0, input, residual, output, n_rows, ncols_dst
+        );
+    } else if (n_waves == Q4_0_HIGH_WAVES) {
+        gemv_q4_0_f32_q8_inline_residual_multi_row_kernel<Q4_0_HIGH_WAVES><<<n_blocks_x, threads_per_block, shared_mem, stream>>>(
             weights_q4_0, input, residual, output, n_rows, ncols_dst
         );
     } else {

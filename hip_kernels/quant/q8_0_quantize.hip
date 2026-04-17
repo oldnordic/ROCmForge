@@ -2,7 +2,7 @@
 
 // Q8_0 constants (must match Rust types.rs)
 #define QK8_0 32
-#define Q8_0_BLOCK_SIZE 34
+#define Q8_0_BLOCK_SIZE 36  // Changed from 34 to 36 (4 bytes float + 32 bytes qs)
 
 /// Quantize f32 data to Q8_0 format (device kernel)
 /// Each thread block processes one 32-element block
@@ -26,27 +26,29 @@ __global__ void quantize_q8_0_device(
     }
 
     // Compute scale (thread 0 only)
-    __shared__ half s_scale;
+    __shared__ float s_scale_f32;
     if (threadIdx.x == 0) {
-        s_scale = __float2half(fmaxf(max_val / 127.0f, 1e-30f));
+        s_scale_f32 = fmaxf(max_val / 127.0f, 1e-30f);
     }
     __syncthreads();
 
     // Quantize values
     uint8_t* out = static_cast<uint8_t*>(output) + block_idx * Q8_0_BLOCK_SIZE;
 
-    // Thread 0 writes scale (f16 = 2 bytes)
+    // Thread 0 writes scale as float32 (4 bytes)
     if (threadIdx.x == 0) {
-        half* d_ptr = reinterpret_cast<half*>(out);
-        *d_ptr = s_scale;
+        float* d_ptr = reinterpret_cast<float*>(out);
+        *d_ptr = s_scale_f32;
     }
 
-    // All threads write their quantized value
+    // All threads write their quantized value (starting at byte 4)
     if (threadIdx.x < QK8_0) {
-        int8_t q = static_cast<int8_t>(
-            fminf(fmaxf(val / __half2float(s_scale), -127.0f), 127.0f)
-        );
-        out[2 + threadIdx.x] = reinterpret_cast<uint8_t&>(q);
+        // Round to nearest int, then clamp and convert to int8_t
+        const float x0 = val / s_scale_f32;
+        const float x0_rounded = roundf(x0);
+        const float x0_clamped = fminf(fmaxf(x0_rounded, -127.0f), 127.0f);
+        int8_t q = static_cast<int8_t>(x0_clamped);
+        out[4 + threadIdx.x] = reinterpret_cast<uint8_t&>(q);
     }
 }
 
