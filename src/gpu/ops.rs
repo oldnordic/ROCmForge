@@ -442,14 +442,24 @@ fn dispatch_gemv_impl(
                 )?
                 */
             }
-            GgmlType::Q5_K => gemv_q5_k_f32_on_stream(
-                weights.as_ptr() as *const u8,
-                input,
-                output,
-                in_dim,
-                out_dim,
-                stream,
-            )?,
+            GgmlType::Q5_K => {
+                // DISABLED: gemv_q5_k_f32_on_stream not available
+                // TODO: Implement Q5_K kernel or use CPU fallback
+                return Err(GpuError::UnsupportedOperation {
+                    operation: format!("gpu_dispatch_gemv_on_stream for {:?}", wtype),
+                    reason: "Q5_K kernel not implemented".to_string(),
+                });
+                /*
+                gemv_q5_k_f32_on_stream(
+                    weights.as_ptr() as *const u8,
+                    input,
+                    output,
+                    in_dim,
+                    out_dim,
+                    stream,
+                )?,
+                */
+            }
             GgmlType::Q6_K => gemv_q6_k_f32_on_stream(
                 weights.as_ptr() as *const u8,
                 input,
