@@ -13,6 +13,7 @@ pub mod detect;
 pub mod device;
 pub mod dynamic_loader;
 pub mod error;
+pub mod features;
 pub mod ffi;
 pub mod forward;
 pub mod graph;
@@ -33,6 +34,7 @@ pub use detect::GpuCapabilities;
 pub use device::GpuDevice;
 pub use dynamic_loader::{library_info, DynamicLibrary, LibraryInfo};
 pub use error::{GpuError, GpuResult};
+pub use features::GpuFeatures;
 pub use forward::{
     gpu_embed_token_hybrid, gpu_full_forward_hybrid, gpu_layer_forward_hybrid,
     gpu_prefill_forward_hybrid, gpu_prefill_layer_forward_hybrid, GpuLogitsMode,

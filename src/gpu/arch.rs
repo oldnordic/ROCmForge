@@ -69,6 +69,19 @@ impl GpuArchitecture {
             id => Self::Unknown(id),
         })
     }
+
+    /// Convert architecture to string representation (e.g., "gfx1100")
+    pub fn to_string(&self) -> String {
+        match self {
+            Self::Gfx1201 => "gfx1201".to_string(),
+            Self::Gfx1100 => "gfx1100".to_string(),
+            Self::Gfx1030 => "gfx1030".to_string(),
+            Self::Gfx90a => "gfx90a".to_string(),
+            Self::Gfx908 => "gfx908".to_string(),
+            Self::Gfx900 => "gfx900".to_string(),
+            Self::Unknown(id) => format!("gfx{:x}", id),
+        }
+    }
 }
 
 #[cfg(test)]
