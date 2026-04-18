@@ -9,17 +9,23 @@ use super::ffi::{hipStreamCaptureStatus, hipStream_t, hip_stream_is_capturing};
 use super::kernels::{
     add_on_stream, gemm_q4_0_f32, gemm_q4_1_f32, gemm_q4_k_f32, gemm_q5_k_f32, gemm_q6_k_f32,
     gemm_q8_0_f32, gemv_gate_up_q4_0_f32_on_stream, gemv_gate_up_q4_0_q8_0_on_stream,
-    gemv_gate_up_swiglu_q4_0_f32_on_stream,
-    gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_on_stream,
-    gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_tile4_on_stream,
-    gemv_gate_up_swiglu_q4_0_f32_q8_inline_on_stream_variant, gemv_q4_0_f32_on_stream_unchecked,
+    // DISABLED: gemv_gate_up_swiglu_q4_0_f32_on_stream not available
+    // DISABLED: Experimental Q8 variants not available
+    // gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_on_stream,
+    // gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_tile4_on_stream,
+    // gemv_gate_up_swiglu_q4_0_f32_q8_inline_on_stream_variant,
+    gemv_q4_0_f32_on_stream_unchecked,
     gemv_q4_0_f32_q8_inline_residual_on_stream, gemv_q4_0_f32_q8_inline_residual_on_stream_variant,
     gemv_q4_0_f32_residual_on_stream_unchecked, gemv_q4_0_q8_0_on_stream,
     gemv_q4_0_q8_0_residual_on_stream, gemv_q4_1_f32_on_stream_unchecked,
     gemv_q4_1_f32_residual_on_stream_unchecked, gemv_q4_1_f32_residual_on_stream_variant_unchecked,
-    gemv_q4_k_f32_on_stream, gemv_q5_k_f32_on_stream, gemv_q6_k_f32_on_stream,
+    // DISABLED: gemv_q4_k_f32_on_stream, gemv_q5_k_f32_on_stream, gemv_q6_k_f32_on_stream not available
+    // gemv_q4_k_f32_on_stream, gemv_q5_k_f32_on_stream, gemv_q6_k_f32_on_stream,
     gemv_q8_0_f32_lm_head_on_stream, gemv_q8_0_f32_lm_head_on_stream_variant,
-    gemv_q8_0_f32_on_stream, gemv_qkv_q4_0_f32_on_stream, gemv_qkv_q4_0_f32_on_stream_variant,
+    gemv_q8_0_f32_on_stream,
+    // DISABLED: gemv_qkv_q4_0_f32_on_stream not available (use fused_qkv_rope_q4_0_gqa_on_stream instead)
+    // gemv_qkv_q4_0_f32_on_stream,
+    // DISABLED: gemv_qkv_q4_0_f32_on_stream_variant not available
     fused_qkv_rope_q4_0_gqa_on_stream,
     mul_on_stream, q8_0_workspace_bytes, quantize_q8_0_on_stream, rms_norm_on_stream,
     rms_norm_vulkan_style, silu_on_stream,
@@ -258,16 +264,23 @@ fn try_q4_0_q8_0_fused_gate_up_fastpath_variant(
     variant: i32,
     stream: hipStream_t,
 ) -> GpuResult<()> {
-    gemv_gate_up_swiglu_q4_0_f32_q8_inline_on_stream_variant(
-        w_gate.as_ptr() as *const u8,
-        w_up.as_ptr() as *const u8,
-        input,
-        output,
-        h,
-        ff_size,
-        variant,
-        stream,
-    )
+    // DISABLED: Experimental Q8 variants not available
+    return Err(GpuError::UnsupportedOperation {
+        operation: "gpu_dispatch_fused_gate_up_with_scratch_q8_variant".to_string(),
+        reason: "Experimental Q8 variants not yet implemented. Use baseline variant.".to_string(),
+    });
+
+    // TODO: Re-enable when Q8 experimental kernels are available
+    // gemv_gate_up_swiglu_q4_0_f32_q8_inline_on_stream_variant(
+    //     w_gate.as_ptr() as *const u8,
+    //     w_up.as_ptr() as *const u8,
+    //     input,
+    //     output,
+    //     h,
+    //     ff_size,
+    //     variant,
+    //     stream,
+    // )
 }
 
 fn dispatch_gemv_impl(
@@ -297,23 +310,24 @@ fn dispatch_gemv_impl(
                     return Ok(());
                 }
 
-                if experimental_gpu_kernels_enabled() {
-                    eprintln!("[RUST] Q4_0 experimental vulkan_style checking");
-                    let n_waves = 8;
-                    if let Ok(()) = super::kernels::quant::gemv_q4_0_f32_vulkan_style(
-                        device,
-                        weights.as_ptr() as *const u8,
-                        input,
-                        output,
-                        in_dim,
-                        out_dim,
-                        n_waves,
-                        stream,
-                    ) {
-                        eprintln!("[RUST] Q4_0 vulkan_style TAKEN");
-                        return Ok(());
-                    }
-                }
+                // DISABLED: vulkan_style kernels not available
+                // if experimental_gpu_kernels_enabled() {
+                //     eprintln!("[RUST] Q4_0 experimental vulkan_style checking");
+                //     let n_waves = 8;
+                //     if let Ok(()) = super::kernels::quant::gemv_q4_0_f32_vulkan_style(
+                //         device,
+                //         weights.as_ptr() as *const u8,
+                //         input,
+                //         output,
+                //         in_dim,
+                //         out_dim,
+                //         n_waves,
+                //         stream,
+                //     ) {
+                //         eprintln!("[RUST] Q4_0 vulkan_style TAKEN");
+                //         return Ok(());
+                //     }
+                // }
 
                 eprintln!("[RUST] Q4_0 falling back to gemv_q4_0_f32_on_stream_unchecked");
                 gemv_q4_0_f32_on_stream_unchecked(
@@ -394,22 +408,30 @@ fn dispatch_gemv_impl(
                 }
             }
             GgmlType::Q4_K => {
-                if experimental_gpu_kernels_enabled() {
-                    let n_waves = 8;
-                    if let Ok(()) = super::kernels::quant::gemv_q4_k_f32_vulkan_style(
-                        device,
-                        weights.as_ptr() as *const u8,
-                        input,
-                        output,
-                        in_dim,
-                        out_dim,
-                        n_waves,
-                        stream,
-                    ) {
-                        return Ok(());
-                    }
-                }
+                // DISABLED: vulkan_style kernels not available
+                // if experimental_gpu_kernels_enabled() {
+                //     let n_waves = 8;
+                //     if let Ok(()) = super::kernels::quant::gemv_q4_k_f32_vulkan_style(
+                //         device,
+                //         weights.as_ptr() as *const u8,
+                //         input,
+                //         output,
+                //         in_dim,
+                //         out_dim,
+                //         n_waves,
+                //         stream,
+                //     ) {
+                //         return Ok(());
+                //     }
+                // }
 
+                // DISABLED: gemv_q4_k_f32_on_stream not available
+                // TODO: Implement Q4_K kernel or use CPU fallback
+                return Err(GpuError::UnsupportedOperation {
+                    operation: format!("gpu_dispatch_gemv_on_stream for {:?}", wtype),
+                    reason: "Q4_K kernel not implemented".to_string(),
+                });
+                /*
                 gemv_q4_k_f32_on_stream(
                     weights.as_ptr() as *const u8,
                     input,
@@ -418,6 +440,7 @@ fn dispatch_gemv_impl(
                     out_dim,
                     stream,
                 )?
+                */
             }
             GgmlType::Q5_K => gemv_q5_k_f32_on_stream(
                 weights.as_ptr() as *const u8,
@@ -701,7 +724,10 @@ pub fn gpu_dispatch_fused_qkv_on_stream(
         && k_meta.wtype == GgmlType::Q4_0
         && v_meta.wtype == GgmlType::Q4_0
     {
+        // DISABLED: gemv_qkv_q4_0_f32_on_stream_variant not available
+        // TODO: Re-enable launch autotune when variant kernels are implemented
         // Check if stream capture is active - skip autotune benchmarking during capture
+        /*
         let capture_active = matches!(
             hip_stream_is_capturing(stream),
             Err(_)
@@ -760,6 +786,7 @@ pub fn gpu_dispatch_fused_qkv_on_stream(
                 )?;
             }
         } else {
+        */
             // Baseline path (backward compatible)
             unsafe {
                 gemv_qkv_q4_0_f32_on_stream(
@@ -779,7 +806,7 @@ pub fn gpu_dispatch_fused_qkv_on_stream(
                     stream,
                 )?;
             }
-        }
+        //} // End of disabled autotune block
         return Ok(());
     }
 
@@ -896,22 +923,22 @@ pub fn gpu_dispatch_fused_qkv_gqa_on_stream(
     }
 
     // Step 1: Fused QKV projection (no RoPE - applied separately)
+    // Note: pos=0 is safe here since RoPE is applied separately below
     fused_qkv_rope_q4_0_gqa_on_stream(
         device,
         w_q.as_ptr() as *const u8,
         w_k.as_ptr() as *const u8,
         w_v.as_ptr() as *const u8,
-        bias_q_ptr,
-        bias_k_ptr,
-        bias_v_ptr,
         input,
         out_q,
         out_k,
         out_v,
+        0,  // pos (not used, RoPE applied separately)
         n_heads,
         n_kv_heads,
         h,  // head_dim
-        h,  // input dimension (hidden_size)
+        rope_theta,
+        rope_neox,
         stream,
     )?;
 
@@ -1109,6 +1136,9 @@ pub(crate) fn gpu_dispatch_fused_gate_up_with_scratch_on_stream(
                     | Ok(hipStreamCaptureStatus::hipStreamCaptureStatusInvalidated)
             );
 
+            // DISABLED: Experimental Q8 variants not available
+            // TODO: Re-enable when experimental kernels are implemented
+            /*
             if launch_autotune_enabled() {
                 let variant = if capture_active {
                     lookup_gate_up_swiglu_q8_variant(h, ff_size).unwrap_or(VariantId::Baseline)
@@ -1205,6 +1235,7 @@ pub(crate) fn gpu_dispatch_fused_gate_up_with_scratch_on_stream(
                     return Ok(());
                 }
             }
+            */
 
             if q8_fastpath_ok(
                 "gemv_gate_up_swiglu_q4_0_f32_q8_inline",
@@ -1216,6 +1247,13 @@ pub(crate) fn gpu_dispatch_fused_gate_up_with_scratch_on_stream(
             }
         }
 
+        // DISABLED: gemv_gate_up_swiglu_q4_0_f32_on_stream not available
+        // TODO: Implement fallback path when gate-up kernel is available
+        return Err(GpuError::UnsupportedOperation {
+            operation: "gpu_dispatch_fused_gate_up_q8_variant".to_string(),
+            reason: "gemv_gate_up_swiglu_q4_0_f32_on_stream kernel not implemented".to_string(),
+        });
+        /*
         unsafe {
             gemv_gate_up_swiglu_q4_0_f32_on_stream(
                 w_gate.as_ptr() as *const u8,
@@ -1228,6 +1266,7 @@ pub(crate) fn gpu_dispatch_fused_gate_up_with_scratch_on_stream(
             )?;
         }
         return Ok(());
+        */
     }
 
     if gate_scratch.is_null() {
@@ -1360,6 +1399,16 @@ pub fn gpu_dispatch_gemm(
         return gpu_dispatch_gemv(device, weights, meta, input, output, out_dim, in_dim);
     }
 
+    // DISABLED: GEMM kernels not available (prefill-only, not needed for decode)
+    // TODO: Implement GEMM kernels or use GEMV for all cases
+    return Err(GpuError::UnsupportedOperation {
+        operation: format!("gpu_dispatch_gemm for seq_len={}", seq_len),
+        reason: "GEMM kernels not yet implemented. Use GEMV (seq_len=1) for now.".to_string(),
+    });
+
+    // TODO: Re-enable GEMM kernels when libraries are built
+    // The following code is commented out because GEMM libraries are not built
+    /*
     unsafe {
         match meta.wtype {
             GgmlType::Q4_0 => gemm_q4_0_f32(
@@ -1418,6 +1467,9 @@ pub fn gpu_dispatch_gemm(
             }
         }
     }
+    */
+    /*
+    */
 
     Ok(())
 }
