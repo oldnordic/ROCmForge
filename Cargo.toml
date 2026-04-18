@@ -39,6 +39,8 @@ fastrand = "2"
 serial_test = "3"
 criterion = "0.5"
 clap = { version = "4.5", features = ["derive"] }
+# For numerical comparisons in kernel correctness tests
+approx = "0.5"
 
 # Test configuration notes:
 # - GPU tests should ALWAYS be run with: --test-threads=1
