@@ -20,6 +20,7 @@ pub mod graph;
 pub mod kernels;
 pub mod launch_autotune;
 pub mod ops;
+pub mod profile;
 pub mod quant;
 pub mod quant_wrapper;
 pub mod safety;
