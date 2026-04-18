@@ -2292,7 +2292,7 @@ unsafe extern "C" {
     ) -> hipError_t;
 
     #[link_name = "gemm_q6_k_f32_launch_dispatch"]
-    fn gemm_q6_k_f32_launch(
+    fn gemm_q6_k_f32_launch_dispatch(
         weights_q6_k: *const u8,
         input: *const f32,
         output: *mut f32,
