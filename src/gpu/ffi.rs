@@ -128,6 +128,20 @@ pub fn hip_set_device(device_id: i32) -> GpuResult<()> {
     }
 }
 
+/// Get HIP device name.
+pub fn hip_get_device_name(device_id: i32) -> GpuResult<String> {
+    unsafe {
+        let mut name: [c_char; 128] = [0; 128];
+        let code = hipGetDeviceName(&mut name[0] as *mut c_char, 128, device_id);
+        hip_check(code)?;
+
+        let name_str = CStr::from_ptr(name.as_ptr())
+            .to_string_lossy()
+            .into_owned();
+        Ok(name_str)
+    }
+}
+
 /// Allocate memory on GPU.
 ///
 /// Returns pointer to allocated memory or GpuError::OutOfMemory.
@@ -646,6 +660,7 @@ extern "C" {
     fn hipGetDeviceProperties(props: *mut hipDeviceProp_t, device: i32) -> hipError_t;
     fn hipGetDevice(device: *mut i32) -> hipError_t;
     fn hipSetDevice(device: i32) -> hipError_t;
+    fn hipGetDeviceName(name: *mut c_char, len: i32, device: i32) -> hipError_t;
     fn hipMalloc(ptr: *mut *mut u8, size: usize) -> hipError_t;
     fn hipFree(ptr: *mut u8) -> hipError_t;
     fn hipHostMalloc(ptr: *mut *mut c_void, size: usize, flags: u32) -> hipError_t;

@@ -105,7 +105,7 @@ impl GpuDevice {
         let (free_vram, _) = ffi::hip_get_mem_info(self.device_id)?;
 
         Ok(super::detect::GpuCapabilities {
-            device_name: info.name,
+            device_name: info.name.clone(),
             total_vram_bytes: info.total_vram_bytes,
             free_vram_bytes: free_vram,
             compute_units: info.compute_units,
@@ -116,6 +116,13 @@ impl GpuDevice {
                 .unwrap_or(super::arch::GpuArchitecture::Unknown(0)),
             max_shared_mem_per_block: info.max_shared_mem_per_block,
         })
+    }
+
+    /// Get the device name string.
+    ///
+    /// Returns the GPU device name as reported by HIP, or None if the query fails.
+    pub fn get_name(&self) -> Option<String> {
+        ffi::hip_get_device_name(self.device_id).ok()
     }
 
     /// Get the HIP stream for this device.

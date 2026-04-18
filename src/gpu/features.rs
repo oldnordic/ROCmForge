@@ -45,11 +45,9 @@ impl GpuFeatures {
     /// assert!(features.has_wmma);
     /// ```
     pub fn detect(device: &GpuDevice) -> GpuResult<Self> {
-        // Query device properties from HIP
-        let props = device.get_properties()?;
-
-        // Use the architecture name from device properties
-        let arch = props.architecture.to_string();
+        // Get device name and map it to architecture
+        let device_name = device.get_name().unwrap_or_default();
+        let arch = Self::map_device_name_to_arch(&device_name);
 
         // Detect features based on architecture
         let has_dp4a = Self::has_dp4a_support(&arch);
