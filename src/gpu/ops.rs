@@ -807,6 +807,14 @@ pub fn gpu_dispatch_fused_qkv_on_stream(
             }
         } else {
         */
+            // DISABLED: gemv_qkv_q4_0_f32_on_stream not available
+            // Use fused_qkv_rope_q4_0_gqa_on_stream instead
+            // TODO: Implement fallback to GQA kernel
+            return Err(GpuError::UnsupportedOperation {
+                operation: "gpu_dispatch_fused_qkv".to_string(),
+                reason: "gemv_qkv_q4_0_f32_on_stream not available, use fused_qkv_rope_q4_0_gqa_on_stream instead".to_string(),
+            });
+            /*
             // Baseline path (backward compatible)
             unsafe {
                 gemv_qkv_q4_0_f32_on_stream(
@@ -826,6 +834,7 @@ pub fn gpu_dispatch_fused_qkv_on_stream(
                     stream,
                 )?;
             }
+            */
         //} // End of disabled autotune block
         return Ok(());
     }
