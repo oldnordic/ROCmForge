@@ -16,39 +16,56 @@
 
 ### Quality Gate: Code Generated Without Tools WILL BE REFUSED
 
+**⚠️ ZERO TOLERANCE POLICY: The following code WILL BE IMMEDIATELY REJECTED:**
+
 **Prohibited patterns (will result in immediate rejection):**
 - Stub implementations: functions that return `unimplemented!()`, `todo!()`, dummy values
-- Mock implementations: simplified/test versions marked as "for now"
-- Placeholder code: comments like `// TODO: implement later`, `// fixme`, `// for now`
-- Code written without tool verification: any code not generated using:
+- Mock implementations: simplified/test versions marked as "for now" or "temporary"
+- Placeholder code: comments like `// TODO: implement later`, `// fixme`, `// for now`, `// placeholder`
+- Code written without tool verification: ANY code not generated using:
   - **LSP** (Rust analyzer) for type checking, definitions, references
   - **Magellan** for call graph navigation and symbol finding
   - **llmgrep** for semantic code search
   - **Mirage** for CFG analysis
 
-**Verification requirement for ALL code:**
-1. Before writing any code, use LSP `goToDefinition` to understand the code you're modifying
-2. Before creating new functions, use Magellan to find similar patterns in the codebase
-3. Before modifying signatures, use LSP `findReferences` to see all call sites
-4. Use llmgrep to search for existing implementations before writing new code
-5. Use Mirage `cfg` if you need to understand control flow complexity
+**REFUSAL POLICY:**
+If you submit code containing:
+- `unimplemented!()`, `todo!()`, or dummy placeholders → **WILL BE REFUSED**
+- "for now" comments, "FIXME", "TODO" in production code → **WILL BE REFUSED**
+- Code written without LSP/Magellan/llmgrep/Mirage verification → **WILL BE REFUSED**
+- Mock implementations or simplified test code marked as temporary → **WILL BE REFUSED**
 
-**If you cannot verify your approach with tools, DO NOT WRITE CODE.** Ask for clarification instead.
+**No exceptions. No "just this once". No "I'll fix it later".**
+
+**Verification requirement for ALL code:**
+1. **BEFORE writing any code:** Use LSP `goToDefinition` to understand the code you're modifying
+2. **BEFORE creating new functions:** Use Magellan to find similar patterns in the codebase
+3. **BEFORE modifying signatures:** Use LSP `findReferences` to see all call sites
+4. **BEFORE implementing:** Use llmgrep to search for existing implementations
+5. **BEFORE complex changes:** Use Mirage `cfg` to understand control flow complexity
+
+**If you cannot verify your approach with tools, DO NOT WRITE CODE. Ask for clarification instead.**
 
 ### Token Limit Handover Procedure
 
+**⚠️ CRITICAL: PROACTIVE HANDOVER IS MANDATORY**
+
 **MANDATORY: Monitor your context usage and proactively hand over BEFORE hitting limits.**
 
-**Check context remaining:**
-- After completing ANY task, check if you've used >80% of your context
-- If approaching context limit, YOU MUST initiate handover
+**Check context remaining AFTER COMPLETING EACH TASK:**
+- If you've used >80% of your context, **YOU MUST STOP AND INITIATE HANDOVER**
+- DO NOT proceed to the next task
 - DO NOT wait until you're blocked from responding
+- DO NOT attempt "one more quick thing"
+
+**Handover is NOT optional when approaching 80% context usage.**
 
 **Handover checklist (when >80% context used):**
 1. Save current state: what task you just completed
 2. What's the next task number (e.g., "Task 2, Step 3")
 3. Any partial work or notes the next subagent needs
 4. Git commit SHA of completed work
+5. File: `/home/feanor/Projects/rocmforge/docs/superpowers/plans/2026-04-18-hipfire-optimizations-for-q4_0.md` (the plan)
 
 **Handover message format:**
 ```
@@ -59,14 +76,17 @@ Next task: Task N, Step Z [specific step from plan]
 Git state: [commit SHA or "N changes staged"]
 Notes: [any important context for next subagent]
 
+Plan location: /home/feanor/Projects/rocmforge/docs/superpowers/plans/2026-04-18-hipfire-optimizations-for-q4_0.md
 Resume execution from: Task N, Step Z in the plan.
 ```
 
 **Next subagent should:**
-1. Read the plan file to see full context
+1. Read the plan file at `/home/feanor/Projects/rocmforge/docs/superpowers/plans/2026-04-18-hipfire-optimizations-for-q4_0.md`
 2. Use `git log --oneline -5` to see recent commits
 3. Resume from the specified task/step
-4. DO NOT re-start from Task 1
+4. **DO NOT re-start from Task 1**
+
+**Remember:** It's better to hand over early with clear context than to run out of tokens mid-task and lose all context.**
 
 ### Mandatory Tool Usage
 
