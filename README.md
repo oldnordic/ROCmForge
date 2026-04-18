@@ -149,9 +149,101 @@ cargo test --release --features gpu --test gpu_decode_real \
 
 - Decode average: `486.0 tok/s`
 
+## GPU Architecture Optimizations
+
+ROCmForge automatically detects your GPU architecture at runtime to enable hardware-specific optimizations:
+
+### Architecture Detection
+
+The `GpuFeatures` module (`src/gpu/features.rs`) detects:
+
+- **GPU Architecture**: Maps device names to architecture strings (gfx1010/gfx1030/gfx1100)
+- **DP4A Support**: `v_dot4_i32_i8` instruction for 4-way int8 multiply-accumulate (RDNA2+)
+- **WMMA Support**: Wave matrix multiply for 16×16×16 matrix operations (RDNA3+)
+- **dot2 Support**: `v_dot2_f32_f16` instruction for FP16 operations
+
+### Per-Architecture Features
+
+| Architecture | GPUs | DP4A | WMMA | dot2 |
+|--------------|------|------|------|------|
+| RDNA1 (gfx1010) | RX 5700 XT | ❌ | ❌ | ❌ |
+| RDNA1 (gfx1013) | BC-250 APU | ❌ | ❌ | ❌ |
+| RDNA2 (gfx1030) | RX 6900 XT, RX 6800 XT | ✅ | ❌ | ✅ |
+| RDNA3 (gfx1100) | RX 7900 XT, RX 7800 XT | ✅ | ✅ | ✅ |
+
+### Optimizations Implemented
+
+1. **Packed 32-bit Loads** (`hip_kernels/quant/q4_0_gemv.hip`)
+   - Load 16 bytes as 4×uint32_t instead of 16×uint8_t
+   - 4× fewer load instructions, better memory coalescing
+   - Applied to Q4_0 GEMV kernels
+
+2. **DP4A-Optimized Fusion Kernel** (`hip_kernels/quant/q4_0_fused_norm_qkv_rope_dp4a.hip`)
+   - Uses `__builtin_amdgcn_sdot4` for 4-way int8 multiply-accumulate
+   - Expected 1.5-2× speedup on RDNA2+ (gfx1030+) and RDNA3+ (gfx1100+)
+   - Trade-off: ~0.4% noise from on-the-fly activation quantization
+   - Kernel implemented but not yet integrated into decode pipeline
+
+3. **Multi-row GEMV** (`hip_kernels/quant/q4_0_gemv.hip`)
+   - Processes 4 output columns per wave for better occupancy
+   - Uses packed loads for dequantization
+   - Shared memory input tiling for large rows
+
+### Current Status
+
+**Implemented:**
+- ✅ GPU architecture and feature detection
+- ✅ Performance profiling infrastructure (`src/gpu/profile.rs`)
+- ✅ Packed load optimization for Q4_0 GEMV
+- ✅ DP4A-optimized fusion kernel (implemented, pending pipeline integration)
+- ✅ Kernel correctness tests (`tests/kernel_correctness.rs`)
+- ✅ Performance benchmarks (`benches/kernel_performance.rs`)
+
+**Not Yet Implemented:**
+- ⏳ Environment variable overrides (ROCMFORGE_USE_DP4A, etc.)
+- ⏳ WMMA-optimized kernel variant for RDNA3+
+- ⏳ Automatic kernel dispatch based on detected features
+- ⏳ Integration of DP4A kernel into decode pipeline
+
+### Performance Expectations
+
+Based on hipfire analysis, expected improvements on Qwen2.5-0.5B Q4_0:
+
+| GPU | Architecture | Baseline | Expected | Speedup |
+|-----|-------------|----------|----------|---------|
+| RX 5700 XT | RDNA1 (gfx1010) | ~150 tok/s | 180-200 | 1.2-1.3× |
+| RX 6900 XT | RDNA2 (gfx1030) | ~150 tok/s | 250-300 | 1.7-2.0× |
+| RX 7900 XT | RDNA3 (gfx1100) | ~150 tok/s | 250-350 | 1.7-2.3× |
+| BC-250 APU | RDNA1 (gfx1013) | ~150 tok/s | 200-220 | 1.3-1.4× |
+
+*Note: Performance numbers are projections based on hipfire implementation. Actual results pending integration testing.*
+
+### Accuracy
+
+DP4A kernel quantizes activations on-the-fly to use int8 SIMD:
+- Introduces ~0.4% noise vs scalar kernel
+- Coherence not affected (verified by correctness tests)
+- Noise level similar to quantization format itself
+
+### Testing
+
+Run kernel correctness tests:
+
+```bash
+ROCMFORGE_RUN_REAL_MODEL_GPU_TESTS=1 cargo test --features gpu --test kernel_correctness -- --nocapture --test-threads=1
+```
+
+Run performance benchmarks:
+
+```bash
+cargo bench --bench kernel_performance
+```
+
 ## Documentation
 
 - Main manual: [MANUAL.md](MANUAL.md)
+- hipfire analysis: [hipfire_detailed_analysis.md](hipfire_detailed_analysis.md)
+- hipfire quick start: [hipfire_quick_start.md](hipfire_quick_start.md)
 
 ## Positioning
 
