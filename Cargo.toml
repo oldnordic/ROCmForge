@@ -66,6 +66,11 @@ name = "gpu_decode"
 harness = false
 required-features = ["gpu"]
 
+[[bench]]
+name = "kernel_performance"
+harness = false
+required-features = ["gpu"]
+
 [profile.release]
 opt-level = 3
 lto = "thin"
