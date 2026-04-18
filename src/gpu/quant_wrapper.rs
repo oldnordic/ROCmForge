@@ -26,10 +26,11 @@ use super::kernels::quant::{
     gemv_q4_0_f32,
     // Q4_1 GEMV kernel
     gemv_q4_1_f32,
-    // Q4_K GEMV kernel
-    gemv_q4_k_f32,
-    // Q5_K GEMV kernel
-    gemv_q5_k_f32,
+    // DISABLED: Q4_K and Q5_K GEMV kernels not available
+    // // Q4_K GEMV kernel
+    // gemv_q4_k_f32,
+    // // Q5_K GEMV kernel
+    // gemv_q5_k_f32,
     // Q8_0 GEMV kernel
     gemv_q8_0_f32,
     // Q4_0 kernels
