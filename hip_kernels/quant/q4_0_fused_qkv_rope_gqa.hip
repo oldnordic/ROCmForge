@@ -245,7 +245,7 @@ extern "C" hipError_t fused_qkv_rope_q4_0_gqa_launch(
         HIP_KERNEL_NAME(fused_qkv_rope_q4_0_gqa_kernel),
         dim3(n_kv_heads_launch),  // grid dims
         dim3(threads_per_block),  // block dims
-        nullptr,  // shared memory
+        0,  // shared memory
         stream,   // HIP stream
         w_q, w_k, w_v, input, out_q, out_k, out_v,
         pos, n_heads, n_kv_heads, head_dim, rope_theta, rope_neox, hidden_size

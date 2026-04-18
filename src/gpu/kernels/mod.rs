@@ -52,14 +52,21 @@ pub use quant::{
     finalize_q4_0_metrics, finalize_q4_1_metrics, finalize_q4_k_metrics, finalize_q5_k_metrics,
     finalize_q8_0_metrics, gemm_q4_0_f32, gemm_q4_1_f32, gemm_q4_k_f32, gemm_q5_k_f32,
     gemm_q6_k_f32, gemm_q8_0_f32, gemv_gate_up_q4_0_f32, gemv_gate_up_q4_0_f32_on_stream,
-    gemv_gate_up_swiglu_q4_0_f32, gemv_gate_up_swiglu_q4_0_f32_on_stream, gemv_q4_0_f32,
+    /* DISABLED: gemv_gate_up_swiglu_q4_0_f32 not available */
+    /* DISABLED: gemv_gate_up_swiglu_q4_0_f32_on_stream not available */
+    gemv_q4_0_f32,
     gemv_q4_0_f32_on_stream, gemv_q4_0_f32_on_stream_unchecked, gemv_q4_0_f32_residual_on_stream,
     gemv_q4_0_f32_residual_on_stream_unchecked, gemv_q4_0_f32_vulkan_style, gemv_q4_1_f32,
     gemv_q4_1_f32_on_stream, gemv_q4_1_f32_on_stream_unchecked, gemv_q4_1_f32_residual_on_stream,
     gemv_q4_1_f32_residual_on_stream_unchecked, gemv_q4_1_f32_residual_on_stream_variant_unchecked,
-    gemv_q4_k_f32, gemv_q4_k_f32_on_stream, gemv_q4_k_f32_vulkan_style, gemv_q5_k_f32,
-    gemv_q5_k_f32_on_stream, gemv_q6_k_f32, gemv_q6_k_f32_on_stream, gemv_qkv_q4_0_f32,
-    gemv_qkv_q4_0_f32_on_stream, gemv_qkv_q4_0_f32_on_stream_variant,
+    /* DISABLED: gemv_q4_k_f32 and gemv_q4_k_f32_on_stream not available */
+    /* gemv_q4_k_f32, gemv_q4_k_f32_on_stream, */ gemv_q4_k_f32_vulkan_style,
+    /* DISABLED: gemv_q5_k_f32 and gemv_q5_k_f32_on_stream not available */
+    /* gemv_q5_k_f32, gemv_q5_k_f32_on_stream, */
+    /* DISABLED: gemv_q6_k_f32 and gemv_q6_k_f32_on_stream not available */
+    /* gemv_q6_k_f32, gemv_q6_k_f32_on_stream, */
+    /* DISABLED: gemv_qkv_q4_0_f32 and gemv_qkv_q4_0_f32_on_stream not available (use fused_qkv_rope_q4_0_gqa_on_stream instead) */
+    /* gemv_qkv_q4_0_f32, gemv_qkv_q4_0_f32_on_stream, */ /* DISABLED: gemv_qkv_q4_0_f32_on_stream_variant not available */
     gemv_norm_qkv_rope_kvwrite_q4_0_f32_dp4a_on_stream, quantize_q4_0, quantize_q4_1,
     quantize_q4_k, quantize_q5_k, quantize_q6_k, quantize_q8_0, verify_q4_0_accuracy,
     verify_q4_1_accuracy, verify_q4_k_accuracy, verify_q5_k_accuracy, verify_q6_k_accuracy,

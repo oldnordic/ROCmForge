@@ -428,7 +428,7 @@ fn dispatch_gemv_impl(
                 // DISABLED: gemv_q4_k_f32_on_stream not available
                 // TODO: Implement Q4_K kernel or use CPU fallback
                 return Err(GpuError::UnsupportedOperation {
-                    operation: format!("gpu_dispatch_gemv_on_stream for {:?}", wtype),
+                    operation: format!("gpu_dispatch_gemv_on_stream for {:?}", meta.wtype),
                     reason: "Q4_K kernel not implemented".to_string(),
                 });
                 /*
@@ -446,7 +446,7 @@ fn dispatch_gemv_impl(
                 // DISABLED: gemv_q5_k_f32_on_stream not available
                 // TODO: Implement Q5_K kernel or use CPU fallback
                 return Err(GpuError::UnsupportedOperation {
-                    operation: format!("gpu_dispatch_gemv_on_stream for {:?}", wtype),
+                    operation: format!("gpu_dispatch_gemv_on_stream for {:?}", meta.wtype),
                     reason: "Q5_K kernel not implemented".to_string(),
                 });
                 /*
@@ -464,7 +464,7 @@ fn dispatch_gemv_impl(
                 // DISABLED: gemv_q6_k_f32_on_stream not available
                 // TODO: Implement Q6_K kernel or use CPU fallback
                 return Err(GpuError::UnsupportedOperation {
-                    operation: format!("gpu_dispatch_gemv_on_stream for {:?}", wtype),
+                    operation: format!("gpu_dispatch_gemv_on_stream for {:?}", meta.wtype),
                     reason: "Q6_K kernel not implemented".to_string(),
                 });
                 /*

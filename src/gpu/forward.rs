@@ -1048,7 +1048,7 @@ fn gpu_layer_forward_from_state_on_stream(
             q_size,
             kv_size,
             h,
-            pos,
+            scratch.decode_pos_ptr(),
             device.stream(),
         )?;
 

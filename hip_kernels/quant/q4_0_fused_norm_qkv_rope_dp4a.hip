@@ -413,7 +413,7 @@ extern "C" hipError_t gemv_norm_qkv_rope_kvwrite_q4_0_f32_dp4a_launch(
         HIP_KERNEL_NAME(gemv_norm_qkv_rope_kvwrite_q4_0_f32_dp4a_kernel),
         dim3(n_kv_launch),
         dim3(threads_per_block),
-        nullptr,
+        0,
         stream,
         raw_hidden,
         norm_weight,

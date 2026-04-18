@@ -42,6 +42,9 @@ pub enum GpuError {
     /// GPU backend does not implement this GGUF weight format yet
     UnsupportedWeightType { tensor: String, wtype: GgmlType },
 
+    /// Operation not supported or not yet implemented
+    UnsupportedOperation { operation: String, reason: String },
+
     /// Matrix weight metadata is invalid for GPU inference
     InvalidWeightLayout {
         tensor: String,
@@ -102,6 +105,9 @@ impl std::fmt::Display for GpuError {
             }
             GpuError::UnsupportedWeightType { tensor, wtype } => {
                 write!(f, "unsupported GPU weight type for {}: {}", tensor, wtype)
+            }
+            GpuError::UnsupportedOperation { operation, reason } => {
+                write!(f, "operation not supported: {} - {}", operation, reason)
             }
             GpuError::InvalidWeightLayout {
                 tensor,

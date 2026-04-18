@@ -1469,12 +1469,19 @@ impl GpuQuant {
     /// - Direct dequantization + dot product (no intermediate Q8_K quantization)
     pub fn gemv_q4_k_f32(
         &self,
-        weights_q4_k: *const u8,
-        input: *const f32,
-        output: *mut f32,
-        n_rows: usize,
-        ncols_dst: usize,
+        _weights_q4_k: *const u8,
+        _input: *const f32,
+        _output: *mut f32,
+        _n_rows: usize,
+        _ncols_dst: usize,
     ) -> GpuResult<()> {
+        // DISABLED: gemv_q4_k_f32 kernel not available
+        // TODO: Implement Q4_K kernel or use CPU fallback
+        Err(GpuError::UnsupportedOperation {
+            operation: "gemv_q4_k_f32".to_string(),
+            reason: "Q4_K kernel not implemented".to_string(),
+        })
+        /*
         // Validate dimensions
         if n_rows == 0 || ncols_dst == 0 {
             return Err(GpuError::HipApiError {
@@ -1537,6 +1544,7 @@ impl GpuQuant {
         self.device.synchronize()?;
 
         Ok(())
+        */
     }
 
     /// Q5_K × f32 GEMV: Compute output = weights @ input
@@ -1570,12 +1578,19 @@ impl GpuQuant {
     /// - Generic fallback for larger sizes
     pub fn gemv_q5_k_f32(
         &self,
-        weights_q5_k: *const u8,
-        input: *const f32,
-        output: *mut f32,
-        n_rows: usize,
-        ncols_dst: usize,
+        _weights_q5_k: *const u8,
+        _input: *const f32,
+        _output: *mut f32,
+        _n_rows: usize,
+        _ncols_dst: usize,
     ) -> GpuResult<()> {
+        // DISABLED: gemv_q5_k_f32 kernel not available
+        // TODO: Implement Q5_K kernel or use CPU fallback
+        Err(GpuError::UnsupportedOperation {
+            operation: "gemv_q5_k_f32".to_string(),
+            reason: "Q5_K kernel not implemented".to_string(),
+        })
+        /*
         // Validate dimensions
         if n_rows == 0 || ncols_dst == 0 {
             return Err(GpuError::HipApiError {
@@ -1638,6 +1653,7 @@ impl GpuQuant {
         self.device.synchronize()?;
 
         Ok(())
+        */
     }
 }
 

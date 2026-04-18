@@ -53,7 +53,10 @@ pub use kernels::{
     // DISABLED: gemv_q4_k_f32, gemv_q5_k_f32 not available
     // gemv_q4_k_f32, gemv_q5_k_f32,
     gemv_q8_0_f32,
-    gemv_q8_0_f32_lm_head, gemv_qkv_q4_0_f32, kv_write, kv_write_batched, mul, mul_batched,
+    gemv_q8_0_f32_lm_head,
+    // DISABLED: gemv_qkv_q4_0_f32 not available (use fused_qkv_rope_q4_0_gqa_on_stream instead)
+    // gemv_qkv_q4_0_f32,
+    kv_write, kv_write_batched, mul, mul_batched,
     quantize_q4_0, quantize_q4_1, quantize_q4_k, quantize_q5_k, quantize_q8_0, rms_norm,
     rms_norm_batched, rope, rope_batched, rope_heads, rope_heads_batched, scale, silu,
     verify_q4_0_accuracy, verify_q4_1_accuracy, verify_q4_k_accuracy, verify_q5_k_accuracy,

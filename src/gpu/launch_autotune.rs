@@ -79,6 +79,8 @@ pub enum VariantId {
     Variant1 = 1,
     /// Optimized variant 2
     Variant2 = 2,
+    /// Optimized variant 3
+    Variant3 = 3,
 }
 
 impl Default for VariantId {

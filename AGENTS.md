@@ -53,6 +53,40 @@ If you submit code containing:
 
 **If you cannot verify your approach with tools, DO NOT WRITE CODE. Ask for clarification instead.**
 
+### File-by-File Plan Requirements:
+ALL code changes must follow this planning process:
+- **Create explicit file-by-file plan** before writing any code
+- **Specify exact files** to create or modify
+- **List exact functions/types** to change with signatures
+- **Include line numbers** when modifying existing code
+- **Get plan approved** before starting implementation
+- **Update plan as needed** when discovering new information
+
+**Example proper plan:**
+```
+Files to modify:
+1. src/gpu/kernels/quant/q4_0.rs:234-267 - Function: gemv_q4_0_f32
+   - Change signature: add stream: &HipStream parameter
+   - Update extern "C" declaration
+   - Modify kernel launch call
+
+2. src/gpu/ops.rs:892-945 - Function: gpu_gemv_q4_0
+   - Add stream parameter passing
+   - Update all call sites
+
+Files to create:
+1. src/gpu/kernels/quant/q4_0_stream.rs (new file)
+   - Purpose: Stream-based Q4_0 operations
+   - Functions: gemv_q4_0_f32_on_stream, gemm_q4_0_f32_on_stream
+```
+
+**Example improper plan (will be refused):**
+```
+"Add stream support to Q4_0 kernels"  ← Too vague
+"Fix the GPU stuff"  ← No specifics
+"Update related files"  ← Which files?
+```
+
 ### Token Limit Handover Procedure:
 
 **⚠️ CRITICAL: PROACTIVE HANDOVER IS MANDATORY**
