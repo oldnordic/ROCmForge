@@ -2230,13 +2230,6 @@ unsafe extern "C" {
         batch_size: c_int,
         stream: hipStream_t,
     ) -> hipError_t;
-}
-        output: *mut f32,
-        n_rows: c_int,
-        ncols_dst: c_int,
-        batch_size: c_int,
-        stream: hipStream_t,
-    ) -> hipError_t;
 
     fn gemm_q4_k_f32_launch(
         weights_q4_k: *const u8,

@@ -20,7 +20,7 @@ use super::kernels::{
     gemv_q4_k_f32_on_stream, gemv_q5_k_f32_on_stream, gemv_q6_k_f32_on_stream,
     gemv_q8_0_f32_lm_head_on_stream, gemv_q8_0_f32_lm_head_on_stream_variant,
     gemv_q8_0_f32_on_stream, gemv_qkv_q4_0_f32_on_stream, gemv_qkv_q4_0_f32_on_stream_variant,
-    fused_qkv_q4_0_gqa_on_stream,
+    fused_qkv_rope_q4_0_gqa_on_stream,
     mul_on_stream, q8_0_workspace_bytes, quantize_q8_0_on_stream, rms_norm_on_stream,
     rms_norm_vulkan_style, silu_on_stream,
 };
@@ -861,6 +861,9 @@ pub fn gpu_dispatch_fused_qkv_gqa_on_stream(
         });
     }
 
+    // Check GPU features for DP4A support
+    let features = super::features::GpuFeatures::detect(device)?;
+
     // Get RoPE parameters from model config
     let rope_theta = 10000.0f32;  // Standard for Qwen2
     let rope_neox = true;          // Qwen2 uses Neox-style RoPE
@@ -870,8 +873,30 @@ pub fn gpu_dispatch_fused_qkv_gqa_on_stream(
     let bias_k_ptr = k_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32);
     let bias_v_ptr = v_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32);
 
+    // TODO: DP4A integration requires pipeline refactoring
+    // The DP4A kernel (gemv_norm_qkv_rope_kvwrite_q4_0_f32_dp4a_on_stream) fuses
+    // RMS norm + QKV projection + RoPE + KV write in a single kernel, but the
+    // current decode pipeline splits these operations:
+    //   1. RMS norm (gpu_dispatch_rms_norm in forward.rs:973)
+    //   2. QKV projection (this function)
+    //   3. RoPE application (line 894-895 below)
+    //   4. KV write (forward.rs:1056)
+    //
+    // To fully integrate DP4A, we need to:
+    //   - Pass raw_hidden (not normed) to this function
+    //   - Pass attn_norm weights and eps
+    //   - Pass KV cache pointers
+    //   - Skip the separate RMS norm, RoPE, and KV write steps in forward.rs
+    //
+    // For now, use the standard kernel path when DP4A is available.
+    // Full DP4A integration is tracked in: https://github.com/your-repo/issues/XXX
+    if features.has_dp4a {
+        // DP4A is available but using standard path due to architectural mismatch
+        // Future work: refactor decode pipeline to use fully fused DP4A kernel
+    }
+
     // Step 1: Fused QKV projection (no RoPE - applied separately)
-    fused_qkv_q4_0_gqa_on_stream(
+    fused_qkv_rope_q4_0_gqa_on_stream(
         device,
         w_q.as_ptr() as *const u8,
         w_k.as_ptr() as *const u8,
