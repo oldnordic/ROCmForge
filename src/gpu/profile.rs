@@ -82,35 +82,24 @@ impl Profiler {
             .collect()
     }
 
-    /// Reset all timing records (useful for testing).
-    pub fn reset(&self) {
-        for timing in self.timings.iter() {
-            let mut t = timing.lock().unwrap();
-            t.calls = 0;
-            t.total_ns = 0;
-            t.avg_ns = 0;
-        }
-    }
-
     /// Print timing summary.
     pub fn print_summary(&self) {
         let timings = self.get_timings();
 
         println!("\n=== GPU Kernel Performance ===");
         println!(
-            "{:<30} {:>10} {:>10} {:>12} {:>12}",
-            "Kernel", "Calls", "Avg (ms)", "Total (s)", "Bandwidth"
+            "{:<30} {:>10} {:>10} {:>12}",
+            "Kernel", "Calls", "Avg (ms)", "Total (s)"
         );
-        println!("{}", "-".repeat(86));
+        println!("{}", "-".repeat(74));
 
         for timing in timings.iter() {
             println!(
-                "{:<30} {:>10} {:>10.2} {:>12.4} {:>12}",
+                "{:<30} {:>10} {:>10.2} {:>12.4}",
                 timing.name,
                 timing.calls,
                 timing.avg_ms(),
-                timing.total_s(),
-                "" // TODO: Add bandwidth calc
+                timing.total_s()
             );
         }
     }
@@ -145,32 +134,22 @@ mod tests {
 
     #[test]
     fn test_profiler_record() {
-        // Clear any existing timings
-        let profiler = Profiler::global().lock().unwrap();
-        profiler.reset();
-        drop(profiler);
-
-        Profiler::record("test_kernel", 1_000_000); // 1ms
-        Profiler::record("test_kernel", 2_000_000); // 2ms
+        Profiler::record("test_kernel_1", 1_000_000); // 1ms
+        Profiler::record("test_kernel_1", 2_000_000); // 2ms
 
         let profiler = Profiler::global().lock().unwrap();
         let timings = profiler.get_timings();
 
         assert_eq!(timings.len(), 1);
-        assert_eq!(timings[0].name, "test_kernel");
+        assert_eq!(timings[0].name, "test_kernel_1");
         assert_eq!(timings[0].calls, 2);
         assert_eq!(timings[0].avg_ns, 1_500_000); // average of 1ms and 2ms
     }
 
     #[test]
     fn test_kernel_timer() {
-        // Clear any existing timings
-        let profiler = Profiler::global().lock().unwrap();
-        profiler.reset();
-        drop(profiler);
-
         {
-            let _timer = KernelTimer::start("test_timer");
+            let _timer = KernelTimer::start("test_timer_kernel");
             std::thread::sleep(std::time::Duration::from_millis(10));
             // Timer records on drop
         }
@@ -179,7 +158,7 @@ mod tests {
         let timings = profiler.get_timings();
 
         assert_eq!(timings.len(), 1);
-        assert_eq!(timings[0].name, "test_timer");
+        assert_eq!(timings[0].name, "test_timer_kernel");
         assert!(timings[0].avg_ns >= 10_000_000); // At least 10ms
     }
 }
