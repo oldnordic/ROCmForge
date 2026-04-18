@@ -205,6 +205,24 @@ set_target_properties(q4_0_fused_qkv_rope_gqa PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
 
+# DP4A-optimized fused QKV+RoPE kernel (RDNA2+ only)
+# Provides 1.5-2× speedup using __builtin_amdgcn_sdot4 for 4-way int8 multiply-accumulate
+# Trade-off: 0.4% noise from on-the-fly activation quantization vs 2× speedup
+add_library(q4_0_fused_norm_qkv_rope_dp4a STATIC
+    q4_0_fused_norm_qkv_rope_dp4a.hip
+)
+
+# Link common library to DP4A kernel
+target_link_libraries(q4_0_fused_norm_qkv_rope_dp4a
+    quant_common
+)
+
+# Set output directory to match Cargo expectations
+set_target_properties(q4_0_fused_norm_qkv_rope_dp4a PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
 # Q4_1 GEMV kernel (Q4_1 × f32 matrix-vector multiplication)
 add_library(q4_1_gemv STATIC
     q4_1_gemv.hip

@@ -211,6 +211,7 @@ mod gpu_build {
                             ("libq4_0_verify.a", "q4_0_verify"),
                             ("libq4_0_gemv.a", "q4_0_gemv"),
                             ("libq4_0_fused_qkv_rope_gqa.a", "q4_0_fused_qkv_rope_gqa"),
+                            ("libq4_0_fused_norm_qkv_rope_dp4a.a", "q4_0_fused_norm_qkv_rope_dp4a"),
                             // Q4_1 libraries
                             ("libq4_1_quantize.a", "q4_1_quantize"),
                             ("libq4_1_dequantize.a", "q4_1_dequantize"),
