@@ -191,4 +191,72 @@ __device__ inline int __vsubss4_gpu(const int a, const int b) {
     return result;
 }
 
+// ── WMMA (Wave Matrix Multiply Accumulate) Intrinsics for RDNA3 ─────
+
+// WMMA matrix fragment types (for RDNA3 gfx1100+)
+#if defined(__AMDGPU__) && defined(__gfx1100__)
+
+// MFMA (Matrix Fuse Multiply-Accumulate) intrinsics
+// __builtin_amdgcn_mfma_f32_4x4x1f32: 4x4 matrix multiply-accumulate (float32)
+// Returns: vec4<float> (4 accumulated results)
+// Args:
+//   - a: vec4<float> (4 input values from matrix A)
+//   - b: vec4<float> (4 input values from matrix B)
+//   - c: vec4<float> (4 accumulator values)
+//   - b: bool (whether to negate result)
+
+// Wrapper for 4-way int8 dot product using MFMA
+// This replaces __builtin_amdgcn_sdot4 for RDNA3
+__device__ __forceinline__ int mfnacc_i32_4x4_i8(
+    int a, int b, int c, bool negate
+) {
+    // Use MFMA instruction for int8 matrix multiply
+    // Returns int32 accumulation result
+    return __builtin_amdgcn_mfma_i32_4x4_i8(a, b, c, negate);
+}
+
+// MFMA intrinsic for 4x4 int8 matrix multiply
+// Input: 4 int8 values packed into int32
+// Output: int32 accumulated result
+#define MFMA_I32_4X4_I8(a, b, c, neg) \
+    __builtin_amdgcn_mfma_i32_4x4_i8((a), (b), (c), (neg))
+
+#endif // __gfx1100__
+
+// ── Portable 4-Way Int8 Dot Product ─────────────────────────────────────
+
+/// Software implementation of 4-way int8 dot product
+/// Computes: sum += dot(int8_vec_a[0:3], int8_vec_b[0:3])
+///
+/// Portably extracts 4 int8 values from packed int32,
+/// sign-extends to int32, multiplies pairwise, and sums.
+///
+/// Performance: Slower than hardware DP4A, but works on all architectures.
+__device__ inline int dot4_manual(int a_packed, int b_packed, int acc) {
+    int dot = 0;
+
+    #pragma unroll
+    for (int i = 0; i < 4; ++i) {
+        // Extract byte i with sign extension using arithmetic shift
+        // Shift to MSB position, then arithmetic shift right to sign-extend
+        const int signed_a = (a_packed << (24 - i * 8)) >> 24;
+        const int signed_b = (b_packed << (24 - i * 8)) >> 24;
+
+        // Multiply-accumulate
+        dot += signed_a * signed_b;
+    }
+
+    return acc + dot;
+}
+
+/// Architecture-aware dot4 dispatcher
+/// Uses hardware DP4A on RDNA2 (gfx1030), software fallback elsewhere
+#if defined(__AMDGPU__) && defined(__gfx1030__)
+    // RDNA2: Use hardware DP4A (dot1-insts feature available)
+    #define DOT4(a, b, acc) __builtin_amdgcn_sdot4((a), (b), (acc), false)
+#else
+    // RDNA1, RDNA3, CDNA: Use portable software fallback
+    #define DOT4(a, b, acc) dot4_manual((a), (b), (acc))
+#endif
+
 #endif // ROCMFORGE_QUANT_COMMON_HIP
