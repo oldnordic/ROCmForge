@@ -663,3 +663,23 @@ mod tests {
         assert!(result.is_err());
     }
 }
+
+// ── Test Helpers for DP4A Portability ─────────────────────────────────────────────
+
+/// Test helper: Call hardware DP4A path (only available on RDNA2)
+#[cfg(feature = "gpu")]
+#[allow(dead_code)]
+pub unsafe fn test_dot4_hardware(a_packed: i32, b_packed: i32, acc: i32) -> i32 {
+    // This will call the DP4A kernel in a test harness
+    // Implementation: Launch a minimal kernel that returns the result
+    todo!("Add test kernel wrapper")
+}
+
+/// Test helper: Call manual dot4 path (works on all architectures)
+#[cfg(feature = "gpu")]
+#[allow(dead_code)]
+pub unsafe fn test_dot4_manual(a_packed: i32, b_packed: i32, acc: i32) -> i32 {
+    // This will call the dot4_manual() function directly
+    // Implementation: Launch a minimal kernel that returns the result
+    todo!("Add test kernel wrapper")
+}
