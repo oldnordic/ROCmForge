@@ -21,10 +21,11 @@ mod legacy;
 
 // Re-export Q4_0 functions
 pub use q4_0::{
-    dequantize_q4_0, dequantize_q4_0_batched, finalize_q4_0_metrics, gemm_q4_0_f32,
-    gemv_q4_0_f32, gemv_q4_0_f32_on_stream, gemv_q4_0_f32_on_stream_unchecked,
-    gemv_q4_0_f32_residual_on_stream, gemv_q4_0_f32_residual_on_stream_unchecked,
-    quantize_q4_0, test_dot4_hardware, test_dot4_manual, verify_q4_0_accuracy,
+    bench_dot4_hardware, bench_dot4_manual, dequantize_q4_0, dequantize_q4_0_batched,
+    finalize_q4_0_metrics, gemm_q4_0_f32, gemv_q4_0_f32, gemv_q4_0_f32_on_stream,
+    gemv_q4_0_f32_on_stream_unchecked, gemv_q4_0_f32_residual_on_stream,
+    gemv_q4_0_f32_residual_on_stream_unchecked, quantize_q4_0, test_dot4_hardware,
+    test_dot4_manual, verify_q4_0_accuracy,
 };
 
 // Re-export Q4_1 functions

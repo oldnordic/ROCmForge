@@ -683,3 +683,23 @@ pub unsafe fn test_dot4_manual(a_packed: i32, b_packed: i32, acc: i32) -> i32 {
     // Implementation: Launch a minimal kernel that returns the result
     todo!("Add test kernel wrapper")
 }
+
+// ── Benchmark Helpers for DP4A Performance ────────────────────────────────────────
+
+/// Benchmark helper: Hardware DP4A path
+#[cfg(feature = "gpu")]
+#[allow(dead_code)]
+pub unsafe fn bench_dot4_hardware(a_packed: i32, b_packed: i32, acc: i32) -> i32 {
+    // This will call the DP4A kernel in a benchmark harness
+    // Implementation: Launch a minimal kernel that returns the result
+    todo!("Add benchmark kernel wrapper")
+}
+
+/// Benchmark helper: Manual dot4 path
+#[cfg(feature = "gpu")]
+#[allow(dead_code)]
+pub unsafe fn bench_dot4_manual(a_packed: i32, b_packed: i32, acc: i32) -> i32 {
+    // This will call the dot4_manual() function directly
+    // Implementation: Launch a minimal kernel that returns the result
+    todo!("Add benchmark kernel wrapper")
+}
