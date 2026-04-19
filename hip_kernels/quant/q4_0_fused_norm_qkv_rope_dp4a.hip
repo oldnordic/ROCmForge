@@ -188,13 +188,13 @@ __device__ float vec_dot_q4_0_dp4a(
         // Even nibbles
         #pragma unroll
         for (int i = 0; i < 4; ++i) {
-            dot_sum = __builtin_amdgcn_sdot4(nib_even[i], xq[i * 2 + 0], dot_sum, false);
+            dot_sum = DOT4(nib_even[i], xq[i * 2 + 0], dot_sum);
         }
 
         // Odd nibbles
         #pragma unroll
         for (int i = 0; i < 4; ++i) {
-            dot_sum = __builtin_amdgcn_sdot4(nib_odd[i], xq[i * 2 + 1], dot_sum, false);
+            dot_sum = DOT4(nib_odd[i], xq[i * 2 + 1], dot_sum);
         }
 
         // Apply scale and add to sum

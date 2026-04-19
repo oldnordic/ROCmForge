@@ -191,37 +191,27 @@ __device__ inline int __vsubss4_gpu(const int a, const int b) {
     return result;
 }
 
-// ── WMMA (Wave Matrix Multiply Accumulate) Intrinsics for RDNA3 ─────
+// ── WMMA (Wave Matrix Multiply Accumulate) Intrinsics for CDNA ─────
 
-// WMMA matrix fragment types (for RDNA3 gfx1100+)
-#if defined(__AMDGPU__) && defined(__gfx1100__)
-
-// MFMA (Matrix Fuse Multiply-Accumulate) intrinsics
-// __builtin_amdgcn_mfma_f32_4x4x1f32: 4x4 matrix multiply-accumulate (float32)
-// Returns: vec4<float> (4 accumulated results)
-// Args:
-//   - a: vec4<float> (4 input values from matrix A)
-//   - b: vec4<float> (4 input values from matrix B)
-//   - c: vec4<float> (4 accumulator values)
-//   - b: bool (whether to negate result)
-
-// Wrapper for 4-way int8 dot product using MFMA
-// This replaces __builtin_amdgcn_sdot4 for RDNA3
-__device__ __forceinline__ int mfnacc_i32_4x4_i8(
-    int a, int b, int c, bool negate
-) {
-    // Use MFMA instruction for int8 matrix multiply
-    // Returns int32 accumulation result
-    return __builtin_amdgcn_mfma_i32_4x4_i8(a, b, c, negate);
-}
-
-// MFMA intrinsic for 4x4 int8 matrix multiply
-// Input: 4 int8 values packed into int32
-// Output: int32 accumulated result
-#define MFMA_I32_4X4_I8(a, b, c, neg) \
-    __builtin_amdgcn_mfma_i32_4x4_i8((a), (b), (c), (neg))
-
-#endif // __gfx1100__
+// WMMA matrix fragment types (CDNA architectures only)
+// NOTE: MFMA intrinsics are NOT available on RDNA (gfx1030, gfx1100)
+// They are only available on CDNA architectures (gfx90a, gfx940, etc.)
+// These intrinsics are not currently used and are reserved for future CDNA optimization
+//
+// TODO: Enable WMMA intrinsics for CDNA architectures when needed
+// #if defined(__AMDGPU__) && !defined(__gfx1100__) && !defined(__gfx1030__)
+//
+// // MFMA (Matrix Fuse Multiply-Accumulate) intrinsics
+// __device__ __forceinline__ int mfnacc_i32_4x4_i8(
+//     int a, int b, int c, bool negate
+// ) {
+//     return __builtin_amdgcn_mfma_i32_4x4_i8(a, b, c, negate);
+// }
+//
+// #define MFMA_I32_4X4_I8(a, b, c, neg) \
+//     __builtin_amdgcn_mfma_i32_4x4_i8((a), (b), (c), (neg))
+//
+// #endif // CDNA architectures only
 
 // ── Portable 4-Way Int8 Dot Product ─────────────────────────────────────
 
