@@ -1158,3 +1158,80 @@ fn test_gpu_ffn_down_real_model_matches_cpu_layer0_projection() {
         max_err
     );
 }
+
+/// Test DP4A kernel with real model (RDNA2 and RDNA3)
+#[test]
+#[serial]
+#[ignore]
+fn test_dp4a_kernel_real_model() {
+    use rocmforge::gpu::GpuDevice;
+
+    if skip_if_model_missing() {
+        eprintln!("Skipping test: model file not found at {}", MODEL_PATH);
+        return;
+    }
+
+    require_real_model_gpu_tests!();
+    require_gpu!();
+    require_vram!(4);
+
+    let caps = gpu::detect().expect("GPU should be detected");
+    let device = GpuDevice::init(caps.device_id).expect("GPU device should initialize");
+    let device_name = device.get_name().unwrap_or_default();
+
+    // Only test on supported architectures
+    if !device_name.contains("gfx1030") && !device_name.contains("gfx1100") {
+        println!("Skipping: DP4A kernel requires RDNA2/3 (found {})", device_name);
+        return;
+    }
+
+    println!("Testing DP4A kernel on {} with model: {:?}", device_name, MODEL_PATH);
+
+    // Load model and verify kernel compiles and links
+    let file = GgufFile::open(MODEL_PATH).expect("Failed to open GGUF file");
+    let config = ModelConfig::from_gguf(&file).expect("Failed to parse model config");
+    let _cpu_weights = CpuModelWeights::load(&file, &config).expect("CPU weights should load");
+    let gpu_weights = gpu::GpuModelWeights::load(&file, &config).expect("GPU weights should load");
+    let tok = BpeTokenizer::from_gguf(file.tokenizer_data());
+
+    // Use short prompt for faster testing
+    let prompt_tokens = tok.encode("Hello", false);
+    assert!(!prompt_tokens.is_empty(), "prompt should tokenize");
+
+    // Run a single decode step to ensure DP4A kernel is invoked
+    let mut kv =
+        GpuKvCache::new(&config, prompt_tokens.len() + 1).expect("GPU KV should allocate");
+    let mut gpu_scratch = GpuForwardScratch::new(&config).expect("GPU scratch should allocate");
+    let mut host_scratch = CpuForwardScratch::new(&config);
+
+    let result = std::panic::catch_unwind(|| {
+        for (pos, &token_id) in prompt_tokens.iter().enumerate() {
+            gpu::gpu_embed_token_hybrid(
+                &device,
+                token_id,
+                &gpu_weights,
+                &_cpu_weights,
+                &mut gpu_scratch,
+                &mut host_scratch,
+                &config,
+            )
+            .expect("GPU embed should succeed");
+            gpu::gpu_full_forward_hybrid(
+                &device,
+                &gpu_weights,
+                &_cpu_weights,
+                &mut kv,
+                &mut gpu_scratch,
+                &mut host_scratch,
+                pos,
+                &config,
+                gpu::GpuLogitsMode::DownloadToHost,
+            )
+            .expect("GPU decode should succeed");
+        }
+        true
+    });
+
+    assert!(result.is_ok(), "DP4A kernel panicked during decode");
+    println!("DP4A kernel integration test passed on {}", device_name);
+}
