@@ -18,7 +18,10 @@ fn test_wave32_device_properties() {
     // Verify VRAM stats work
     let stats = device.vram_stats().expect("Failed to get VRAM stats");
     assert!(stats.total_vram_gb() > 16.0, "Should have >16 GB VRAM");
-    assert!(stats.safely_allocatable_gb() > 8.0, "Should have >8 GB safe VRAM");
+    assert!(
+        stats.safely_allocatable_gb() > 8.0,
+        "Should have >8 GB safe VRAM"
+    );
 
     // Explicit cleanup
     drop(device);

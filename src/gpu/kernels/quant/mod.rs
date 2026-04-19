@@ -30,12 +30,12 @@ pub use q4_0::{
 
 // Re-export Q4_1 functions
 pub use q4_1::{
-    dequantize_q4_1, dequantize_q4_1_batched, finalize_q4_1_metrics,
+    dequantize_q4_1, dequantize_q4_1_batched, finalize_q4_1_metrics, gemm_q4_1_f32,
     gemv_ffn_down_swiglu_q4_1_f32_experimental,
-    gemv_ffn_down_swiglu_q4_1_f32_experimental_on_stream, gemm_q4_1_f32, gemv_q4_1_f32,
-    gemv_q4_1_f32_on_stream, gemv_q4_1_f32_on_stream_unchecked,
-    gemv_q4_1_f32_residual_on_stream, gemv_q4_1_f32_residual_on_stream_unchecked,
-    gemv_q4_1_f32_residual_on_stream_variant_unchecked, quantize_q4_1, verify_q4_1_accuracy,
+    gemv_ffn_down_swiglu_q4_1_f32_experimental_on_stream, gemv_q4_1_f32, gemv_q4_1_f32_on_stream,
+    gemv_q4_1_f32_on_stream_unchecked, gemv_q4_1_f32_residual_on_stream,
+    gemv_q4_1_f32_residual_on_stream_unchecked, gemv_q4_1_f32_residual_on_stream_variant_unchecked,
+    quantize_q4_1, verify_q4_1_accuracy,
 };
 
 // Re-export Q4_K functions

@@ -36,8 +36,8 @@ impl GpuArchitecture {
     /// Warp size (wavefront size) for this architecture
     pub fn warp_size(&self) -> u32 {
         match self {
-            Self::Gfx1201 | Self::Gfx1100 | Self::Gfx1030 => 32,              // RDNA
-            Self::Gfx90a | Self::Gfx908 | Self::Gfx900 => 64, // CDNA/Vega
+            Self::Gfx1201 | Self::Gfx1100 | Self::Gfx1030 => 32, // RDNA
+            Self::Gfx90a | Self::Gfx908 | Self::Gfx900 => 64,    // CDNA/Vega
             Self::Unknown(_) => 32,
         }
     }

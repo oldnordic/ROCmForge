@@ -17,8 +17,8 @@
 mod common;
 
 use rocmforge::config::ModelConfig;
-use rocmforge::gpu::GpuDevice;
 use rocmforge::gpu::device::VramStats;
+use rocmforge::gpu::GpuDevice;
 use rocmforge::loader::GgufFile;
 use serial_test::serial;
 
@@ -29,9 +29,9 @@ use serial_test::serial;
 // - Qwen2.5-14B-Instruct-1M-q6_k_m.gguf (12GB - too large for testing)
 const Q6_K_MODEL_PATH: &str = "/home/feanor/Projects/Memoria/models/qwen2-0.5b-instruct-q6_k.gguf";
 
-const REQUIRED_VRAM_GB: u64 = 5;  // Must leave 5GB free
-const TIMEOUT_SECONDS: u64 = 30;  // Timeout for all tests
-const MAX_TOKENS_SMALL: u32 = 5;  // Small token limit for quick tests
+const REQUIRED_VRAM_GB: u64 = 5; // Must leave 5GB free
+const TIMEOUT_SECONDS: u64 = 30; // Timeout for all tests
+const MAX_TOKENS_SMALL: u32 = 5; // Small token limit for quick tests
 const MAX_TOKENS_MEDIUM: u32 = 20; // Medium token limit for longer tests
 
 /// Skip test if Q6_K model file is missing
@@ -45,7 +45,10 @@ fn verify_decode_graph_state() {
     // Both graph enabled and disabled modes are safe
     // This check now just logs the state for debugging
     let graph_enabled = rocmforge::gpu::decode_graph_enabled();
-    eprintln!("Q6_K safety test: Graph capture is {}", if graph_enabled { "ENABLED" } else { "DISABLED" });
+    eprintln!(
+        "Q6_K safety test: Graph capture is {}",
+        if graph_enabled { "ENABLED" } else { "DISABLED" }
+    );
 }
 
 /// Check VRAM availability and return VRAM stats
@@ -94,7 +97,8 @@ fn verify_vram_cleanup(initial_stats: &VramStats, tolerance_mb: u64) {
     let device = GpuDevice::init(0).expect("Failed to initialize GPU");
     let final_stats = device.vram_stats().expect("Failed to get VRAM stats");
 
-    let leaked_mb = (initial_stats.used_vram as i64 - final_stats.used_vram as i64).abs() / (1024 * 1024);
+    let leaked_mb =
+        (initial_stats.used_vram as i64 - final_stats.used_vram as i64).abs() / (1024 * 1024);
 
     eprintln!(
         "VRAM Cleanup Check: {} MB leaked (tolerance: {} MB)",
@@ -423,9 +427,7 @@ fn test_q6_k_decode_graph_env_check() {
             rocmforge::gpu::ENABLE_DECODE_GRAPH_ENV
         );
     } else {
-        eprintln!(
-            "OK: Decode graph is DISABLED - safe for Q6_K testing"
-        );
+        eprintln!("OK: Decode graph is DISABLED - safe for Q6_K testing");
     }
 
     // Test should pass regardless of graph state

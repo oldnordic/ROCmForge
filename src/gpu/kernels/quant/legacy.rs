@@ -174,10 +174,7 @@ pub fn gemv_q4_k_f32_vulkan_style(
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
             code: result as i32,
-            description: format!(
-                "gemv_q4_k_f32_vulkan_style kernel failed: {:?}",
-                result
-            ),
+            description: format!("gemv_q4_k_f32_vulkan_style kernel failed: {:?}", result),
         });
     }
 
@@ -585,8 +582,14 @@ pub fn gemv_gate_up_q4_0_f32_on_stream(
 
     let result = unsafe {
         gemv_gate_up_q4_0_f32_launch(
-            w_gate, w_up, input, out_gate, out_up,
-            n_rows as c_int, n_ff as c_int, stream,
+            w_gate,
+            w_up,
+            input,
+            out_gate,
+            out_up,
+            n_rows as c_int,
+            n_ff as c_int,
+            stream,
         )
     };
 
@@ -703,8 +706,8 @@ pub fn gemv_gate_up_swiglu_vulkan_q4_0_f32(
     if n_rows == 0 || n_ff == 0 || n_waves == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
-            description:
-                "gemv_gate_up_swiglu_vulkan_q4_0_f32: dimensions cannot be zero".to_string(),
+            description: "gemv_gate_up_swiglu_vulkan_q4_0_f32: dimensions cannot be zero"
+                .to_string(),
         });
     }
 
@@ -721,15 +724,21 @@ pub fn gemv_gate_up_swiglu_vulkan_q4_0_f32(
     if w_gate.is_null() || w_up.is_null() || input.is_null() {
         return Err(GpuError::HipApiError {
             code: -1,
-            description:
-                "gemv_gate_up_swiglu_vulkan_q4_0_f32: pointers must be non-null".to_string(),
+            description: "gemv_gate_up_swiglu_vulkan_q4_0_f32: pointers must be non-null"
+                .to_string(),
         });
     }
 
     let result = unsafe {
         gemv_gate_up_swiglu_vulkan_q4_0_f32_launch(
-            w_gate, w_up, input, out_swiglu,
-            n_rows as c_int, n_ff as c_int, n_waves as c_int, stream,
+            w_gate,
+            w_up,
+            input,
+            out_swiglu,
+            n_rows as c_int,
+            n_ff as c_int,
+            n_waves as c_int,
+            stream,
         )
     };
 
@@ -797,10 +806,7 @@ pub fn gemv_q4_0_f32_vulkan_style(
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
             code: result as i32,
-            description: format!(
-                "gemv_q4_0_f32_vulkan_style kernel failed: {:?}",
-                result
-            ),
+            description: format!("gemv_q4_0_f32_vulkan_style kernel failed: {:?}", result),
         });
     }
 
@@ -1433,47 +1439,4 @@ unsafe extern "C" {
     ) -> hipError_t;
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn gemv_q4_k_f32_rejects_zero_n_rows() {
-        let result = gemv_q4_k_f32(std::ptr::null(), std::ptr::null(), std::ptr::null_mut(), 0, 100);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn gemv_q4_k_f32_rejects_zero_ncols() {
-        let result = gemv_q4_k_f32(std::ptr::null(), std::ptr::null(), std::ptr::null_mut(), 100, 0);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn gemv_q4_k_f32_rejects_misaligned_n_rows() {
-        let result = gemv_q4_k_f32(std::ptr::null(), std::ptr::null(), std::ptr::null_mut(), 100, 100);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn gemv_q4_k_f32_rejects_null_weights() {
-        let result = gemv_q4_k_f32(std::ptr::null(), std::ptr::null(), std::ptr::null_mut(), 256, 100);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn gemv_q4_k_f32_rejects_null_input() {
-        let weights = vec![0u8; 100];
-        let result = gemv_q4_k_f32(weights.as_ptr(), std::ptr::null(), std::ptr::null_mut(), 256, 100);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn gemv_q4_k_f32_rejects_null_output() {
-        let weights = vec![0u8; 100];
-        let input = vec![0.0f32; 256];
-        let result =
-            gemv_q4_k_f32(weights.as_ptr(), input.as_ptr(), std::ptr::null_mut(), 256, 100);
-        assert!(result.is_err());
-    }
-}
+// Q4_K tests moved to q4_k module

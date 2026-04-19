@@ -7,37 +7,40 @@ use super::super::super::ffi::{hipError_t, hipStream_t};
 use std::os::raw::c_int;
 
 // Declare external kernels
+// NOTE: Q6_K quantization/dequantization/verify kernels not yet implemented
+// extern "C" {
+//     fn quantize_q6_k_launch(
+//         input: *const f32,
+//         output: *mut u8,
+//         n: c_int,
+//         stream: hipStream_t,
+//     ) -> hipError_t;
+//
+//     fn dequantize_q6_k_launch(
+//         input: *const u8,
+//         output: *mut f32,
+//         n: c_int,
+//         stream: hipStream_t,
+//     ) -> hipError_t;
+//
+//     fn dequantize_q6_k_batched_launch(
+//         input: *const u8,
+//         output: *mut f32,
+//         n: c_int,
+//         batch_size: c_int,
+//         stream: hipStream_t,
+//     ) -> hipError_t;
+//
+//     fn verify_q6_k_launch(
+//         original: *const f32,
+//         quantized: *const u8,
+//         errors: *mut f32,
+//         n: c_int,
+//         stream: hipStream_t,
+//     ) -> hipError_t;
+// }
+
 extern "C" {
-    fn quantize_q6_k_launch(
-        input: *const f32,
-        output: *mut u8,
-        n: c_int,
-        stream: hipStream_t,
-    ) -> hipError_t;
-
-    fn dequantize_q6_k_launch(
-        input: *const u8,
-        output: *mut f32,
-        n: c_int,
-        stream: hipStream_t,
-    ) -> hipError_t;
-
-    fn dequantize_q6_k_batched_launch(
-        input: *const u8,
-        output: *mut f32,
-        n: c_int,
-        batch_size: c_int,
-        stream: hipStream_t,
-    ) -> hipError_t;
-
-    fn verify_q6_k_launch(
-        original: *const f32,
-        quantized: *const u8,
-        errors: *mut f32,
-        n: c_int,
-        stream: hipStream_t,
-    ) -> hipError_t;
-
     fn gemv_q6_k_f32_launch(
         weights_q6_k: *const u8,
         input: *const f32,
@@ -71,29 +74,13 @@ extern "C" {
 /// # Safety
 /// - All memory pointers must be valid GPU pointers
 /// - Bounds are validated on CPU before kernel launch
+#[allow(dead_code)]
 pub fn quantize_q6_k(input: *const f32, output: *mut u8, n: usize) -> GpuResult<()> {
-    if n == 0 {
-        return Err(GpuError::HipApiError {
-            code: -1,
-            description: "quantize_q6_k: n cannot be zero".to_string(),
-        });
-    }
-
-    let num_blocks = (n + 255) / 256;
-    if num_blocks == 0 {
-        return Ok(());
-    }
-
-    let result = unsafe { quantize_q6_k_launch(input, output, n as c_int, hipStream_t::null()) };
-
-    if result != hipError_t::hipSuccess {
-        return Err(GpuError::HipApiError {
-            code: result as i32,
-            description: format!("quantize_q6_k kernel failed: {:?}", result),
-        });
-    }
-
-    Ok(())
+    // Kernel not yet implemented
+    Err(GpuError::HipApiError {
+        code: -1,
+        description: "quantize_q6_k: kernel not yet implemented".to_string(),
+    })
 }
 
 /// Dequantize Q6_K data to f32.
@@ -109,29 +96,13 @@ pub fn quantize_q6_k(input: *const f32, output: *mut u8, n: usize) -> GpuResult<
 /// # Safety
 /// - All memory pointers must be valid GPU pointers
 /// - Bounds are validated on CPU before kernel launch
+#[allow(dead_code)]
 pub fn dequantize_q6_k(input: *const u8, output: *mut f32, n: usize) -> GpuResult<()> {
-    if n == 0 {
-        return Err(GpuError::HipApiError {
-            code: -1,
-            description: "dequantize_q6_k: n cannot be zero".to_string(),
-        });
-    }
-
-    let num_blocks = (n + 255) / 256;
-    if num_blocks == 0 {
-        return Ok(());
-    }
-
-    let result = unsafe { dequantize_q6_k_launch(input, output, n as c_int, hipStream_t::null()) };
-
-    if result != hipError_t::hipSuccess {
-        return Err(GpuError::HipApiError {
-            code: result as i32,
-            description: format!("dequantize_q6_k kernel failed: {:?}", result),
-        });
-    }
-
-    Ok(())
+    // Kernel not yet implemented
+    Err(GpuError::HipApiError {
+        code: -1,
+        description: "dequantize_q6_k: kernel not yet implemented".to_string(),
+    })
 }
 
 /// Batched dequantize Q6_K data to f32.
@@ -148,42 +119,18 @@ pub fn dequantize_q6_k(input: *const u8, output: *mut f32, n: usize) -> GpuResul
 /// # Safety
 /// - All memory pointers must be valid GPU pointers
 /// - Bounds are validated on CPU before kernel launch
+#[allow(dead_code)]
 pub fn dequantize_q6_k_batched(
     input: *const u8,
     output: *mut f32,
     n: usize,
     batch_size: usize,
 ) -> GpuResult<()> {
-    if n == 0 || batch_size == 0 {
-        return Err(GpuError::HipApiError {
-            code: -1,
-            description: "dequantize_q6_k_batched: n and batch_size cannot be zero".to_string(),
-        });
-    }
-
-    let num_blocks = (n + 255) / 256;
-    if num_blocks == 0 {
-        return Ok(());
-    }
-
-    let result = unsafe {
-        dequantize_q6_k_batched_launch(
-            input,
-            output,
-            n as c_int,
-            batch_size as c_int,
-            hipStream_t::null(),
-        )
-    };
-
-    if result != hipError_t::hipSuccess {
-        return Err(GpuError::HipApiError {
-            code: result as i32,
-            description: format!("dequantize_q6_k_batched kernel failed: {:?}", result),
-        });
-    }
-
-    Ok(())
+    // Kernel not yet implemented
+    Err(GpuError::HipApiError {
+        code: -1,
+        description: "dequantize_q6_k_batched: kernel not yet implemented".to_string(),
+    })
 }
 
 /// Verify Q6_K quantization accuracy.
@@ -204,29 +151,18 @@ pub fn dequantize_q6_k_batched(
 /// # Safety
 /// - All memory pointers must be valid GPU pointers
 /// - Bounds are validated on CPU before kernel launch
+#[allow(dead_code)]
 pub fn verify_q6_k_accuracy(
     original: *const f32,
     quantized: *const u8,
     errors: *mut f32,
     n: usize,
 ) -> GpuResult<()> {
-    if n == 0 {
-        return Err(GpuError::HipApiError {
-            code: -1,
-            description: "verify_q6_k_accuracy: n cannot be zero".to_string(),
-        });
-    }
-
-    let result = unsafe { verify_q6_k_launch(original, quantized, errors, n as c_int, hipStream_t::null()) };
-
-    if result != hipError_t::hipSuccess {
-        return Err(GpuError::HipApiError {
-            code: result as i32,
-            description: format!("verify_q6_k_accuracy kernel failed: {:?}", result),
-        });
-    }
-
-    Ok(())
+    // Kernel not yet implemented
+    Err(GpuError::HipApiError {
+        code: -1,
+        description: "verify_q6_k_accuracy: kernel not yet implemented".to_string(),
+    })
 }
 
 #[cfg(test)]

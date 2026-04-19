@@ -115,9 +115,7 @@ impl GpuFeatures {
     /// - RDNA3 (gfx1100+)
     /// - RDNA4 (gfx1100+, gfx1150+)
     fn has_wmma_support(arch: &str) -> bool {
-        arch.starts_with("gfx110")
-            || arch.starts_with("gfx115")
-            || arch.starts_with("gfx120")
+        arch.starts_with("gfx110") || arch.starts_with("gfx115") || arch.starts_with("gfx120")
     }
 
     /// Detect v_dot2_f32_f16 instruction support.
@@ -130,11 +128,19 @@ impl GpuFeatures {
     fn has_dot2_f32_f16_support(arch: &str) -> bool {
         matches!(
             arch,
-            "gfx1011" | "gfx1012"
-                | "gfx1030" | "gfx1031" | "gfx1032"
-                | "gfx1100" | "gfx1101" | "gfx1102" | "gfx1103"
-                | "gfx1150" | "gfx1151"
-                | "gfx1200" | "gfx1201"
+            "gfx1011"
+                | "gfx1012"
+                | "gfx1030"
+                | "gfx1031"
+                | "gfx1032"
+                | "gfx1100"
+                | "gfx1101"
+                | "gfx1102"
+                | "gfx1103"
+                | "gfx1150"
+                | "gfx1151"
+                | "gfx1200"
+                | "gfx1201"
         )
     }
 }
@@ -145,9 +151,18 @@ mod tests {
 
     #[test]
     fn test_arch_detection_device_names() {
-        assert_eq!(GpuFeatures::map_device_name_to_arch("RX 7900 XT"), "gfx1100");
-        assert_eq!(GpuFeatures::map_device_name_to_arch("RX 6900 XT"), "gfx1030");
-        assert_eq!(GpuFeatures::map_device_name_to_arch("RX 5700 XT"), "gfx1010");
+        assert_eq!(
+            GpuFeatures::map_device_name_to_arch("RX 7900 XT"),
+            "gfx1100"
+        );
+        assert_eq!(
+            GpuFeatures::map_device_name_to_arch("RX 6900 XT"),
+            "gfx1030"
+        );
+        assert_eq!(
+            GpuFeatures::map_device_name_to_arch("RX 5700 XT"),
+            "gfx1010"
+        );
         assert_eq!(GpuFeatures::map_device_name_to_arch("BC-250"), "gfx1013");
     }
 

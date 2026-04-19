@@ -7,8 +7,7 @@ use rocmforge::tokenizer::BpeTokenizer;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-const Q6_K_MODEL_PATH: &str =
-    "/home/feanor/Projects/Memoria/models/qwen2-0.5b-instruct-q6_k.gguf";
+const Q6_K_MODEL_PATH: &str = "/home/feanor/Projects/Memoria/models/qwen2-0.5b-instruct-q6_k.gguf";
 
 struct Q6KDecodeBenchContext {
     device: GpuDevice,
@@ -44,10 +43,7 @@ impl Q6KDecodeBenchContext {
         }
 
         if !Path::new(Q6_K_MODEL_PATH).exists() {
-            return Err(format!(
-                "Q6_K model not found at {}",
-                Q6_K_MODEL_PATH
-            ));
+            return Err(format!("Q6_K model not found at {}", Q6_K_MODEL_PATH));
         }
 
         let caps = gpu::detect().ok_or_else(|| "GPU not detected".to_string())?;
@@ -169,10 +165,7 @@ fn bench_q6_k_decode_single_token(c: &mut Criterion) {
     group.sample_size(20);
 
     group.bench_function("single_token", |b| {
-        b.iter(|| {
-            black_box(ctx.run_once())
-                .expect("Q6_K decode should succeed")
-        })
+        b.iter(|| black_box(ctx.run_once()).expect("Q6_K decode should succeed"))
     });
 
     group.finish();
@@ -212,11 +205,8 @@ fn bench_q6_k_decode_multi_token(c: &mut Criterion) {
             "The quick brown fox jumps over the lazy dog. This sentence contains every letter of the alphabet. It is a classic pangram used for testing typewriters and computer fonts. In this test, we want to verify that the model can handle long prompts without producing corrupted output.".to_string()
         };
 
-        let tok = BpeTokenizer::from_gguf(
-            GgufFile::open(Q6_K_MODEL_PATH)
-                .unwrap()
-                .tokenizer_data()
-        );
+        let tok =
+            BpeTokenizer::from_gguf(GgufFile::open(Q6_K_MODEL_PATH).unwrap().tokenizer_data());
         ctx.prompt_tokens = tok.encode(&prompt, false);
 
         group.bench_with_input(
@@ -261,11 +251,7 @@ fn bench_q6_k_decode_comparison(c: &mut Criterion) {
 
     // Use 17-token prompt (classic bug case)
     let prompt = "Hello, how are you doing today? I hope you are well.";
-    let tok = BpeTokenizer::from_gguf(
-        GgufFile::open(Q6_K_MODEL_PATH)
-            .unwrap()
-            .tokenizer_data()
-    );
+    let tok = BpeTokenizer::from_gguf(GgufFile::open(Q6_K_MODEL_PATH).unwrap().tokenizer_data());
 
     let mut group = c.benchmark_group("q6_k_decode_17_token_period_ending");
     group.sample_size(20);
@@ -273,12 +259,11 @@ fn bench_q6_k_decode_comparison(c: &mut Criterion) {
     group.bench_function("period_ending_prompt", |b| {
         b.iter(|| {
             // Reload context for each iteration (GPU resources aren't Clone)
-            let mut ctx = Q6KDecodeBenchContext::load()
-                .expect("Failed to load Q6_K benchmark context");
+            let mut ctx =
+                Q6KDecodeBenchContext::load().expect("Failed to load Q6_K benchmark context");
             ctx.prompt_tokens = tok.encode(&prompt, false);
 
-            black_box(ctx.run_once())
-                .expect("Q6_K decode should succeed")
+            black_box(ctx.run_once()).expect("Q6_K decode should succeed")
         })
     });
 

@@ -3,8 +3,8 @@
 //! Verifies that dot4_manual() produces identical results to hardware DP4A
 //! on architectures where both are available (RDNA2).
 
-use rocmforge::gpu::GpuDevice;
 use rocmforge::gpu::kernels::quant::{test_dot4_hardware, test_dot4_manual};
+use rocmforge::gpu::GpuDevice;
 
 #[cfg(feature = "gpu")]
 mod tests {
@@ -19,34 +19,31 @@ mod tests {
         let device_name = ctx.get_name().unwrap_or_default();
 
         if !device_name.contains("gfx1030") {
-            println!("Skipping: Test requires RDNA2 (gfx1030), got {}", device_name);
+            println!(
+                "Skipping: Test requires RDNA2 (gfx1030), got {}",
+                device_name
+            );
             return;
         }
 
         // Test vectors: 4 pairs of int8 values packed into int32
         let test_cases = vec![
             // Simple cases
-            ((0x00010203_i32, 0x00010203_i32, 0), 14),     // 1*1 + 2*2 + 3*3 = 14
-            ((-1_i32, 0x01010101, 0), -4),                 // -1*1 + -1*1 + -1*1 + -1*1 = -4
-            ((0x00000000_i32, -1_i32, 100), 100),          // 0 + 100 = 100
-
+            ((0x00010203_i32, 0x00010203_i32, 0), 14), // 1*1 + 2*2 + 3*3 = 14
+            ((-1_i32, 0x01010101, 0), -4),             // -1*1 + -1*1 + -1*1 + -1*1 = -4
+            ((0x00000000_i32, -1_i32, 100), 100),      // 0 + 100 = 100
             // Mixed positive/negative
-            ((0x7F808080_i32, 0x01010101, 0), -255),       // 127*1 + -128*1 + -128*1 + -128*1 = -255
-            ((0x01010101_i32, 0x7F808080, 0), -255),       // Same as above (commutative)
-
+            ((0x7F808080_i32, 0x01010101, 0), -255), // 127*1 + -128*1 + -128*1 + -128*1 = -255
+            ((0x01010101_i32, 0x7F808080, 0), -255), // Same as above (commutative)
             // Accumulator tests
-            ((0x01010101_i32, 0x01010101, 10), 14),        // 4 + 10 = 14
-            ((-1_i32, -1_i32, -100), -104),                 // -4 + -100 = -104
+            ((0x01010101_i32, 0x01010101, 10), 14), // 4 + 10 = 14
+            ((-1_i32, -1_i32, -100), -104),         // -4 + -100 = -104
         ];
 
         for (i, ((a_packed, b_packed, acc), expected)) in test_cases.iter().enumerate() {
             // Call kernel with both DP4A and manual paths
-            let result_dp4a = unsafe {
-                test_dot4_hardware(*a_packed, *b_packed, *acc)
-            };
-            let result_manual = unsafe {
-                test_dot4_manual(*a_packed, *b_packed, *acc)
-            };
+            let result_dp4a = unsafe { test_dot4_hardware(*a_packed, *b_packed, *acc) };
+            let result_manual = unsafe { test_dot4_manual(*a_packed, *b_packed, *acc) };
 
             assert_eq!(
                 result_dp4a, *expected,
@@ -74,7 +71,10 @@ mod tests {
         let device_name = ctx.get_name().unwrap_or_default();
 
         if !device_name.contains("gfx1100") {
-            println!("Skipping: Test requires RDNA3 (gfx1100), got {}", device_name);
+            println!(
+                "Skipping: Test requires RDNA3 (gfx1100), got {}",
+                device_name
+            );
             return;
         }
 
@@ -90,9 +90,7 @@ mod tests {
         ];
 
         for (i, ((a_packed, b_packed, acc), expected)) in test_cases.iter().enumerate() {
-            let result = unsafe {
-                test_dot4_manual(*a_packed, *b_packed, *acc)
-            };
+            let result = unsafe { test_dot4_manual(*a_packed, *b_packed, *acc) };
 
             assert_eq!(
                 result, *expected,

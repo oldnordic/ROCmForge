@@ -24,9 +24,9 @@ use super::kernels::rope::{
     rope_heads_batched, rope_heads_from_state_on_stream, rope_heads_on_stream,
 };
 use super::ops::{
-    gpu_dispatch_fused_gate_up_on_stream, gpu_dispatch_fused_qkv_gqa_on_stream, gpu_dispatch_fused_qkv_on_stream, gpu_dispatch_gemm,
-    gpu_dispatch_gemv, gpu_dispatch_gemv_on_stream, gpu_dispatch_gemv_residual_on_stream,
-    gpu_dispatch_rms_norm,
+    gpu_dispatch_fused_gate_up_on_stream, gpu_dispatch_fused_qkv_gqa_on_stream,
+    gpu_dispatch_fused_qkv_on_stream, gpu_dispatch_gemm, gpu_dispatch_gemv,
+    gpu_dispatch_gemv_on_stream, gpu_dispatch_gemv_residual_on_stream, gpu_dispatch_rms_norm,
 };
 use super::safety::decode_graph_disabled_override_requested;
 use super::weights::{GpuBuffer, GpuLayerWeights, GpuModelWeights, WeightMeta};

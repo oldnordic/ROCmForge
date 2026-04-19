@@ -3,8 +3,8 @@
 //! Tracks kernel execution time and memory bandwidth utilization
 //! to measure optimization impact.
 
-use std::time::Instant;
 use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
 /// Kernel execution timing record.
 #[derive(Debug, Clone)]

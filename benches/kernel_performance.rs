@@ -124,8 +124,7 @@ impl KernelBenchContext {
             .map_err(|err| format!("GPU prefill failed: {}", err))?;
         }
 
-        let mut token =
-            next_token.ok_or_else(|| "prefill produced no greedy token".to_string())?;
+        let mut token = next_token.ok_or_else(|| "prefill produced no greedy token".to_string())?;
 
         // Benchmark decode loop
         let decode_start = Instant::now();
@@ -246,30 +245,26 @@ fn bench_kernel_variants(c: &mut Criterion) {
     let features = match gpu::GpuFeatures::detect(&ctx.device) {
         Ok(features) => features,
         Err(err) => {
-            eprintln!("Skipping kernel_variant benchmark: feature detection failed: {}", err);
+            eprintln!(
+                "Skipping kernel_variant benchmark: feature detection failed: {}",
+                err
+            );
             return;
         }
     };
 
-    let variant_name = if features.has_dp4a {
-        "dp4a"
-    } else {
-        "scalar"
-    };
+    let variant_name = if features.has_dp4a { "dp4a" } else { "scalar" };
 
     let mut group = c.benchmark_group("kernel_variants");
     group.throughput(Throughput::Elements(ctx.decode_tokens as u64));
-    group.bench_function(
-        BenchmarkId::new(variant_name, &ctx.model_label),
-        |b| {
-            b.iter(|| {
-                let stats = ctx
-                    .run_decode_benchmark()
-                    .expect("decode benchmark should succeed");
-                black_box(stats.decode_tok_s);
-            });
-        },
-    );
+    group.bench_function(BenchmarkId::new(variant_name, &ctx.model_label), |b| {
+        b.iter(|| {
+            let stats = ctx
+                .run_decode_benchmark()
+                .expect("decode benchmark should succeed");
+            black_box(stats.decode_tok_s);
+        });
+    });
     group.finish();
 }
 

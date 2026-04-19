@@ -3,9 +3,9 @@
 //! Measures performance difference between hardware DP4A (RDNA2)
 //! and software fallback (RDNA3).
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use rocmforge::gpu::GpuDevice;
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use rocmforge::gpu::kernels::quant::{bench_dot4_hardware, bench_dot4_manual};
+use rocmforge::gpu::GpuDevice;
 
 #[cfg(feature = "gpu")]
 fn bench_dot4_performance(c: &mut Criterion) {
@@ -31,9 +31,7 @@ fn bench_dot4_performance(c: &mut Criterion) {
                 &(a_packed, b_packed),
                 |bencher, &(a, b)| {
                     bencher.iter(|| {
-                        black_box(unsafe {
-                            bench_dot4_hardware(black_box(a), black_box(b), 0)
-                        })
+                        black_box(unsafe { bench_dot4_hardware(black_box(a), black_box(b), 0) })
                     })
                 },
             );
@@ -43,9 +41,7 @@ fn bench_dot4_performance(c: &mut Criterion) {
                 &(a_packed, b_packed),
                 |bencher, &(a, b)| {
                     bencher.iter(|| {
-                        black_box(unsafe {
-                            bench_dot4_manual(black_box(a), black_box(b), 0)
-                        })
+                        black_box(unsafe { bench_dot4_manual(black_box(a), black_box(b), 0) })
                     })
                 },
             );
@@ -58,9 +54,7 @@ fn bench_dot4_performance(c: &mut Criterion) {
                 &(a_packed, b_packed),
                 |bencher, &(a, b)| {
                     bencher.iter(|| {
-                        black_box(unsafe {
-                            bench_dot4_manual(black_box(a), black_box(b), 0)
-                        })
+                        black_box(unsafe { bench_dot4_manual(black_box(a), black_box(b), 0) })
                     })
                 },
             );

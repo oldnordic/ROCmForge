@@ -40,7 +40,9 @@ fn run_safe_gpu_test(
     }
 
     // Run with timeout
-    let output = cmd.output().map_err(|e| format!("Failed to execute: {}", e))?;
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to execute: {}", e))?;
 
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())

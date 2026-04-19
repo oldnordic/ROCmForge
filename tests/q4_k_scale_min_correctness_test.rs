@@ -10,8 +10,8 @@ mod q4_k_scale_min_tests {
     #[test]
     fn test_scale_min_extraction_j_less_than_4() {
         let mut scales = [0u8; 12];
-        scales[0] = 1;  // d[0]
-        scales[4] = 2;  // m[0]
+        scales[0] = 1; // d[0]
+        scales[4] = 2; // m[0]
 
         let (d, m) = BlockQ4K::get_scale_min_k4(0, scales);
         assert_eq!(d, 1, "d[0] should be 1");
@@ -33,12 +33,7 @@ mod q4_k_scale_min_tests {
     /// Test all 8 scale/min pairs
     #[test]
     fn test_all_scale_min_pairs() {
-        let scales: [u8; 12] = [
-            1, 2, 3, 4,
-            5, 6, 7, 8,
-            0xAB, 0xCD,
-            0xEF, 0x12,
-        ];
+        let scales: [u8; 12] = [1, 2, 3, 4, 5, 6, 7, 8, 0xAB, 0xCD, 0xEF, 0x12];
 
         let pairs: Vec<(u8, u8)> = (0..8)
             .map(|j| BlockQ4K::get_scale_min_k4(j, scales))

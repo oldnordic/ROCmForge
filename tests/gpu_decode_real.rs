@@ -1181,11 +1181,17 @@ fn test_dp4a_kernel_real_model() {
 
     // Only test on supported architectures
     if !device_name.contains("gfx1030") && !device_name.contains("gfx1100") {
-        println!("Skipping: DP4A kernel requires RDNA2/3 (found {})", device_name);
+        println!(
+            "Skipping: DP4A kernel requires RDNA2/3 (found {})",
+            device_name
+        );
         return;
     }
 
-    println!("Testing DP4A kernel on {} with model: {:?}", device_name, MODEL_PATH);
+    println!(
+        "Testing DP4A kernel on {} with model: {:?}",
+        device_name, MODEL_PATH
+    );
 
     // Load model and verify kernel compiles and links
     let file = GgufFile::open(MODEL_PATH).expect("Failed to open GGUF file");
@@ -1199,8 +1205,7 @@ fn test_dp4a_kernel_real_model() {
     assert!(!prompt_tokens.is_empty(), "prompt should tokenize");
 
     // Run a single decode step to ensure DP4A kernel is invoked
-    let mut kv =
-        GpuKvCache::new(&config, prompt_tokens.len() + 1).expect("GPU KV should allocate");
+    let mut kv = GpuKvCache::new(&config, prompt_tokens.len() + 1).expect("GPU KV should allocate");
     let mut gpu_scratch = GpuForwardScratch::new(&config).expect("GPU scratch should allocate");
     let mut host_scratch = CpuForwardScratch::new(&config);
 

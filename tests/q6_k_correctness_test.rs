@@ -27,14 +27,26 @@ fn test_q6_k_model_output_coherence() {
         .expect("Failed to execute rocmforge");
 
     // Check command succeeded
-    assert!(output.status.success(), "Command failed: {:?}", output.status);
+    assert!(
+        output.status.success(),
+        "Command failed: {:?}",
+        output.status
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     // Check for GPU crashes
-    assert!(!stderr.contains("HIP_ERROR"), "GPU error detected: {}", stderr);
-    assert!(!stderr.contains("GPU reset"), "GPU reset detected: {}", stderr);
+    assert!(
+        !stderr.contains("HIP_ERROR"),
+        "GPU error detected: {}",
+        stderr
+    );
+    assert!(
+        !stderr.contains("GPU reset"),
+        "GPU reset detected: {}",
+        stderr
+    );
 
     // Check output is not garbage (should contain coherent English)
     // Garbage output from broken Q6_K looked like:
@@ -42,11 +54,7 @@ fn test_q6_k_model_output_coherence() {
     let output_text = stdout.trim();
 
     // Check that output contains reasonable English characters
-    assert!(
-        output_text.len() > 5,
-        "Output too short: '{}'",
-        output_text
-    );
+    assert!(output_text.len() > 5, "Output too short: '{}'", output_text);
 
     // Check that output doesn't contain random Chinese characters mixed with English
     // (this was the symptom of broken Q6_K)

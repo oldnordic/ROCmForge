@@ -34,12 +34,18 @@ fn test_q8_0_multirow_4col_matches_single() {
         "Output length mismatch"
     );
 
-    for (i, (s, m)) in output_single.iter().zip(output_multi_4col.iter()).enumerate() {
+    for (i, (s, m)) in output_single
+        .iter()
+        .zip(output_multi_4col.iter())
+        .enumerate()
+    {
         let diff = f64::abs(*s as f64 - *m as f64);
         assert!(
             diff < 1e-5,
             "Mismatch at position {}: single={}, multi_4col={}",
-            i, s, m
+            i,
+            s,
+            m
         );
     }
 
@@ -67,12 +73,18 @@ fn test_q8_0_multirow_8col_matches_single() {
         "Output length mismatch"
     );
 
-    for (i, (s, m)) in output_single.iter().zip(output_multi_8col.iter()).enumerate() {
+    for (i, (s, m)) in output_single
+        .iter()
+        .zip(output_multi_8col.iter())
+        .enumerate()
+    {
         let diff = f64::abs(*s as f64 - *m as f64);
         assert!(
             diff < 1e-5,
             "Mismatch at position {}: single={}, multi_8col={}",
-            i, s, m
+            i,
+            s,
+            m
         );
     }
 
@@ -119,18 +131,31 @@ fn run_inference(model_path: &str, variant: &str) -> Vec<f32> {
         .output()
         .expect("Failed to execute rocmforge");
 
-    assert!(output.status.success(), "Command failed: {:?}", output.status);
+    assert!(
+        output.status.success(),
+        "Command failed: {:?}",
+        output.status
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     // Check for GPU crashes
-    assert!(!stderr.contains("HIP_ERROR"), "GPU error detected: {}", stderr);
-    assert!(!stderr.contains("GPU reset"), "GPU reset detected: {}", stderr);
+    assert!(
+        !stderr.contains("HIP_ERROR"),
+        "GPU error detected: {}",
+        stderr
+    );
+    assert!(
+        !stderr.contains("GPU reset"),
+        "GPU reset detected: {}",
+        stderr
+    );
 
     // Parse output as tokens/floats (simplified for now)
     // TODO: Implement proper tokenization/float parsing
-    stdout.trim()
+    stdout
+        .trim()
         .split_whitespace()
         .map(|s| s.parse::<f32>().unwrap_or(0.0))
         .collect()

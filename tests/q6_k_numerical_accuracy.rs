@@ -4,7 +4,7 @@
 
 #![cfg(feature = "gpu")]
 
-const Q6_K_BLOCK_SIZE: usize = 210;  // Bytes per Q6_K block
+const Q6_K_BLOCK_SIZE: usize = 210; // Bytes per Q6_K block
 
 #[test]
 fn test_q6_k_block_size_constant() {
@@ -12,7 +12,10 @@ fn test_q6_k_block_size_constant() {
     // Q6_K format: 256 quantized values (6 bits each) + metadata
     // Each block is 210 bytes
     assert_eq!(Q6_K_BLOCK_SIZE, 210);
-    println!("✓ Q6_K block size constant is correct: {} bytes", Q6_K_BLOCK_SIZE);
+    println!(
+        "✓ Q6_K block size constant is correct: {} bytes",
+        Q6_K_BLOCK_SIZE
+    );
 }
 
 #[test]
@@ -54,19 +57,10 @@ fn test_simd_intrinsics_correctness() {
 // FFI declarations for vector intrinsic test kernels
 extern "C" {
     /// Test get_int_b2() against scalar byte reads
-    fn test_get_int_b2(
-        input: *const u8,
-        errors: *mut i32,
-        n_elements: i32,
-    );
+    fn test_get_int_b2(input: *const u8, errors: *mut i32, n_elements: i32);
 
     /// Test __vsubss4_gpu() against scalar subtraction
-    fn test_vsubss4(
-        input_a: *const i32,
-        input_b: *const i32,
-        errors: *mut i32,
-        n_elements: i32,
-    );
+    fn test_vsubss4(input_a: *const i32, input_b: *const i32, errors: *mut i32, n_elements: i32);
 }
 
 #[test]
@@ -78,7 +72,7 @@ fn test_vector_intrinsic_get_int_b2() {
 
     // Create test data with known pattern
     // Test pattern: 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, ...
-    const TEST_SIZE: usize = 256;  // 64 integers * 4 bytes
+    const TEST_SIZE: usize = 256; // 64 integers * 4 bytes
     let mut test_data: [u8; TEST_SIZE] = [0; TEST_SIZE];
     for i in 0..TEST_SIZE {
         test_data[i] = (i % 256) as u8;

@@ -92,14 +92,14 @@ impl Default for Q5KBlock {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct Q8_0Block {
-    pub d: f32,      // scale (4 bytes) - changed from f16 to fix conversion bug
+    pub d: f32,       // scale (4 bytes) - changed from f16 to fix conversion bug
     pub qs: [i8; 32], // quantized values (32 bytes)
 }
 
 impl Default for Q8_0Block {
     fn default() -> Self {
         Self {
-            d: 1.0f32,  // Changed from f16 to f32
+            d: 1.0f32, // Changed from f16 to f32
             qs: [0; 32],
         }
     }

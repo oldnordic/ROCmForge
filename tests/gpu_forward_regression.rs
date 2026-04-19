@@ -50,7 +50,6 @@ fn max_abs_error(a: &[f32], b: &[f32]) -> f32 {
 #[serial]
 #[ignore = "Requires real GPU and model - run with: cargo test -- --ignored"]
 fn test_ffn_down_dimensions_correct_in_hybrid_forward() {
-
     if skip_if_model_missing() {
         return;
     }
@@ -59,7 +58,8 @@ fn test_ffn_down_dimensions_correct_in_hybrid_forward() {
     let file = GgufFile::open(MODEL_PATH).expect("Failed to open GGUF file");
     let config = ModelConfig::from_gguf(&file).expect("Failed to parse config");
     let cpu_weights = CpuModelWeights::load(&file, &config).expect("Failed to load CPU weights");
-    let gpu_weights = gpu::GpuModelWeights::load(&file, &config).expect("Failed to load GPU weights");
+    let gpu_weights =
+        gpu::GpuModelWeights::load(&file, &config).expect("Failed to load GPU weights");
 
     // Initialize GPU
     let caps = gpu::detect().expect("GPU should be detected");
@@ -128,7 +128,11 @@ fn test_ffn_down_dimensions_correct_in_hybrid_forward() {
     let gpu_hidden = download_gpu_f32(&gpu_scratch.hidden, h);
 
     // Verify dimensions match
-    assert_eq!(gpu_hidden.len(), h, "Output dimension should match hidden_size");
+    assert_eq!(
+        gpu_hidden.len(),
+        h,
+        "Output dimension should match hidden_size"
+    );
 
     // Verify values match CPU (with some tolerance for quantization)
     let max_error = max_abs_error(&cpu_hidden, &gpu_hidden);

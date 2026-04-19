@@ -762,7 +762,8 @@ mod tests {
 
     #[test]
     fn verify_q4_1_accuracy_rejects_zero_n() {
-        let result = verify_q4_1_accuracy(std::ptr::null(), std::ptr::null(), std::ptr::null_mut(), 0);
+        let result =
+            verify_q4_1_accuracy(std::ptr::null(), std::ptr::null(), std::ptr::null_mut(), 0);
         assert!(result.is_err());
     }
 
@@ -774,14 +775,32 @@ mod tests {
 
     #[test]
     fn gemv_q4_1_f32_rejects_invalid_dimensions() {
-        let result = gemv_q4_1_f32(std::ptr::null(), std::ptr::null(), std::ptr::null_mut(), 0, 100);
+        let result = gemv_q4_1_f32(
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            0,
+            100,
+        );
         assert!(result.is_err());
 
-        let result = gemv_q4_1_f32(std::ptr::null(), std::ptr::null(), std::ptr::null_mut(), 100, 0);
+        let result = gemv_q4_1_f32(
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            100,
+            0,
+        );
         assert!(result.is_err());
 
         // n_rows must be multiple of 32
-        let result = gemv_q4_1_f32(std::ptr::null(), std::ptr::null(), std::ptr::null_mut(), 100, 100);
+        let result = gemv_q4_1_f32(
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            100,
+            100,
+        );
         assert!(result.is_err());
     }
 

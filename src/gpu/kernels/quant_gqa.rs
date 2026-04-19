@@ -102,7 +102,7 @@ pub fn fused_qkv_rope_q4_0_gqa_on_stream(
             head_dim as c_int,
             rope_theta,
             rope_neox,
-            (n_heads * head_dim) as c_int,  // hidden_size
+            (n_heads * head_dim) as c_int, // hidden_size
             stream,
         )
     };

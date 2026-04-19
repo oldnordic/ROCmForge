@@ -7,28 +7,44 @@ use super::error::{GpuError, GpuResult};
 use super::ffi::hip_stream_synchronize;
 use super::ffi::{hipStreamCaptureStatus, hipStream_t, hip_stream_is_capturing};
 use super::kernels::{
-    add_on_stream, gemm_q4_0_f32, gemm_q4_1_f32, gemm_q4_k_f32, gemm_q5_k_f32, gemm_q6_k_f32,
-    gemm_q8_0_f32, gemv_gate_up_q4_0_f32_on_stream, gemv_gate_up_q4_0_q8_0_on_stream,
+    add_on_stream,
+    // DISABLED: gemv_qkv_q4_0_f32_on_stream not available (use fused_qkv_rope_q4_0_gqa_on_stream instead)
+    // gemv_qkv_q4_0_f32_on_stream,
+    // DISABLED: gemv_qkv_q4_0_f32_on_stream_variant not available
+    fused_qkv_rope_q4_0_gqa_on_stream,
+    gemm_q4_0_f32,
+    gemm_q4_1_f32,
+    gemm_q4_k_f32,
+    gemm_q5_k_f32,
+    gemm_q6_k_f32,
+    gemm_q8_0_f32,
+    gemv_gate_up_q4_0_f32_on_stream,
+    gemv_gate_up_q4_0_q8_0_on_stream,
     // DISABLED: gemv_gate_up_swiglu_q4_0_f32_on_stream not available
     // DISABLED: Experimental Q8 variants not available
     // gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_on_stream,
     // gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_tile4_on_stream,
     // gemv_gate_up_swiglu_q4_0_f32_q8_inline_on_stream_variant,
     gemv_q4_0_f32_on_stream_unchecked,
-    gemv_q4_0_f32_q8_inline_residual_on_stream, gemv_q4_0_f32_q8_inline_residual_on_stream_variant,
-    gemv_q4_0_f32_residual_on_stream_unchecked, gemv_q4_0_q8_0_on_stream,
-    gemv_q4_0_q8_0_residual_on_stream, gemv_q4_1_f32_on_stream_unchecked,
-    gemv_q4_1_f32_residual_on_stream_unchecked, gemv_q4_1_f32_residual_on_stream_variant_unchecked,
+    gemv_q4_0_f32_q8_inline_residual_on_stream,
+    gemv_q4_0_f32_q8_inline_residual_on_stream_variant,
+    gemv_q4_0_f32_residual_on_stream_unchecked,
+    gemv_q4_0_q8_0_on_stream,
+    gemv_q4_0_q8_0_residual_on_stream,
+    gemv_q4_1_f32_on_stream_unchecked,
+    gemv_q4_1_f32_residual_on_stream_unchecked,
+    gemv_q4_1_f32_residual_on_stream_variant_unchecked,
     // DISABLED: gemv_q4_k_f32_on_stream, gemv_q5_k_f32_on_stream, gemv_q6_k_f32_on_stream not available
     // gemv_q4_k_f32_on_stream, gemv_q5_k_f32_on_stream, gemv_q6_k_f32_on_stream,
-    gemv_q8_0_f32_lm_head_on_stream, gemv_q8_0_f32_lm_head_on_stream_variant,
+    gemv_q8_0_f32_lm_head_on_stream,
+    gemv_q8_0_f32_lm_head_on_stream_variant,
     gemv_q8_0_f32_on_stream,
-    // DISABLED: gemv_qkv_q4_0_f32_on_stream not available (use fused_qkv_rope_q4_0_gqa_on_stream instead)
-    // gemv_qkv_q4_0_f32_on_stream,
-    // DISABLED: gemv_qkv_q4_0_f32_on_stream_variant not available
-    fused_qkv_rope_q4_0_gqa_on_stream,
-    mul_on_stream, q8_0_workspace_bytes, quantize_q8_0_on_stream, rms_norm_on_stream,
-    rms_norm_vulkan_style, silu_on_stream,
+    mul_on_stream,
+    q8_0_workspace_bytes,
+    quantize_q8_0_on_stream,
+    rms_norm_on_stream,
+    rms_norm_vulkan_style,
+    silu_on_stream,
 };
 use super::launch_autotune::{
     lookup_gate_up_swiglu_q8_variant, lookup_lm_head_q8_variant, lookup_q4_0_q8_residual_variant,
@@ -293,7 +309,10 @@ fn dispatch_gemv_impl(
     out_dim: usize,
     in_dim: usize,
 ) -> GpuResult<()> {
-    eprintln!("[RUST] dispatch_gemv_impl called: wtype={:?}, out_dim={}, in_dim={}", meta.wtype, out_dim, in_dim);
+    eprintln!(
+        "[RUST] dispatch_gemv_impl called: wtype={:?}, out_dim={}, in_dim={}",
+        meta.wtype, out_dim, in_dim
+    );
     unsafe {
         match meta.wtype {
             GgmlType::Q4_0 => {
@@ -807,34 +826,34 @@ pub fn gpu_dispatch_fused_qkv_on_stream(
             }
         } else {
         */
-            // DISABLED: gemv_qkv_q4_0_f32_on_stream not available
-            // Use fused_qkv_rope_q4_0_gqa_on_stream instead
-            // TODO: Implement fallback to GQA kernel
-            return Err(GpuError::UnsupportedOperation {
+        // DISABLED: gemv_qkv_q4_0_f32_on_stream not available
+        // Use fused_qkv_rope_q4_0_gqa_on_stream instead
+        // TODO: Implement fallback to GQA kernel
+        return Err(GpuError::UnsupportedOperation {
                 operation: "gpu_dispatch_fused_qkv".to_string(),
                 reason: "gemv_qkv_q4_0_f32_on_stream not available, use fused_qkv_rope_q4_0_gqa_on_stream instead".to_string(),
             });
-            /*
-            // Baseline path (backward compatible)
-            unsafe {
-                gemv_qkv_q4_0_f32_on_stream(
-                    w_q.as_ptr() as *const u8,
-                    w_k.as_ptr() as *const u8,
-                    w_v.as_ptr() as *const u8,
-                    q_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32),
-                    k_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32),
-                    v_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32),
-                    input,
-                    out_q,
-                    out_k,
-                    out_v,
-                    h,
-                    q_size,
-                    kv_size,
-                    stream,
-                )?;
-            }
-            */
+        /*
+        // Baseline path (backward compatible)
+        unsafe {
+            gemv_qkv_q4_0_f32_on_stream(
+                w_q.as_ptr() as *const u8,
+                w_k.as_ptr() as *const u8,
+                w_v.as_ptr() as *const u8,
+                q_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32),
+                k_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32),
+                v_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32),
+                input,
+                out_q,
+                out_k,
+                out_v,
+                h,
+                q_size,
+                kv_size,
+                stream,
+            )?;
+        }
+        */
         //} // End of disabled autotune block
         return Ok(());
     }
@@ -890,7 +909,7 @@ pub fn gpu_dispatch_fused_qkv_gqa_on_stream(
     q_size: usize,
     kv_size: usize,
     h: usize,
-    pos_ptr: *const i32,  // GPU pointer to decode state position
+    pos_ptr: *const i32, // GPU pointer to decode state position
     stream: hipStream_t,
 ) -> GpuResult<()> {
     // Validate GQA compatibility
@@ -921,8 +940,8 @@ pub fn gpu_dispatch_fused_qkv_gqa_on_stream(
     let features = super::features::GpuFeatures::detect(device)?;
 
     // Get RoPE parameters from model config
-    let rope_theta = 10000.0f32;  // Standard for Qwen2
-    let rope_neox = true;          // Qwen2 uses Neox-style RoPE
+    let rope_theta = 10000.0f32; // Standard for Qwen2
+    let rope_neox = true; // Qwen2 uses Neox-style RoPE
 
     // Convert bias Option<&GpuBuffer> to *const f32 (null if None)
     let bias_q_ptr = q_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32);
@@ -962,18 +981,22 @@ pub fn gpu_dispatch_fused_qkv_gqa_on_stream(
         out_q,
         out_k,
         out_v,
-        0,  // pos (not used, RoPE applied separately)
+        0, // pos (not used, RoPE applied separately)
         n_heads,
         n_kv_heads,
-        h,  // head_dim
+        h, // head_dim
         rope_theta,
         rope_neox,
         stream,
     )?;
 
     // Step 2: Apply RoPE to Q and K separately using GPU state pointer (for graph replay compatibility)
-    super::kernels::rope::rope_heads_from_state_on_stream(out_q, pos_ptr, n_heads, h, rope_theta, rope_neox, stream)?;
-    super::kernels::rope::rope_heads_from_state_on_stream(out_k, pos_ptr, n_kv_heads, h, rope_theta, rope_neox, stream)?;
+    super::kernels::rope::rope_heads_from_state_on_stream(
+        out_q, pos_ptr, n_heads, h, rope_theta, rope_neox, stream,
+    )?;
+    super::kernels::rope::rope_heads_from_state_on_stream(
+        out_k, pos_ptr, n_kv_heads, h, rope_theta, rope_neox, stream,
+    )?;
 
     Ok(())
 }
@@ -1498,7 +1521,7 @@ pub fn gpu_dispatch_gemm(
     }
     */
     /*
-    */
+     */
 
     Ok(())
 }

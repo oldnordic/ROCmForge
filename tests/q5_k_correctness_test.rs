@@ -24,28 +24,40 @@ fn test_q5_k_model_output_coherence() {
         .expect("Failed to execute rocmforge");
 
     // Check command succeeded
-    assert!(output.status.success(), "Command failed: {:?}", output.status);
+    assert!(
+        output.status.success(),
+        "Command failed: {:?}",
+        output.status
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     // Check for GPU crashes
-    assert!(!stderr.contains("HIP_ERROR"), "GPU error detected: {}", stderr);
-    assert!(!stderr.contains("GPU reset"), "GPU reset detected: {}", stderr);
+    assert!(
+        !stderr.contains("HIP_ERROR"),
+        "GPU error detected: {}",
+        stderr
+    );
+    assert!(
+        !stderr.contains("GPU reset"),
+        "GPU reset detected: {}",
+        stderr
+    );
 
     // Check output is coherent English
     let output_text = stdout.trim();
 
     // Basic sanity checks
-    assert!(
-        output_text.len() > 5,
-        "Output too short: '{}'",
-        output_text
-    );
+    assert!(output_text.len() > 5, "Output too short: '{}'", output_text);
 
     // Should have English characters
     let has_english = output_text.chars().any(|c| c.is_ascii_alphabetic());
-    assert!(has_english, "Output contains no English text: '{}'", output_text);
+    assert!(
+        has_english,
+        "Output contains no English text: '{}'",
+        output_text
+    );
 
     // Should not have mixed Chinese/English (garbage symptom)
     let has_chinese = output_text.chars().any(|c| {
@@ -84,7 +96,10 @@ fn test_q5_k_correctness_infrastructure() {
         (0x4E00..=0x9FFF).contains(&cp)
     });
 
-    assert!(!has_chinese_correct, "Should not have Chinese in correct output");
+    assert!(
+        !has_chinese_correct,
+        "Should not have Chinese in correct output"
+    );
 
     println!("✅ Q5_K correctness test infrastructure works");
 }
