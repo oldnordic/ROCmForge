@@ -1,3 +1,4 @@
+#![cfg(feature = "gpu")]
 //! Systematic component tests to isolate GPU correctness bugs
 //!
 //! Each test validates a single GPU component against CPU reference
@@ -5,9 +6,9 @@
 
 use rocmforge::config::ModelConfig;
 use rocmforge::cpu::cache::CpuForwardScratch;
-use rocmforge::cpu::ops::{dispatch_gemv, rms_norm};
+use rocmforge::cpu::ops::rms_norm;
 use rocmforge::cpu::weights::CpuModelWeights;
-use rocmforge::gpu::{self, GpuDevice, GpuForwardScratch};
+use rocmforge::gpu::{self, GpuDevice};
 use rocmforge::loader::GgufFile;
 use serial_test::serial;
 
@@ -25,7 +26,7 @@ fn download_gpu_f32(buf: &gpu::GpuBuffer, len: usize) -> Vec<f32> {
 }
 
 fn upload_gpu_f32(data: &[f32]) -> gpu::GpuBuffer {
-    let size_in_bytes = data.len() * std::mem::size_of::<f32>();
+    let size_in_bytes = std::mem::size_of_val(data);
     let mut buf = gpu::GpuBuffer::alloc(size_in_bytes).expect("Failed to allocate GPU buffer");
     buf.copy_from_host(unsafe {
         std::slice::from_raw_parts(data.as_ptr() as *const u8, size_in_bytes)
@@ -55,7 +56,7 @@ fn test_gpu_rms_norm_matches_cpu() {
 
     // Initialize GPU
     let caps = gpu::detect().expect("GPU should be detected");
-    let device = GpuDevice::init(caps.device_id).expect("GPU device should initialize");
+    let _device = GpuDevice::init(caps.device_id).expect("GPU device should initialize");
 
     // Create test data
     let h = config.hidden_size;
@@ -64,7 +65,7 @@ fn test_gpu_rms_norm_matches_cpu() {
 
     // Fill with test values
     for (i, val) in cpu_input.iter_mut().enumerate() {
-        *val = ((i as f32) * 0.1 - 5.0); // Range: -5.0 to +4.something
+        *val = (i as f32) * 0.1 - 5.0; // Range: -5.0 to +4.something
     }
 
     // CPU reference
@@ -76,7 +77,7 @@ fn test_gpu_rms_norm_matches_cpu() {
     );
 
     // GPU computation
-    let gpu_input = upload_gpu_f32(&cpu_input);
+    let _gpu_input = upload_gpu_f32(&cpu_input);
 
     // Copy weights directly as bytes (they're stored as f32)
     let weight_bytes: &[u8] = unsafe {

@@ -1,7 +1,7 @@
+#![cfg(feature = "gpu")]
 //! Test to identify all transposed weight operations in a layer
 
 use rocmforge::config::ModelConfig;
-use rocmforge::cpu::weights::CpuModelWeights;
 use rocmforge::gpu::GpuModelWeights;
 use rocmforge::loader::GgufFile;
 
@@ -70,6 +70,4 @@ fn test_transposed_weights_analysis() {
     {
         eprintln!("  ffn_down: Q4_0 + transposed = BUG (FIXED)");
     }
-
-    assert!(true, "Transposed weights analysis completed");
 }

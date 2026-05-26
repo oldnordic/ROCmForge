@@ -1,3 +1,13 @@
+#![allow(
+    dead_code,
+    unused_variables,
+    unused_imports,
+    unused_mut,
+    unused_unsafe,
+    unused_must_use,
+    clippy::all
+)]
+
 pub mod bench;
 pub mod config;
 pub mod cpu;

@@ -3,6 +3,13 @@
 //! All unsafe blocks wrapped with error checking.
 //! No raw HIP API exposed outside gpu module.
 
+#![allow(
+    non_snake_case,
+    non_camel_case_types,
+    non_upper_case_globals,
+    dead_code
+)]
+
 use super::error::{GpuError, GpuResult};
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int, c_void};
@@ -129,17 +136,9 @@ pub fn hip_set_device(device_id: i32) -> GpuResult<()> {
 }
 
 /// Get HIP device name.
-///
-/// NOTE: hipGetDeviceName FFI function not available in current ROCm version.
-/// Returns a placeholder string based on device_id.
 pub fn hip_get_device_name(device_id: i32) -> GpuResult<String> {
-    // TODO: Replace with actual hipGetDeviceName call when available in ROCm
-    // For now, return a placeholder name based on device_id
-    let name = match device_id {
-        0 => "AMD GPU (Device 0)".to_string(),
-        _ => format!("AMD GPU (Device {})", device_id),
-    };
-    Ok(name)
+    let info = hip_get_device_info(device_id)?;
+    Ok(info.name)
 }
 
 /// Allocate memory on GPU.

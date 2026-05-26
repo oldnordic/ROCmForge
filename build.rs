@@ -13,10 +13,7 @@ mod gpu_build {
         use std::process::Command;
 
         let hip_path = find_rocm_path();
-        let hip_path = hip_path
-            .as_ref()
-            .map(|p| p.as_path())
-            .unwrap_or(Path::new("/opt/rocm"));
+        let hip_path = hip_path.as_deref().unwrap_or(Path::new("/opt/rocm"));
 
         // Detect wave size for target architecture
         let target_arch = "gfx1100"; // RX 7900 XT (RDNA3)
@@ -226,12 +223,19 @@ mod gpu_build {
                             ("libq4_k_gemv_vulkan_style.a", "q4_k_gemv_vulkan_style"),
                             // GEMM libraries
                             ("libq4_0_gemm.a", "q4_0_gemm"),
+                            ("libbatched_q4_0_gemm.a", "batched_q4_0_gemm"),
+                            ("libbatched_q4_1_gemm.a", "batched_q4_1_gemm"),
                             ("libq4_0_fused.a", "q4_0_fused"),
+                            ("libq4_0_fused_q8.a", "q4_0_fused_q8"),
                             ("libq4_1_gemm.a", "q4_1_gemm"),
                             ("libq8_0_gemm.a", "q8_0_gemm"),
                             ("libq4_k_gemm.a", "q4_k_gemm"),
                             ("libq5_k_gemm.a", "q5_k_gemm"),
                             ("libq6_k_gemm.a", "q6_k_gemm"),
+                            // RFM unpack library
+                            ("librfm_unpack.a", "rfm_unpack"),
+                            // WMMA matrix core library
+                            ("libwmma_matmul.a", "wmma_matmul"),
                         ];
 
                         for (lib_name, link_name) in libs_to_copy {

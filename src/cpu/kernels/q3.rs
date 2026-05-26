@@ -78,7 +78,7 @@ impl Half16 {
 /// Q3_K block structure (110 bytes for 256 weights).
 ///
 /// This is the on-disk and in-memory representation of Q3_K quantized weights.
-#[repr(C, align(16))]
+#[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct BlockQ3K {
     /// High bit mask for 3-bit quantization (1 bit per element)
@@ -131,67 +131,80 @@ impl BlockQ3K {
         // Parse super-block scale from f16
         let d_all = Half16::from_le_bytes(self.d).to_f32();
 
-        // Unpack scales from packed 6-bit format into 12 i8 values
-        let mut scales = [0i8; 12];
-        let tmp = u32::from_le_bytes([
+        // Unpack the 12 scales (packed 6-bit format) into 16 scale values
+        const KMASK1: u32 = 0x03030303;
+        const KMASK2: u32 = 0x0f0f0f0f;
+
+        let mut aux = [0u32; 4];
+        aux[0] = u32::from_le_bytes([
+            self.scales[0],
+            self.scales[1],
             self.scales[2],
             self.scales[3],
+        ]);
+        aux[1] = u32::from_le_bytes([
             self.scales[4],
             self.scales[5],
+            self.scales[6],
+            self.scales[7],
+        ]);
+        aux[2] = u32::from_le_bytes([
+            self.scales[8],
+            self.scales[9],
+            self.scales[10],
+            self.scales[11],
         ]);
 
-        // Unpack following llama.cpp's format
-        scales[0] = (((self.scales[0] & 0x0F) as i8) << 2) | ((tmp & 0x03) as i8);
-        scales[1] = ((self.scales[0] >> 4) & 0x0F) as i8;
-        scales[2] = (((self.scales[1] & 0x0F) as i8) << 2) | ((tmp >> 2) & 0x03) as i8;
-        scales[3] = ((self.scales[1] >> 4) & 0x0F) as i8;
-        scales[4] = ((tmp >> 4) & 0x0F) as i8;
-        scales[5] = (((self.scales[2] & 0x0F) as i8) << 2) | ((tmp >> 6) & 0x03) as i8;
-        scales[6] = ((self.scales[2] >> 4) & 0x0F) as i8;
-        scales[7] = ((tmp >> 8) & 0x0F) as i8;
-        scales[8] = ((self.scales[0] >> 6) & 0x03) as i8;
-        scales[9] = ((self.scales[1] >> 6) & 0x03) as i8;
-        scales[10] = (((self.scales[2] >> 2) & 0x03) as i8) << 2;
-        scales[11] = ((self.scales[2] >> 0) & 0x03) as i8;
+        let tmp = aux[2];
+        aux[2] = ((aux[0] >> 4) & KMASK2) | (((tmp >> 4) & KMASK1) << 4);
+        aux[3] = ((aux[1] >> 4) & KMASK2) | (((tmp >> 6) & KMASK1) << 4);
+        aux[0] = (aux[0] & KMASK2) | ((tmp & KMASK1) << 4);
+        aux[1] = (aux[1] & KMASK2) | (((tmp >> 2) & KMASK1) << 4);
+
+        let mut scales = [0i8; 16];
+        for i in 0..4 {
+            let bytes = aux[i].to_le_bytes();
+            for j in 0..4 {
+                scales[i * 4 + j] = bytes[j] as i8;
+            }
+        }
 
         let mut y_idx = 0;
         let mut scale_idx = 0;
+        let mut m = 1u8;
 
         // Process 256 elements as two 128-element chunks
         for chunk in 0..2 {
-            let q = &self.qs[chunk * 32..];
-            let hm = &self.hmask[chunk * 16..];
+            let qs = &self.qs[chunk * 32..(chunk + 1) * 32];
 
-            let mut m = 1u8;
             let mut shift = 0i32;
 
-            // 4 groups of 32 elements each
+            // 4 groups of 32 elements each (4 * 32 = 128 elements)
             for _ in 0..4 {
-                // First 16 elements of this group
-                let dl = d_all * (scales[scale_idx] - 32) as f32;
+                // First 16 elements of this 32-element group
+                let dl = d_all * (scales[scale_idx] as f32 - 32.0);
                 scale_idx += 1;
 
                 for l in 0..16 {
-                    let ql = (q[l >> 2] >> shift) & 0x03;
-                    let hbit = if hm[l >> 3] & m != 0 { 0 } else { 4 };
+                    let ql = (qs[l] >> shift) & 0x03;
+                    let hbit = if self.hmask[l] & m != 0 { 0 } else { 4 };
                     output[y_idx + l] = dl * (ql as i8 - hbit) as f32;
                 }
 
-                // Next 16 elements of this group
-                let dl = d_all * (scales[scale_idx] - 32) as f32;
+                // Next 16 elements of this 32-element group
+                let dl = d_all * (scales[scale_idx] as f32 - 32.0);
                 scale_idx += 1;
 
-                for l in 16..32 {
-                    let ql = (q[l >> 2] >> shift) & 0x03;
-                    let hbit = if hm[l >> 3] & m != 0 { 0 } else { 4 };
-                    output[y_idx + l] = dl * (ql as i8 - hbit) as f32;
+                for l in 0..16 {
+                    let ql = (qs[l + 16] >> shift) & 0x03;
+                    let hbit = if self.hmask[l + 16] & m != 0 { 0 } else { 4 };
+                    output[y_idx + 16 + l] = dl * (ql as i8 - hbit) as f32;
                 }
 
                 shift += 2;
                 m <<= 1;
+                y_idx += 32;
             }
-
-            y_idx += 64;
         }
     }
 }
@@ -235,10 +248,14 @@ mod tests {
         // Set d = 1.0 (fp16)
         block.d = 0x3C00u16.to_le_bytes(); // fp16 1.0
 
-        // Set scales to middle value (32, which gives scale = 0 after offset)
-        // This means output = d * (q - 4) where q is 3-bit value in [-4, 3]
-        for i in 0..12 {
-            block.scales[i] = 32; // Middle of 6-bit range
+        // Set scales such that they unpack to 33, which gives scale = 1 after offset (33 - 32 = 1)
+        // scales[0..4] = 17 (0x11)
+        // scales[4..8] = 17 (0x11)
+        // scales[8..12] = 170 (0xAA)
+        for i in 0..4 {
+            block.scales[i] = 17;
+            block.scales[i + 4] = 17;
+            block.scales[i + 8] = 170;
         }
 
         // Set all qs to 0 (low 2 bits = 0)

@@ -1,3 +1,4 @@
+#![cfg(feature = "gpu")]
 //! Test for proper state accumulation across GPU layers
 //!
 //! This tests two scenarios:
@@ -27,8 +28,9 @@ fn download_gpu_f32(buf: &GpuBuffer, len: usize) -> Vec<f32> {
     unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const f32, len).to_vec() }
 }
 
+#[allow(dead_code)]
 fn upload_gpu_f32(data: &[f32]) -> GpuBuffer {
-    let size_in_bytes = data.len() * std::mem::size_of::<f32>();
+    let size_in_bytes = std::mem::size_of_val(data);
     let mut buf = GpuBuffer::alloc(size_in_bytes).expect("Failed to allocate GPU buffer");
     buf.copy_from_host(unsafe {
         std::slice::from_raw_parts(data.as_ptr() as *const u8, size_in_bytes)

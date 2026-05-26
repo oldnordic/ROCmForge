@@ -1,4 +1,5 @@
 #![cfg(feature = "gpu")]
+#![allow(warnings)]
 
 //! GPU weights loading tests.
 

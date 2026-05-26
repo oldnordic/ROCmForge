@@ -1,8 +1,8 @@
+#![cfg(feature = "gpu")]
 //! Test to check if gate_up operation is working correctly
 
 use rocmforge::config::ModelConfig;
-use rocmforge::cpu::cache::CpuForwardScratch;
-use rocmforge::cpu::ops::{dispatch_gemv, silu};
+use rocmforge::cpu::ops::dispatch_gemv;
 use rocmforge::cpu::weights::CpuModelWeights;
 use rocmforge::gpu::{GpuDevice, GpuModelWeights};
 use rocmforge::loader::GgufFile;
@@ -22,7 +22,7 @@ fn download_gpu_f32(buf: &rocmforge::gpu::GpuBuffer, len: usize) -> Vec<f32> {
 }
 
 fn upload_gpu_f32(data: &[f32]) -> rocmforge::gpu::GpuBuffer {
-    let size_in_bytes = data.len() * std::mem::size_of::<f32>();
+    let size_in_bytes = std::mem::size_of_val(data);
     let mut buf =
         rocmforge::gpu::GpuBuffer::alloc(size_in_bytes).expect("Failed to allocate GPU buffer");
     buf.copy_from_host(unsafe {
@@ -65,7 +65,7 @@ fn test_gate_up_operation_correctness() {
     // Create test input
     let mut cpu_input = vec![1.0f32; h];
     for (i, val) in cpu_input.iter_mut().enumerate() {
-        *val = ((i as f32) * 0.1 - 5.0);
+        *val = (i as f32) * 0.1 - 5.0;
     }
 
     // CPU reference - manual gate_up + swiglu
@@ -108,9 +108,9 @@ fn test_gate_up_operation_correctness() {
     // For GPU, we'll just check if gate_up produces reasonable output
     // by testing the individual gate and up operations
     let gpu_input = upload_gpu_f32(&cpu_input);
-    let mut gpu_gate = rocmforge::gpu::GpuBuffer::alloc(ff_size * std::mem::size_of::<f32>())
+    let gpu_gate = rocmforge::gpu::GpuBuffer::alloc(ff_size * std::mem::size_of::<f32>())
         .expect("Failed to alloc GPU gate");
-    let mut gpu_up = rocmforge::gpu::GpuBuffer::alloc(ff_size * std::mem::size_of::<f32>())
+    let gpu_up = rocmforge::gpu::GpuBuffer::alloc(ff_size * std::mem::size_of::<f32>())
         .expect("Failed to alloc GPU up");
 
     rocmforge::gpu::ops::gpu_dispatch_gemv_on_stream(

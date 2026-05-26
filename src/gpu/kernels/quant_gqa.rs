@@ -77,7 +77,7 @@ pub fn fused_qkv_rope_q4_0_gqa_on_stream(
         });
     }
 
-    if n_heads % n_kv_heads != 0 {
+    if !n_heads.is_multiple_of(n_kv_heads) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(

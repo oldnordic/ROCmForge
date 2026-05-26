@@ -23,7 +23,7 @@ fn validate_q8_0_gemv_args(
         });
     }
 
-    if n_rows % 32 != 0 {
+    if !n_rows.is_multiple_of(32) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!("{kernel_name}: n_rows must be multiple of 32, got {n_rows}"),

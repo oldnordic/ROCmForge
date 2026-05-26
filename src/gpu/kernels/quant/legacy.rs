@@ -142,7 +142,7 @@ pub fn gemv_q4_k_f32_vulkan_style(
         });
     }
 
-    if n_rows % 256 != 0 {
+    if !n_rows.is_multiple_of(256) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -262,8 +262,6 @@ pub fn gemv_q5_k_f32_on_stream(
 
 // ── Q6_K GEMV ─────────────────────────────────────────────────────────────────────
 
-// DISABLED: gemv_q6_k_f32_on_stream not available
-/*
 pub fn gemv_q6_k_f32(
     weights_q6_k: *const u8,
     input: *const f32,
@@ -280,11 +278,7 @@ pub fn gemv_q6_k_f32(
         hipStream_t::null(),
     )
 }
-*/
 
-// DISABLED: gemv_q6_k_f32_launch kernel not available
-// TODO: Re-enable when Q6_K kernel is implemented
-/*
 pub fn gemv_q6_k_f32_on_stream(
     weights_q6_k: *const u8,
     input: *const f32,
@@ -337,7 +331,6 @@ pub fn gemv_q6_k_f32_on_stream(
 
     Ok(())
 }
-*/
 
 // ── Q4_0 QKV Fusion ───────────────────────────────────────────────────────────────
 
@@ -357,8 +350,6 @@ pub fn gemv_q6_k_f32_on_stream(
 /// * `out_q`, `out_k`, `out_v` - Output projections (will be written)
 /// * `n_rows` - Input dimension (must be multiple of 32)
 /// * `n_q`, `n_kv` - Output dimensions for Q and K/V
-// DISABLED: gemv_qkv_q4_0_f32_on_stream not available (use fused_qkv_rope_q4_0_gqa_on_stream instead)
-/*
 pub fn gemv_qkv_q4_0_f32(
     w_q: *const u8,
     w_k: *const u8,
@@ -391,11 +382,7 @@ pub fn gemv_qkv_q4_0_f32(
         hipStream_t::null(),
     )
 }
-*/ // End of disabled gemv_qkv_q4_0_f32
 
-// DISABLED: gemv_qkv_q4_0_f32_launch kernel not available
-// Use fused_qkv_rope_q4_0_gqa_on_stream instead
-/*
 pub fn gemv_qkv_q4_0_f32_on_stream(
     w_q: *const u8,
     w_k: *const u8,
@@ -419,7 +406,7 @@ pub fn gemv_qkv_q4_0_f32_on_stream(
         });
     }
 
-    if n_rows % 32 != 0 {
+    if !n_rows.is_multiple_of(32) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -438,8 +425,20 @@ pub fn gemv_qkv_q4_0_f32_on_stream(
 
     let result = unsafe {
         gemv_qkv_q4_0_f32_launch(
-            w_q, w_k, w_v, bias_q, bias_k, bias_v, input, out_q, out_k, out_v,
-            n_rows as c_int, n_q as c_int, n_kv as c_int, stream,
+            w_q,
+            w_k,
+            w_v,
+            bias_q,
+            bias_k,
+            bias_v,
+            input,
+            out_q,
+            out_k,
+            out_v,
+            n_rows as c_int,
+            n_q as c_int,
+            n_kv as c_int,
+            stream,
         )
     };
 
@@ -452,11 +451,7 @@ pub fn gemv_qkv_q4_0_f32_on_stream(
 
     Ok(())
 }
-*/
 
-// DISABLED: gemv_qkv_q4_0_f32_variant_launch kernel not available
-// TODO: Re-enable when variant kernel is implemented
-/*
 pub fn gemv_qkv_q4_0_f32_on_stream_variant(
     w_q: *const u8,
     w_k: *const u8,
@@ -481,7 +476,7 @@ pub fn gemv_qkv_q4_0_f32_on_stream_variant(
         });
     }
 
-    if n_rows % 32 != 0 {
+    if !n_rows.is_multiple_of(32) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -494,14 +489,28 @@ pub fn gemv_qkv_q4_0_f32_on_stream_variant(
     if w_q.is_null() || w_k.is_null() || w_v.is_null() || input.is_null() {
         return Err(GpuError::HipApiError {
             code: -1,
-            description: "gemv_qkv_q4_0_f32_variant: required pointers must be non-null".to_string(),
+            description: "gemv_qkv_q4_0_f32_variant: required pointers must be non-null"
+                .to_string(),
         });
     }
 
     let result = unsafe {
         gemv_qkv_q4_0_f32_variant_launch(
-            w_q, w_k, w_v, bias_q, bias_k, bias_v, input, out_q, out_k, out_v,
-            n_rows as c_int, n_q as c_int, n_kv as c_int, variant as c_int, stream,
+            w_q,
+            w_k,
+            w_v,
+            bias_q,
+            bias_k,
+            bias_v,
+            input,
+            out_q,
+            out_k,
+            out_v,
+            n_rows as c_int,
+            n_q as c_int,
+            n_kv as c_int,
+            variant as c_int,
+            stream,
         )
     };
 
@@ -514,7 +523,6 @@ pub fn gemv_qkv_q4_0_f32_on_stream_variant(
 
     Ok(())
 }
-*/
 
 // ── Q4_0 Gate-Up Fusion ───────────────────────────────────────────────────────────
 
@@ -563,7 +571,7 @@ pub fn gemv_gate_up_q4_0_f32_on_stream(
         });
     }
 
-    if n_rows % 32 != 0 {
+    if !n_rows.is_multiple_of(32) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -605,9 +613,6 @@ pub fn gemv_gate_up_q4_0_f32_on_stream(
 
 // ── Q4_0 SwiGLU Gate-Up Fusion ────────────────────────────────────────────────────
 
-// DISABLED: gemv_gate_up_swiglu_q4_0_f32_on_stream not available
-// TODO: Re-enable when gate-up kernel is implemented
-/*
 /// Fused gate-up projection with SwiGLU activation for Q4_0 quantized weights.
 ///
 /// Computes:
@@ -633,11 +638,7 @@ pub fn gemv_gate_up_swiglu_q4_0_f32(
         hipStream_t::null(),
     )
 }
-*/
 
-// DISABLED: gemv_gate_up_swiglu_q4_0_f32_launch kernel not available
-// TODO: Re-enable when gate-up kernel is implemented
-/*
 pub fn gemv_gate_up_swiglu_q4_0_f32_on_stream(
     w_gate: *const u8,
     w_up: *const u8,
@@ -654,7 +655,7 @@ pub fn gemv_gate_up_swiglu_q4_0_f32_on_stream(
         });
     }
 
-    if n_rows % 32 != 0 {
+    if !n_rows.is_multiple_of(32) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -673,24 +674,25 @@ pub fn gemv_gate_up_swiglu_q4_0_f32_on_stream(
 
     let result = unsafe {
         gemv_gate_up_swiglu_q4_0_f32_launch(
-            w_gate, w_up, input, out_swiglu,
-            n_rows as c_int, n_ff as c_int, stream,
+            w_gate,
+            w_up,
+            input,
+            out_swiglu,
+            n_rows as c_int,
+            n_ff as c_int,
+            stream,
         )
     };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
             code: result as i32,
-            description: format!(
-                "gemv_gate_up_swiglu_q4_0_f32 kernel failed: {:?}",
-                result
-            ),
+            description: format!("gemv_gate_up_swiglu_q4_0_f32 kernel failed: {:?}", result),
         });
     }
 
     Ok(())
 }
-*/
 
 /// Vulkan-style variant with explicit wave control
 pub fn gemv_gate_up_swiglu_vulkan_q4_0_f32(
@@ -711,7 +713,7 @@ pub fn gemv_gate_up_swiglu_vulkan_q4_0_f32(
         });
     }
 
-    if n_rows % 32 != 0 {
+    if !n_rows.is_multiple_of(32) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -774,7 +776,7 @@ pub fn gemv_q4_0_f32_vulkan_style(
         });
     }
 
-    if n_rows % 32 != 0 {
+    if !n_rows.is_multiple_of(32) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -1124,7 +1126,7 @@ pub fn gemv_norm_qkv_rope_kvwrite_q4_0_f32_dp4a_on_stream(
         });
     }
 
-    if n_rows % 32 != 0 {
+    if !n_rows.is_multiple_of(32) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -1295,8 +1297,6 @@ unsafe extern "C" {
         stream: hipStream_t,
     ) -> hipError_t;
 
-    // DISABLED: gemv_qkv_q4_0_f32_variant_launch not available
-    /*
     fn gemv_qkv_q4_0_f32_variant_launch(
         w_q: *const u8,
         w_k: *const u8,
@@ -1314,7 +1314,6 @@ unsafe extern "C" {
         variant: c_int,
         stream: hipStream_t,
     ) -> hipError_t;
-    */
 
     // Q4_0 gate-up fusion
     fn gemv_gate_up_q4_0_f32_launch(
@@ -1328,8 +1327,6 @@ unsafe extern "C" {
         stream: hipStream_t,
     ) -> hipError_t;
 
-    // DISABLED: gemv_gate_up_swiglu_q4_0_f32_launch not available
-    /*
     fn gemv_gate_up_swiglu_q4_0_f32_launch(
         w_gate: *const u8,
         w_up: *const u8,
@@ -1339,7 +1336,6 @@ unsafe extern "C" {
         n_ff: c_int,
         stream: hipStream_t,
     ) -> hipError_t;
-    */
 
     fn gemv_gate_up_swiglu_vulkan_q4_0_f32_launch(
         w_gate: *const u8,

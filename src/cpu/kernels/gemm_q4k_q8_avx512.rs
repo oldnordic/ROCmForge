@@ -171,8 +171,7 @@ pub unsafe fn dot_q4_k_q8_k_block_avx512(q4_block: &BlockQ4K, q8_block: &BlockQ8
         let p32h = _mm256_dpbusd_epi32(_mm256_setzero_si256(), q4h, q8h);
 
         // Get scale vectors for this group
-        let scale_l =
-            _mm256_shuffle_epi8(scales, super::gemm_q4k_q8::get_scale_shuffle_k4(2 * j + 0));
+        let scale_l = _mm256_shuffle_epi8(scales, super::gemm_q4k_q8::get_scale_shuffle_k4(2 * j));
         let scale_h =
             _mm256_shuffle_epi8(scales, super::gemm_q4k_q8::get_scale_shuffle_k4(2 * j + 1));
 

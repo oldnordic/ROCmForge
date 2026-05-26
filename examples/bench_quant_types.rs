@@ -94,7 +94,7 @@ fn bench_all_types(hidden: usize, intermediate: usize) {
         println!("  [{}]", qt.name);
 
         // Check if dimensions are compatible
-        if hidden % qt.block_elems != 0 || intermediate % qt.block_elems != 0 {
+        if !hidden.is_multiple_of(qt.block_elems) || !intermediate.is_multiple_of(qt.block_elems) {
             println!(
                 "    SKIP (incompatible dimensions: {} % {} = {})",
                 hidden,
@@ -158,7 +158,7 @@ fn bench_gemv(hidden: usize, intermediate: usize, qt: &QuantType) -> f64 {
     let w = vec![0u8; out_dim * row_bytes];
 
     // Create realistic input (activations with typical distribution)
-    let x: Vec<f32> = (0..in_dim).map(|i| (i as f32 * 0.001 - 0.5)).collect();
+    let x: Vec<f32> = (0..in_dim).map(|i| i as f32 * 0.001 - 0.5).collect();
     let mut y = vec![0.0f32; out_dim];
 
     let meta = WeightMeta {
@@ -168,7 +168,7 @@ fn bench_gemv(hidden: usize, intermediate: usize, qt: &QuantType) -> f64 {
     };
 
     // Warmup
-    let _ = dispatch_gemv(&w, &meta, &x, &mut y, out_dim, in_dim);
+    let _ = dispatch_gemv(&w, &meta, &x, &mut y, out_dim, in_dim, None);
 
     // Benchmark
     let iterations = if qt.ggml_type == GgmlType::F32 {
@@ -178,7 +178,7 @@ fn bench_gemv(hidden: usize, intermediate: usize, qt: &QuantType) -> f64 {
     };
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = dispatch_gemv(&w, &meta, &x, &mut y, out_dim, in_dim);
+        let _ = dispatch_gemv(&w, &meta, &x, &mut y, out_dim, in_dim, None);
     }
     let elapsed = start.elapsed();
 
@@ -194,7 +194,7 @@ fn bench_gemm(hidden: usize, intermediate: usize, qt: &QuantType) -> f64 {
     let row_bytes = num_blocks_k * qt.block_bytes;
     let w = vec![0u8; n * row_bytes];
 
-    let x: Vec<f32> = (0..m * k).map(|i| (i as f32 * 0.001 - 0.5)).collect();
+    let x: Vec<f32> = (0..m * k).map(|i| i as f32 * 0.001 - 0.5).collect();
     let mut y = vec![0.0f32; m * n];
 
     let meta = WeightMeta {

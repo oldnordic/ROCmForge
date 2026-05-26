@@ -1,9 +1,7 @@
 // examples/test_real_weights.rs
 // Test Q4_K × Q8_K kernels with real model weights
 
-use rocmforge::cpu::kernels::{
-    gemm_q4k_q8::gemv_q4_k_q8_k_dispatch, q4::BlockQ4K, q8::quantize_q8_k,
-};
+use rocmforge::cpu::kernels::{gemm_q4k_q8::gemv_q4_k_q8_k_dispatch, q4::BlockQ4K};
 use std::time::Instant;
 
 fn main() {
@@ -37,8 +35,8 @@ fn main() {
     let mut w = vec![0u8; OUT_DIM * NUM_BLOCKS * BlockQ4K::SIZE];
 
     // Fill with some pattern to simulate real weights
-    for i in 0..w.len() {
-        w[i] = ((i as u32).wrapping_mul(0x9E3779B9) & 0xFF) as u8;
+    for (i, val) in w.iter_mut().enumerate() {
+        *val = ((i as u32).wrapping_mul(0x9E3779B9) & 0xFF) as u8;
     }
 
     // Create input with pattern (simulating activation values)

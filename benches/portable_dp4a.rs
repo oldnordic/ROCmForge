@@ -1,3 +1,4 @@
+#![cfg(feature = "gpu")]
 //! Portable DP4A performance benchmarks
 //!
 //! Measures performance difference between hardware DP4A (RDNA2)

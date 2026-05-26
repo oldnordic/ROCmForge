@@ -149,7 +149,7 @@ impl SimdActivations {
 
     fn gelu_scalar(&self, x: &[f32], y: &mut [f32]) {
         // Constants: sqrt(2/pi) = 0.7978845608, 0.044715
-        const SQRT_2_OVER_PI: f32 = 0.7978845608;
+        const SQRT_2_OVER_PI: f32 = 0.797_884_6;
         const GELU_COEFF: f32 = 0.044715;
 
         for (xi, yi) in x.iter().zip(y.iter_mut()) {

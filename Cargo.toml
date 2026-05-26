@@ -57,6 +57,10 @@ path = "src/main.rs"
 name = "bench_gemv"
 path = "src/bench_gemv.rs"
 
+[[bin]]
+name = "rocmforge-convert"
+path = "src/bin/convert.rs"
+
 [[bench]]
 name = "kernels"
 harness = false
@@ -68,6 +72,26 @@ required-features = ["gpu"]
 
 [[bench]]
 name = "kernel_performance"
+harness = false
+required-features = ["gpu"]
+
+[[bench]]
+name = "batched_fused_gate_up"
+harness = false
+required-features = ["gpu"]
+
+[[bench]]
+name = "gpu_prefill_layer"
+harness = false
+required-features = ["gpu"]
+
+[[bench]]
+name = "portable_dp4a"
+harness = false
+required-features = ["gpu"]
+
+[[bench]]
+name = "q6_k_decode"
 harness = false
 required-features = ["gpu"]
 

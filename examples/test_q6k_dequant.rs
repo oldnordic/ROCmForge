@@ -49,7 +49,7 @@ fn main() {
             "  l={:2}: is={} -> sc[{}], sc[{}], sc[{}], sc[{}]",
             l,
             is,
-            is + 0,
+            is,
             is + 2,
             is + 4,
             is + 6

@@ -14,6 +14,7 @@ use rocmforge::cpu::{
 };
 use rocmforge::gpu::{GpuDevice, GpuForwardScratch, GpuKvCache};
 use rocmforge::loader::GgufFile;
+use rocmforge::tokenizer::BpeTokenizer;
 use serial_test::serial;
 use std::path::Path;
 
@@ -36,12 +37,13 @@ fn test_q4_0_dequantization_correctness() {
 
     // Load model
     let gguf = GgufFile::open(MODEL_PATH).unwrap();
-    let cpu_weights = CpuModelWeights::from_gguf(&gguf).unwrap();
-    let config = ModelConfig::from_gguf(&gguf);
+    let config = ModelConfig::from_gguf(&gguf).unwrap();
+    let cpu_weights = CpuModelWeights::load(&gguf, &config).unwrap();
+    let tok = BpeTokenizer::from_gguf(gguf.tokenizer_data());
 
     // Create sample input
     let prompt = "Hello, world!";
-    let tokens = cpu_weights.tokenize(prompt);
+    let tokens = tok.encode(prompt, false);
 
     // Run CPU reference
     let mut cpu_kv = CpuKvCache::new(&config, tokens.len());
@@ -64,36 +66,36 @@ fn test_q4_0_dequantization_correctness() {
     let cpu_output = cpu_scratch.logits.clone();
 
     // Run GPU kernel
-    let device = GpuDevice::create(0).expect("GPU device should be available");
+    let device = GpuDevice::init(0).expect("GPU device should be available");
     let gpu_weights =
-        rocmforge::gpu::GpuModelWeights::from_gguf(&gguf).expect("GPU weights should load");
+        rocmforge::gpu::GpuModelWeights::load(&gguf, &config).expect("GPU weights should load");
 
-    let mut gpu_kv =
-        GpuKvCache::new(&device, &config, tokens.len()).expect("GPU KV cache should allocate");
-    let mut gpu_scratch =
-        GpuForwardScratch::new(&device, &config).expect("GPU scratch should allocate");
-    let mut gpu_hidden = device
-        .alloc_zeros::<f32>(config.hidden_size)
-        .expect("GPU hidden buffer should allocate");
+    let mut gpu_kv = GpuKvCache::new(&config, tokens.len()).expect("GPU KV cache should allocate");
+    let mut gpu_scratch = GpuForwardScratch::new(&config).expect("GPU scratch should allocate");
+    let mut host_scratch = CpuForwardScratch::new(&config);
 
     for (pos, &token_id) in tokens.iter().enumerate() {
         rocmforge::gpu::gpu_embed_token_hybrid(
             &device,
             token_id,
-            &gpu_weights.embeddings,
-            &mut gpu_hidden,
+            &gpu_weights,
+            &cpu_weights,
+            &mut gpu_scratch,
+            &mut host_scratch,
             &config,
         )
         .expect("GPU embed should succeed");
 
         rocmforge::gpu::gpu_full_forward_hybrid(
             &device,
-            &gpu_hidden,
             &gpu_weights,
+            &cpu_weights,
             &mut gpu_kv,
             &mut gpu_scratch,
+            &mut host_scratch,
             pos,
             &config,
+            rocmforge::gpu::GpuLogitsMode::DownloadToHost,
         )
         .expect("GPU forward should succeed");
     }
@@ -142,52 +144,55 @@ fn test_fusion_kernel_coherence() {
 
     // Load model
     let gguf = GgufFile::open(MODEL_PATH).unwrap();
-    let cpu_weights = CpuModelWeights::from_gguf(&gguf).unwrap();
-    let config = ModelConfig::from_gguf(&gguf);
+    let config = ModelConfig::from_gguf(&gguf).unwrap();
+    let cpu_weights = CpuModelWeights::load(&gguf, &config).unwrap();
+    let tok = BpeTokenizer::from_gguf(gguf.tokenizer_data());
 
-    let device = GpuDevice::create(0).expect("GPU device should be available");
+    let device = GpuDevice::init(0).expect("GPU device should be available");
     let gpu_weights =
-        rocmforge::gpu::GpuModelWeights::from_gguf(&gguf).expect("GPU weights should load");
+        rocmforge::gpu::GpuModelWeights::load(&gguf, &config).expect("GPU weights should load");
 
     // Create GPU forward pass
-    let mut gpu_kv = GpuKvCache::new(&device, &config, 512).expect("GPU KV cache should allocate");
-    let mut gpu_scratch =
-        GpuForwardScratch::new(&device, &config).expect("GPU scratch should allocate");
+    let mut gpu_kv = GpuKvCache::new(&config, 512).expect("GPU KV cache should allocate");
+    let mut gpu_scratch = GpuForwardScratch::new(&config).expect("GPU scratch should allocate");
+    let mut host_scratch = CpuForwardScratch::new(&config);
 
     // Generate tokens for a simple prompt
     let prompt = "The capital of France is";
-    let tokens = cpu_weights.tokenize(prompt);
+    let tokens = tok.encode(prompt, false);
 
     // Run generation through GPU
     let mut output_tokens = Vec::new();
-    let mut gpu_hidden = device
-        .alloc_zeros::<f32>(config.hidden_size)
-        .expect("GPU hidden buffer should allocate");
 
     // Process prompt tokens
     for (pos, &token_id) in tokens.iter().enumerate() {
         rocmforge::gpu::gpu_embed_token_hybrid(
             &device,
             token_id,
-            &gpu_weights.embeddings,
-            &mut gpu_hidden,
+            &gpu_weights,
+            &cpu_weights,
+            &mut gpu_scratch,
+            &mut host_scratch,
             &config,
         )
         .expect("GPU embed should succeed");
 
         rocmforge::gpu::gpu_full_forward_hybrid(
             &device,
-            &gpu_hidden,
             &gpu_weights,
+            &cpu_weights,
             &mut gpu_kv,
             &mut gpu_scratch,
+            &mut host_scratch,
             pos,
             &config,
+            rocmforge::gpu::GpuLogitsMode::DownloadToHost,
         )
         .expect("GPU forward should succeed");
     }
 
     // Generate a few tokens
+    #[allow(unused_assignments)]
     let mut current_token = *tokens.last().unwrap();
     for pos in tokens.len()..tokens.len() + 10 {
         // Sample from logits (greedy)
@@ -208,29 +213,30 @@ fn test_fusion_kernel_coherence() {
         rocmforge::gpu::gpu_embed_token_hybrid(
             &device,
             current_token,
-            &gpu_weights.embeddings,
-            &mut gpu_hidden,
+            &gpu_weights,
+            &cpu_weights,
+            &mut gpu_scratch,
+            &mut host_scratch,
             &config,
         )
         .expect("GPU embed should succeed");
 
         rocmforge::gpu::gpu_full_forward_hybrid(
             &device,
-            &gpu_hidden,
             &gpu_weights,
+            &cpu_weights,
             &mut gpu_kv,
             &mut gpu_scratch,
+            &mut host_scratch,
             pos,
             &config,
+            rocmforge::gpu::GpuLogitsMode::DownloadToHost,
         )
         .expect("GPU forward should succeed");
     }
 
     // Verify output is coherent (not repetitive loops or garbage)
-    let output_text = cpu_weights
-        .tokenizer
-        .decode(&output_tokens)
-        .expect("Tokenizer should decode");
+    let output_text = tok.decode(&output_tokens, false);
 
     // Simple heuristic: output should not contain 3+ consecutive repeated tokens
     let mut repeat_count = 0;
@@ -277,12 +283,12 @@ fn test_single_layer_correctness() {
 
     // Load model
     let gguf = GgufFile::open(MODEL_PATH).unwrap();
-    let cpu_weights = CpuModelWeights::from_gguf(&gguf).unwrap();
-    let config = ModelConfig::from_gguf(&gguf);
+    let config = ModelConfig::from_gguf(&gguf).unwrap();
+    let cpu_weights = CpuModelWeights::load(&gguf, &config).unwrap();
 
-    let device = GpuDevice::create(0).expect("GPU device should be available");
+    let device = GpuDevice::init(0).expect("GPU device should be available");
     let gpu_weights =
-        rocmforge::gpu::GpuModelWeights::from_gguf(&gguf).expect("GPU weights should load");
+        rocmforge::gpu::GpuModelWeights::load(&gguf, &config).expect("GPU weights should load");
 
     // Test first layer only
     let layer_idx = 0;
@@ -313,18 +319,22 @@ fn test_single_layer_correctness() {
     let cpu_output = cpu_hidden.clone();
 
     // GPU kernel
-    let gpu_hidden_buffer = device
-        .copy_from_host(&cpu_hidden)
-        .expect("GPU hidden buffer should allocate");
-    let mut gpu_kv = GpuKvCache::new(&device, &config, 1).expect("GPU KV cache should allocate");
-    let mut gpu_scratch =
-        GpuForwardScratch::new(&device, &config).expect("GPU scratch should allocate");
+    let mut gpu_kv = GpuKvCache::new(&config, 1).expect("GPU KV cache should allocate");
+    let mut gpu_scratch = GpuForwardScratch::new(&config).expect("GPU scratch should allocate");
 
-    let mut gpu_hidden_managed = rocmforge::gpu::GpuBuffer::from(gpu_hidden_buffer);
+    let cpu_hidden_bytes = unsafe {
+        std::slice::from_raw_parts(
+            cpu_hidden.as_ptr() as *const u8,
+            cpu_hidden.len() * std::mem::size_of::<f32>(),
+        )
+    };
+    gpu_scratch
+        .hidden
+        .copy_from_host(cpu_hidden_bytes)
+        .expect("GPU hidden buffer copy failed");
 
     rocmforge::gpu::gpu_layer_forward_hybrid(
         &device,
-        &mut gpu_hidden_managed,
         gpu_layer_weights,
         &mut gpu_kv,
         &mut gpu_scratch,
@@ -334,7 +344,8 @@ fn test_single_layer_correctness() {
     )
     .expect("GPU layer forward should succeed");
 
-    let gpu_output = gpu_hidden_managed
+    let gpu_output = gpu_scratch
+        .hidden
         .copy_to_host_vec()
         .expect("GPU output should download");
 

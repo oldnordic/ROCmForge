@@ -148,19 +148,19 @@ fn test_vram_check_rejects_invalid() {
     // Note: This test verifies logic without requiring actual GPU
 
     // MAX_TEST_VRAM_GB should be 10.0
-    const MAX_TEST_VRAM_GB: f64 = 10.0;
+    let max_test_vram_gb: f64 = 10.0;
 
     // Values exceeding MAX should always fail
-    assert!(MAX_TEST_VRAM_GB > 0.0, "MAX_TEST_VRAM_GB must be positive");
+    assert!(max_test_vram_gb > 0.0, "MAX_TEST_VRAM_GB must be positive");
     assert!(
-        MAX_TEST_VRAM_GB <= 100.0,
+        max_test_vram_gb <= 100.0,
         "MAX_TEST_VRAM_GB must be reasonable"
     );
 
     // Test arithmetic for block calculation
     let required_gb = 15.0;
     assert!(
-        required_gb > MAX_TEST_VRAM_GB,
+        required_gb > max_test_vram_gb,
         "Test should use value exceeding max"
     );
 }
@@ -249,16 +249,16 @@ fn test_block_size_constant() {
 #[test]
 #[serial]
 fn test_warp_size_constant() {
-    const WARP_SIZE: usize = 32;
+    let warp_size: usize = 32;
 
     // Default warp size should be 32 (NVIDIA/AMD RDNA standard)
-    assert_eq!(WARP_SIZE, 32, "Default WARP_SIZE should be 32");
+    assert_eq!(warp_size, 32, "Default WARP_SIZE should be 32");
 
     // WARP_SIZE should be power of 2
-    assert!(WARP_SIZE.is_power_of_two(), "WARP_SIZE must be power of 2");
+    assert!(warp_size.is_power_of_two(), "WARP_SIZE must be power of 2");
 
     // WARP_SIZE should be <= typical wavefront sizes (32 or 64)
-    assert!(WARP_SIZE <= 64, "WARP_SIZE should be <= 64");
+    assert!(warp_size <= 64, "WARP_SIZE should be <= 64");
 }
 
 /// Test architecture properties are internally consistent
@@ -291,7 +291,7 @@ fn test_architecture_consistency() {
 
         // max_threads should be multiple of warp_size
         assert!(
-            max_threads % warp_size == 0,
+            max_threads.is_multiple_of(warp_size),
             "max_threads should be multiple of warp_size"
         );
     }
@@ -401,7 +401,7 @@ fn test_q4_k_constants() {
 fn test_q4_k_block_struct_size() {
     use rocmforge::gpu::Q4KBlock;
 
-    let block = Q4KBlock::default();
+    let _block = Q4KBlock::default();
     assert_eq!(std::mem::size_of::<Q4KBlock>(), 144);
 }
 
@@ -464,7 +464,7 @@ fn test_q5_k_constants() {
 fn test_q5_k_block_struct_size() {
     use rocmforge::gpu::Q5KBlock;
 
-    let block = Q5KBlock::default();
+    let _block = Q5KBlock::default();
     assert_eq!(std::mem::size_of::<Q5KBlock>(), 176); // 2+2+12+32+128
 }
 

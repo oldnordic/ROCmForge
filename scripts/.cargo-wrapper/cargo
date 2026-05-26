@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# scripts/.cargo-wrapper/cargo — Intercepts cargo calls and appends --features gpu when appropriate.
+
+REAL_CARGO="/home/feanor/.cargo/bin/cargo"
+
+# Check if command is check, test, clippy, or build
+if [[ "$1" == "check" || "$1" == "test" || "$1" == "clippy" || "$1" == "build" ]]; then
+    # Check if --features is already present in the arguments
+    has_features=false
+    for arg in "$@"; do
+        if [[ "$arg" == "--features" ]]; then
+            has_features=true
+            break
+        fi
+    done
+    
+    if [ "$has_features" = false ]; then
+        # Check if -- is present in the arguments
+        has_dash_dash=false
+        for arg in "$@"; do
+            if [[ "$arg" == "--" ]]; then
+                has_dash_dash=true
+                break
+            fi
+        done
+
+        if [ "$has_dash_dash" = true ]; then
+            # Insert --features gpu before --
+            args=()
+            for arg in "$@"; do
+                if [[ "$arg" == "--" ]]; then
+                    args+=("--features" "gpu" "--")
+                else
+                    args+=("$arg")
+                fi
+            done
+            exec "$REAL_CARGO" "${args[@]}"
+        else
+            exec "$REAL_CARGO" "$@" --features gpu
+        fi
+    fi
+fi
+
+exec "$REAL_CARGO" "$@"

@@ -1,3 +1,4 @@
+#![cfg(feature = "gpu")]
 //! Test to check Q4_0 weight layout and offset calculations
 
 use rocmforge::config::ModelConfig;
@@ -88,6 +89,4 @@ fn test_q4_0_weight_layout_diagnostic() {
             _ => {}
         }
     }
-
-    assert!(true, "Weight layout diagnostic completed");
 }

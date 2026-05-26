@@ -6,6 +6,7 @@
 use std::ffi::c_void;
 
 // FFI declarations for vectorized kernel
+#[allow(dead_code)]
 extern "C" {
     /// Vectorized Q6_K GEMM kernel (Phase 2)
     fn gemm_q6_k_f32_kernel_vectorized(

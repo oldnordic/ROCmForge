@@ -1,6 +1,7 @@
 //! Test to check which kernel path is being used for Q4_0
 
 #![cfg(feature = "gpu")]
+#![allow(warnings)]
 
 use rocmforge::config::ModelConfig;
 use rocmforge::cpu::weights::CpuModelWeights;

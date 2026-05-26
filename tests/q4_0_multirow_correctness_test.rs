@@ -57,15 +57,15 @@ fn test_q4_0_multirow_infrastructure() {
     // Verify our test infrastructure works
 
     // Simulate single-column output
-    let output_single = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+    let output_single = [1.0, 2.0, 3.0, 4.0, 5.0];
 
     // Simulate matching multi-row residual output
-    let output_multi = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+    let output_multi = [1.0, 2.0, 3.0, 4.0, 5.0];
 
     // Verify match
     assert_eq!(output_single.len(), output_multi.len());
     for (i, (s, m)) in output_single.iter().zip(output_multi.iter()).enumerate() {
-        let diff = f64::abs(*s as f64 - *m as f64);
+        let diff = f64::abs(*s - *m);
         assert!(diff < 1e-5, "Mismatch at {}", i);
     }
 
@@ -116,7 +116,6 @@ fn run_inference(model_path: &str, variant: &str) -> Vec<f32> {
     // Parse output as tokens/floats (simplified for now)
     // TODO: Implement proper tokenization/float parsing
     stdout
-        .trim()
         .split_whitespace()
         .map(|s| s.parse::<f32>().unwrap_or(0.0))
         .collect()

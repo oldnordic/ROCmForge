@@ -42,15 +42,15 @@ fn test_weight_storage_layout_analysis() {
     );
 
     // For Q4_0, each block is 32 values stored in 18 bytes
-    let Q4_0_BLOCK_ELEMS: usize = 32;
-    let Q4_0_BLOCK_BYTES: usize = 18;
+    let q4_0_block_elems: usize = 32;
+    let q4_0_block_bytes: usize = 18;
 
     // Calculate expected layout
     let stored_rows = cpu_layer.ffn_down_meta.dims[0] as usize; // 4864
     let stored_cols = cpu_layer.ffn_down_meta.dims[1] as usize; // 896
 
-    let blocks_per_col = stored_rows / Q4_0_BLOCK_ELEMS; // 4864 / 32 = 152
-    let col_bytes = blocks_per_col * Q4_0_BLOCK_BYTES; // 152 * 18 = 2736
+    let blocks_per_col = stored_rows / q4_0_block_elems; // 4864 / 32 = 152
+    let col_bytes = blocks_per_col * q4_0_block_bytes; // 152 * 18 = 2736
 
     let expected_size = stored_cols * col_bytes; // 896 * 2736 = 2451456
 
@@ -79,7 +79,7 @@ fn test_weight_storage_layout_analysis() {
         eprintln!("    First block at offset {}", first_block_offset);
 
         // The block should contain scale (2 bytes) and 16 quantized bytes
-        if first_block_offset + Q4_0_BLOCK_BYTES <= cpu_layer.ffn_down.len() {
+        if first_block_offset + q4_0_block_bytes <= cpu_layer.ffn_down.len() {
             let scale_bytes = &cpu_layer.ffn_down[first_block_offset..first_block_offset + 2];
             let qs_bytes = &cpu_layer.ffn_down[first_block_offset + 2..first_block_offset + 18];
             eprintln!("    Scale bytes: {:?}", scale_bytes);
@@ -103,8 +103,8 @@ fn test_weight_storage_layout_analysis() {
     );
 
     let gpu_n_blocks_total = ff_size / 32;
-    let gpu_col_0_offset = 0 * gpu_n_blocks_total * Q4_0_BLOCK_BYTES;
-    let gpu_col_1_offset = 1 * gpu_n_blocks_total * Q4_0_BLOCK_BYTES;
+    let gpu_col_0_offset = 0;
+    let gpu_col_1_offset = gpu_n_blocks_total * q4_0_block_bytes;
 
     eprintln!("\nComparing offsets:");
     eprintln!("  Column 0: CPU={}, GPU={}", 0, gpu_col_0_offset);
@@ -117,6 +117,4 @@ fn test_weight_storage_layout_analysis() {
     } else {
         eprintln!("  Offsets match!");
     }
-
-    assert!(true, "Weight layout analysis completed");
 }

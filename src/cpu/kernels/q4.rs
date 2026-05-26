@@ -69,23 +69,17 @@ impl BlockQ4K {
 
         let mut block = Self::zero();
 
-        // Compute min/max for entire block to determine scale ranges
-        let mut min_val = f32::INFINITY;
-        let mut max_val = f32::NEG_INFINITY;
-        for &w in weights {
-            min_val = min_val.min(w);
-            max_val = max_val.max(w);
-        }
+        // 1. Compute subblock parameters: sb_min (clamped to <= 0.0) and sb_range
+        let mut sb_mins = [0.0f32; NUM_SUBBLOCKS];
+        let mut sb_ranges = [0.0f32; NUM_SUBBLOCKS];
+        let mut max_sb_range = 0.0f32;
+        let mut max_abs_sb_min = 0.0f32;
 
-        let block_range = max_val - min_val;
-
-        // For each sub-block
         for sb in 0..NUM_SUBBLOCKS {
             let start = sb * SUBBLOCK_SIZE;
             let end = start + SUBBLOCK_SIZE;
             let subblock = &weights[start..end];
 
-            // Find min and max for this sub-block
             let mut sb_min = f32::INFINITY;
             let mut sb_max = f32::NEG_INFINITY;
             for &w in subblock {
@@ -93,18 +87,91 @@ impl BlockQ4K {
                 sb_max = sb_max.max(w);
             }
 
+            if sb_min > 0.0 {
+                sb_min = 0.0;
+            }
             let sb_range = sb_max - sb_min;
 
-            // Quantize each weight to 4-bit [0, 15]
+            sb_mins[sb] = sb_min;
+            sb_ranges[sb] = sb_range;
+
+            max_sb_range = max_sb_range.max(sb_range);
+            max_abs_sb_min = max_abs_sb_min.max(-sb_min);
+        }
+
+        // 2. Compute super-block scale d and dmin
+        let d = if max_sb_range > 0.0 {
+            max_sb_range / (15.0 * 63.0)
+        } else {
+            0.0
+        };
+
+        let dmin = if max_abs_sb_min > 0.0 {
+            max_abs_sb_min / 63.0
+        } else {
+            0.0
+        };
+
+        // Round to fp16 and convert back to f32 to avoid precision mismatch
+        let d_f16 = Half16::from_f32(d);
+        block.d = d_f16.to_le_bytes();
+        let d_coarse = d_f16.to_f32();
+
+        let dmin_f16 = Half16::from_f32(dmin);
+        block.dmin = dmin_f16.to_le_bytes();
+        let dmin_coarse = dmin_f16.to_f32();
+
+        // 3. Compute 6-bit scales and mins for each subblock
+        let mut sc = [0u8; NUM_SUBBLOCKS];
+        let mut m = [0u8; NUM_SUBBLOCKS];
+
+        for sb in 0..NUM_SUBBLOCKS {
+            sc[sb] = if d_coarse > 1e-7 {
+                ((sb_ranges[sb] / (15.0 * d_coarse)) + 0.5).floor() as u8
+            } else {
+                0
+            }
+            .min(63);
+
+            m[sb] = if dmin_coarse > 1e-7 {
+                ((-sb_mins[sb] / dmin_coarse) + 0.5).floor() as u8
+            } else {
+                0
+            }
+            .min(63);
+        }
+
+        // 4. Pack scales and mins into scales array (12 bytes)
+        // Using the exact inverse of get_scale_min_k4
+        for j in 0..4 {
+            block.scales[j] = sc[j] & 63;
+            block.scales[j + 4] = m[j] & 63;
+        }
+        for j in 4..8 {
+            let sc_j = sc[j];
+            let m_j = m[j];
+
+            block.scales[j + 4] = (sc_j & 0xF) | ((m_j & 0xF) << 4);
+            block.scales[j - 4] |= (sc_j >> 4) << 6;
+            block.scales[j] |= (m_j >> 4) << 6;
+        }
+
+        // 5. Quantize sub-block weights to 4-bit qs array
+        for sb in 0..NUM_SUBBLOCKS {
+            let start = sb * SUBBLOCK_SIZE;
+            let end = start + SUBBLOCK_SIZE;
+            let subblock = &weights[start..end];
+
+            let d1 = d_coarse * (sc[sb] as f32);
+            let m1 = dmin_coarse * (m[sb] as f32);
+
             for (i, &w) in subblock.iter().enumerate() {
-                let qi = if sb_range > 1e-7 {
-                    let normalized = (w - sb_min) / sb_range;
-                    let quantized = (normalized * 15.0 + 0.5).floor() as u8;
-                    quantized.min(15).max(0)
+                let qi = if d1 > 1e-7 {
+                    (((w + m1) / d1) + 0.5).floor() as i32
                 } else {
-                    // All values are same, quantize to middle
-                    8
-                };
+                    0
+                }
+                .clamp(0, 15) as u8;
 
                 // Pack 2 quants into 1 byte
                 let byte_idx = (sb * SUBBLOCK_SIZE + i) / 2;
@@ -116,48 +183,6 @@ impl BlockQ4K {
                     block.qs[byte_idx] = (block.qs[byte_idx] & 0x0F) | (qi << 4);
                 }
             }
-
-            // Pack scale and min into 6-bit format
-            // This is a simplified packing - llama.cpp uses more sophisticated encoding
-            let scale_val = sb_range.to_bits();
-            let min_val_bits = sb_min.to_bits();
-
-            // Simple packing: store 12 bits for scale, 12 bits for min
-            // In 12-byte array, each sub-block gets 12 bits
-            let byte_base = sb * 12 / 8;
-            let bit_offset = (sb * 12) % 8;
-
-            // Extract lower 12 bits
-            let scale_lower = (scale_val & 0xFFF) as u16;
-            let min_lower = (min_val_bits & 0xFFF) as u16;
-
-            // Pack into scales array (simplified)
-            if byte_base < 12 {
-                if bit_offset == 0 {
-                    block.scales[byte_base] = scale_lower as u8;
-                    if byte_base + 1 < 12 {
-                        block.scales[byte_base + 1] = (scale_lower >> 8) as u8;
-                    }
-                } else if bit_offset == 4 {
-                    let part1 = ((scale_lower & 0x0F) << 4) as u8;
-                    let part2 = ((min_lower >> 8) as u8) & 0x0F;
-                    let combined = part1 | part2;
-                    block.scales[byte_base] = combined;
-                    if byte_base + 1 < 12 {
-                        block.scales[byte_base + 1] = min_lower as u8;
-                    }
-                }
-            }
-        }
-
-        // Set overall scales (simplified - should use f16 encoding)
-        if block_range > 1e-7 {
-            let scale_f16 = Half16::from_f32(block_range);
-            block.d = scale_f16.to_le_bytes();
-        }
-        if min_val > 1e-7 {
-            let min_f16 = Half16::from_f32(min_val);
-            block.dmin = min_f16.to_le_bytes();
         }
 
         block

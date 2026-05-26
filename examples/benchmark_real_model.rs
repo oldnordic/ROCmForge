@@ -207,16 +207,14 @@ fn benchmark_model(model_path: &PathBuf, args: &Args) -> Result<ModelResult, Str
         quantization: detect_quantization(model_path),
         num_layers: config.num_layers,
         hidden_size: config.hidden_size,
-        vocab_size: config.vocab_size,
         load_time_ms: load_time,
         prefill_ms: avg_prefill_ms,
         decode_ms: avg_decode_ms,
         tokens_per_sec,
-        num_tokens: args.tokens,
     })
 }
 
-fn detect_quantization(path: &PathBuf) -> String {
+fn detect_quantization(path: &std::path::Path) -> String {
     // Try to detect quantization from filename
     // This is a simple heuristic
     let name = path.to_string_lossy();
@@ -287,10 +285,8 @@ struct ModelResult {
     quantization: String,
     num_layers: usize,
     hidden_size: usize,
-    vocab_size: usize,
     load_time_ms: f64,
     prefill_ms: f64,
     decode_ms: f64,
     tokens_per_sec: f64,
-    num_tokens: usize,
 }

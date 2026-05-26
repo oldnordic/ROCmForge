@@ -69,7 +69,7 @@ pub const Q8_0_MAX: f32 = 127.0;
 /// Validate that dimensions are compatible with block size.
 /// Returns Ok(()) if valid, or error with details if not.
 pub fn validate_block_size(dim: usize, block_elems: usize, name: &str) -> Result<(), String> {
-    if dim % block_elems != 0 {
+    if !dim.is_multiple_of(block_elems) {
         Err(format!(
             "{} dimension {} is not a multiple of block size {} (remainder: {})",
             name,
@@ -85,7 +85,7 @@ pub fn validate_block_size(dim: usize, block_elems: usize, name: &str) -> Result
 /// Calculate padded dimension for block-aligned operations.
 /// Returns the dimension rounded up to the next multiple of block_elems.
 pub fn padded_dim(dim: usize, block_elems: usize) -> usize {
-    ((dim + block_elems - 1) / block_elems) * block_elems
+    dim.div_ceil(block_elems) * block_elems
 }
 
 /// Calculate number of full blocks and remaining elements.
@@ -322,8 +322,8 @@ pub fn embed_q6_k(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usi
                 let is = l / 16;
 
                 // const int8_t q1 = (int8_t)((ql[l +  0] & 0xF) | (((qh[l] >> 0) & 3) << 4)) - 32;
-                let q1_ql_part = ql[l + 0] & 0xF;
-                let q1_qh_part = ((qh[l] >> 0) & 3) << 4;
+                let q1_ql_part = ql[l] & 0xF;
+                let q1_qh_part = (qh[l] & 3) << 4;
                 let q1_combined = q1_ql_part | q1_qh_part;
                 let q1 = q1_combined as i8 as i32 - 32;
 
@@ -334,7 +334,7 @@ pub fn embed_q6_k(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usi
                 let q2 = q2_combined as i8 as i32 - 32;
 
                 // const int8_t q3 = (int8_t)((ql[l +  0]  >> 4) | (((qh[l] >> 4) & 3) << 4)) - 32;
-                let q3_ql_part = (ql[l + 0] >> 4) & 0xF;
+                let q3_ql_part = (ql[l] >> 4) & 0xF;
                 let q3_qh_part = ((qh[l] >> 4) & 3) << 4;
                 let q3_combined = q3_ql_part | q3_qh_part;
                 let q3 = q3_combined as i8 as i32 - 32;
@@ -347,12 +347,12 @@ pub fn embed_q6_k(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usi
 
                 // llama.cpp: y[l + 0] = d * sc[is + 0] * q1;
                 // But we use: out[base + out_offset + l + 0] = d * sc[is + 0] * q1;
-                let scale1 = d * (sc[is + 0] as f32);
+                let scale1 = d * (sc[is] as f32);
                 let scale2 = d * (sc[is + 2] as f32);
                 let scale3 = d * (sc[is + 4] as f32);
                 let scale4 = d * (sc[is + 6] as f32);
 
-                out[base + out_offset + l + 0] = scale1 * (q1 as f32);
+                out[base + out_offset + l] = scale1 * (q1 as f32);
                 out[base + out_offset + l + 32] = scale2 * (q2 as f32);
                 out[base + out_offset + l + 64] = scale3 * (q3 as f32);
                 out[base + out_offset + l + 96] = scale4 * (q4 as f32);
@@ -444,7 +444,7 @@ pub fn embed_q3_k(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usi
         unpacked_scales[8] = ((scales[0] >> 6) & 0x03) as i8;
         unpacked_scales[9] = ((scales[1] >> 6) & 0x03) as i8;
         unpacked_scales[10] = (((scales[2] >> 2) & 0x03) as i8) << 2;
-        unpacked_scales[11] = ((scales[2] >> 0) & 0x03) as i8;
+        unpacked_scales[11] = (scales[2] & 0x03) as i8;
 
         let base = b * Q3_K_BLOCK_ELEMS;
         let mut scale_idx = 0;

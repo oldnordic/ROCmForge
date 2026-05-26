@@ -27,6 +27,7 @@ struct KernelBenchContext {
     model_label: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 struct DecodeStats {
     decode_ms: f64,
@@ -234,7 +235,7 @@ fn bench_kernel_variants(c: &mut Criterion) {
     };
 
     // Detect GPU features to determine which variant is active
-    let caps = match gpu::detect() {
+    let _caps = match gpu::detect() {
         Some(caps) => caps,
         None => {
             eprintln!("Skipping kernel_variant benchmark: cannot detect GPU capabilities");

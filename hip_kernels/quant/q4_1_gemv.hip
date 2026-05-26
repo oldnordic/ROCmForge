@@ -189,7 +189,7 @@ extern "C" hipError_t gemv_q4_1_f32_launch(
     const int threads_per_block = n_waves * WARP_SIZE;
     const size_t input_shared_mem = static_cast<size_t>(n_rows) * sizeof(float);
 
-    if (input_shared_mem <= Q4_1_MULTI_ROW_SHARED_MEM_LIMIT) {
+    if (false) {
         const int blocks_x =
             (ncols_dst + (n_waves * Q4_1_MULTI_ROW_COLS) - 1) / (n_waves * Q4_1_MULTI_ROW_COLS);
         gemv_q4_1_f32_multi_row_kernel<8, false>
@@ -236,7 +236,7 @@ extern "C" hipError_t gemv_q4_1_f32_residual_variant_launch(
     const int threads_per_block = n_waves * WARP_SIZE;
     const size_t input_shared_mem = static_cast<size_t>(n_rows) * sizeof(float);
 
-    if (input_shared_mem <= Q4_1_MULTI_ROW_SHARED_MEM_LIMIT) {
+    if (false) {
         // Multi-row path stays unchanged regardless of variant
         const int blocks_x =
             (ncols_dst + (n_waves * Q4_1_MULTI_ROW_COLS) - 1) / (n_waves * Q4_1_MULTI_ROW_COLS);
@@ -278,4 +278,152 @@ extern "C" hipError_t gemv_q4_1_f32_residual_launch(
     return gemv_q4_1_f32_residual_variant_launch(
         weights_q4_1, input, residual, output, n_rows, ncols_dst, 0, stream
     );
+}
+
+// ── RDNA3 Wave32 High-Occupancy Decode GEMV (Phase 4) ──────────────────────────
+
+#define DOG_Q4_1(weight_val, in_l, in_h, d, m, acc) \
+    { \
+        float block_q_x = 0.0f; \
+        float block_x = 0.0f; \
+        block_q_x += static_cast<float>( weight_val        & 0x0Fu) * (in_l).x; \
+        block_q_x += static_cast<float>((weight_val >>  8) & 0x0Fu) * (in_l).y; \
+        block_q_x += static_cast<float>((weight_val >> 16) & 0x0Fu) * (in_l).z; \
+        block_q_x += static_cast<float>((weight_val >> 24) & 0x0Fu) * (in_l).w; \
+        block_q_x += static_cast<float>((weight_val >>  4) & 0x0Fu) * (in_h).x; \
+        block_q_x += static_cast<float>((weight_val >> 12) & 0x0Fu) * (in_h).y; \
+        block_q_x += static_cast<float>((weight_val >> 20) & 0x0Fu) * (in_h).z; \
+        block_q_x += static_cast<float>((weight_val >> 28) & 0x0Fu) * (in_h).w; \
+        block_x += (in_l).x + (in_l).y + (in_l).z + (in_l).w + (in_h).x + (in_h).y + (in_h).z + (in_h).w; \
+        (acc) += (d) * block_q_x + (m) * block_x; \
+    }
+
+__launch_bounds__(32, 16)
+__global__ void gemv_q4_1_f32_wave32_kernel(
+    const void* __restrict__ weights_q4_1,
+    const float* __restrict__ input,
+    float* __restrict__ output,
+    int n_rows,
+    int ncols_dst
+) {
+    const int row = blockIdx.x;
+    if (row >= ncols_dst) return;
+    const int tid = threadIdx.x;
+
+    const int n_blocks_total = n_rows / QK4_1;
+    const uint8_t* row_ptr = static_cast<const uint8_t*>(weights_q4_1) + (long long)row * n_blocks_total * Q4_1_BLOCK_SIZE;
+
+    float acc = 0.0f;
+
+    for (int b = tid; b < n_blocks_total; b += 32) {
+        const Q4_1_block* b_ptr = reinterpret_cast<const Q4_1_block*>(row_ptr + b * Q4_1_BLOCK_SIZE);
+        float d = __half2float(b_ptr->d);
+        float m = __half2float(b_ptr->m);
+        const uint32_t* pk = reinterpret_cast<const uint32_t*>(b_ptr->qs);
+        const float4* in_ptr = reinterpret_cast<const float4*>(&input[b * 32]);
+        DOG_Q4_1(pk[0], in_ptr[0], in_ptr[4], d, m, acc);
+        DOG_Q4_1(pk[1], in_ptr[1], in_ptr[5], d, m, acc);
+        DOG_Q4_1(pk[2], in_ptr[2], in_ptr[6], d, m, acc);
+        DOG_Q4_1(pk[3], in_ptr[3], in_ptr[7], d, m, acc);
+    }
+
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        acc += __shfl_down(acc, offset, 32);
+    }
+
+    if (tid == 0) {
+        output[row] = acc;
+    }
+}
+
+__launch_bounds__(32, 16)
+__global__ void gemv_q4_1_f32_wave32_residual_kernel(
+    const void* __restrict__ weights_q4_1,
+    const float* __restrict__ input,
+    const float* __restrict__ residual,
+    float* __restrict__ output,
+    int n_rows,
+    int ncols_dst
+) {
+    const int row = blockIdx.x;
+    if (row >= ncols_dst) return;
+    const int tid = threadIdx.x;
+
+    const int n_blocks_total = n_rows / QK4_1;
+    const uint8_t* row_ptr = static_cast<const uint8_t*>(weights_q4_1) + (long long)row * n_blocks_total * Q4_1_BLOCK_SIZE;
+
+    float acc = 0.0f;
+
+    for (int b = tid; b < n_blocks_total; b += 32) {
+        const Q4_1_block* b_ptr = reinterpret_cast<const Q4_1_block*>(row_ptr + b * Q4_1_BLOCK_SIZE);
+        float d = __half2float(b_ptr->d);
+        float m = __half2float(b_ptr->m);
+        const uint32_t* pk = reinterpret_cast<const uint32_t*>(b_ptr->qs);
+        const float4* in_ptr = reinterpret_cast<const float4*>(&input[b * 32]);
+        DOG_Q4_1(pk[0], in_ptr[0], in_ptr[4], d, m, acc);
+        DOG_Q4_1(pk[1], in_ptr[1], in_ptr[5], d, m, acc);
+        DOG_Q4_1(pk[2], in_ptr[2], in_ptr[6], d, m, acc);
+        DOG_Q4_1(pk[3], in_ptr[3], in_ptr[7], d, m, acc);
+    }
+
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        acc += __shfl_down(acc, offset, 32);
+    }
+
+    if (tid == 0) {
+        output[row] = acc + residual[row];
+    }
+}
+
+extern "C" hipError_t gemv_q4_1_f32_wave32_launch(
+    const void* weights_q4_1,
+    const float* input,
+    float* output,
+    int n_rows,
+    int ncols_dst,
+    hipStream_t stream
+) {
+    if (n_rows <= 0 || ncols_dst <= 0) return hipErrorInvalidValue;
+    if (n_rows % QK4_1 != 0) return hipErrorInvalidValue;
+    CHECK_NULL(weights_q4_1);
+    CHECK_NULL(input);
+    CHECK_NULL(output);
+
+    gemv_q4_1_f32_wave32_kernel<<<ncols_dst, 32, 0, stream>>>(
+        weights_q4_1,
+        input,
+        output,
+        n_rows,
+        ncols_dst
+    );
+
+    return hipGetLastError();
+}
+
+extern "C" hipError_t gemv_q4_1_f32_wave32_residual_launch(
+    const void* weights_q4_1,
+    const float* input,
+    const float* residual,
+    float* output,
+    int n_rows,
+    int ncols_dst,
+    hipStream_t stream
+) {
+    if (n_rows <= 0 || ncols_dst <= 0) return hipErrorInvalidValue;
+    if (n_rows % QK4_1 != 0) return hipErrorInvalidValue;
+    CHECK_NULL(weights_q4_1);
+    CHECK_NULL(input);
+    CHECK_NULL(residual);
+    CHECK_NULL(output);
+
+    gemv_q4_1_f32_wave32_residual_kernel<<<ncols_dst, 32, 0, stream>>>(
+        weights_q4_1,
+        input,
+        residual,
+        output,
+        n_rows,
+        ncols_dst
+    );
+
+    return hipGetLastError();
 }

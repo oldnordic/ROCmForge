@@ -63,7 +63,7 @@ pub fn gemv_q4_0_q8_0_residual_on_stream(
             description: "gemv_q4_0_q8_0_residual: n_rows and ncols_dst cannot be zero".to_string(),
         });
     }
-    if n_rows % QK4_0 != 0 {
+    if !n_rows.is_multiple_of(QK4_0) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -117,7 +117,7 @@ pub fn gemv_q4_0_f32_q8_inline_residual_on_stream(
                 .to_string(),
         });
     }
-    if n_rows % QK4_0 != 0 {
+    if !n_rows.is_multiple_of(QK4_0) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -177,7 +177,7 @@ pub fn gemv_q4_0_f32_q8_inline_residual_on_stream_variant(
                     .to_string(),
         });
     }
-    if n_rows % QK4_0 != 0 {
+    if !n_rows.is_multiple_of(QK4_0) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -235,7 +235,7 @@ pub fn gemv_q4_0_q8_0_on_stream(
             description: "gemv_q4_0_q8_0: n_rows and ncols_dst cannot be zero".to_string(),
         });
     }
-    if n_rows % QK4_0 != 0 {
+    if !n_rows.is_multiple_of(QK4_0) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -288,7 +288,7 @@ pub fn gemv_gate_up_q4_0_q8_0_on_stream(
             description: "gemv_gate_up_q4_0_q8_0: n_rows and n_ff cannot be zero".to_string(),
         });
     }
-    if n_rows % QK4_0 != 0 {
+    if !n_rows.is_multiple_of(QK4_0) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -354,7 +354,7 @@ pub fn gemv_gate_up_swiglu_q4_0_q8_0_on_stream(
                 .to_string(),
         });
     }
-    if n_rows % QK4_0 != 0 {
+    if !n_rows.is_multiple_of(QK4_0) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -410,7 +410,7 @@ pub fn gemv_gate_up_swiglu_q4_0_f32_q8_inline_on_stream(
                 .to_string(),
         });
     }
-    if n_rows % QK4_0 != 0 {
+    if !n_rows.is_multiple_of(QK4_0) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -470,7 +470,7 @@ pub fn gemv_gate_up_swiglu_q4_0_f32_q8_inline_on_stream_variant(
                     .to_string(),
         });
     }
-    if n_rows % QK4_0 != 0 {
+    if !n_rows.is_multiple_of(QK4_0) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -530,7 +530,7 @@ pub fn gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_on_stream(
                     .to_string(),
         });
     }
-    if n_rows % QK4_0 != 0 {
+    if !n_rows.is_multiple_of(QK4_0) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -588,7 +588,7 @@ pub fn gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_tile4_on_stream(
                     .to_string(),
         });
     }
-    if n_rows % QK4_0 != 0 {
+    if !n_rows.is_multiple_of(QK4_0) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(

@@ -3,6 +3,7 @@
 //! compared to reference implementations
 
 #![cfg(feature = "gpu")]
+#![allow(dead_code, unused_imports, unused_unsafe, clippy::needless_range_loop)]
 
 const Q6_K_BLOCK_SIZE: usize = 210; // Bytes per Q6_K block
 
@@ -88,7 +89,7 @@ fn test_vector_intrinsic_get_int_b2() {
     // TODO: Launch GPU kernel to test get_int_b2
     // For now, just verify the test setup is correct
     let first_bytes: [u8; 4] = [test_data[0], test_data[1], test_data[2], test_data[3]];
-    let first_int: i32 = unsafe { transmute(first_bytes) };
+    let first_int: i32 = unsafe { i32::from_ne_bytes(first_bytes) };
     assert_eq!(first_int, expected_first);
 
     println!("✓ get_int_b2() test setup validated");

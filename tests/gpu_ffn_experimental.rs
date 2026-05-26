@@ -58,6 +58,7 @@ where
     start.elapsed().as_secs_f64() * 1000.0 / iters as f64
 }
 
+#[allow(clippy::type_complexity)]
 fn prepare_layer0_ffn_inputs(
     cpu_weights: &CpuModelWeights,
     config: &ModelConfig,

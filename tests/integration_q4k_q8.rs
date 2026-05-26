@@ -6,10 +6,6 @@ use rocmforge::cpu::kernels::{
 
 #[test]
 fn test_q4k_q8k_end_to_end() {
-    // Create test data matching typical 7B model dimensions
-    const HIDDEN: usize = 1536; // Qwen2.5-7B hidden size
-    const FF: usize = 8960; // Intermediate size
-
     // Simplified test with smaller dimensions (must be multiple of 256)
     const OUT_DIM: usize = 256;
     const IN_DIM: usize = 256;

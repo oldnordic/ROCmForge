@@ -42,7 +42,7 @@ pub fn quantize_q4_0(input: *const f32, output: *mut u8, n: usize) -> GpuResult<
         });
     }
 
-    let num_blocks = (n + 31) / 32;
+    let num_blocks = n.div_ceil(32);
     if num_blocks == 0 {
         return Ok(());
     }
@@ -94,7 +94,7 @@ pub fn dequantize_q4_0(input: *const u8, output: *mut f32, n: usize) -> GpuResul
         });
     }
 
-    let num_blocks = (n + 31) / 32;
+    let num_blocks = n.div_ceil(32);
     if num_blocks == 0 {
         return Ok(());
     }
@@ -152,7 +152,7 @@ pub fn dequantize_q4_0_batched(
         });
     }
 
-    let num_blocks = (n + 31) / 32;
+    let num_blocks = n.div_ceil(32);
     if num_blocks == 0 {
         return Ok(());
     }
@@ -222,7 +222,7 @@ pub fn verify_q4_0_accuracy(
         });
     }
 
-    let num_blocks = (n + 31) / 32;
+    let num_blocks = n.div_ceil(32);
     if num_blocks == 0 {
         return Ok(());
     }
@@ -344,7 +344,7 @@ pub fn gemv_q4_0_f32_on_stream(
     }
 
     // n_rows must be aligned to QK4_0
-    if n_rows % 32 != 0 {
+    if !n_rows.is_multiple_of(32) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -429,7 +429,7 @@ pub fn gemv_q4_0_f32_residual_on_stream(
         });
     }
 
-    if n_rows % 32 != 0 {
+    if !n_rows.is_multiple_of(32) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -487,6 +487,68 @@ pub unsafe fn gemv_q4_0_f32_residual_on_stream_unchecked(
         return Err(GpuError::HipApiError {
             code: result as i32,
             description: format!("gemv_q4_0_f32_residual kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+/// Launch the Wave32 GEMV kernel.
+pub unsafe fn gemv_q4_0_f32_wave32_on_stream_unchecked(
+    weights_q4_0: *const u8,
+    input: *const f32,
+    output: *mut f32,
+    n_rows: usize,
+    ncols_dst: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    let result = unsafe {
+        gemv_q4_0_f32_wave32_launch(
+            weights_q4_0,
+            input,
+            output,
+            n_rows as c_int,
+            ncols_dst as c_int,
+            stream,
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("gemv_q4_0_f32_wave32 kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+/// Launch the Wave32 GEMV Residual kernel.
+pub unsafe fn gemv_q4_0_f32_wave32_residual_on_stream_unchecked(
+    weights_q4_0: *const u8,
+    input: *const f32,
+    residual: *const f32,
+    output: *mut f32,
+    n_rows: usize,
+    ncols_dst: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    let result = unsafe {
+        gemv_q4_0_f32_wave32_residual_launch(
+            weights_q4_0,
+            input,
+            residual,
+            output,
+            n_rows as c_int,
+            ncols_dst as c_int,
+            stream,
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("gemv_q4_0_f32_wave32_residual kernel failed: {:?}", result),
         });
     }
 
@@ -582,6 +644,25 @@ unsafe extern "C" {
     ) -> hipError_t;
 
     fn gemv_q4_0_f32_residual_launch(
+        weights_q4_0: *const u8,
+        input: *const f32,
+        residual: *const f32,
+        output: *mut f32,
+        n_rows: c_int,
+        ncols_dst: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
+    fn gemv_q4_0_f32_wave32_launch(
+        weights_q4_0: *const u8,
+        input: *const f32,
+        output: *mut f32,
+        n_rows: c_int,
+        ncols_dst: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
+    fn gemv_q4_0_f32_wave32_residual_launch(
         weights_q4_0: *const u8,
         input: *const f32,
         residual: *const f32,

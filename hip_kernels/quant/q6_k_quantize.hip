@@ -17,8 +17,8 @@ __global__ void quantize_q6_k_kernel(
 
     // Shared memory for accumulating block statistics
     __shared__ float s_scale;
-    __shared__ uint8_t s_ql[128];
-    __shared__ uint8_t s_qh[64];
+    __shared__ unsigned int s_ql[32];
+    __shared__ unsigned int s_qh[16];
     __shared__ int8_t s_scales[16];
 
     const int elem_start = block_idx * QK_K;
@@ -29,8 +29,8 @@ __global__ void quantize_q6_k_kernel(
     if (tid == 0) {
         s_scale = 0.0f;
     }
-    if (tid < 128) s_ql[tid] = 0;
-    if (tid < 64) s_qh[tid] = 0;
+    if (tid < 32) s_ql[tid] = 0;
+    if (tid < 16) s_qh[tid] = 0;
     if (tid < 16) s_scales[tid] = 0;
 
     __syncthreads();
@@ -66,14 +66,14 @@ __global__ void quantize_q6_k_kernel(
         // Clamp to 6-bit range (0..63)
         q = max(0, min(63, q));
 
-        // Pack: low 4 bits to ql[128], high 2 bits to qh[64]
-        int ql_idx = i / 2;
-        int ql_shift = (i % 2) * 4;
-        int qh_idx = i / 4;
-        int qh_shift = (i % 4) * 2;
+        // Pack: low 4 bits to ql (32 x unsigned int), high 2 bits to qh (16 x unsigned int)
+        int ql_word_idx = i / 8;
+        int ql_shift = (i % 8) * 4;
+        int qh_word_idx = i / 16;
+        int qh_shift = (i % 16) * 2;
 
-        atomicOr(&s_ql[ql_idx], ((q & 0xF) << ql_shift));
-        atomicOr(&s_qh[qh_idx], ((q >> 4) << qh_shift));
+        atomicOr(&s_ql[ql_word_idx], ((q & 0xF) << ql_shift));
+        atomicOr(&s_qh[qh_word_idx], ((q >> 4) << qh_shift));
     }
 
     __syncthreads();
@@ -88,11 +88,14 @@ __global__ void quantize_q6_k_kernel(
     // Write block to global memory in Q6_K format
     uint8_t* block_bytes = static_cast<uint8_t*>(output) + block_idx * Q6_K_BLOCK_SIZE;
 
+    const uint8_t* s_ql_bytes = reinterpret_cast<const uint8_t*>(s_ql);
+    const uint8_t* s_qh_bytes = reinterpret_cast<const uint8_t*>(s_qh);
+
     if (tid < 128) {
-        block_bytes[tid] = s_ql[tid];
+        block_bytes[tid] = s_ql_bytes[tid];
     }
     if (tid < 64) {
-        block_bytes[128 + tid] = s_qh[tid];
+        block_bytes[128 + tid] = s_qh_bytes[tid];
     }
     if (tid < 16) {
         reinterpret_cast<int8_t*>(block_bytes + 192)[tid] = s_scales[tid];

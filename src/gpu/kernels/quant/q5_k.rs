@@ -46,7 +46,7 @@ pub fn quantize_q5_k(input: *const f32, output: *mut u8, n: usize) -> GpuResult<
         });
     }
 
-    let num_blocks = (n + 255) / 256;
+    let num_blocks = n.div_ceil(256);
     if num_blocks == 0 {
         return Ok(());
     }
@@ -84,7 +84,7 @@ pub fn dequantize_q5_k(input: *const u8, output: *mut f32, n: usize) -> GpuResul
         });
     }
 
-    let num_blocks = (n + 255) / 256;
+    let num_blocks = n.div_ceil(256);
     if num_blocks == 0 {
         return Ok(());
     }
@@ -128,7 +128,7 @@ pub fn dequantize_q5_k_batched(
         });
     }
 
-    let num_blocks = (n + 255) / 256;
+    let num_blocks = n.div_ceil(256);
     if num_blocks == 0 {
         return Ok(());
     }

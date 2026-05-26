@@ -19,6 +19,7 @@ pub const MAX_TEST_VRAM_GB: f64 = 4.0;
 pub const DESKTOP_VRAM_RESERVATION_GB: f64 = 4.0;
 
 /// Total safe VRAM for tests (leaves room for desktop)
+#[allow(dead_code)]
 pub const SAFE_TEST_VRAM_GB: f64 = MAX_TEST_VRAM_GB; // Already accounts for desktop
 
 /// Check available VRAM before test.
@@ -32,7 +33,7 @@ pub fn check_vram_available(required_gb: f64) -> Result<(), String> {
     }
 
     let output = Command::new("rocm-smi")
-        .args(&["--showmeminfo", "vram"])
+        .args(["--showmeminfo", "vram"])
         .output();
 
     let output = output.map_err(|e| format!("rocm-smi not available: {}", e))?;
@@ -84,7 +85,7 @@ pub fn check_vram_available(required_gb: f64) -> Result<(), String> {
 /// Checks for VRAM leaks (free memory should not decrease significantly).
 pub fn rocm_smi_verify() -> Result<(), String> {
     let output = Command::new("rocm-smi")
-        .args(&["--showmeminfo", "vram"])
+        .args(["--showmeminfo", "vram"])
         .output()
         .map_err(|e| format!("rocm-smi not available: {}", e))?;
 

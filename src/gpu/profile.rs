@@ -140,10 +140,12 @@ mod tests {
         let profiler = Profiler::global().lock().unwrap();
         let timings = profiler.get_timings();
 
-        assert_eq!(timings.len(), 1);
-        assert_eq!(timings[0].name, "test_kernel_1");
-        assert_eq!(timings[0].calls, 2);
-        assert_eq!(timings[0].avg_ns, 1_500_000); // average of 1ms and 2ms
+        let timing = timings
+            .iter()
+            .find(|t| t.name == "test_kernel_1")
+            .expect("Expected to find test_kernel_1 in timings");
+        assert_eq!(timing.calls, 2);
+        assert_eq!(timing.avg_ns, 1_500_000); // average of 1ms and 2ms
     }
 
     #[test]
@@ -157,8 +159,10 @@ mod tests {
         let profiler = Profiler::global().lock().unwrap();
         let timings = profiler.get_timings();
 
-        assert_eq!(timings.len(), 1);
-        assert_eq!(timings[0].name, "test_timer_kernel");
-        assert!(timings[0].avg_ns >= 10_000_000); // At least 10ms
+        let timing = timings
+            .iter()
+            .find(|t| t.name == "test_timer_kernel")
+            .expect("Expected to find test_timer_kernel in timings");
+        assert!(timing.avg_ns >= 10_000_000); // At least 10ms
     }
 }

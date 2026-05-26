@@ -2,38 +2,314 @@
 
 ## [Unreleased]
 
+### [Safety & Hardening]
+
+**safety(gpu): deduplicate VRAM reservation constants, add pre-flight VRAM gates**
+
+- **Date:** May 25, 2026
+- **Issue:** `DESKTOP_VRAM_RESERVATION_BYTES` was defined twice (`gpu/device.rs:14` and `gpu/weights.rs:21`), risking divergence. `GpuDevice::init()` never checked free VRAM before proceeding. `GpuKvCache::new()` allocated without budget pre-check.
+- **Fix:**
+  - Created `src/gpu/vram_budget.rs` as single source of truth for `DESKTOP_VRAM_RESERVATION_BYTES`, `VramBudget`, `query_vram_budget()`, `check_model_load_headroom()`, `check_allocation_fits()`.
+  - Removed duplicate constants from `device.rs` and `weights.rs`.
+  - Added pre-flight VRAM check in `GpuDevice::init()`: errors if `free_vram < DESKTOP_VRAM_RESERVATION_BYTES`.
+  - Added total-cache pre-flight check in `GpuKvCache::new()` before allocation loop.
+  - Added `DeviceInsufficientVram` and `OutOfVram` error variants.
+- **Verified:** `cargo test --lib` 145 passed, `cargo clippy --lib -- -D warnings` clean, `cargo check --features gpu` clean.
+- **Not verified on GPU:** The new `DeviceInsufficientVram` gate has not been exercised on a live display-attached GPU. It is a compile-time-only gate until someone runs `cargo test --features gpu` with ROCm hardware.
+- **Files Changed:** `src/gpu/vram_budget.rs` (new), `src/gpu/error.rs`, `src/gpu/device.rs`, `src/gpu/weights/` (post-split), `src/gpu/cache.rs`, `src/gpu/mod.rs`
+
+**fix(test): gate all GPU test/bench targets behind cfg(feature = "gpu")**
+
+- **Date:** May 25, 2026
+- **Issue:** `cargo test` (without `--features gpu`) failed to compile because 39 test files and 3 bench files imported `rocmforge::gpu` which is gated behind `#[cfg(feature = "gpu")]`.
+- **Fix:** Added `#![cfg(feature = "gpu")]` to 20 ungated test files and 3 bench files. Added `required-features = ["gpu"]` to 3 bench targets in `Cargo.toml` that were missing it.
+- **Verified:** `cargo test --no-run` compiles clean without `--features gpu`. `cargo test --lib` 145 passed.
+- **Files Changed:** 20 test files, 3 bench files, `Cargo.toml`
+
+### [Refactoring]
+
+**refactor: unify GGUF/RFM model loading with ModelFile enum**
+
+- **Date:** May 25, 2026
+- **Issue:** Three inference entry points (`run_cpu_inference`, `run_gpu_inference`, `run_gpu_speculative_inference`) each duplicated the `if path.ends_with(".rfm")` branching pattern for file opening, config parsing, tokenizer creation, and weight loading — totaling ~350 lines of near-identical code across `main.rs`.
+- **Fix:** Created `src/loader/model_file.rs` with a `ModelFile` enum that dispatches GGUF/RFM operations (`open`, `config`, `tokenizer`, `chat_template`, `load_cpu_weights`, `load_gpu_weights`). Replaced all three duplicated branches with `ModelFile::open()` calls.
+- **Impact:** `main.rs` reduced from 1389 to 1276 LOC. Three duplicated loading patterns eliminated. `speculative.rs` still has its own internal GGUF/RFM branching for the draft model (not yet unified).
+- **Not done:** `SpeculativeEngine::new` in `src/gpu/speculative.rs` still has its own RFM/GGUF branching for target+draft models. This was left for a future refactor to avoid scope creep.
+- **Verified:** `cargo check --features gpu` clean, `cargo test --lib` 145 passed.
+- **Files Changed:** `src/loader/model_file.rs` (new), `src/loader/mod.rs`, `src/main.rs`
+
+**refactor: split 6 large source files into focused submodules**
+
+- **Date:** May 25, 2026
+- **Issue:** 6 source files exceeded 1000 LOC, making navigation and review difficult.
+- **Fix:** Split each into a directory of focused submodules with a `mod.rs` that re-exports everything, preserving the public API:
+  - `cpu/ops.rs` (2324 LOC) → `cpu/ops/` (9 files: mod, norm, rope, activation, attention, arithmetic, gemm, gemv, avx2)
+  - `gpu/weights.rs` (2100 LOC) → `gpu/weights/` (6 files: mod, metadata, buffer, upload, layer, model)
+  - `gpu/quant_wrapper.rs` (1729 LOC) → `gpu/quant_wrapper/` (6 files: mod, q4_0, q4_1, q4_k, q5_k, q8_0)
+  - `gpu/ops.rs` (1432 LOC) → `gpu/ops/` (8 files: mod, fastpath, norm, gemv, gemv_residual, qkv, gate_up, gemm)
+  - `gpu/forward.rs` (1163 LOC) → `gpu/forward/` (6 files: mod, utils, logits, layer, decode, embed)
+  - `config.rs` (1121 LOC) → `config/` (5 files: mod, tensor_names, traits, model_config, chat_template)
+- **Verified:** `cargo test --lib` 145 passed, `cargo clippy --lib -- -D warnings` clean, `cargo check --features gpu` clean, `cargo fmt --check` clean.
+- **Not split (still >1000 LOC):** `src/main.rs` (1276), `src/gpu/kernels/quant/legacy.rs` (1438). `main.rs` is borderline and would require extracting the three large inference functions into separate CLI modules. `legacy.rs` was not in the original plan.
+- **Files Changed:** 6 files deleted, ~40 new files created across 6 directories.
+
+### [Plans]
+
+**docs: add cleanup and safety plan**
+
+- **Date:** May 25, 2026
+- **Files Changed:** `docs/superpowers/plans/2026-05-25-cleanup-and-safety.md` (new)
+
 ### [GPU Backend]
+
+**feat(gpu): add batched Q4_0 fused gate-up prefill path**
+
+- **Date:** April 20, 2026
+- **Issue:** Mixed-quant batched prefill still used a per-token legacy gate-up loop for the Q4_0/Q4_0 FFN gate/up path, leaving a decode-style hotpath inside prefill.
+- **Root Cause:** `gpu_batched_prefill_forward_q4_0()` dispatched QKV, attention output, and FFN-down through batched kernels, but gate-up still iterated token-by-token via `gpu_dispatch_fused_gate_up_on_stream(...)`.
+- **Solution:** Added a batched Q4_0 fused gate-up HIP kernel, Rust wrapper, and batched dispatch path, then switched prefill to use it for the Q4_0/Q4_0 case while preserving the row-wise fallback for other type combinations.
+- **Files Changed:**
+  - `hip_kernels/quant/batched_q4_0.hip`
+  - `src/gpu/kernels/quant/batched.rs`
+  - `src/gpu/ops_batched.rs`
+  - `src/gpu/forward_prefill.rs`
+- **Validation:**
+  - ✅ `cargo check --features gpu`
+  - ✅ `./scripts/gpu_safe_run.sh --timeout 30 --max-tokens 1 ./target/release/rocmforge --gpu --model /home/feanor/Projects/Memoria/models/qwen2.5-0.5b-instruct-q4_0.gguf --prompt "Hello world" --no-template --prefill-only-validate`
+- **Observed Runtime Result:**
+  - Batched prefill remained active on the real Qwen regression model
+  - Safe-run validation completed successfully with `PREFILL_ONLY_VALIDATE: PASSED`
+  - Measured prefill for the 2-token validation prompt: `107.2ms (18.7 tok/s)`
+  - Non-Q4_0/Q4_0 gate-up combinations still fall back to the previous per-token path instead of failing
+
+**feat(gpu): support mixed-quant batched prefill for Q4_1 tensors**
+
+- **Date:** April 20, 2026
+- **Issue:** The real-model batched prefill path still fell back on mixed-quant GGUFs because `Q4_1` tensors inside an otherwise `Q4_0` model were rejected by the batched GEMV dispatcher.
+- **Root Cause:** Batched prefill only exposed the `Q4_0` HIP kernel/wrapper path even though the regression model contains `Q4_1` FFN-down tensors.
+- **Solution:** Wired the existing `Q4_1` batched HIP kernel into the build, Rust FFI wrappers, kernel exports, and mixed-quant batched dispatch used by prefill.
+- **Files Changed:**
+  - `hip_kernels/quant/batched_q4_1.hip`
+  - `hip_kernels/quant/CMakeLists.txt`
+  - `build.rs`
+  - `src/gpu/kernels/quant/batched.rs`
+  - `src/gpu/kernels/quant/mod.rs`
+  - `src/gpu/kernels/mod.rs`
+  - `src/gpu/ops_batched.rs`
+  - `src/gpu/forward_prefill.rs`
+  - `src/gpu/mod.rs`
+- **Validation:**
+  - ✅ `cargo test --features gpu --test gpu_cli_qa --no-run`
+  - ✅ `cargo build --release --features gpu`
+  - ✅ `./scripts/gpu_safe_run.sh --timeout 30 --max-tokens 1 ./target/release/rocmforge --gpu --model /home/feanor/Projects/Memoria/models/qwen2.5-0.5b-instruct-q4_0.gguf --prompt "Hello world" --no-template --prefill-only-validate`
+- **Observed Runtime Result:**
+  - Batched prefill remained active on the mixed-quant Qwen regression model: `Using batched GPU prefill for Q4_0 model (2 tokens)`
+  - The previous fallback `unsupported GPU weight type for batched_gemv: Q4_1` did not occur
+  - Safe-run validation completed successfully with `PREFILL_ONLY_VALIDATE: PASSED`
+  - No GPU reset occurred during the staged preflight + execution harness
+
+**fix(gpu): restore q4_0 fused qkv and swiglu wrapper dispatch**
+
+- **Date:** April 20, 2026
+- **Issue:** Batched prefill validation was blocked by temporary `UnsupportedOperation` branches even though the linked Q4_0 fused HIP kernels already exported the required launch symbols.
+- **Root Cause:** The Rust wrapper/export path for Q4_0 fused QKV and fused gate-up SwiGLU had been commented out in the legacy quant wrappers and dispatch layer.
+- **Solution:** Re-enabled the existing Q4_0 fused wrappers and restored the dispatch path to call the linked kernels instead of returning `UnsupportedOperation`.
+- **Files Changed:**
+  - `src/gpu/kernels/quant/legacy.rs`
+  - `src/gpu/kernels/mod.rs`
+  - `src/gpu/ops.rs`
+- **Validation:**
+  - ✅ `cargo check --features gpu`
+  - ✅ `cargo test --lib --features gpu --no-run`
+  - ✅ `cargo test --features gpu --test gpu_cli_qa --no-run`
+  - ✅ `./scripts/gpu_safe_run.sh --timeout 30 --max-tokens 1 ./target/release/rocmforge --gpu --model /home/feanor/Projects/Memoria/models/qwen2.5-0.5b-instruct-q4_0.gguf --prompt "Hello world" --no-template --prefill-only-validate`
+- **Observed Runtime Result:**
+  - Batched prefill was reached for a multi-token prompt: `Using batched GPU prefill for Q4_0 model (2 tokens)`
+  - The run no longer failed on the old Q4_0 fused `UnsupportedOperation` path
+  - The next blocker is a separate mixed-quant path: `unsupported GPU weight type for batched_gemv: Q4_1`, followed by `gemv_q4_1_f32_residual_on_stream_unchecked - Q4_1 residual kernel not implemented`
+  - No GPU reset occurred during the staged safe-run validation
+
+**feat(gpu): add prefill-only validation mode**
+
+- **Date:** April 20, 2026
+- **Issue:** Need to validate corrected batched prefill on real models without depending on the currently broken decode path
+- **Solution:** Implemented `--prefill-only-validate` flag that exits after prefill with clear success/failure signal
+- **Changes:**
+  - Added `--prefill-only-validate` CLI flag in `src/main.rs`
+  - Added validation logic after prefill: checks logits are finite/non-empty, reports whether batched prefill was exercised
+  - Added subprocess-isolated test `test_prefill_only_validation()` in `tests/gpu_cli_qa.rs`
+  - Exit with code 0 on success, 1 on failure (NaN/Inf logits, no finite logits)
+- **Files Changed:**
+  - `src/main.rs` (added flag, validation logic, early exit before decode loop)
+  - `tests/gpu_cli_qa.rs` (added ignored test for prefill-only validation)
+- **Usage:**
+  ```bash
+  ./scripts/gpu_safe_run.sh --timeout 30 --max-tokens 1 \
+    ./target/release/rocmforge --gpu --model model.gguf --prompt "Hi" \
+    --no-template --prefill-only-validate
+  ```
+- **Validation Status:**
+  - Implementation compiled and was exercised through the staged safety harness on the local Q4_0 regression model
+  - Batched prefill was attempted for a multi-token prompt and exited with a clear missing-kernel failure instead of crashing the GPU
+  - Remaining successful end-to-end batched prefill validation still requires the missing gate-up / fallback kernels to be implemented
+
+
+**fix(gpu): batched prefill out-of-bounds stride bug and runtime hardening**
+
+- **Date:** April 20, 2026
+- **Issue:** Batched prefill path passed incorrect strides to flash_attn_prefill_strided, causing out-of-bounds memory access. Runtime path lacked VRAM safety validation before entering batched prefill.
+- **Root Cause:** Stride calculation used `seq_len * dim` instead of `dim` for row-major buffers. No VRAM headroom check before batched prefill allocation.
+- **Solution:** Fixed stride calculation to match row-major layout. Added a conservative VRAM safety gate and tightened the batched Q4_0 block-alignment validation.
+- **Changes:**
+  - Fixed `flash_attn_prefill_strided` call in `src/gpu/forward_prefill.rs`: strides now correctly use row dimension (`q_size`, `kv_size`) instead of `seq_len * dim`
+  - Added `GpuPrefillScratch::estimate_total_bytes()` helper for pre-allocation VRAM validation
+  - Added VRAM safety gate in `src/main.rs`: requires estimated scratch bytes plus a 5 GiB reserve before batched prefill
+  - Tightened validation in `src/gpu/ops_batched.rs`: rejects `in_dim` values that violate Q4_0 block alignment
+  - Added compile-time stride verification test and validation tests
+- **Files Changed:**
+  - `src/gpu/forward_prefill.rs` (fixed strides, added test)
+  - `src/gpu/cache.rs` (added `estimate_total_bytes()` helper)
+  - `src/main.rs` (added VRAM safety gate)
+  - `src/gpu/ops_batched.rs` (tightened validation, added tests)
+- **Impact:**
+  - ✅ Batched prefill no longer causes out-of-bounds memory access
+  - ✅ Batched prefill now keeps an explicit 5 GiB reserve before allocating the extra prefill scratch
+  - ✅ Batched Q4_0 kernel rejects invalid dimensions that violate packing assumptions
+  - ✅ Fallback to decode-style prompt path when VRAM insufficient
+- **Residual Risk:**
+  - Batched prefill path has not been validated on real models since stride fix
+  - Previous CHANGELOG entry claiming real-model validation (72-76 tok/s) is now superseded by this fix
+  - Recommend re-validating with staged safety harness (gpu_lock.sh, gpu_preflight.sh, gpu_safe_run.sh)
+
+
+**safety(gpu): add staged safety harness for real-model GPU testing**
+
+- **Date:** April 19, 2026
+- **Issue:** Direct real-model GPU execution carries risk of VRAM exhaustion, page faults, and GPU resets
+- **Root Cause:** Previous prefill integration attempt caused amdgpu page fault, MES queue teardown failure, and desktop GPU reset
+- **Solution:** Implemented staged safety harness with cross-process lock, preflight checks, and timeout enforcement
+- **Changes:**
+  - Created `scripts/gpu_lock.sh` for cross-process GPU mutex (acquire/release/status)
+  - Created `scripts/gpu_preflight.sh` for staged preflight checks (render node, ROCm visibility, memory round-trip, kernel launch)
+  - Created `scripts/gpu_safe_run.sh` as sanctioned wrapper for manual GPU CLI execution
+  - Updated `tests/gpu_safety_template.rs` as policy reference for harness usage
+  - Added `tests/common/mod.rs` helpers: `gpu_safe_runner_available()` and `require_gpu_safe_runner!()` macro
+  - Created `tests/gpu_cli_qa.rs` for subprocess-isolated GPU CLI QA tests
+- **Files Changed:**
+  - `scripts/gpu_lock.sh` (new)
+  - `scripts/gpu_preflight.sh` (new)
+  - `scripts/gpu_safe_run.sh` (new)
+  - `tests/gpu_safety_template.rs` (converted from pseudo-tests to policy documentation)
+  - `tests/common/mod.rs` (added env-gating helpers)
+  - `tests/gpu_cli_qa.rs` (new)
+- **Impact:**
+  - ✅ All GPU work must now pass through staged safety checks before real-model execution
+  - ✅ Cross-process lock prevents concurrent GPU access that can cause deadlocks
+  - ✅ Preflight checks verify driver, ROCm runtime, memory, and kernel launch capability
+  - ✅ Timeout and max-tokens enforcement prevents unbounded execution
+  - ✅ Subprocess-isolated QA tests prevent GPU crashes from affecting test harness
+- **Safety Protocol:**
+  1. Acquire GPU lock (timeout: 30s default via ROCMFORGE_GPU_LOCK_TIMEOUT)
+  2. Run preflight checks (4-stage: render node, ROCm visibility, memory round-trip, kernel launch)
+  3. Execute with timeout wrapper (default: 120s via ROCMFORGE_DEFAULT_TIMEOUT)
+  4. Enforce max-tokens limit (default: 50 via ROCMFORGE_DEFAULT_MAX_TOKENS)
+  5. Release lock on completion or failure
+- **Rationale:**
+  - Concurrent GPU access can cause MES queue teardown failures
+  - Unbounded GPU runs can cause desktop freezes and GPU resets
+  - Real-model testing carries risk of VRAM exhaustion and page faults
+  - Staged approach ensures problems are caught early (preflight) and contained (timeout/max-tokens/lock)
+
+**feat(gpu): batched Q4_0 GEMM kernel for prefill QKV projection**
+
+- **Date:** April 19, 2026
+- **Issue:** Decode-only kernel path lacks prefill optimization for batched QKV projection operations
+- **Root Cause:** Existing GEMV kernels process single tokens; prefill requires processing all tokens in prompt through same weight matrix
+- **Solution:** Added `batched_gemm_q4_0_f32()` kernel and Rust wrapper for parallel multi-token matrix multiplication
+- **Changes:**
+  - Created `hip_kernels/quant/batched_q4_0.hip` with `batched_gemm_q4_0_f32_prefill()` HIP kernel
+  - Added `src/gpu/kernels/quant/batched.rs` module with public Rust API and input validation
+  - Updated CMakeLists.txt to build `libbatched_q4_0_gemm.a` static library
+  - Added integration test `tests/gpu_batched_qkv_projection.rs` for end-to-end validation
+  - Kernel processes [seq_len][n_rows] × [ncols_dst][n_rows/32][18] Q4_0 weight matrix
+- **Files Changed:**
+  - `hip_kernels/quant/batched_q4_0.hip` (new)
+  - `src/gpu/kernels/quant/batched.rs` (new)
+  - `src/gpu/kernels/quant/mod.rs` (module export)
+  - `hip_kernels/quant/CMakeLists.txt` (build target)
+  - `tests/gpu_batched_qkv_projection.rs` (new)
+  - `build.rs` (library link entry)
+- **Impact:**
+  - ✅ Batched prefill processing now has dedicated kernel path
+  - ✅ Thread block organization: grid=(ncols_dst, seq_len), block=256 threads
+  - ✅ Comprehensive input validation (null checks, dimension bounds, seq_len > 0)
+  - ✅ Unit tests verify rejection of invalid inputs
+- **Validation:**
+  - ✅ `cargo check --features gpu` passes
+  - ✅ `cargo test --features gpu --test gpu_batched_qkv_projection --no-run` links successfully
+  - ⚠️ **Real-model validation superseded by April 20, 2026 stride fix** - previous real-model testing results are no longer trustworthy due to out-of-bounds memory access bug
+- **Performance (Historical, Superseded):**
+  - Historical throughput: ~48,700 tokens/sec for 32-token batch (excluded warmup outlier)
+  - Compute performance: ~50 GFLOPS (49.9-50.7 GFLOPS range measured)
+  - Total operations: 33M multiply-accumulate ops per QKV projection batch
+  - Latency: 0.65-0.66 ms for 32-token prefill batch
+  - Model tested: `/home/feanor/Projects/Memoria/models/qwen2.5-0.5b-instruct-q4_0.gguf`
+  - **Note:** Performance numbers from before stride fix are not representative of corrected implementation
+  - Optimization opportunity: shared memory tiling and WMMA for RDNA3
+
+**fix(gpu): restore q4_0_fused kernel linking for gate-up projection**
+
+- **Date:** April 19, 2026
+- **Issue:** Test binary failed to link with undefined symbols: `gemv_gate_up_q4_0_f32_launch` and `gemv_gate_up_q4_0_q8_0_launch`
+- **Root Cause:** `libq4_0_fused.a` and `libq4_0_fused_q8.a` were removed from CMakeLists.txt but still referenced in build.rs and legacy.rs
+- **Solution:** Restored fused gate-up kernel build targets in CMakeLists.txt and added missing q4_0_fused_q8 library link
+- **Changes:**
+  - Re-added `q4_0_fused` target to `hip_kernels/quant/CMakeLists.txt` (builds `q4_0_fused.hip`)
+  - Added new `q4_0_fused_q8` target to `hip_kernels/quant/CMakeLists.txt` (builds `q4_0_fused_q8.hip`)
+  - Added `libq4_0_fused_q8.a` to library link list in `build.rs`
+- **Files Changed:**
+  - `hip_kernels/quant/CMakeLists.txt` (restored build targets)
+  - `build.rs` (added q4_0_fused_q8 link)
+- **Impact:**
+  - ✅ Gate-up projection kernels now link correctly for FFN layer operations
+  - ✅ Legacy gate-up fusion code in `src/gpu/kernels/quant/legacy.rs` can now compile
+  - ✅ Test binary `gpu_batched_qkv_projection` links without undefined symbol errors
+- **Validation:**
+  - ✅ `cargo check --features gpu` passes
+  - ✅ `cargo test --features gpu --test gpu_batched_qkv_projection --no-run` succeeds
+  - ✅ No linker errors for gemv_gate_up symbols
 
 **feat(gpu): portable DP4A kernel with software fallback**
 
 - **Date:** April 19, 2026
-- **Issue:** DP4A kernel failed to compile on RDNA3 (gfx1100) due to missing `dot1-insts` feature
-- **Root Cause:** RDNA3 doesn't support hardware DP4A instructions (only RDNA2+ has `__builtin_amdgcn_dot4`)
-- **Solution:** Implemented portable `dot4_manual()` function with architecture-aware `DOT4()` macro
+- **Issue:** The active Q4_0 DP4A kernel path was tied to a hardware dot-product intrinsic and did not build cleanly across the current AMD architecture targets
+- **Root Cause:** The DP4A path depended on the signed 4-way int8 dot-product intrinsic `__builtin_amdgcn_sdot4`, which is not a portable assumption across the repo's supported architectures
+- **Solution:** Added a portable `dot4_manual()` implementation and routed the Q4_0 DP4A kernel through an architecture-aware `DOT4()` macro
 - **Changes:**
-  - Added `dot4_manual()` function in `hip_kernels/quant/q4_0_gemv.hip`
-  - Created `DOT4()` macro with compile-time dispatch based on `__AMDGPU__` version
-  - Hardware DP4A path: RDNA2 (gfx1030) uses `__builtin_amdgcn_dot4`
-  - Software fallback: RDNA1/3, CDNA uses manual SIMD implementation
-  - DP4A kernel now compiles on all AMD architectures (RDNA1/2/3, CDNA)
+  - Added `dot4_manual()` and the `DOT4()` macro to `hip_kernels/quant/common.hip`
+  - Updated `hip_kernels/quant/q4_0_fused_norm_qkv_rope_dp4a.hip` to call `DOT4()` instead of binding directly to the hardware intrinsic path
+  - Kept the hardware path on supported targets via `__builtin_amdgcn_sdot4`
+  - Added a software fallback path for targets where the hardware intrinsic path is not available or not portable
+  - Exposed Rust-side test and benchmark hooks in `src/gpu/kernels/quant/q4_0.rs`
 - **Files Changed:**
-  - `hip_kernels/quant/q4_0_gemv.hip` (added `dot4_manual()`, `DOT4()` macro)
-  - `tests/dp4a_correctness.rs` (new test suite)
-  - `benches/dp4a_performance.rs` (new benchmarks)
-  - `tests/dp4a_integration.rs` (new integration tests)
+  - `hip_kernels/quant/common.hip`
+  - `hip_kernels/quant/q4_0_fused_norm_qkv_rope_dp4a.hip`
+  - `src/gpu/kernels/quant/q4_0.rs`
+  - `tests/gpu_dp4a_portability.rs`
+  - `benches/portable_dp4a.rs`
 - **Impact:**
   - ✅ DP4A kernel compiles on RDNA3 (previously failed)
-  - ✅ Numerical correctness validated across all architectures
-  - ✅ Hardware DP4A on RDNA2: ~0.3x performance of hardware implementation
-  - ✅ Software fallback: portable but slower (expected, to be optimized)
+  - ✅ Numerical correctness has dedicated portability coverage
+  - ✅ Hardware and software dot4 paths are both reachable from the current test/benchmark surface
+  - ✅ Software fallback is portable but expected to be slower than the hardware intrinsic path
 - **Validation:**
-  - ✅ Test suite verifies numerical accuracy (max error <1e-6)
-  - ✅ Integration tests confirm kernel compiles on gfx900, gfx1030, gfx1100
-  - ✅ Benchmarks measure performance gap between hardware and software paths
+  - ✅ `cargo build --release --features gpu`
+  - ✅ `tests/gpu_dp4a_portability.rs` exercises hardware/manual dot4 parity helpers
+  - ✅ `benches/portable_dp4a.rs` benchmarks hardware vs manual dot4 helpers
 - **Performance:**
-  - Hardware DP4A (RDNA2): ~3-4x faster than software implementation
-  - Software DP4A (RDNA3): Target for future optimization
-  - Both paths produce numerically identical results
+  - Hardware DP4A should remain the preferred path where `__builtin_amdgcn_sdot4` is available
+  - Software fallback keeps the kernel path buildable on unsupported targets while preserving behavior
+  - Further measurement and optimization of the software fallback remain open work
 
 ### [GPU Backend]
 

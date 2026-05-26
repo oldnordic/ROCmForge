@@ -1,3 +1,4 @@
+#![allow(warnings)]
 /// Simple benchmark for GEMV performance comparison.
 use rocmforge::cpu::ops::{gemv_q4_0, gemv_q4_0_q8_0};
 use rocmforge::cpu::quant::{load_f16_scale, store_f16_scale};

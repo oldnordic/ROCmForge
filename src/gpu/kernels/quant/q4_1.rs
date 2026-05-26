@@ -41,7 +41,7 @@ pub fn quantize_q4_1(input: *const f32, output: *mut u8, n: usize) -> GpuResult<
         });
     }
 
-    let num_blocks = (n + 31) / 32;
+    let num_blocks = n.div_ceil(32);
     if num_blocks == 0 {
         return Ok(());
     }
@@ -93,7 +93,7 @@ pub fn dequantize_q4_1(input: *const u8, output: *mut f32, n: usize) -> GpuResul
         });
     }
 
-    let num_blocks = (n + 31) / 32;
+    let num_blocks = n.div_ceil(32);
     if num_blocks == 0 {
         return Ok(());
     }
@@ -151,7 +151,7 @@ pub fn dequantize_q4_1_batched(
         });
     }
 
-    let num_blocks = (n + 31) / 32;
+    let num_blocks = n.div_ceil(32);
     if num_blocks == 0 {
         return Ok(());
     }
@@ -221,7 +221,7 @@ pub fn verify_q4_1_accuracy(
         });
     }
 
-    let num_blocks = (n + 31) / 32;
+    let num_blocks = n.div_ceil(32);
     if num_blocks == 0 {
         return Ok(());
     }
@@ -343,7 +343,7 @@ pub fn gemv_q4_1_f32_on_stream(
     }
 
     // n_rows must be aligned to QK4_1
-    if n_rows % 32 != 0 {
+    if !n_rows.is_multiple_of(32) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -380,22 +380,65 @@ pub fn gemv_q4_1_f32_on_stream(
     }
 }
 
-/// Hot-path variant used by trusted dispatch code that has already validated
-/// tensor layout and pointers.
 #[inline(always)]
 pub unsafe fn gemv_q4_1_f32_on_stream_unchecked(
-    _weights_q4_1: *const u8,
-    _input: *const f32,
-    _output: *mut f32,
-    _n_rows: usize,
-    _ncols_dst: usize,
-    _stream: hipStream_t,
+    weights_q4_1: *const u8,
+    input: *const f32,
+    output: *mut f32,
+    n_rows: usize,
+    ncols_dst: usize,
+    stream: hipStream_t,
 ) -> GpuResult<()> {
-    // DISABLED: gemv_q4_1_f32_launch kernel not available
-    Err(GpuError::UnsupportedOperation {
-        operation: "gemv_q4_1_f32_on_stream_unchecked".to_string(),
-        reason: "Q4_1 kernel not implemented".to_string(),
-    })
+    let result = unsafe {
+        gemv_q4_1_f32_launch(
+            weights_q4_1,
+            input,
+            output,
+            n_rows as c_int,
+            ncols_dst as c_int,
+            stream,
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("gemv_q4_1_f32 kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+/// RDNA3 Wave32 GEMV hot-path wrapper
+#[inline(always)]
+pub unsafe fn gemv_q4_1_f32_wave32_on_stream_unchecked(
+    weights_q4_1: *const u8,
+    input: *const f32,
+    output: *mut f32,
+    n_rows: usize,
+    ncols_dst: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    let result = unsafe {
+        gemv_q4_1_f32_wave32_launch(
+            weights_q4_1,
+            input,
+            output,
+            n_rows as c_int,
+            ncols_dst as c_int,
+            stream,
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("gemv_q4_1_f32_wave32 kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
 }
 
 pub fn gemv_q4_1_f32_residual_on_stream(
@@ -414,7 +457,7 @@ pub fn gemv_q4_1_f32_residual_on_stream(
         });
     }
 
-    if n_rows % 32 != 0 {
+    if !n_rows.is_multiple_of(32) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -448,19 +491,67 @@ pub fn gemv_q4_1_f32_residual_on_stream(
 /// tensor layout and pointers.
 #[inline(always)]
 pub unsafe fn gemv_q4_1_f32_residual_on_stream_unchecked(
-    _weights_q4_1: *const u8,
-    _input: *const f32,
-    _residual: *const f32,
-    _output: *mut f32,
-    _n_rows: usize,
-    _ncols_dst: usize,
-    _stream: hipStream_t,
+    weights_q4_1: *const u8,
+    input: *const f32,
+    residual: *const f32,
+    output: *mut f32,
+    n_rows: usize,
+    ncols_dst: usize,
+    stream: hipStream_t,
 ) -> GpuResult<()> {
-    // DISABLED: gemv_q4_1_f32_residual_launch kernel not available
-    Err(GpuError::UnsupportedOperation {
-        operation: "gemv_q4_1_f32_residual_on_stream_unchecked".to_string(),
-        reason: "Q4_1 residual kernel not implemented".to_string(),
-    })
+    let result = unsafe {
+        gemv_q4_1_f32_residual_launch(
+            weights_q4_1,
+            input,
+            residual,
+            output,
+            n_rows as c_int,
+            ncols_dst as c_int,
+            stream,
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("gemv_q4_1_f32_residual kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+/// RDNA3 Wave32 GEMV residual hot-path wrapper
+#[inline(always)]
+pub unsafe fn gemv_q4_1_f32_wave32_residual_on_stream_unchecked(
+    weights_q4_1: *const u8,
+    input: *const f32,
+    residual: *const f32,
+    output: *mut f32,
+    n_rows: usize,
+    ncols_dst: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    let result = unsafe {
+        gemv_q4_1_f32_wave32_residual_launch(
+            weights_q4_1,
+            input,
+            residual,
+            output,
+            n_rows as c_int,
+            ncols_dst as c_int,
+            stream,
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("gemv_q4_1_f32_wave32_residual kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
 }
 
 /// Variant launch for autotuning Q4_1 residual kernel.
@@ -470,22 +561,15 @@ pub unsafe fn gemv_q4_1_f32_residual_on_stream_unchecked(
 /// - variant: 0 = baseline (256 threads), 1 = 128 threads
 #[inline(always)]
 pub unsafe fn gemv_q4_1_f32_residual_on_stream_variant_unchecked(
-    _weights_q4_1: *const u8,
-    _input: *const f32,
-    _residual: *const f32,
-    _output: *mut f32,
-    _n_rows: usize,
-    _ncols_dst: usize,
-    _variant: i32,
-    _stream: hipStream_t,
+    weights_q4_1: *const u8,
+    input: *const f32,
+    residual: *const f32,
+    output: *mut f32,
+    n_rows: usize,
+    ncols_dst: usize,
+    variant: i32,
+    stream: hipStream_t,
 ) -> GpuResult<()> {
-    // DISABLED: gemv_q4_1_f32_residual_variant_launch not available
-    // TODO: Implement Q4_1 residual variant kernel or use CPU fallback
-    Err(GpuError::UnsupportedOperation {
-        operation: "gemv_q4_1_f32_residual_on_stream_variant_unchecked".to_string(),
-        reason: "Q4_1 residual variant kernel not implemented".to_string(),
-    })
-    /*
     let result = unsafe {
         gemv_q4_1_f32_residual_variant_launch(
             weights_q4_1,
@@ -507,7 +591,6 @@ pub unsafe fn gemv_q4_1_f32_residual_on_stream_variant_unchecked(
     }
 
     Ok(())
-    */
 }
 
 /// Experimental FFN-down microkernel for Q4_1 weights.
@@ -552,7 +635,7 @@ pub fn gemv_ffn_down_swiglu_q4_1_f32_experimental_on_stream(
         });
     }
 
-    if n_rows % 32 != 0 {
+    if !n_rows.is_multiple_of(32) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -675,9 +758,6 @@ unsafe extern "C" {
 
     fn finalize_q4_1_metrics_kernel(errors: *const f32, metrics: *mut f32, n: c_int) -> hipError_t;
 
-    // DISABLED: gemv_q4_1_f32_launch not available
-    // TODO: Re-enable when Q4_1 kernel is implemented
-    /*
     fn gemv_q4_1_f32_launch(
         weights_q4_1: *const u8,
         input: *const f32,
@@ -686,11 +766,26 @@ unsafe extern "C" {
         ncols_dst: c_int,
         stream: hipStream_t,
     ) -> hipError_t;
-    */
 
-    // DISABLED: gemv_q4_1_f32_residual_launch not available
-    // TODO: Re-enable when Q4_1 residual kernel is implemented
-    /*
+    fn gemv_q4_1_f32_wave32_launch(
+        weights_q4_1: *const u8,
+        input: *const f32,
+        output: *mut f32,
+        n_rows: c_int,
+        ncols_dst: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
+    fn gemv_q4_1_f32_wave32_residual_launch(
+        weights_q4_1: *const u8,
+        input: *const f32,
+        residual: *const f32,
+        output: *mut f32,
+        n_rows: c_int,
+        ncols_dst: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
     fn gemv_q4_1_f32_residual_launch(
         weights_q4_1: *const u8,
         input: *const f32,
@@ -700,11 +795,7 @@ unsafe extern "C" {
         ncols_dst: c_int,
         stream: hipStream_t,
     ) -> hipError_t;
-    */
 
-    // DISABLED: gemv_q4_1_f32_residual_variant_launch not available
-    // TODO: Re-enable when Q4_1 residual variant kernel is implemented
-    /*
     fn gemv_q4_1_f32_residual_variant_launch(
         weights_q4_1: *const u8,
         input: *const f32,
@@ -715,7 +806,6 @@ unsafe extern "C" {
         variant: c_int,
         stream: hipStream_t,
     ) -> hipError_t;
-    */
 
     fn gemv_ffn_down_swiglu_q4_1_f32_experimental_launch(
         weights_q4_1: *const u8,

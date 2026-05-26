@@ -283,7 +283,7 @@ pub fn embed_q8_0_token(
             description: "embed_q8_0_token: hidden_size and vocab_size cannot be zero".to_string(),
         });
     }
-    if hidden_size % 32 != 0 {
+    if !hidden_size.is_multiple_of(32) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -343,7 +343,7 @@ pub fn embed_q4_0_token(
             description: "embed_q4_0_token: hidden_size and vocab_size cannot be zero".to_string(),
         });
     }
-    if hidden_size % 32 != 0 {
+    if !hidden_size.is_multiple_of(32) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -405,7 +405,7 @@ pub fn embed_q8_0_batch(
                 .to_string(),
         });
     }
-    if hidden_size % 32 != 0 {
+    if !hidden_size.is_multiple_of(32) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -460,7 +460,7 @@ pub fn embed_q4_0_batch(
                 .to_string(),
         });
     }
-    if hidden_size % 32 != 0 {
+    if !hidden_size.is_multiple_of(32) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(

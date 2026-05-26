@@ -33,7 +33,7 @@ pub fn parse_header<R: Read>(r: &mut R) -> Result<Header, LoadError> {
     }
 
     let version = read_u32(r)?;
-    if version < VERSION_MIN || version > VERSION_MAX {
+    if !(VERSION_MIN..=VERSION_MAX).contains(&version) {
         return Err(LoadError::UnsupportedVersion(version));
     }
 
@@ -234,7 +234,7 @@ fn skip_value<R: Read>(r: &mut R, value_type: u32) -> Result<(), LoadError> {
         2 | 3 => {
             r.read_exact(&mut [0u8; 2])?;
         }
-        4 | 5 | 6 => {
+        4..=6 => {
             r.read_exact(&mut [0u8; 4])?;
         }
         8 => {
@@ -247,7 +247,7 @@ fn skip_value<R: Read>(r: &mut R, value_type: u32) -> Result<(), LoadError> {
                 skip_value(r, elem_type)?;
             }
         }
-        10 | 11 | 12 => {
+        10..=12 => {
             r.read_exact(&mut [0u8; 8])?;
         }
         _ => {
@@ -311,8 +311,8 @@ pub fn parse_tensor_descs<R: Read + Seek>(
     }
 
     // GGUF spec: tensor data section starts at the next TENSOR_ALIGNMENT boundary
-    let pos = r.seek(SeekFrom::Current(0))?;
-    let data_start = (pos + TENSOR_ALIGNMENT - 1) / TENSOR_ALIGNMENT * TENSOR_ALIGNMENT;
+    let pos = r.stream_position()?;
+    let data_start = pos.div_ceil(TENSOR_ALIGNMENT) * TENSOR_ALIGNMENT;
 
     Ok((descs, data_start))
 }

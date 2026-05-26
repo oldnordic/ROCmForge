@@ -162,7 +162,8 @@ __global__ void flash_attn_decode_strided_multi_head_v2_kernel(
 ) {
     const int head_idx = blockIdx.x;
     const int tid = threadIdx.x;
-    const int kv_head_idx = head_idx / (num_heads / num_kv_heads);
+    const int ratio = num_heads / num_kv_heads;
+    const int kv_head_idx = (ratio > 0) ? (head_idx / ratio) : 0;
     const int kv_size = num_kv_heads * head_dim;
     const int head_offset = kv_head_idx * head_dim;
 
@@ -230,7 +231,8 @@ __global__ void flash_attn_decode_strided_multi_head_state_kernel(
     const int seq_len = *seq_len_ptr;
     const int head_idx = blockIdx.x;
     const int tid = threadIdx.x;
-    const int kv_head_idx = head_idx / (num_heads / num_kv_heads);
+    const int ratio = num_heads / num_kv_heads;
+    const int kv_head_idx = (ratio > 0) ? (head_idx / ratio) : 0;
     const int kv_size = num_kv_heads * head_dim;
     const int head_offset = kv_head_idx * head_dim;
 

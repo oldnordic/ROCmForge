@@ -5,13 +5,11 @@
 
 use super::error::GpuResult;
 use super::ffi;
+use super::vram_budget::DESKTOP_VRAM_RESERVATION_BYTES;
 use super::weights::GpuBuffer;
 use std::sync::Mutex;
 
 const DEFAULT_Q8_WORKSPACE_BYTES: usize = 64 * 1024;
-
-// VRAM reservation for desktop/compositor (4 GB for multi-monitor setups)
-const DESKTOP_VRAM_RESERVATION_BYTES: usize = 4 * 1024 * 1024 * 1024;
 
 struct Q8Workspace {
     buffer: Option<GpuBuffer>,
@@ -76,10 +74,16 @@ impl GpuDevice {
     pub fn init(device_id: i32) -> GpuResult<Self> {
         ffi::hip_set_device(device_id)?;
 
-        // Verify device exists
         let info = ffi::hip_get_device_info(device_id)?;
 
-        // Create HIP stream
+        let (free_vram, _total_vram) = ffi::hip_get_mem_info(device_id)?;
+        if free_vram < DESKTOP_VRAM_RESERVATION_BYTES {
+            return Err(super::error::GpuError::DeviceInsufficientVram {
+                free_vram,
+                required: DESKTOP_VRAM_RESERVATION_BYTES,
+            });
+        }
+
         let stream = ffi::hip_stream_create()?;
 
         Ok(Self {

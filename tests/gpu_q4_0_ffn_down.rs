@@ -1,10 +1,9 @@
+#![cfg(feature = "gpu")]
 //! Test Q4_0 FFN down projection specifically to isolate the bug
 
 use rocmforge::config::ModelConfig;
-use rocmforge::cpu::cache::CpuForwardScratch;
-use rocmforge::cpu::ops::{dispatch_gemv, rms_norm};
+use rocmforge::cpu::ops::dispatch_gemv;
 use rocmforge::cpu::weights::CpuModelWeights;
-use rocmforge::gpu::ops::gpu_dispatch_gemv_on_stream;
 use rocmforge::gpu::{self, GpuDevice};
 use rocmforge::loader::GgufFile;
 use serial_test::serial;
@@ -23,7 +22,7 @@ fn download_gpu_f32(buf: &gpu::GpuBuffer, len: usize) -> Vec<f32> {
 }
 
 fn upload_gpu_f32(data: &[f32]) -> gpu::GpuBuffer {
-    let size_in_bytes = data.len() * std::mem::size_of::<f32>();
+    let size_in_bytes = std::mem::size_of_val(data);
     let mut buf = gpu::GpuBuffer::alloc(size_in_bytes).expect("Failed to allocate GPU buffer");
     buf.copy_from_host(unsafe {
         std::slice::from_raw_parts(data.as_ptr() as *const u8, size_in_bytes)
@@ -77,7 +76,7 @@ fn test_q4_0_ffn_down_layer2_vs_layer0() {
 
         // Fill input with test values
         for (i, val) in cpu_input.iter_mut().enumerate() {
-            *val = ((i as f32) * 0.1 - 50.0); // Range: -50.0 to +436.4
+            *val = (i as f32) * 0.1 - 50.0; // Range: -50.0 to +436.4
         }
 
         // CPU reference
@@ -95,7 +94,7 @@ fn test_q4_0_ffn_down_layer2_vs_layer0() {
 
         // GPU computation
         let gpu_input = upload_gpu_f32(&cpu_input);
-        let mut gpu_output = gpu::GpuBuffer::alloc(h * std::mem::size_of::<f32>())
+        let gpu_output = gpu::GpuBuffer::alloc(h * std::mem::size_of::<f32>())
             .expect("Failed to alloc GPU output");
 
         gpu::ops::gpu_dispatch_gemv_on_stream(

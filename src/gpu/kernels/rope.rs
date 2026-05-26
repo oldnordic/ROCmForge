@@ -32,7 +32,7 @@ pub fn rope(x: *mut f32, pos: usize, dim: usize, theta_base: f32) -> GpuResult<(
         });
     }
 
-    if dim % 2 != 0 {
+    if !dim.is_multiple_of(2) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!("RoPE: dim {} must be even", dim),
@@ -91,7 +91,7 @@ pub fn rope_heads_on_stream(
         });
     }
 
-    if head_dim % 2 != 0 {
+    if !head_dim.is_multiple_of(2) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!("RoPE heads: head_dim {} must be even", head_dim),
@@ -142,7 +142,7 @@ pub fn rope_heads_from_state_on_stream(
             description: "RoPE heads: pos_ptr must be non-null".to_string(),
         });
     }
-    if head_dim % 2 != 0 {
+    if !head_dim.is_multiple_of(2) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!("RoPE heads: head_dim {} must be even", head_dim),
@@ -193,7 +193,7 @@ pub fn rope_batched(
         });
     }
 
-    if dim % 2 != 0 {
+    if !dim.is_multiple_of(2) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!("RoPE batched: dim {} must be even", dim),
@@ -238,7 +238,7 @@ pub fn rope_heads_batched(
         });
     }
 
-    if head_dim % 2 != 0 {
+    if !head_dim.is_multiple_of(2) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!("RoPE heads batched: head_dim {} must be even", head_dim),

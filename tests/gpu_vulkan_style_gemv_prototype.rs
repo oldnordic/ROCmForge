@@ -3,7 +3,6 @@
 mod common;
 
 use rocmforge::config::ModelConfig;
-use rocmforge::cpu::{cache::CpuForwardScratch, weights::CpuModelWeights};
 use rocmforge::gpu::{self, GpuBuffer, GpuDevice};
 use rocmforge::loader::{GgmlType, GgufFile};
 use serial_test::serial;
@@ -87,8 +86,8 @@ fn test_gpu_vulkan_style_ffn_down_multi_row_q4_0() {
 
     // Create random input
     let mut input = vec![0.0f32; ff_size];
-    for i in 0..ff_size {
-        input[i] = (i as f32).sin();
+    for (i, val) in input.iter_mut().enumerate() {
+        *val = (i as f32).sin();
     }
 
     let d_input = upload_f32(&input);

@@ -99,12 +99,7 @@ __global__ void fused_qkv_rope_q4_0_gqa_kernel(
     const int heads_per_kv = n_heads / n_kv_heads;  // 7 for Qwen2.5-0.5B
     const int q_head_start = kv_head_idx * heads_per_kv;
 
-    // Shared memory for input (broadcast to all threads)
-    __shared__ float s_input[1792];  // Assumes hidden_size <= 1792 (14 * 128)
-    if (tid < hidden_size) {
-        s_input[tid] = input[tid];
-    }
-    __syncthreads();
+    // Input vector is cached in high-speed global cache; threads read input directly from global memory.
 
     // Process K and V projections for this KV head
     const block_q4_0* blocks_k = reinterpret_cast<const block_q4_0*>(w_k);
@@ -121,7 +116,7 @@ __global__ void fused_qkv_rope_q4_0_gqa_kernel(
         for (int block_idx = 0; block_idx < (hidden_size + QK4_0 - 1) / QK4_0; ++block_idx) {
             k_sum += blocks_k[block_idx * n_kv_heads + kv_head_idx].d *
                      get_q4_0_value(blocks_k, block_idx * QK4_0 * n_kv_heads + kv_head_idx * QK4_0 + tid) *
-                     s_input[block_idx * QK4_0 + tid];
+                     input[block_idx * QK4_0 + tid];
         }
         // Warp reduction
         for (int offset = 16; offset > 0; offset >>= 1) {
@@ -157,7 +152,7 @@ __global__ void fused_qkv_rope_q4_0_gqa_kernel(
         for (int block_idx = 0; block_idx < (hidden_size + QK4_0 - 1) / QK4_0; ++block_idx) {
             v_sum += blocks_v[block_idx * n_kv_heads + kv_head_idx].d *
                      get_q4_0_value(blocks_v, block_idx * QK4_0 * n_kv_heads + kv_head_idx * QK4_0 + tid) *
-                     s_input[block_idx * QK4_0 + tid];
+                     input[block_idx * QK4_0 + tid];
         }
         // Warp reduction
         for (int offset = 16; offset > 0; offset >>= 1) {
@@ -185,7 +180,7 @@ __global__ void fused_qkv_rope_q4_0_gqa_kernel(
             for (int block_idx = 0; block_idx < (hidden_size + QK4_0 - 1) / QK4_0; ++block_idx) {
                 q_sum += blocks_q[block_idx * n_heads + q_head_idx].d *
                          get_q4_0_value(blocks_q, block_idx * QK4_0 * n_heads + q_head_idx * QK4_0 + tid) *
-                         s_input[block_idx * QK4_0 + tid];
+                         input[block_idx * QK4_0 + tid];
             }
             // Warp reduction
             for (int offset = 16; offset > 0; offset >>= 1) {

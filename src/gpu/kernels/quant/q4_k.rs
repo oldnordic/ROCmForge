@@ -47,7 +47,7 @@ pub fn quantize_q4_k(input: *const f32, output: *mut u8, n: usize) -> GpuResult<
     }
 
     // Each block processes QK_K elements
-    let num_blocks = (n + 255) / 256;
+    let num_blocks = n.div_ceil(256);
     if num_blocks == 0 {
         return Ok(());
     }
@@ -86,7 +86,7 @@ pub fn dequantize_q4_k(input: *const u8, output: *mut f32, n: usize) -> GpuResul
         });
     }
 
-    let num_blocks = (n + 255) / 256;
+    let num_blocks = n.div_ceil(256);
     if num_blocks == 0 {
         return Ok(());
     }
@@ -130,7 +130,7 @@ pub fn dequantize_q4_k_batched(
         });
     }
 
-    let num_blocks = (n + 255) / 256;
+    let num_blocks = n.div_ceil(256);
     if num_blocks == 0 {
         return Ok(());
     }
@@ -179,7 +179,7 @@ pub fn verify_q4_k_accuracy(
         });
     }
 
-    let num_blocks = (n + 255) / 256;
+    let num_blocks = n.div_ceil(256);
     if num_blocks == 0 {
         return Ok(());
     }

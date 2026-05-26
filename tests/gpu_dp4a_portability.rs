@@ -1,3 +1,4 @@
+#![cfg(feature = "gpu")]
 //! Portable DP4A numerical correctness tests
 //!
 //! Verifies that dot4_manual() produces identical results to hardware DP4A
@@ -27,7 +28,7 @@ mod tests {
         }
 
         // Test vectors: 4 pairs of int8 values packed into int32
-        let test_cases = vec![
+        let test_cases = [
             // Simple cases
             ((0x00010203_i32, 0x00010203_i32, 0), 14), // 1*1 + 2*2 + 3*3 = 14
             ((-1_i32, 0x01010101, 0), -4),             // -1*1 + -1*1 + -1*1 + -1*1 = -4
@@ -79,7 +80,7 @@ mod tests {
         }
 
         // Same test cases as above, but only test manual path
-        let test_cases = vec![
+        let test_cases = [
             ((0x00010203_i32, 0x00010203_i32, 0), 14),
             ((-1_i32, 0x01010101, 0), -4),
             ((0x00000000_i32, -1_i32, 100), 100),

@@ -294,20 +294,25 @@ __global__ void gemv_qkv_q4_0_f32_wave_parallel_v3_kernel(
             float4 in_l = reinterpret_cast<float4*>(&s_input[row_offset + 4 * i])[0];
             float4 in_h = reinterpret_cast<float4*>(&s_input[row_offset + 4 * i + 16])[0];
 
+            float sum_x = in_l.x + in_l.y + in_l.z + in_l.w + in_h.x + in_h.y + in_h.z + in_h.w;
+
             #pragma unroll
             for (int c = 0; c < 4; ++c) {
                 const Q4_0_block* b = &w_cols[c][block_idx];
                 const float d = __half2float(b->d);
                 const uint32_t q = reinterpret_cast<const uint32_t*>(b->qs)[i];
 
-                sums[c] += d * (static_cast<float>( q        & 0x0F) - 8.0f) * in_l.x;
-                sums[c] += d * (static_cast<float>((q >>  8) & 0x0F) - 8.0f) * in_l.y;
-                sums[c] += d * (static_cast<float>((q >> 16) & 0x0F) - 8.0f) * in_l.z;
-                sums[c] += d * (static_cast<float>((q >> 24) & 0x0F) - 8.0f) * in_l.w;
-                sums[c] += d * (static_cast<float>((q >>  4) & 0x0F) - 8.0f) * in_h.x;
-                sums[c] += d * (static_cast<float>((q >> 12) & 0x0F) - 8.0f) * in_h.y;
-                sums[c] += d * (static_cast<float>((q >> 20) & 0x0F) - 8.0f) * in_h.z;
-                sums[c] += d * (static_cast<float>((q >> 28) & 0x0F) - 8.0f) * in_h.w;
+                float dot_q_x = 0.0f;
+                dot_q_x += static_cast<float>( q        & 0x0Fu) * in_l.x;
+                dot_q_x += static_cast<float>((q >>  8) & 0x0Fu) * in_l.y;
+                dot_q_x += static_cast<float>((q >> 16) & 0x0Fu) * in_l.z;
+                dot_q_x += static_cast<float>((q >> 24) & 0x0Fu) * in_l.w;
+                dot_q_x += static_cast<float>((q >>  4) & 0x0Fu) * in_h.x;
+                dot_q_x += static_cast<float>((q >> 12) & 0x0Fu) * in_h.y;
+                dot_q_x += static_cast<float>((q >> 20) & 0x0Fu) * in_h.z;
+                dot_q_x += static_cast<float>((q >> 28) & 0x0Fu) * in_h.w;
+
+                sums[c] += d * (dot_q_x - 8.0f * sum_x);
             }
         }
     }
@@ -821,22 +826,27 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_vulkan_style_kernel(
             float4 in_l = reinterpret_cast<float4*>(&s_input[row_offset + 4*i])[0];
             float4 in_h = reinterpret_cast<float4*>(&s_input[row_offset + 4*i + 16])[0];
 
-            auto process_nibbles = [&](uint32_t q, float d, float4 il, float4 ih, float& sum) {
-                sum += d * (static_cast<float>( q        & 0x0F) - 8.0f) * il.x;
-                sum += d * (static_cast<float>((q >>  8) & 0x0F) - 8.0f) * il.y;
-                sum += d * (static_cast<float>((q >> 16) & 0x0F) - 8.0f) * il.z;
-                sum += d * (static_cast<float>((q >> 24) & 0x0F) - 8.0f) * il.w;
-                sum += d * (static_cast<float>((q >>  4) & 0x0F) - 8.0f) * ih.x;
-                sum += d * (static_cast<float>((q >> 12) & 0x0F) - 8.0f) * ih.y;
-                sum += d * (static_cast<float>((q >> 20) & 0x0F) - 8.0f) * ih.z;
-                sum += d * (static_cast<float>((q >> 28) & 0x0F) - 8.0f) * ih.w;
+            float sum_x = in_l.x + in_l.y + in_l.z + in_l.w + in_h.x + in_h.y + in_h.z + in_h.w;
+
+            auto process_nibbles = [&](uint32_t q, float d, float4 il, float4 ih, float sum_x_val, float& sum) {
+                float dot_q_x = 0.0f;
+                dot_q_x += static_cast<float>( q        & 0x0Fu) * il.x;
+                dot_q_x += static_cast<float>((q >>  8) & 0x0Fu) * il.y;
+                dot_q_x += static_cast<float>((q >> 16) & 0x0Fu) * il.z;
+                dot_q_x += static_cast<float>((q >> 24) & 0x0Fu) * il.w;
+                dot_q_x += static_cast<float>((q >>  4) & 0x0Fu) * ih.x;
+                dot_q_x += static_cast<float>((q >> 12) & 0x0Fu) * ih.y;
+                dot_q_x += static_cast<float>((q >> 20) & 0x0Fu) * ih.z;
+                dot_q_x += static_cast<float>((q >> 28) & 0x0Fu) * ih.w;
+
+                sum += d * (dot_q_x - 8.0f * sum_x_val);
             };
 
-            process_nibbles(qs_gate0[i], d_gate0, in_l, in_h, sum_gate0);
-            process_nibbles(qs_up0[i],   d_up0,   in_l, in_h, sum_up0);
+            process_nibbles(qs_gate0[i], d_gate0, in_l, in_h, sum_x, sum_gate0);
+            process_nibbles(qs_up0[i],   d_up0,   in_l, in_h, sum_x, sum_up0);
             if (has_ff1) {
-                process_nibbles(reinterpret_cast<const uint32_t*>(w_gate_col1[block_idx].qs)[i], d_gate1, in_l, in_h, sum_gate1);
-                process_nibbles(reinterpret_cast<const uint32_t*>(w_up_col1[block_idx].qs)[i],   d_up1,   in_l, in_h, sum_up1);
+                process_nibbles(reinterpret_cast<const uint32_t*>(w_gate_col1[block_idx].qs)[i], d_gate1, in_l, in_h, sum_x, sum_gate1);
+                process_nibbles(reinterpret_cast<const uint32_t*>(w_up_col1[block_idx].qs)[i],   d_up1,   in_l, in_h, sum_x, sum_up1);
             }
         }
     }
@@ -921,22 +931,27 @@ __global__ void gemv_gate_up_q4_0_f32_vulkan_style_kernel(
             float4 in_l = reinterpret_cast<float4*>(&s_input[row_offset + 4*i])[0];
             float4 in_h = reinterpret_cast<float4*>(&s_input[row_offset + 4*i + 16])[0];
 
-            auto process_nibbles = [&](uint32_t q, float d, float4 il, float4 ih, float& sum) {
-                sum += d * (static_cast<float>( q        & 0x0F) - 8.0f) * il.x;
-                sum += d * (static_cast<float>((q >>  8) & 0x0F) - 8.0f) * il.y;
-                sum += d * (static_cast<float>((q >> 16) & 0x0F) - 8.0f) * il.z;
-                sum += d * (static_cast<float>((q >> 24) & 0x0F) - 8.0f) * il.w;
-                sum += d * (static_cast<float>((q >>  4) & 0x0F) - 8.0f) * ih.x;
-                sum += d * (static_cast<float>((q >> 12) & 0x0F) - 8.0f) * ih.y;
-                sum += d * (static_cast<float>((q >> 20) & 0x0F) - 8.0f) * ih.z;
-                sum += d * (static_cast<float>((q >> 28) & 0x0F) - 8.0f) * ih.w;
+            float sum_x = in_l.x + in_l.y + in_l.z + in_l.w + in_h.x + in_h.y + in_h.z + in_h.w;
+
+            auto process_nibbles = [&](uint32_t q, float d, float4 il, float4 ih, float sum_x_val, float& sum) {
+                float dot_q_x = 0.0f;
+                dot_q_x += static_cast<float>( q        & 0x0Fu) * il.x;
+                dot_q_x += static_cast<float>((q >>  8) & 0x0Fu) * il.y;
+                dot_q_x += static_cast<float>((q >> 16) & 0x0Fu) * il.z;
+                dot_q_x += static_cast<float>((q >> 24) & 0x0Fu) * il.w;
+                dot_q_x += static_cast<float>((q >>  4) & 0x0Fu) * ih.x;
+                dot_q_x += static_cast<float>((q >> 12) & 0x0Fu) * ih.y;
+                dot_q_x += static_cast<float>((q >> 20) & 0x0Fu) * ih.z;
+                dot_q_x += static_cast<float>((q >> 28) & 0x0Fu) * ih.w;
+
+                sum += d * (dot_q_x - 8.0f * sum_x_val);
             };
 
-            process_nibbles(qs_gate0[i], d_gate0, in_l, in_h, sum_gate0);
-            process_nibbles(qs_up0[i], d_up0, in_l, in_h, sum_up0);
+            process_nibbles(qs_gate0[i], d_gate0, in_l, in_h, sum_x, sum_gate0);
+            process_nibbles(qs_up0[i], d_up0, in_l, in_h, sum_x, sum_up0);
             if (has_ff1) {
-                process_nibbles(reinterpret_cast<const uint32_t*>(w_gate_col1[block_idx].qs)[i], d_gate1, in_l, in_h, sum_gate1);
-                process_nibbles(reinterpret_cast<const uint32_t*>(w_up_col1[block_idx].qs)[i], d_up1, in_l, in_h, sum_up1);
+                process_nibbles(reinterpret_cast<const uint32_t*>(w_gate_col1[block_idx].qs)[i], d_gate1, in_l, in_h, sum_x, sum_gate1);
+                process_nibbles(reinterpret_cast<const uint32_t*>(w_up_col1[block_idx].qs)[i], d_up1, in_l, in_h, sum_x, sum_up1);
             }
         }
     }

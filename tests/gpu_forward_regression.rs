@@ -1,3 +1,4 @@
+#![cfg(feature = "gpu")]
 //! Regression tests for GPU forward pass bugs
 //!
 //! This file contains tests for specific bugs that have been found and fixed.

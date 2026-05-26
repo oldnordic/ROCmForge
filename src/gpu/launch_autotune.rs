@@ -65,15 +65,17 @@ impl ShapeKey {
     }
 
     fn bucket_dim(dim: usize) -> u32 {
-        ((dim + 63) / 64 * 64) as u32
+        (dim.div_ceil(64) * 64) as u32
     }
 }
 
 /// Variant identifier for a specific launch configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[repr(u8)]
+#[derive(Default)]
 pub enum VariantId {
     /// Default/baseline variant
+    #[default]
     Baseline = 0,
     /// Optimized variant 1 (e.g., different block size)
     Variant1 = 1,
@@ -81,12 +83,6 @@ pub enum VariantId {
     Variant2 = 2,
     /// Optimized variant 3
     Variant3 = 3,
-}
-
-impl Default for VariantId {
-    fn default() -> Self {
-        VariantId::Baseline
-    }
 }
 
 /// Persistent cache for autotune decisions.

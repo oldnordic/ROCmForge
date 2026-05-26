@@ -16,6 +16,9 @@ mod q5_k;
 mod q6_k;
 mod q8_0;
 
+// Batched kernels for prefill processing
+pub mod batched;
+
 // Legacy code - contains shared GEMV/GEMM utilities and fusion kernels
 mod legacy;
 
@@ -24,7 +27,8 @@ pub use q4_0::{
     bench_dot4_hardware, bench_dot4_manual, dequantize_q4_0, dequantize_q4_0_batched,
     finalize_q4_0_metrics, gemm_q4_0_f32, gemv_q4_0_f32, gemv_q4_0_f32_on_stream,
     gemv_q4_0_f32_on_stream_unchecked, gemv_q4_0_f32_residual_on_stream,
-    gemv_q4_0_f32_residual_on_stream_unchecked, quantize_q4_0, test_dot4_hardware,
+    gemv_q4_0_f32_residual_on_stream_unchecked, gemv_q4_0_f32_wave32_on_stream_unchecked,
+    gemv_q4_0_f32_wave32_residual_on_stream_unchecked, quantize_q4_0, test_dot4_hardware,
     test_dot4_manual, verify_q4_0_accuracy,
 };
 
@@ -35,6 +39,7 @@ pub use q4_1::{
     gemv_ffn_down_swiglu_q4_1_f32_experimental_on_stream, gemv_q4_1_f32, gemv_q4_1_f32_on_stream,
     gemv_q4_1_f32_on_stream_unchecked, gemv_q4_1_f32_residual_on_stream,
     gemv_q4_1_f32_residual_on_stream_unchecked, gemv_q4_1_f32_residual_on_stream_variant_unchecked,
+    gemv_q4_1_f32_wave32_on_stream_unchecked, gemv_q4_1_f32_wave32_residual_on_stream_unchecked,
     quantize_q4_1, verify_q4_1_accuracy,
 };
 
@@ -59,5 +64,12 @@ pub use q8_0::{
     verify_q8_0_accuracy,
 };
 
+// Re-export batched functions for prefill processing
+pub use batched::{batched_gemm_q4_0_f32, batched_gemm_q4_1_f32, wmma_matmul_q4_0_f32};
+
 // Re-export legacy functions (fusion kernels, specialized GEMV variants, etc.)
 pub use legacy::*;
+
+// RFM Unpack GPU Kernels
+mod rfm_unpack;
+pub use rfm_unpack::{gpu_unpack_q4_fused_gate_up, gpu_unpack_q4_split};

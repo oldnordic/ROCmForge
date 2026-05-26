@@ -52,6 +52,16 @@ pub enum GpuError {
         reason: String,
     },
 
+    /// Device has insufficient free VRAM to operate safely
+    DeviceInsufficientVram { free_vram: usize, required: usize },
+
+    /// Single allocation exceeds safe VRAM budget
+    OutOfVram {
+        requested: usize,
+        free: usize,
+        total: usize,
+    },
+
     /// Model does not fit in available VRAM
     ModelTooLarge {
         /// Total model size in bytes
@@ -138,6 +148,30 @@ impl std::fmt::Display for GpuError {
                     f,
                     "invalid sequence position: {} (max context {})",
                     pos, max
+                )
+            }
+            GpuError::DeviceInsufficientVram {
+                free_vram,
+                required,
+            } => {
+                write!(
+                    f,
+                    "Insufficient free VRAM to initialize GPU: {} MB free, {} MB desktop reservation required",
+                    free_vram / (1024 * 1024),
+                    required / (1024 * 1024)
+                )
+            }
+            GpuError::OutOfVram {
+                requested,
+                free,
+                total,
+            } => {
+                write!(
+                    f,
+                    "Allocation exceeds safe VRAM budget: {} MB requested, {} MB free of {} MB total",
+                    requested / (1024 * 1024),
+                    free / (1024 * 1024),
+                    total / (1024 * 1024)
                 )
             }
         }

@@ -1,3 +1,4 @@
+#![cfg(feature = "gpu")]
 //! Multi-layer test to isolate where GPU/CPU divergence begins
 
 use rocmforge::config::ModelConfig;

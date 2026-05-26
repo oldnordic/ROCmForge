@@ -1,3 +1,4 @@
+#![cfg(feature = "gpu")]
 //! Diagnostic test to examine layer 2 weight metadata vs other layers
 
 use rocmforge::config::ModelConfig;
@@ -89,5 +90,4 @@ fn test_layer2_weight_metadata_diagnostic() {
     }
 
     // Test passes if we can examine metadata without crashing
-    assert!(true, "Metadata diagnostic completed successfully");
 }

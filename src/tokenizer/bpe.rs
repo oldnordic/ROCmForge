@@ -102,6 +102,26 @@ impl BpeTokenizer {
         )
     }
 
+    /// Build from RFM metadata.
+    pub fn from_rfm(data: &crate::loader::RfmMetadata) -> Self {
+        // Determine pre-tokenizer type
+        let pre_type = match data.tokenizer_pre.as_deref() {
+            Some("qwen2") => PreTokenizerType::Qwen2,
+            _ => PreTokenizerType::Qwen2, // Default to Qwen2 for rocmforge
+        };
+
+        Self::new(
+            data.tokens.clone(),
+            data.merges.clone(),
+            data.bos_token_id,
+            data.eos_token_id,
+            data.unk_token_id,
+            data.add_bos,
+            data.add_eos,
+            pre_type,
+        )
+    }
+
     fn new(
         vocab: Vec<Vec<u8>>,
         merges: Vec<(Vec<u8>, Vec<u8>)>,
@@ -409,8 +429,7 @@ impl BpeTokenizer {
         let mut i = 0;
         while i < text.len() {
             let slice = &text[i..];
-            if slice.starts_with("<0x") {
-                let rest = &slice[3..];
+            if let Some(rest) = slice.strip_prefix("<0x") {
                 let mut hex = String::new();
                 for ch in rest.chars() {
                     if ch.is_ascii_hexdigit() && hex.len() < 2 {

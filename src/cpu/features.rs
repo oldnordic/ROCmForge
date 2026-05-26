@@ -79,7 +79,7 @@ impl CpuFeatures {
     /// Detected features with kernel preference selected.
     #[inline]
     pub fn get() -> &'static Self {
-        CACHED_FEATURES.get_or_init(|| Self::detect())
+        CACHED_FEATURES.get_or_init(Self::detect)
     }
 
     /// Detect CPU SIMD features at runtime.

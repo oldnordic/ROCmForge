@@ -1,9 +1,10 @@
+#![cfg(feature = "gpu")]
 //! Test to compare individual FFN down vs. FFN down in full layer forward
 
 use rocmforge::config::ModelConfig;
 use rocmforge::cpu::cache::{CpuForwardScratch, CpuKvCache};
 use rocmforge::cpu::forward::cpu_layer_forward;
-use rocmforge::cpu::ops::{dispatch_gemv, rms_norm};
+
 use rocmforge::cpu::weights::CpuModelWeights;
 use rocmforge::gpu::ops::gpu_dispatch_gemv_on_stream;
 use rocmforge::gpu::{self, gpu_layer_forward_hybrid, GpuDevice, GpuForwardScratch, GpuKvCache};
@@ -24,7 +25,7 @@ fn download_gpu_f32(buf: &gpu::GpuBuffer, len: usize) -> Vec<f32> {
 }
 
 fn upload_gpu_f32(data: &[f32]) -> gpu::GpuBuffer {
-    let size_in_bytes = data.len() * std::mem::size_of::<f32>();
+    let size_in_bytes = std::mem::size_of_val(data);
     let mut buf = gpu::GpuBuffer::alloc(size_in_bytes).expect("Failed to allocate GPU buffer");
     buf.copy_from_host(unsafe {
         std::slice::from_raw_parts(data.as_ptr() as *const u8, size_in_bytes)
@@ -67,13 +68,13 @@ fn test_ffn_down_individual_vs_layer_forward() {
     // Create test input (simulating SwiGLU output)
     let mut swiglu_input = vec![1.0f32; ff_size];
     for (i, val) in swiglu_input.iter_mut().enumerate() {
-        *val = ((i as f32) * 0.1 - 50.0);
+        *val = (i as f32) * 0.1 - 50.0;
     }
 
     // Method 1: Individual FFN down call
     eprintln!("\nMethod 1: Individual FFN down call");
     let gpu_input_1 = upload_gpu_f32(&swiglu_input);
-    let mut gpu_output_1 =
+    let gpu_output_1 =
         gpu::GpuBuffer::alloc(h * std::mem::size_of::<f32>()).expect("Failed to alloc GPU output");
 
     gpu_dispatch_gemv_on_stream(

@@ -47,7 +47,7 @@ pub fn quantize_q8_0(input: *const f32, output: *mut u8, n: usize) -> GpuResult<
     }
 
     // Each block processes QK8_0 elements
-    let num_blocks = (n + 31) / 32;
+    let num_blocks = n.div_ceil(32);
     if num_blocks == 0 {
         return Ok(());
     }
@@ -86,7 +86,7 @@ pub fn dequantize_q8_0(input: *const u8, output: *mut f32, n: usize) -> GpuResul
         });
     }
 
-    let num_blocks = (n + 31) / 32;
+    let num_blocks = n.div_ceil(32);
     if num_blocks == 0 {
         return Ok(());
     }
@@ -130,7 +130,7 @@ pub fn dequantize_q8_0_batched(
         });
     }
 
-    let num_blocks = (n + 31) / 32;
+    let num_blocks = n.div_ceil(32);
     if num_blocks == 0 {
         return Ok(());
     }
@@ -179,7 +179,7 @@ pub fn verify_q8_0_accuracy(
         });
     }
 
-    let num_blocks = (n + 31) / 32;
+    let num_blocks = n.div_ceil(32);
     if num_blocks == 0 {
         return Ok(());
     }

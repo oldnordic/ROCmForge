@@ -32,6 +32,7 @@ impl GpuLock {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(path)?;
 
         // Try to acquire exclusive lock (non-blocking)
@@ -88,15 +89,24 @@ pub fn experimental_gpu_tests_enabled() -> bool {
         && rocmforge::gpu::experimental_gpu_kernels_enabled()
 }
 
+/// Check if GPU CLI safe runner is available.
+///
+/// Verifies that scripts/gpu_safe_run.sh exists and is executable.
+#[allow(dead_code)]
+pub fn gpu_safe_runner_available() -> bool {
+    let runner_path = std::path::Path::new("scripts/gpu_safe_run.sh");
+    runner_path.exists() && runner_path.is_file()
+}
+
 /// Macro to skip test if GPU unavailable.
 #[macro_export]
 macro_rules! require_gpu {
     () => {
-        if !crate::common::gpu_available() {
+        if !$crate::common::gpu_available() {
             eprintln!("Skipping test: No GPU detected");
             return;
         }
-        let _gpu_lock = match crate::common::GpuLock::acquire() {
+        let _gpu_lock = match $crate::common::GpuLock::acquire() {
             Ok(lock) => lock,
             Err(err) => {
                 eprintln!("Skipping test: {}", err);
@@ -112,7 +122,7 @@ macro_rules! require_gpu {
 #[macro_export]
 macro_rules! require_vram {
     ($gib:expr) => {
-        match crate::common::get_free_vram() {
+        match $crate::common::get_free_vram() {
             Some(free_bytes) => {
                 let required_bytes = $gib * 1024 * 1024 * 1024;
                 if free_bytes < required_bytes {
@@ -135,7 +145,7 @@ macro_rules! require_vram {
 #[macro_export]
 macro_rules! require_real_model_gpu_tests {
     () => {
-        if !crate::common::real_model_gpu_tests_enabled() {
+        if !$crate::common::real_model_gpu_tests_enabled() {
             eprintln!(
                 "Skipping test: set {}=1 to run real-model GPU tests",
                 rocmforge::gpu::RUN_REAL_MODEL_GPU_TESTS_ENV
@@ -148,7 +158,7 @@ macro_rules! require_real_model_gpu_tests {
 #[macro_export]
 macro_rules! require_experimental_gpu_tests {
     () => {
-        if !crate::common::experimental_gpu_tests_enabled() {
+        if !$crate::common::experimental_gpu_tests_enabled() {
             eprintln!(
                 "Skipping test: set {}=1 and {}=1 to run experimental GPU kernel tests",
                 rocmforge::gpu::RUN_EXPERIMENTAL_GPU_TESTS_ENV,
@@ -190,13 +200,26 @@ macro_rules! require_q6_k_graph_disabled {
     };
 }
 
+/// Macro to require GPU safe runner availability.
+///
+/// Skips test if scripts/gpu_safe_run.sh is not available.
+#[macro_export]
+macro_rules! require_gpu_safe_runner {
+    () => {
+        if !$crate::common::gpu_safe_runner_available() {
+            eprintln!("Skipping test: GPU safe runner not available (scripts/gpu_safe_run.sh)");
+            return;
+        }
+    };
+}
+
 /// HIP-based VRAM leak detection macro.
 ///
 /// Uses device.vram_stats() for accurate HIP API measurements instead of rocm-smi.
 /// Panics if VRAM leak exceeds tolerance (default 10 MB).
 ///
 /// Usage:
-/// ```rust
+/// ```rust,ignore
 /// #[test]
 /// #[serial]
 /// fn test_something() {

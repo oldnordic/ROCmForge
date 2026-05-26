@@ -10,6 +10,7 @@ use super::error::{GpuError, GpuResult};
 use super::ffi::hipStream_t;
 use super::graph::{CapturedDecodeGraph, DecodeGraphKey};
 use super::kernels::{kv_write, kv_write_batched, kv_write_on_stream, zero_fill};
+use super::vram_budget::query_vram_budget;
 use super::weights::{GpuBuffer, GpuPinnedBuffer};
 use crate::config::ModelConfig;
 
@@ -35,6 +36,18 @@ pub struct GpuKvCache {
 }
 
 impl GpuKvCache {
+    /// Get the total size of this KV cache in VRAM (in bytes).
+    pub fn vram_bytes(&self) -> usize {
+        let mut total = 0;
+        for buf in &self.k {
+            total += buf.size();
+        }
+        for buf in &self.v {
+            total += buf.size();
+        }
+        total
+    }
+
     /// Allocate a new KV cache in GPU VRAM.
     ///
     /// # Arguments
@@ -46,6 +59,21 @@ impl GpuKvCache {
     pub fn new(config: &ModelConfig, max_seq_len: usize) -> GpuResult<Self> {
         let kv_size = config.num_kv_heads * config.head_dim;
         let layer_bytes = max_seq_len * kv_size * std::mem::size_of::<f32>();
+        let total_cache_bytes = 2 * config.num_layers * layer_bytes;
+
+        let budget = query_vram_budget(super::vram_budget::active_or_default_device_id())?;
+        if total_cache_bytes > budget.safe_allocation_size {
+            return Err(GpuError::CacheAllocationFailed {
+                reason: format!(
+                    "KV cache requires {} MB but only {} MB safely allocatable ({} MB free, 2 * {} layers * {} MB/layer)",
+                    total_cache_bytes / (1024 * 1024),
+                    budget.safe_allocation_size / (1024 * 1024),
+                    budget.free_vram / (1024 * 1024),
+                    config.num_layers,
+                    layer_bytes / (1024 * 1024),
+                ),
+            });
+        }
 
         // Allocate K cache per layer
         let mut k = Vec::with_capacity(config.num_layers);
@@ -738,6 +766,7 @@ pub struct GpuPrefillScratch {
     pub gate: GpuBuffer,
     pub swiglu: GpuBuffer,
     pub token_ids: GpuBuffer,
+    pub logits: GpuBuffer,
 }
 
 impl GpuPrefillScratch {
@@ -804,6 +833,12 @@ impl GpuPrefillScratch {
                 reason: format!("prefill token_ids allocation failed: {}", e),
             }
         })?;
+        let logits =
+            GpuBuffer::alloc(config.vocab_size * std::mem::size_of::<f32>()).map_err(|e| {
+                GpuError::CacheAllocationFailed {
+                    reason: format!("prefill logits allocation failed: {}", e),
+                }
+            })?;
 
         Ok(Self {
             seq_len,
@@ -817,6 +852,7 @@ impl GpuPrefillScratch {
             gate,
             swiglu,
             token_ids,
+            logits,
         })
     }
 
@@ -868,6 +904,29 @@ impl GpuPrefillScratch {
     pub fn swiglu_row_mut_ptr(&mut self, row: usize, ff_size: usize) -> *mut f32 {
         debug_assert!(row < self.seq_len);
         unsafe { (self.swiglu.as_ptr() as *mut f32).add(row * ff_size) }
+    }
+
+    /// Estimate total VRAM bytes needed for prefill scratch buffers.
+    ///
+    /// Pure computation for pre-allocation validation. Does not allocate.
+    /// Formula: sum over all buffers of (seq_len * dim * sizeof(f32))
+    ///
+    /// # Arguments
+    /// * `config` - Model configuration
+    /// * `seq_len` - Number of tokens in prefill batch
+    ///
+    /// # Returns
+    /// Total bytes required for all prefill scratch buffers
+    pub fn estimate_total_bytes(config: &ModelConfig, seq_len: usize) -> usize {
+        let h = config.hidden_size;
+        let q = config.num_heads * config.head_dim;
+        let kv = config.num_kv_heads * config.head_dim;
+        let ff = config.intermediate_size;
+        let elem_size = std::mem::size_of::<f32>();
+
+        // Sum: [seq_len * dim] for each buffer
+        let total_elements = seq_len * (h + h + q + kv + kv + q + h + ff + ff) + seq_len;
+        total_elements * elem_size
     }
 }
 

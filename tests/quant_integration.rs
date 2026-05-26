@@ -472,7 +472,7 @@ fn test_q5_k_gemv() {
     // Use values that quantize well for Q5_K
     let mut weight_data: Vec<f32> = Vec::with_capacity(n_rows * ncols_dst);
     for col in 0..ncols_dst {
-        for row in 0..n_rows {
+        for _ in 0..n_rows {
             // Simple pattern: use col index as value
             weight_data.push((col + 1) as f32 * 0.1);
         }

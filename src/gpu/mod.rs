@@ -5,6 +5,15 @@
 //! - Never panic, always return GpuError
 //! - CPU fallback when GPU unavailable
 
+#![allow(
+    dead_code,
+    unused_variables,
+    unused_imports,
+    unused_mut,
+    unused_unsafe,
+    unused_must_use
+)]
+
 pub mod arch;
 pub mod cache;
 mod decode_graph_keys;
@@ -16,14 +25,18 @@ pub mod error;
 pub mod features;
 pub mod ffi;
 pub mod forward;
+pub mod forward_prefill;
 pub mod graph;
 pub mod kernels;
 pub mod launch_autotune;
 pub mod ops;
+pub mod ops_batched;
 pub mod profile;
 pub mod quant;
 pub mod quant_wrapper;
 pub mod safety;
+pub mod speculative;
+pub mod vram_budget;
 pub mod weights;
 
 pub use arch::GpuArchitecture;
@@ -37,14 +50,18 @@ pub use dynamic_loader::{library_info, DynamicLibrary, LibraryInfo};
 pub use error::{GpuError, GpuResult};
 pub use features::GpuFeatures;
 pub use forward::{
-    gpu_embed_token_hybrid, gpu_full_forward_hybrid, gpu_layer_forward_hybrid,
-    gpu_prefill_forward_hybrid, gpu_prefill_layer_forward_hybrid, GpuLogitsMode,
+    gpu_embed_token_hybrid, gpu_full_forward_hybrid, gpu_layer_forward_hybrid, GpuLogitsMode,
+};
+pub use forward_prefill::{
+    gpu_batched_prefill_forward_q4_0, gpu_batched_qkv_projection, gpu_prefill_layer_forward_q4_0,
 };
 pub use graph::{CapturedDecodeGraph, DecodeGraphKey, HipGraph, HipGraphExec};
 pub use kernels::{
     add,
     add_batched,
     argmax_f32,
+    batched_gemm_q4_0_f32,
+    batched_gemm_q4_1_f32,
     dequantize_q4_0,
     dequantize_q4_0_batched,
     dequantize_q4_1,
@@ -102,6 +119,7 @@ pub use kernels::{
     verify_q4_k_accuracy,
     verify_q5_k_accuracy,
     verify_q8_0_accuracy,
+    wmma_matmul_q4_0_f32,
     zero_fill,
 };
 pub use launch_autotune::{
@@ -112,6 +130,7 @@ pub use launch_autotune::{
 pub use ops::{
     gpu_dispatch_fused_gate_up, gpu_dispatch_fused_qkv, gpu_dispatch_gemm, gpu_dispatch_gemv,
 };
+pub use ops_batched::gpu_dispatch_batched_gemv_batched;
 pub use profile::{KernelTimer, KernelTiming, Profiler};
 pub use quant::{
     Q4KBlock, Q4_0Block, Q4_1Block, Q5KBlock, Q6KBlock, Q8_0Block, K_SCALE_SIZE, Q4_0_BLOCK_SIZE,
@@ -128,6 +147,7 @@ pub use safety::{
     ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH_ENV, ENABLE_LAUNCH_AUTOTUNE_ENV, GPU_SAFE_MODE_ENV,
     RUN_EXPERIMENTAL_GPU_TESTS_ENV, RUN_GPU_BENCHES_ENV, RUN_REAL_MODEL_GPU_TESTS_ENV,
 };
+pub use speculative::SpeculativeEngine;
 pub use weights::{GpuBuffer, GpuLayerWeights, GpuModelWeights, TensorRole, WeightMeta};
 
 /// Detect AMD GPU capabilities (safe wrapper).

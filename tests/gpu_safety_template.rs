@@ -1,165 +1,150 @@
-// GPU Safety Test Template
+// GPU Safety Policy and Reference
 //
-// ALL GPU tests MUST include these safety measures to prevent GPU crashes:
-// 1. ROCMFORGE_DISABLE_DECODE_GRAPH=1 for Q6_K models
-// 2. timeout wrapper to prevent GPU hangs
-// 3. --max-tokens limit to prevent unbounded execution
+// This file documents the mandatory GPU safety harness that must be used
+// for all real-model GPU testing. It is NOT a test file - it serves as
+// policy documentation and integration reference.
 //
-// This template shows the REQUIRED pattern for safe GPU testing.
-
-use std::process::Command;
-use std::time::Duration;
-
-/// Safe GPU test helper that enforces all safety protocols
-fn run_safe_gpu_test(
-    model_path: &str,
-    prompt: &str,
-    max_tokens: u32,
-    use_graph: bool,
-) -> Result<String, String> {
-    let timeout_secs = 30;
-
-    // Build command with ALL safety measures
-    let mut cmd = Command::new("timeout");
-    cmd.arg(format!("{}s", timeout_secs))
-        .arg("./target/release/rocmforge")
-        .arg("--gpu")
-        .arg("--model")
-        .arg(model_path)
-        .arg("--prompt")
-        .arg(prompt)
-        .arg("--max-tokens")
-        .arg(&format!("{}", max_tokens))
-        .arg("--no-template")
-        .arg("--top-p")
-        .arg("1.0");
-
-    // CRITICAL: Disable graph for Q6_K models
-    if model_path.contains("q6_k") {
-        cmd.env("ROCMFORGE_DISABLE_DECODE_GRAPH", "1");
-    }
-
-    // Run with timeout
-    let output = cmd
-        .output()
-        .map_err(|e| format!("Failed to execute: {}", e))?;
-
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
-    } else {
-        Err(format!(
-            "Command failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ))
-    }
-}
-
-#[cfg(test)]
-mod safe_gpu_tests {
-    use super::*;
-
-    // ✅ SAFE: Single token with timeout and token limit
-    #[test]
-    fn test_gpu_single_token_safe() {
-        let result = run_safe_gpu_test(
-            "/path/to/model.gguf",
-            "X",
-            2,
-            false, // graph disabled
-        );
-
-        // Test should complete without crashing GPU
-        assert!(result.is_ok() || result.is_err()); // Either result is OK, just don't crash
-    }
-
-    // ✅ SAFE: Multi-token prompt with all safety measures
-    #[test]
-    fn test_gpu_multi_token_safe() {
-        let result = run_safe_gpu_test(
-            "/path/to/model.gguf",
-            "Hello world",
-            5,
-            false, // graph disabled for Q6_K
-        );
-
-        // Test should complete without crashing GPU
-        assert!(result.is_ok() || result.is_err()); // Either result is OK, just don't crash
-    }
-
-    // ❌ UNSAFE: This test would be BLOCKED by hooks
-    // #[test]
-    // fn test_gpu_unsafe() {
-    //     // Missing: ROCMFORGE_DISABLE_DECODE_GRAPH=1 for Q6_K
-    //     // Missing: timeout wrapper
-    //     // Missing: --max-tokens limit
-    //     let output = Command::new("./target/release/rocmforge")
-    //         .arg("--gpu")
-    //         .arg("--model")
-    //         .arg("q6_k.gguf")
-    //         .arg("--prompt")
-    //         .arg("Hello world")
-    //         .output()
-    //         .unwrap();
-    // }
-}
-
-#[cfg(test)]
-mod q6_k_specific_tests {
-    use super::*;
-
-    // ✅ SAFE: Q6_K test with graph disabled (REQUIRED)
-    #[test]
-    #[ignore = "Requires Q6_K model file"]
-    fn test_q6_k_with_graph_disabled() {
-        let result = run_safe_gpu_test(
-            "/path/to/q6_k_model.gguf",
-            "Hello",
-            3,
-            false, // graph MUST be disabled for Q6_K multi-token
-        );
-
-        // Q6_K should work with graph disabled
-        assert!(result.is_ok() || result.is_err());
-    }
-
-    // ⚠️ PARTIAL: Q6_K single-token works with graph
-    #[test]
-    #[ignore = "Requires Q6_K model file"]
-    fn test_q6_k_single_token_with_graph() {
-        let result = run_safe_gpu_test(
-            "/path/to/q6_k_model.gguf",
-            "X",
-            2,
-            true, // graph OK for single-token
-        );
-
-        // Single-token Q6_K works with graph
-        assert!(result.is_ok() || result.is_err());
-    }
-}
-
-// Command-line test runner example
-#[cfg(test)]
-mod manual_test_examples {
-    /// Example: Manually run Q4_K test with all safety measures
-    #[test]
-    #[ignore = "Manual test - run with: cargo test -- --ignored --nocapture"]
-    fn manual_test_q4_k_safe() {
-        // Command equivalent:
-        // timeout 30 ROCMFORGE_DISABLE_DECODE_GRAPH=1 \
-        //   ./target/release/rocmforge --gpu \
-        //   --model /path/to/q4_k.gguf \
-        //   --prompt "Hello world" \
-        //   --max-tokens 5
-
-        let result = run_safe_gpu_test(
-            "/home/feanor/Projects/Memoria/models/qwen2.5-0.5b-instruct-q4_0.gguf",
-            "Hello world",
-            5,
-            false,
-        );
-
-        println!("Result: {:?}", result);
-        assert!(result.is_ok());
-    }
-}
+// ================================================================
+// REQUIRED SAFETY HARNESS FOR GPU WORK
+// ================================================================
+//
+// Before ANY real-model GPU execution, the following staged safety
+// checks must be performed in order:
+//
+// 1. ACQUIRE GPU LOCK (cross-process mutex)
+//    Use: scripts/gpu_lock.sh acquire
+//    Purpose: Prevent concurrent GPU access that can cause deadlocks
+//
+// 2. RUN GPU PREFLIGHT (staged checks)
+//    Use: scripts/gpu_preflight.sh
+//    Purpose: Verify driver, ROCm runtime, memory, and kernel launch
+//
+// 3. EXECUTE WITH TIMEOUT WRAPPER
+//    Use: scripts/gpu_safe_run.sh --timeout <seconds> --max-tokens <n> <cmd>
+//    Purpose: Enforce timeout and max token limits for safety
+//
+// 4. RELEASE GPU LOCK
+//    Use: scripts/gpu_lock.sh release
+//    Purpose: Allow other processes to use GPU
+//
+// ================================================================
+// FOR DIRECT CLI TESTING (MANUAL GPU RUNS)
+// ================================================================
+//
+// When manually testing the GPU CLI with real models, ALWAYS use the
+// safe runner wrapper:
+//
+//   ./scripts/gpu_safe_run.sh ./target/release/rocmforge --gpu \
+//     --model <path> --prompt "test"
+//
+// The wrapper will:
+// - Acquire GPU lock (with timeout)
+// - Run preflight checks
+// - Enforce timeout and max-tokens limits
+// - Release lock on completion or failure
+//
+// NEVER run:
+//   ./target/release/rocmforge --gpu --model <path>
+//
+// ALWAYS run:
+//   ./scripts/gpu_safe_run.sh ./target/release/rocmforge --gpu --model <path>
+//
+// ================================================================
+// FOR AUTOMATED TESTS (REAL GPU QA)
+// ================================================================
+//
+// Real GPU tests should:
+// 1. Be gated by ROCMFORGE_RUN_REAL_MODEL_GPU_TESTS=1
+// 2. Use subprocess isolation (not direct in-process GPU calls)
+// 3. Use the safe runner wrapper (gpu_safe_run.sh)
+// 4. Run serially (--test-threads=1)
+//
+// See: tests/gpu_cli_qa.rs for reference implementation
+//
+// ================================================================
+// ENVIRONMENT VARIABLES
+// ================================================================
+//
+// ROCMFORGE_RUN_REAL_MODEL_GPU_TESTS
+//   Set to "1" to enable real-model GPU QA tests
+//   Default: unset (tests are skipped)
+//
+// ROCMFORGE_GPU_LOCK_TIMEOUT
+//   GPU lock acquisition timeout in seconds
+//   Default: 30
+//
+// ROCMFORGE_DEFAULT_TIMEOUT
+//   Default command execution timeout in seconds
+//   Default: 120
+//
+// ROCMFORGE_DEFAULT_MAX_TOKENS
+//   Default max tokens for decode runs
+//   Default: 50
+//
+// ================================================================
+// HANDLING LOCK ISSUES
+// ================================================================
+//
+// If GPU lock is stuck:
+//
+//   # Check lock status
+//   ./scripts/gpu_lock.sh status
+//
+//   # If stale lock (process not running), remove manually
+//   rm -rf /tmp/rocmforge_gpu_lock
+//
+//   # Kill stuck processes
+//   pkill -9 rocmforge
+//
+// ================================================================
+// SCRIPT EXIT CODES
+// ================================================================
+//
+// gpu_lock.sh:
+//   0 - Success
+//   1 - Lock acquisition timeout
+//   2 - Lock not held
+//   3 - Lock file corrupted
+//
+// gpu_preflight.sh:
+//   0 - All checks passed
+//   1 - Render node check failed
+//   2 - ROCm visibility check failed
+//   3 - Memory round-trip failed
+//   4 - Trivial kernel launch failed
+//
+// gpu_safe_run.sh:
+//   0 - Success
+//   1-4 - Preflight check failed
+//   10 - Lock acquisition timeout
+//   11 - Command timeout
+//   12 - Command execution failed
+//   255 - Usage error
+//
+// ================================================================
+// VERIFICATION CHECKLIST
+// ================================================================
+//
+// Before merging new GPU code:
+// [ ] Lock acquisition works (concurrent processes wait)
+// [ ] Preflight checks pass on target hardware
+// [ ] Timeout enforcement works (kill runaway processes)
+// [ ] Max tokens enforcement works (prevent long runs)
+// [ ] Lock release on success/failure/timeout
+// [ ] Tests use env gating (ROCMFORGE_RUN_REAL_MODEL_GPU_TESTS)
+// [ ] Tests use subprocess isolation
+// [ ] Tests run serially (--test-threads=1)
+//
+// ================================================================
+// RATIONALE
+// ================================================================
+//
+// This harness exists because:
+// - Concurrent GPU access can cause MES queue teardown failures
+// - Unbounded GPU runs can cause desktop freezes and GPU resets
+// - Real-model testing carries risk of VRAM exhaustion and page faults
+// - Previous attempts at prefill integration caused amdgpu page faults
+//
+// The staged approach ensures that problems are caught early
+// (preflight) and contained (timeout/max-tokens/lock).
+//

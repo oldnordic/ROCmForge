@@ -133,7 +133,7 @@ mod tests {
 
         // All quants should be in range
         for &q in &block.qs {
-            assert!(q >= -127 && q <= 127);
+            assert!(q >= -127);
         }
     }
 

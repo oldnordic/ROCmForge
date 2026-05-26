@@ -1,6 +1,7 @@
 .planning/
 target/
 *.gguf
+*.rfm
 
 # CMake build artifacts
 hip_kernels/quant/build/

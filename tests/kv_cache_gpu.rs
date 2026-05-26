@@ -64,12 +64,12 @@ fn test_kv_cache_write_and_read() {
     let test_v: Vec<f32> = (0..kv_size).map(|i| i as f32 * 2.0).collect();
 
     // Allocate GPU buffers for K/V
-    let gpu_k = GpuBuffer::alloc(kv_size * 4).expect("K buffer alloc should succeed");
-    let gpu_v = GpuBuffer::alloc(kv_size * 4).expect("V buffer alloc should succeed");
+    let _gpu_k = GpuBuffer::alloc(kv_size * 4).expect("K buffer alloc should succeed");
+    let _gpu_v = GpuBuffer::alloc(kv_size * 4).expect("V buffer alloc should succeed");
 
     // Copy data to GPU
-    let k_bytes = unsafe { std::slice::from_raw_parts(test_k.as_ptr() as *const u8, kv_size * 4) };
-    let v_bytes = unsafe { std::slice::from_raw_parts(test_v.as_ptr() as *const u8, kv_size * 4) };
+    let _k_bytes = unsafe { std::slice::from_raw_parts(test_k.as_ptr() as *const u8, kv_size * 4) };
+    let _v_bytes = unsafe { std::slice::from_raw_parts(test_v.as_ptr() as *const u8, kv_size * 4) };
 
     // Note: GpuBuffer::copy_from_host takes &mut self, so we need mutable references
     // But we only have immutable gpu_k/gpu_v from alloc(). Let's fix this test

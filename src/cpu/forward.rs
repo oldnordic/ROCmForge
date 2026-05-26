@@ -493,9 +493,12 @@ pub fn cpu_embed_token(
         GgmlType::Q8_0 => {
             super::quant::embed_q8_0(token_id as usize, &weights.token_emb, &mut hidden[..h], h);
         }
-        _ => panic!(
-            "Unsupported embedding type: {:?}",
-            weights.token_emb_meta.wtype
-        ),
+        _ => {
+            let msg = format!(
+                "Unsupported embedding type: {:?}",
+                weights.token_emb_meta.wtype
+            );
+            std::panic::panic_any(msg);
+        }
     }
 }

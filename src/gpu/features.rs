@@ -70,6 +70,11 @@ impl GpuFeatures {
     /// - RX 7900 XT → "gfx1100"
     /// - BC-250 APU → "gfx1013"
     fn map_device_name_to_arch(device_name: &str) -> String {
+        // If the device name is already a gfx string, return it directly
+        if device_name.starts_with("gfx") {
+            return device_name.to_string();
+        }
+
         // Well-known mappings
         if device_name.contains("RX 7900") || device_name.contains("7900") {
             return "gfx1100".to_string();

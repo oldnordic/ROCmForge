@@ -147,12 +147,19 @@ __global__ void gemv_q4_0_f32_chunked_kernel(
             const float d = __half2float(b->d);
             const int lds_offset = (block_idx - block_start) * QK4_0;
             
+            float sum_x = 0.0f;
+            float dot_q_x = 0.0f;
+
             #pragma unroll
             for (int l = 0; l < 16; ++l) {
                 const uint8_t q = static_cast<uint8_t>(b->qs[l]);
-                sum += d * (static_cast<float>(q & 0x0F) - 8.0f) * s_input_chunk[lds_offset + l];
-                sum += d * (static_cast<float>(q >> 4) - 8.0f) * s_input_chunk[lds_offset + l + 16];
+                float xl = s_input_chunk[lds_offset + l];
+                float xh = s_input_chunk[lds_offset + l + 16];
+                sum_x += xl + xh;
+                dot_q_x += static_cast<float>(q & 0x0F) * xl;
+                dot_q_x += static_cast<float>(q >> 4) * xh;
             }
+            sum += d * (dot_q_x - 8.0f * sum_x);
         }
         __syncthreads();
     }
@@ -212,12 +219,19 @@ __global__ void gemv_q4_0_f32_residual_chunked_kernel(
             const float d = __half2float(b->d);
             const int lds_offset = (block_idx - block_start) * QK4_0;
 
+            float sum_x = 0.0f;
+            float dot_q_x = 0.0f;
+            
             #pragma unroll
             for (int l = 0; l < 16; ++l) {
                 const uint8_t q = static_cast<uint8_t>(b->qs[l]);
-                sum += d * (static_cast<float>(q & 0x0F) - 8.0f) * s_input_chunk[lds_offset + l];
-                sum += d * (static_cast<float>(q >> 4) - 8.0f) * s_input_chunk[lds_offset + l + 16];
+                float xl = s_input_chunk[lds_offset + l];
+                float xh = s_input_chunk[lds_offset + l + 16];
+                sum_x += xl + xh;
+                dot_q_x += static_cast<float>(q & 0x0F) * xl;
+                dot_q_x += static_cast<float>(q >> 4) * xh;
             }
+            sum += d * (dot_q_x - 8.0f * sum_x);
         }
         __syncthreads();
     }
@@ -290,28 +304,41 @@ __global__ void gemv_q4_0_f32_multi_row_kernel(
 
     for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += WARP_SIZE) {
         const int row_offset = block_idx * QK4_0;
-        
+
+        float sum_x = 0.0f;
+        float dot_q_x[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+
         #pragma unroll
         for (int i = 0; i < 4; ++i) {
             float4 in_l = reinterpret_cast<float4*>(&s_input[row_offset + 4*i])[0];
             float4 in_h = reinterpret_cast<float4*>(&s_input[row_offset + 4*i + 16])[0];
 
+            sum_x += in_l.x + in_l.y + in_l.z + in_l.w + in_h.x + in_h.y + in_h.z + in_h.w;
+
             #pragma unroll
             for (int c = 0; c < 4; ++c) {
                 if (w_cols[c]) {
                     const Q4_0_block* b = &w_cols[c][block_idx];
-                    const float d = __half2float(b->d);
                     const uint32_t q = reinterpret_cast<const uint32_t*>(b->qs)[i];
 
-                    sums[c] += d * (static_cast<float>( q        & 0x0F) - 8.0f) * in_l.x;
-                    sums[c] += d * (static_cast<float>((q >>  8) & 0x0F) - 8.0f) * in_l.y;
-                    sums[c] += d * (static_cast<float>((q >> 16) & 0x0F) - 8.0f) * in_l.z;
-                    sums[c] += d * (static_cast<float>((q >> 24) & 0x0F) - 8.0f) * in_l.w;
-                    sums[c] += d * (static_cast<float>((q >>  4) & 0x0F) - 8.0f) * in_h.x;
-                    sums[c] += d * (static_cast<float>((q >> 12) & 0x0F) - 8.0f) * in_h.y;
-                    sums[c] += d * (static_cast<float>((q >> 20) & 0x0F) - 8.0f) * in_h.z;
-                    sums[c] += d * (static_cast<float>((q >> 28) & 0x0F) - 8.0f) * in_h.w;
+                    dot_q_x[c] += static_cast<float>( q        & 0x0Fu) * in_l.x;
+                    dot_q_x[c] += static_cast<float>((q >>  8) & 0x0Fu) * in_l.y;
+                    dot_q_x[c] += static_cast<float>((q >> 16) & 0x0Fu) * in_l.z;
+                    dot_q_x[c] += static_cast<float>((q >> 24) & 0x0Fu) * in_l.w;
+                    dot_q_x[c] += static_cast<float>((q >>  4) & 0x0Fu) * in_h.x;
+                    dot_q_x[c] += static_cast<float>((q >> 12) & 0x0Fu) * in_h.y;
+                    dot_q_x[c] += static_cast<float>((q >> 20) & 0x0Fu) * in_h.z;
+                    dot_q_x[c] += static_cast<float>((q >> 28) & 0x0Fu) * in_h.w;
                 }
+            }
+        }
+
+        #pragma unroll
+        for (int c = 0; c < 4; ++c) {
+            if (w_cols[c]) {
+                const Q4_0_block* b = &w_cols[c][block_idx];
+                const float d = __half2float(b->d);
+                sums[c] += d * (dot_q_x[c] - 8.0f * sum_x);
             }
         }
     }
@@ -375,28 +402,41 @@ __global__ void gemv_q4_0_f32_residual_multi_row_kernel(
 
     for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += WARP_SIZE) {
         const int row_offset = block_idx * QK4_0;
-        
+
+        float sum_x = 0.0f;
+        float dot_q_x[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+
         #pragma unroll
         for (int i = 0; i < 4; ++i) {
             float4 in_l = reinterpret_cast<float4*>(&s_input[row_offset + 4*i])[0];
             float4 in_h = reinterpret_cast<float4*>(&s_input[row_offset + 4*i + 16])[0];
 
+            sum_x += in_l.x + in_l.y + in_l.z + in_l.w + in_h.x + in_h.y + in_h.z + in_h.w;
+
             #pragma unroll
             for (int c = 0; c < 4; ++c) {
                 if (w_cols[c]) {
                     const Q4_0_block* b = &w_cols[c][block_idx];
-                    const float d = __half2float(b->d);
                     const uint32_t q = reinterpret_cast<const uint32_t*>(b->qs)[i];
 
-                    sums[c] += d * (static_cast<float>( q        & 0x0F) - 8.0f) * in_l.x;
-                    sums[c] += d * (static_cast<float>((q >>  8) & 0x0F) - 8.0f) * in_l.y;
-                    sums[c] += d * (static_cast<float>((q >> 16) & 0x0F) - 8.0f) * in_l.z;
-                    sums[c] += d * (static_cast<float>((q >> 24) & 0x0F) - 8.0f) * in_l.w;
-                    sums[c] += d * (static_cast<float>((q >>  4) & 0x0F) - 8.0f) * in_h.x;
-                    sums[c] += d * (static_cast<float>((q >> 12) & 0x0F) - 8.0f) * in_h.y;
-                    sums[c] += d * (static_cast<float>((q >> 20) & 0x0F) - 8.0f) * in_h.z;
-                    sums[c] += d * (static_cast<float>((q >> 28) & 0x0F) - 8.0f) * in_h.w;
+                    dot_q_x[c] += static_cast<float>( q        & 0x0Fu) * in_l.x;
+                    dot_q_x[c] += static_cast<float>((q >>  8) & 0x0Fu) * in_l.y;
+                    dot_q_x[c] += static_cast<float>((q >> 16) & 0x0Fu) * in_l.z;
+                    dot_q_x[c] += static_cast<float>((q >> 24) & 0x0Fu) * in_l.w;
+                    dot_q_x[c] += static_cast<float>((q >>  4) & 0x0Fu) * in_h.x;
+                    dot_q_x[c] += static_cast<float>((q >> 12) & 0x0Fu) * in_h.y;
+                    dot_q_x[c] += static_cast<float>((q >> 20) & 0x0Fu) * in_h.z;
+                    dot_q_x[c] += static_cast<float>((q >> 28) & 0x0Fu) * in_h.w;
                 }
+            }
+        }
+
+        #pragma unroll
+        for (int c = 0; c < 4; ++c) {
+            if (w_cols[c]) {
+                const Q4_0_block* b = &w_cols[c][block_idx];
+                const float d = __half2float(b->d);
+                sums[c] += d * (dot_q_x[c] - 8.0f * sum_x);
             }
         }
     }
@@ -846,4 +886,133 @@ extern "C" hipError_t gemv_q4_0_f32_q8_inline_residual_launch(
     return gemv_q4_0_f32_q8_inline_residual_variant_launch(
         weights_q4_0, input, residual, output, n_rows, ncols_dst, 0, stream
     );
+}
+
+// ── RDNA3 Wave32 High-Occupancy Decode GEMV (Phase 4) ──────────────────────────
+
+#undef DOG
+#define DOG(weight_val, in_l, in_h, d, acc) \
+    { \
+        float block_q_x = 0.0f; \
+        float block_x = 0.0f; \
+        block_q_x += static_cast<float>( weight_val        & 0x0Fu) * (in_l).x; \
+        block_q_x += static_cast<float>((weight_val >>  8) & 0x0Fu) * (in_l).y; \
+        block_q_x += static_cast<float>((weight_val >> 16) & 0x0Fu) * (in_l).z; \
+        block_q_x += static_cast<float>((weight_val >> 24) & 0x0Fu) * (in_l).w; \
+        block_q_x += static_cast<float>((weight_val >>  4) & 0x0Fu) * (in_h).x; \
+        block_q_x += static_cast<float>((weight_val >> 12) & 0x0Fu) * (in_h).y; \
+        block_q_x += static_cast<float>((weight_val >> 20) & 0x0Fu) * (in_h).z; \
+        block_q_x += static_cast<float>((weight_val >> 28) & 0x0Fu) * (in_h).w; \
+        block_x += (in_l).x + (in_l).y + (in_l).z + (in_l).w + (in_h).x + (in_h).y + (in_h).z + (in_h).w; \
+        (acc) += (d) * (block_q_x - 8.0f * block_x); \
+    }
+
+__launch_bounds__(32, 16)
+__global__ void gemv_q4_0_f32_wave32_kernel(
+    const void* __restrict__ weights_q4_0,
+    const float* __restrict__ input,
+    float* __restrict__ output,
+    int n_rows,
+    int ncols_dst
+) {
+    const int row = blockIdx.x;
+    if (row >= ncols_dst) return;
+    const int tid = threadIdx.x;
+
+    const int n_blocks_total = n_rows / QK4_0;
+    const uint8_t* row_ptr = static_cast<const uint8_t*>(weights_q4_0) + (long long)row * n_blocks_total * Q4_0_BLOCK_SIZE;
+
+    float acc = 0.0f;
+
+    for (int b = tid; b < n_blocks_total; b += 32) {
+        const Q4_0_block* b_ptr = reinterpret_cast<const Q4_0_block*>(row_ptr + b * Q4_0_BLOCK_SIZE);
+        float d = __half2float(b_ptr->d);
+        const uint32_t* pk = reinterpret_cast<const uint32_t*>(b_ptr->qs);
+        const float4* in_ptr = reinterpret_cast<const float4*>(&input[b * 32]);
+        DOG(pk[0], in_ptr[0], in_ptr[4], d, acc);
+        DOG(pk[1], in_ptr[1], in_ptr[5], d, acc);
+        DOG(pk[2], in_ptr[2], in_ptr[6], d, acc);
+        DOG(pk[3], in_ptr[3], in_ptr[7], d, acc);
+    }
+
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        acc += __shfl_down(acc, offset, 32);
+    }
+
+    if (tid == 0) {
+        output[row] = acc;
+    }
+}
+
+__launch_bounds__(32, 16)
+__global__ void gemv_q4_0_f32_wave32_residual_kernel(
+    const void* __restrict__ weights_q4_0,
+    const float* __restrict__ input,
+    const float* __restrict__ residual,
+    float* __restrict__ output,
+    int n_rows,
+    int ncols_dst
+) {
+    const int row = blockIdx.x;
+    if (row >= ncols_dst) return;
+    const int tid = threadIdx.x;
+
+    const int n_blocks_total = n_rows / QK4_0;
+    const uint8_t* row_ptr = static_cast<const uint8_t*>(weights_q4_0) + (long long)row * n_blocks_total * Q4_0_BLOCK_SIZE;
+
+    float acc = 0.0f;
+
+    for (int b = tid; b < n_blocks_total; b += 32) {
+        const Q4_0_block* b_ptr = reinterpret_cast<const Q4_0_block*>(row_ptr + b * Q4_0_BLOCK_SIZE);
+        float d = __half2float(b_ptr->d);
+        const uint32_t* pk = reinterpret_cast<const uint32_t*>(b_ptr->qs);
+        const float4* in_ptr = reinterpret_cast<const float4*>(&input[b * 32]);
+        DOG(pk[0], in_ptr[0], in_ptr[4], d, acc);
+        DOG(pk[1], in_ptr[1], in_ptr[5], d, acc);
+        DOG(pk[2], in_ptr[2], in_ptr[6], d, acc);
+        DOG(pk[3], in_ptr[3], in_ptr[7], d, acc);
+    }
+
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        acc += __shfl_down(acc, offset, 32);
+    }
+
+    if (tid == 0) {
+        output[row] = acc + residual[row];
+    }
+}
+
+extern "C" hipError_t gemv_q4_0_f32_wave32_launch(
+    const void* weights_q4_0,
+    const float* input,
+    float* output,
+    int n_rows,
+    int ncols_dst,
+    hipStream_t stream
+) {
+    if (n_rows <= 0 || ncols_dst <= 0) return hipErrorInvalidValue;
+
+    gemv_q4_0_f32_wave32_kernel<<<ncols_dst, 32, 0, stream>>>(
+        weights_q4_0, input, output, n_rows, ncols_dst
+    );
+
+    return hipGetLastError();
+}
+
+extern "C" hipError_t gemv_q4_0_f32_wave32_residual_launch(
+    const void* weights_q4_0,
+    const float* input,
+    const float* residual,
+    float* output,
+    int n_rows,
+    int ncols_dst,
+    hipStream_t stream
+) {
+    if (n_rows <= 0 || ncols_dst <= 0 || residual == nullptr) return hipErrorInvalidValue;
+
+    gemv_q4_0_f32_wave32_residual_kernel<<<ncols_dst, 32, 0, stream>>>(
+        weights_q4_0, input, residual, output, n_rows, ncols_dst
+    );
+
+    return hipGetLastError();
 }

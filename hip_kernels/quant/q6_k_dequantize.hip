@@ -46,14 +46,14 @@ __global__ void dequantize_q6_k_kernel(
     //     y  += 128;  ql += 64;  qh += 32;  sc += 8;
     // }
 
-    int n = elem_idx / 128; // 0 or 1
+    int n_block = elem_idx / 128; // 0 or 1
     int l = (elem_idx % 128) / 4; // 0..31
     int lane = elem_idx % 4; // 0..3
 
     int is = l / 16;
-    int ql_offset = n * 64;
-    int qh_offset = n * 32;
-    int sc_offset = n * 8;
+    int ql_offset = n_block * 64;
+    int qh_offset = n_block * 32;
+    int sc_offset = n_block * 8;
 
     int8_t q;
     if (lane == 0) {

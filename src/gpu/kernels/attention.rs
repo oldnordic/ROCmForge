@@ -143,6 +143,20 @@ pub fn kv_write_on_stream(
     max_seq: usize,
     stream: hipStream_t,
 ) -> GpuResult<()> {
+    if k_cache.is_null() || v_cache.is_null() || k.is_null() || v.is_null() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "KV write: pointer arguments cannot be null".to_string(),
+        });
+    }
+
+    if pos >= max_seq {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!("KV write: pos ({}) cannot be >= max_seq ({})", pos, max_seq),
+        });
+    }
+
     if kv_size == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
@@ -284,7 +298,7 @@ pub fn kv_write_rope_from_state_on_stream(
             description: "KV rope write: num_kv_heads and head_dim cannot be zero".to_string(),
         });
     }
-    if head_dim % 2 != 0 {
+    if !head_dim.is_multiple_of(2) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!("KV rope write: head_dim {} must be even", head_dim),

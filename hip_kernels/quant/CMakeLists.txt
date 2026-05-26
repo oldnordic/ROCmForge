@@ -275,7 +275,25 @@ add_library(q4_0_gemm STATIC q4_0_gemm.hip)
 target_link_libraries(q4_0_gemm quant_common)
 set_target_properties(q4_0_gemm PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
-# REMOVED: Vulkan-style Q4_0 fused kernels (moved to old/ folder - not AMD HIP compliant)
+# Batched Q4_0 GEMM kernel for prefill processing
+add_library(batched_q4_0_gemm STATIC batched_q4_0.hip)
+target_link_libraries(batched_q4_0_gemm quant_common)
+set_target_properties(batched_q4_0_gemm PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+
+# Batched Q4_1 GEMM kernel for prefill processing
+add_library(batched_q4_1_gemm STATIC batched_q4_1.hip)
+target_link_libraries(batched_q4_1_gemm quant_common)
+set_target_properties(batched_q4_1_gemm PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+
+# Q4_0 fused gate-up projection kernel (FFN layer optimization)
+add_library(q4_0_fused STATIC q4_0_fused.hip)
+target_link_libraries(q4_0_fused quant_common)
+set_target_properties(q4_0_fused PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+
+# Q4_0 fused gate-up projection kernel with Q8_0 activation quantization
+add_library(q4_0_fused_q8 STATIC q4_0_fused_q8.hip)
+target_link_libraries(q4_0_fused_q8 quant_common)
+set_target_properties(q4_0_fused_q8 PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
 add_library(q4_1_gemm STATIC q4_1_gemm.hip)
 target_link_libraries(q4_1_gemm quant_common)
@@ -472,8 +490,37 @@ set_target_properties(q6_k_verify PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
 
+# RFM GPU-Accelerated Unpack Kernels
+add_library(rfm_unpack STATIC
+    rfm_unpack.hip
+)
+
+target_link_libraries(rfm_unpack
+    quant_common
+)
+
+set_target_properties(rfm_unpack PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
+# RDNA3 WMMA Matrix Core Acceleration
+add_library(wmma_matmul STATIC
+    wmma_matmul.hip
+)
+
+target_link_libraries(wmma_matmul
+    quant_common
+)
+
+set_target_properties(wmma_matmul PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
 # Print build info
 message(STATUS "ROCm GPU Quantization Build Configuration:")
 message(STATUS "  CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
 message(STATUS "  CMAKE_CXX_COMPILER: ${CMAKE_CXX_COMPILER}")
 message(STATUS "  Output directory: ${CMAKE_BINARY_DIR}/lib")
+

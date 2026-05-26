@@ -104,11 +104,11 @@ pub unsafe fn dot_q5_0_q8_0_block_avx2(
     for i in 0..16 {
         let h0 = ((q5_block.qh[i >> 3] >> (i & 7)) & 1) << 4;
         let l0 = q5_block.qs[i] & 0x0F;
-        qx[i * 2] = (((h0 | l0) as i8).wrapping_sub(16));
+        qx[i * 2] = ((h0 | l0) as i8).wrapping_sub(16);
 
         let h1 = ((q5_block.qh[(i >> 3) + 2] >> (i & 7)) & 1) << 4;
         let l1 = (q5_block.qs[i] >> 4) & 0x0F;
-        qx[i * 2 + 1] = (((h1 | l1) as i8).wrapping_sub(16));
+        qx[i * 2 + 1] = ((h1 | l1) as i8).wrapping_sub(16);
     }
 
     let qx = _mm256_loadu_si256(qx.as_ptr() as *const __m256i);
@@ -134,7 +134,10 @@ pub unsafe fn dot_q5_0_q8_0_block_avx2(
 /// Caller must ensure AVX2 and FMA are available.
 #[cfg(target_arch = "x86_64")]
 pub fn gemv_q5_0_q8_0_avx2(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
-    assert!(in_dim % 32 == 0, "in_dim must be multiple of 32 for Q5_0");
+    assert!(
+        in_dim.is_multiple_of(32),
+        "in_dim must be multiple of 32 for Q5_0"
+    );
     assert!(is_x86_feature_detected!("avx2"), "AVX2 required");
 
     let num_blocks = in_dim / 32;
@@ -203,7 +206,7 @@ fn gemv_q5_0_q8_0_scalar(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_
                 let low_bits_0 = qs[i] & 0x0F;
                 let q0 = ((high_bit_0 | low_bits_0) as i32) - 16;
 
-                let high_bit_1 = ((qh[i >> 3 + 2] >> (i & 7)) & 1) << 4;
+                let high_bit_1 = ((qh[i >> (3 + 2)] >> (i & 7)) & 1) << 4;
                 let low_bits_1 = (qs[i] >> 4) & 0x0F;
                 let q1 = ((high_bit_1 | low_bits_1) as i32) - 16;
 

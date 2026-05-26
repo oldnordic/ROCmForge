@@ -31,7 +31,6 @@ const Q6_K_MODEL_PATH: &str = "/home/feanor/Projects/Memoria/models/qwen2-0.5b-i
 
 const REQUIRED_VRAM_GB: u64 = 5; // Must leave 5GB free
 const TIMEOUT_SECONDS: u64 = 30; // Timeout for all tests
-const MAX_TOKENS_SMALL: u32 = 5; // Small token limit for quick tests
 const MAX_TOKENS_MEDIUM: u32 = 20; // Medium token limit for longer tests
 
 /// Skip test if Q6_K model file is missing
@@ -432,7 +431,6 @@ fn test_q6_k_decode_graph_env_check() {
 
     // Test should pass regardless of graph state
     // This just verifies the environment check works
-    assert!(true);
 }
 
 #[test]
@@ -468,7 +466,6 @@ fn test_gpu_temperature_safe() {
 
     // If we can't read temperature, log warning but don't fail
     eprintln!("⚠️  Could not read GPU temperature, skipping check");
-    assert!(true);
 }
 
 // ============================================================================

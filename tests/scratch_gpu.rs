@@ -1,4 +1,5 @@
 #![cfg(feature = "gpu")]
+#![allow(warnings)]
 
 //! Forward scratch buffer tests.
 

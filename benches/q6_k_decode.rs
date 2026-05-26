@@ -1,3 +1,5 @@
+#![cfg(feature = "gpu")]
+#![allow(warnings)]
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use rocmforge::config::ModelConfig;
 use rocmforge::cpu::{cache::CpuForwardScratch, weights::CpuModelWeights};

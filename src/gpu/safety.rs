@@ -224,8 +224,12 @@ mod tests {
         assert!(!parse_env_flag(Some("no".to_string()), true));
     }
 
+    use std::sync::Mutex;
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
     #[test]
     fn refresh_runtime_env_flags_reloads_cached_defaults() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         unsafe {
             std::env::set_var(ENABLE_EXPERIMENTAL_FFN_FASTPATH_ENV, "0");
         }
@@ -253,6 +257,7 @@ mod tests {
 
     #[test]
     fn runtime_disable_decode_graph_is_process_local_until_refresh() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         unsafe {
             std::env::set_var(ENABLE_DECODE_GRAPH_ENV, "1");
         }
@@ -274,6 +279,7 @@ mod tests {
 
     #[test]
     fn runtime_disable_q8_fastpath_is_process_local_until_refresh() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         unsafe {
             std::env::set_var(ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH_ENV, "1");
         }
@@ -295,6 +301,7 @@ mod tests {
 
     #[test]
     fn gpu_safe_mode_forces_conservative_feature_set() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         unsafe {
             std::env::set_var(ENABLE_DECODE_GRAPH_ENV, "1");
             std::env::set_var(ENABLE_EXPERIMENTAL_FFN_FASTPATH_ENV, "1");

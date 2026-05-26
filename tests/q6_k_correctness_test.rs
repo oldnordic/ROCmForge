@@ -74,7 +74,7 @@ fn test_q6_k_model_output_coherence() {
 
     // If there's Chinese, it's likely garbage (broken Q6_K symptom)
     assert!(
-        !has_chinese || (has_chinese && has_english && output_text.len() > 20),
+        !has_chinese || has_english && output_text.len() > 20,
         "Output has mixed Chinese/English (garbage symptom): '{}'",
         output_text
     );

@@ -131,7 +131,10 @@ fn get_scaled_min(mins: &[u32], index: usize) -> i32 {
 /// * `out_dim` - Number of output rows
 /// * `in_dim` - Inner dimension (must be multiple of 256)
 pub fn gemv_q4_k_q8_k(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
-    assert!(in_dim % 256 == 0, "in_dim must be multiple of QK_K=256");
+    assert!(
+        in_dim.is_multiple_of(256),
+        "in_dim must be multiple of QK_K=256"
+    );
     assert_eq!(x.len(), in_dim);
     assert_eq!(y.len(), out_dim);
 
@@ -173,7 +176,7 @@ pub fn gemv_q4_k_q8_k(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim
 /// * `n` - Output dimension (out_dim)
 /// * `k` - Inner dimension (in_dim)
 pub fn gemm_q4_k_q8_k(w: &[u8], x: &[f32], y: &mut [f32], m: usize, n: usize, k: usize) {
-    assert!(k % 256 == 0, "k must be multiple of QK_K=256");
+    assert!(k.is_multiple_of(256), "k must be multiple of QK_K=256");
 
     let num_blocks_k = k / 256;
 

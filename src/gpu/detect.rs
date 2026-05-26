@@ -109,8 +109,8 @@ impl GpuCapabilities {
     /// Clamped to [1, 256] range.
     pub fn recommend_batch_size(&self, bytes_per_token: usize) -> usize {
         let batch_vram = self.free_vram_bytes / 2;
-        let batch = (batch_vram / bytes_per_token).max(1).min(256);
-        batch
+
+        (batch_vram / bytes_per_token).max(1).min(256)
     }
 
     /// Get total VRAM in gigabytes for display.

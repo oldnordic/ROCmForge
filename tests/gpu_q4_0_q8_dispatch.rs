@@ -3,7 +3,7 @@
 #[path = "common/mod.rs"]
 mod common;
 
-use rocmforge::cpu::quant::{load_f16_scale, Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS, Q8_BLOCK_BYTES};
+use rocmforge::cpu::quant::{load_f16_scale, Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS};
 use rocmforge::gpu::{detect, GpuBuffer, GpuDevice, GpuQuant, TensorRole, WeightMeta};
 use rocmforge::loader::GgmlType;
 use serial_test::serial;
@@ -63,19 +63,21 @@ fn q4_0_q8_0_cpu_oracle(
 ) -> Vec<f32> {
     let num_blocks = in_dim / Q4_BLOCK_ELEMS;
     let col_bytes = num_blocks * Q4_BLOCK_BYTES;
-    assert_eq!(input_q8.len(), num_blocks * Q8_BLOCK_BYTES);
+    assert_eq!(input_q8.len(), num_blocks * 36);
 
     let mut out = vec![0.0f32; out_dim];
-    for col in 0..out_dim {
+    for (col, val) in out.iter_mut().enumerate() {
         let mut acc = 0.0f32;
         let col_offset = col * col_bytes;
         for block_idx in 0..num_blocks {
             let w_block = &weights[col_offset + block_idx * Q4_BLOCK_BYTES
                 ..col_offset + (block_idx + 1) * Q4_BLOCK_BYTES];
-            let x_block = &input_q8[block_idx * Q8_BLOCK_BYTES..(block_idx + 1) * Q8_BLOCK_BYTES];
-            let scale = load_f16_scale(&w_block[..2]) * load_f16_scale(&x_block[..2]);
+            let x_block = &input_q8[block_idx * 36..(block_idx + 1) * 36];
+            let w_scale = load_f16_scale(&w_block[..2]);
+            let x_scale = f32::from_le_bytes([x_block[0], x_block[1], x_block[2], x_block[3]]);
+            let scale = w_scale * x_scale;
             let qs = &w_block[2..18];
-            let x_qs = &x_block[2..];
+            let x_qs = &x_block[4..];
 
             let mut block_sum = 0i32;
             for i in 0..16 {
@@ -86,7 +88,7 @@ fn q4_0_q8_0_cpu_oracle(
 
             acc += scale * block_sum as f32;
         }
-        out[col] = acc;
+        *val = acc;
     }
 
     out
@@ -501,6 +503,8 @@ fn test_gpu_dispatch_fused_gate_up_uses_q8_fastpath_when_enabled() {
         &meta,
         &d_up,
         &meta,
+        None,
+        None,
         d_input.as_ptr() as *const f32,
         d_output_dispatch.as_ptr() as *mut f32,
         ff_dim,
