@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### [Research]
+
+**research: SVD-Quant and MPO weight compression analysis on Qwen3.5-4B**
+
+- **Date:** May 27, 2026
+  - **Summary:** Evaluated two tensor decomposition approaches for weight compression on real Qwen3.5-4B BF16 safetensors (~8.8 GB, 2 shards). Both approaches proved ineffective for this model.
+- **MPO (Matrix Product Operator) compression:**
+  - Added `factor_dimension`, `compress_matrix_to_mpo_auto`, `compress_variable_mpo`, `trim_mpo`, `mpo_to_graph_nodes` to `geographdb-core/src/algorithms/mpo.rs`
+  - Removed perfect-power dimension constraint, integrated with `GraphNode4D` chains
+  - Tested on Qwen3.5 GGUF (Q4_K): MPO at chi=2-32 gives 60-99% error on real weights
+  - **Result: Dead end for direct weight compression** — flat SVD spectrum means bond dimensions must be impractically large
+  - geographdb-core improvements remain useful for general tensor network applications (15 tests pass, clippy clean)
+- **SVD-Quant compression:**
+  - Built `src/bin/svd_analyze.rs`: zero-dep safetensors loader (BF16/FP16/FP32, sharded), power-iteration SVD, naive Q4 vs SVD-Quant+Q4 comparison
+  - Correct metric: Frobenius-norm relative error of naive Q4 dequantization vs SVD-Quant+Q4 dequantization
+  - Tested k=1 through k=256 on Qwen3.5-4B BF16 weight matrices (2560x9216, 9216x2560)
+  - **Result: Negligible improvement at any practical k**
+    - k=1-8: ~0.1-0.5% relative improvement (1.0x)
+    - k=64-128: ~0.7-1.0% relative improvement (1.0-1.1x)
+    - k=256: ~1.0-2.2% relative improvement (1.2x best case)
+  - At k=256, SVD factors alone consume ~6MB FP16 per MLP layer, eroding compression gains
+  - **Root cause:** Qwen3.5-4B has an extremely flat singular value spectrum — outlier channels are not concentrated in a few low-rank directions
+- **Files Added:** `src/bin/svd_analyze.rs`, `src/bin/mpo_analyze.rs`, `src/bin/dump_tensors.rs`
+- **Not committed:** `models/` directory (downloaded Qwen3.5-4B BF16 safetensors, ~8.8 GB)
+
 ### [Safety & Hardening]
 
 **safety(gpu): deduplicate VRAM reservation constants, add pre-flight VRAM gates**
