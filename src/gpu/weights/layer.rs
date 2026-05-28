@@ -38,6 +38,68 @@ pub struct GpuMpoWeights {
     pub n_sites: u32,
 }
 
+/// CPU-resident compressed expert weights for one expert tensor type (gate, up, or down).
+///
+/// Loaded from `MoeExpertSvdSparse` RFM tensors.  Stays in CPU RAM;
+/// uploaded one expert at a time to `GpuExpertScratch` during decode.
+///
+/// Expert `i`'s matrix is `[rows, cols]` row-major — rows = out_dim, cols = in_dim.
+pub struct CpuCompressedExperts {
+    pub n_experts: usize,
+    pub k: usize,
+    pub rows: usize,
+    pub cols: usize,
+    /// Packed U: `[n_experts, rows, k]` F32
+    pub u_data: Vec<f32>,
+    /// Packed V: `[n_experts, k, cols]` F32
+    pub v_data: Vec<f32>,
+    /// CSR row pointers: `[n_experts, rows+1]` u32 (experts concatenated)
+    pub csr_row_ptr: Vec<u32>,
+    /// CSR col indices: `[total_nnz]` u32
+    pub csr_col_idx: Vec<u32>,
+    /// CSR values: `[total_nnz]` F32
+    pub csr_values: Vec<f32>,
+    /// NNZ per expert — indexes into col_idx / values.
+    pub expert_nnz: Vec<usize>,
+}
+
+impl CpuCompressedExperts {
+    /// Byte-slice of U for expert `i` (rows × k F32).
+    pub fn u_bytes(&self, i: usize) -> &[u8] {
+        let stride = self.rows * self.k;
+        let slice = &self.u_data[i * stride..(i + 1) * stride];
+        unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, stride * 4) }
+    }
+
+    /// Byte-slice of V for expert `i` (k × cols F32).
+    pub fn v_bytes(&self, i: usize) -> &[u8] {
+        let stride = self.k * self.cols;
+        let slice = &self.v_data[i * stride..(i + 1) * stride];
+        unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, stride * 4) }
+    }
+
+    /// (row_ptr_bytes, col_idx_bytes, val_bytes, nnz) for expert `i`.
+    pub fn csr_bytes(&self, i: usize) -> (&[u8], &[u8], &[u8], usize) {
+        let rp_stride = self.rows + 1;
+        let row_ptr = &self.csr_row_ptr[i * rp_stride..(i + 1) * rp_stride];
+        let nnz_start: usize = self.expert_nnz[..i].iter().sum();
+        let nnz = self.expert_nnz[i];
+        let col_idx = &self.csr_col_idx[nnz_start..nnz_start + nnz];
+        let values = &self.csr_values[nnz_start..nnz_start + nnz];
+        unsafe {
+            let rp_bytes = std::slice::from_raw_parts(row_ptr.as_ptr() as *const u8, (self.rows + 1) * 4);
+            let ci_bytes = std::slice::from_raw_parts(col_idx.as_ptr() as *const u8, nnz * 4);
+            let val_bytes = std::slice::from_raw_parts(values.as_ptr() as *const u8, nnz * 4);
+            (rp_bytes, ci_bytes, val_bytes, nnz)
+        }
+    }
+
+    /// Maximum nnz across all experts — used to size `GpuExpertScratch`.
+    pub fn max_nnz(&self) -> usize {
+        self.expert_nnz.iter().copied().max().unwrap_or(0)
+    }
+}
+
 /// Weights for a single transformer layer, stored in VRAM.
 ///
 /// All weight tensors are stored in their native quantized format.
@@ -107,6 +169,11 @@ pub struct GpuLayerWeights {
     pub ffn_gate_mpo: Option<GpuMpoWeights>,
     pub ffn_up_mpo: Option<GpuMpoWeights>,
     pub ffn_down_mpo: Option<GpuMpoWeights>,
+    /// CPU-resident per-expert SVD+sparse weights (None for non-MoE or uncompressed models).
+    /// Uploaded one expert at a time to GpuExpertScratch during decode dispatch.
+    pub ffn_gate_compressed: Option<CpuCompressedExperts>,
+    pub ffn_up_compressed: Option<CpuCompressedExperts>,
+    pub ffn_down_compressed: Option<CpuCompressedExperts>,
 }
 
 /// Mixture-of-Experts side weights for Qwen-style MoE layers.
@@ -688,6 +755,9 @@ impl GpuLayerWeights {
             ffn_gate_mpo: None,
             ffn_up_mpo: None,
             ffn_down_mpo: None,
+            ffn_gate_compressed: None,
+            ffn_up_compressed: None,
+            ffn_down_compressed: None,
         })
     }
 
@@ -1695,6 +1765,9 @@ impl GpuLayerWeights {
             ffn_gate_mpo,
             ffn_up_mpo,
             ffn_down_mpo,
+            ffn_gate_compressed: None,
+            ffn_up_compressed: None,
+            ffn_down_compressed: None,
         })
     }
 }
