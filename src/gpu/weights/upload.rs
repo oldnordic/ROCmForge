@@ -174,7 +174,8 @@ pub(super) fn rfm_type_to_ggml(t: &RfmType) -> GgmlType {
         RfmType::GgufPassthrough(v) => GgmlType::from_u32(*v).unwrap_or(GgmlType::Q4_0),
         RfmType::SparseCsr { value_type, .. }
         | RfmType::Mpo { value_type, .. }
-        | RfmType::SvdSparseCsr { value_type, .. } => {
+        | RfmType::SvdSparseCsr { value_type, .. }
+        | RfmType::MoeExpertSvdSparse { value_type, .. } => {
             GgmlType::from_u32(*value_type).unwrap_or(GgmlType::F32)
         }
     }
@@ -286,6 +287,9 @@ pub(super) fn estimate_rfm_layer_vram(file: &RfmFile, layer: usize) -> GpuResult
                         let out_dim = t.dims[1] as usize;
                         total += (in_dim + out_dim) * (*k as usize) * 4;
                     }
+                }
+                RfmType::MoeExpertSvdSparse { .. } => {
+                    // Experts are CPU-resident; they contribute 0 bytes to GPU VRAM.
                 }
             }
         }

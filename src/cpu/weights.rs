@@ -533,7 +533,8 @@ fn rfm_type_to_ggml(t: &RfmType) -> GgmlType {
         RfmType::GgufPassthrough(v) => GgmlType::from_u32(*v).unwrap_or(GgmlType::Q4_0),
         RfmType::SparseCsr { value_type, .. }
         | RfmType::Mpo { value_type, .. }
-        | RfmType::SvdSparseCsr { value_type, .. } => {
+        | RfmType::SvdSparseCsr { value_type, .. }
+        | RfmType::MoeExpertSvdSparse { value_type, .. } => {
             GgmlType::from_u32(*value_type).unwrap_or(GgmlType::F32)
         }
     }
@@ -984,7 +985,10 @@ impl CpuLayerWeights {
                     // CPU fallback: unpack sparse residual to dense F32 (SVD correction GPU-only).
                     sparse_csr_to_dense_f32_bytes(gate_view.data, rows as usize, cols as usize, nnz as usize)
                 }
-                RfmType::SparseCsr { .. } | RfmType::Mpo { .. } | RfmType::Q4FusedGateUp => {
+                RfmType::SparseCsr { .. }
+                | RfmType::Mpo { .. }
+                | RfmType::MoeExpertSvdSparse { .. }
+                | RfmType::Q4FusedGateUp => {
                     return Err(WeightError::Load(LoadError::UnknownTensorType(999)));
                 }
             };
@@ -996,7 +1000,10 @@ impl CpuLayerWeights {
                 RfmType::SvdSparseCsr { rows, cols, nnz, .. } => {
                     sparse_csr_to_dense_f32_bytes(up_view.data, rows as usize, cols as usize, nnz as usize)
                 }
-                RfmType::SparseCsr { .. } | RfmType::Mpo { .. } | RfmType::Q4FusedGateUp => {
+                RfmType::SparseCsr { .. }
+                | RfmType::Mpo { .. }
+                | RfmType::MoeExpertSvdSparse { .. }
+                | RfmType::Q4FusedGateUp => {
                     return Err(WeightError::Load(LoadError::UnknownTensorType(999)));
                 }
             };
