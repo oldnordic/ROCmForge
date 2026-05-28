@@ -50,3 +50,6 @@ old/
 *this-session-is-being-continued-from-a-previous-c.txt
 detailed_test_output.txt
 model_scan_output.txt
+
+# Model artifacts (large binary files)
+models/
