@@ -62,6 +62,15 @@ impl GpuKvCache {
         total
     }
 
+    /// Estimate VRAM bytes required for a KV cache without allocating anything.
+    ///
+    /// Use this for pre-flight VRAM checks before calling `new`.
+    pub fn estimate_bytes(config: &ModelConfig, max_seq_len: usize) -> usize {
+        let kv_size = config.num_kv_heads * config.head_dim;
+        let layer_bytes = max_seq_len * kv_size * std::mem::size_of::<f32>();
+        2 * config.num_layers * layer_bytes
+    }
+
     /// Allocate a new KV cache in GPU VRAM.
     ///
     /// # Arguments
@@ -349,6 +358,187 @@ impl GpuKvCache {
     }
 }
 
+// ── KV Dump (research / analysis tool) ───────────────────────────────────────────
+
+/// Magic bytes that identify a KV cache dump file.
+pub const KV_DUMP_MAGIC: &[u8; 8] = b"KVCACHE1";
+
+/// In-memory representation of a KV cache dump loaded from disk.
+#[allow(dead_code)]
+///
+/// Layout:
+/// - `k[layer]`: flat `Vec<f32>` of shape `[num_tokens × kv_size]`
+///   where `kv_size = num_kv_heads × head_dim`.
+/// - `v[layer]`: same shape.
+pub struct KvDump {
+    pub num_layers: usize,
+    pub num_kv_heads: usize,
+    pub head_dim: usize,
+    pub num_tokens: usize,
+    /// Key vectors per layer. `k[l][t * kv_size .. (t+1) * kv_size]` = token t.
+    pub k: Vec<Vec<f32>>,
+    /// Value vectors per layer. Same layout as `k`.
+    pub v: Vec<Vec<f32>>,
+}
+
+impl KvDump {
+    /// Load a KV cache dump written by [`GpuKvCache::dump_to_file`].
+    pub fn load(path: &std::path::Path) -> Result<Self, Box<dyn std::error::Error>> {
+        use std::io::Read;
+        let mut data = Vec::new();
+        std::fs::File::open(path)?.read_to_end(&mut data)?;
+
+        // Header: 8 magic + 4×4 fields + 8 padding = 32 bytes
+        if data.len() < 32 {
+            return Err("KvDump: file too short to contain header".into());
+        }
+        if &data[..8] != KV_DUMP_MAGIC {
+            return Err(format!(
+                "KvDump: bad magic {:?}, expected {:?}",
+                &data[..8],
+                KV_DUMP_MAGIC
+            )
+            .into());
+        }
+        let num_layers = u32::from_le_bytes(data[8..12].try_into()?) as usize;
+        let num_kv_heads = u32::from_le_bytes(data[12..16].try_into()?) as usize;
+        let head_dim = u32::from_le_bytes(data[16..20].try_into()?) as usize;
+        let num_tokens = u32::from_le_bytes(data[20..24].try_into()?) as usize;
+        // bytes 24..32 are padding
+
+        let kv_size = num_kv_heads * head_dim;
+        let floats_per_layer = num_tokens * kv_size;
+        let bytes_per_layer = floats_per_layer * 4;
+        let expected_len = 32 + 2 * num_layers * bytes_per_layer;
+
+        if data.len() < expected_len {
+            return Err(format!(
+                "KvDump: truncated — expected {} bytes, got {}",
+                expected_len,
+                data.len()
+            )
+            .into());
+        }
+
+        let mut k = Vec::with_capacity(num_layers);
+        let mut v = Vec::with_capacity(num_layers);
+        let mut offset = 32usize;
+
+        for _ in 0..num_layers {
+            let k_floats: Vec<f32> = data[offset..offset + bytes_per_layer]
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+                .collect();
+            offset += bytes_per_layer;
+
+            let v_floats: Vec<f32> = data[offset..offset + bytes_per_layer]
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+                .collect();
+            offset += bytes_per_layer;
+
+            k.push(k_floats);
+            v.push(v_floats);
+        }
+
+        Ok(KvDump {
+            num_layers,
+            num_kv_heads,
+            head_dim,
+            num_tokens,
+            k,
+            v,
+        })
+    }
+
+    /// Return the key vector for a specific layer and token position.
+    ///
+    /// Returns a slice of length `num_kv_heads * head_dim`.
+    pub fn key(&self, layer: usize, token: usize) -> &[f32] {
+        let kv_size = self.num_kv_heads * self.head_dim;
+        &self.k[layer][token * kv_size..(token + 1) * kv_size]
+    }
+
+    /// Return the value vector for a specific layer and token position.
+    pub fn val(&self, layer: usize, token: usize) -> &[f32] {
+        let kv_size = self.num_kv_heads * self.head_dim;
+        &self.v[layer][token * kv_size..(token + 1) * kv_size]
+    }
+}
+
+impl GpuKvCache {
+    /// Dump the first `num_tokens` positions of every layer's KV cache to a
+    /// binary file for off-GPU analysis.
+    ///
+    /// The file format is:
+    /// ```text
+    /// [u8; 8]  magic = "KVCACHE1"
+    /// u32      num_layers
+    /// u32      num_kv_heads
+    /// u32      head_dim
+    /// u32      num_tokens
+    /// [u8; 8]  padding
+    /// -- for each layer l in 0..num_layers:
+    ///    [f32; num_tokens * num_kv_heads * head_dim]  K[l]
+    ///    [f32; num_tokens * num_kv_heads * head_dim]  V[l]
+    /// ```
+    ///
+    /// This is a research / analysis tool; it synchronises the GPU stream and
+    /// copies VRAM → host, so it is not suitable for hot inference paths.
+    pub fn dump_to_file(
+        &self,
+        path: &std::path::Path,
+        num_tokens: usize,
+        num_kv_heads: usize,
+        head_dim: usize,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use std::io::Write;
+
+        if num_tokens == 0 || num_tokens > self.max_seq_len {
+            return Err(format!(
+                "dump_to_file: num_tokens {} out of range [1, {}]",
+                num_tokens, self.max_seq_len
+            )
+            .into());
+        }
+
+        let kv_size = num_kv_heads * head_dim;
+        let floats_per_layer = num_tokens * kv_size;
+
+        let mut file = std::fs::File::create(path)?;
+
+        // Header
+        file.write_all(KV_DUMP_MAGIC)?;
+        file.write_all(&(self.num_layers as u32).to_le_bytes())?;
+        file.write_all(&(num_kv_heads as u32).to_le_bytes())?;
+        file.write_all(&(head_dim as u32).to_le_bytes())?;
+        file.write_all(&(num_tokens as u32).to_le_bytes())?;
+        file.write_all(&[0u8; 8])?; // padding
+
+        // Body: K then V for each layer
+        for layer in 0..self.num_layers {
+            // copy_to_host_vec reads the whole layer buffer (max_seq_len * kv_size)
+            let full_k = self.k[layer].copy_to_host_vec()?;
+            let full_v = self.v[layer].copy_to_host_vec()?;
+
+            // Write only the populated prefix
+            let k_bytes: Vec<u8> = full_k[..floats_per_layer]
+                .iter()
+                .flat_map(|f| f.to_le_bytes())
+                .collect();
+            file.write_all(&k_bytes)?;
+
+            let v_bytes: Vec<u8> = full_v[..floats_per_layer]
+                .iter()
+                .flat_map(|f| f.to_le_bytes())
+                .collect();
+            file.write_all(&v_bytes)?;
+        }
+
+        Ok(())
+    }
+}
+
 #[inline]
 fn mix_binding_tag(tag: u64, ptr: usize) -> u64 {
     tag.rotate_left(13) ^ (ptr as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
@@ -443,6 +633,104 @@ mod tests {
             assert_ne!(first.binding_tag(), second.binding_tag());
         }
     }
+
+    // ── KvDump file format ────────────────────────────────────────────────────
+
+    /// A KvDump written and re-parsed must round-trip all header fields.
+    #[test]
+    fn kv_dump_header_round_trips() {
+        use std::io::{Read, Write};
+        use tempfile::NamedTempFile;
+
+        let mut f = NamedTempFile::new().unwrap();
+
+        let num_layers: u32 = 4;
+        let num_kv_heads: u32 = 8;
+        let head_dim: u32 = 128;
+        let num_tokens: u32 = 16;
+
+        // Write header
+        f.write_all(KV_DUMP_MAGIC).unwrap();
+        f.write_all(&num_layers.to_le_bytes()).unwrap();
+        f.write_all(&num_kv_heads.to_le_bytes()).unwrap();
+        f.write_all(&head_dim.to_le_bytes()).unwrap();
+        f.write_all(&num_tokens.to_le_bytes()).unwrap();
+        f.write_all(&[0u8; 8]).unwrap(); // padding
+
+        // Write placeholder data (zeros)
+        let floats_per_layer = num_tokens as usize * num_kv_heads as usize * head_dim as usize;
+        let zeros = vec![0u8; floats_per_layer * 4 * 2 * num_layers as usize];
+        f.write_all(&zeros).unwrap();
+        f.flush().unwrap();
+
+        // Read back and check header
+        let path = f.path().to_owned();
+        let mut buf = Vec::new();
+        std::fs::File::open(&path)
+            .unwrap()
+            .read_to_end(&mut buf)
+            .unwrap();
+
+        assert_eq!(&buf[..8], KV_DUMP_MAGIC, "magic mismatch");
+        assert_eq!(
+            u32::from_le_bytes(buf[8..12].try_into().unwrap()),
+            num_layers
+        );
+        assert_eq!(
+            u32::from_le_bytes(buf[12..16].try_into().unwrap()),
+            num_kv_heads
+        );
+        assert_eq!(
+            u32::from_le_bytes(buf[16..20].try_into().unwrap()),
+            head_dim
+        );
+        assert_eq!(
+            u32::from_le_bytes(buf[20..24].try_into().unwrap()),
+            num_tokens
+        );
+
+        // Total size: 32 header + 2 * num_layers * floats_per_layer * 4
+        let expected_len = 32 + 2 * num_layers as usize * floats_per_layer * 4;
+        assert_eq!(buf.len(), expected_len, "file size mismatch");
+    }
+
+    /// A KvDump with wrong magic returns an error.
+    #[test]
+    fn kv_dump_parse_rejects_bad_magic() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut f = NamedTempFile::new().unwrap();
+        f.write_all(b"BADMAGIC").unwrap();
+        f.write_all(&[0u8; 100]).unwrap();
+        f.flush().unwrap();
+
+        let result = KvDump::load(f.path());
+        assert!(result.is_err(), "should fail on bad magic");
+        let msg = result.err().unwrap().to_string();
+        assert!(msg.contains("magic"), "error should mention magic: {msg}");
+    }
+
+    /// A KvDump with truncated data returns an error.
+    #[test]
+    fn kv_dump_parse_rejects_truncated_file() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut f = NamedTempFile::new().unwrap();
+        f.write_all(KV_DUMP_MAGIC).unwrap();
+        // Write a header claiming 4 layers / 8 heads / 128 dim / 16 tokens
+        // but no body data
+        f.write_all(&4u32.to_le_bytes()).unwrap();
+        f.write_all(&8u32.to_le_bytes()).unwrap();
+        f.write_all(&128u32.to_le_bytes()).unwrap();
+        f.write_all(&16u32.to_le_bytes()).unwrap();
+        f.write_all(&[0u8; 8]).unwrap();
+        f.flush().unwrap();
+
+        let result = KvDump::load(f.path());
+        assert!(result.is_err(), "should fail on truncated body");
+    }
 }
 
 // ── Forward Scratch Buffers ───────────────────────────────────────────────────────
@@ -499,6 +787,29 @@ pub struct GpuForwardScratch {
 }
 
 impl GpuForwardScratch {
+    /// Estimate VRAM bytes required for forward scratch buffers without allocating.
+    ///
+    /// This mirrors the GPU-only (non-pinned) allocations in `new`.
+    /// Use for pre-flight VRAM checks before calling `new`.
+    pub fn estimate_bytes(config: &ModelConfig) -> usize {
+        let h = config.hidden_size;
+        let q = config.num_heads * config.head_dim;
+        let kv = config.num_kv_heads * config.head_dim;
+        let ff = config.intermediate_size;
+        let v = config.vocab_size;
+        let argmax_partials = v.div_ceil(GPU_ARGMAX_ITEMS_PER_BLOCK);
+        // Count only VRAM (GpuBuffer) allocations, not pinned host buffers.
+        std::mem::size_of::<f32>()
+            * (3 * h           // hidden, normed, layer_out
+                + 2 * q        // q_buf, attn_out
+                + 2 * kv       // k_buf, v_buf
+                + 2 * ff       // gate, swiglu
+                + 32           // svd_scratch
+                + v            // logits
+                + 2 * argmax_partials  // argmax partial values + indices
+                + 3) // argmax_result_device (1) + decode_state (2)
+    }
+
     /// Allocate scratch buffers in GPU VRAM.
     ///
     /// # Arguments
@@ -632,6 +943,27 @@ impl GpuForwardScratch {
                     reason: format!("decode state host allocation failed: {}", e),
                 }
             })?;
+
+        // Zero-initialize all scratch buffers to prevent NaN propagation from
+        // uninitialized memory. SVD correction kernels use += accumulation,
+        // and residual connections add buffers together — garbage in any buffer
+        // spreads through the entire forward pass.
+        super::ffi::hip_memset(hidden.as_ptr(), 0, hidden.size())?;
+        super::ffi::hip_memset(normed.as_ptr(), 0, normed.size())?;
+        super::ffi::hip_memset(q_buf.as_ptr(), 0, q_buf.size())?;
+        super::ffi::hip_memset(k_buf.as_ptr(), 0, k_buf.size())?;
+        super::ffi::hip_memset(v_buf.as_ptr(), 0, v_buf.size())?;
+        super::ffi::hip_memset(attn_out.as_ptr(), 0, attn_out.size())?;
+        super::ffi::hip_memset(layer_out.as_ptr(), 0, layer_out.size())?;
+        super::ffi::hip_memset(gate.as_ptr(), 0, gate.size())?;
+        super::ffi::hip_memset(swiglu.as_ptr(), 0, swiglu.size())?;
+        super::ffi::hip_memset(svd_scratch.as_ptr(), 0, svd_scratch.size())?;
+        super::ffi::hip_memset(logits.as_ptr(), 0, logits.size())?;
+        super::ffi::hip_memset(argmax_partial_values.as_ptr(), 0, argmax_partial_values.size())?;
+        super::ffi::hip_memset(argmax_partial_indices.as_ptr(), 0, argmax_partial_indices.size())?;
+        super::ffi::hip_memset(argmax_result_device.as_ptr(), 0, argmax_result_device.size())?;
+        super::ffi::hip_memset(decode_state.as_ptr(), 0, decode_state.size())?;
+        // Pinned buffers and argmax_result_index are host-side; zeroed on use
 
         Ok(Self {
             hidden,
@@ -964,6 +1296,23 @@ impl GpuPrefillScratch {
                     reason: format!("prefill SVD scratch allocation failed: {}", e),
                 }
             })?;
+
+        // Zero-initialize all scratch buffers to prevent NaN propagation from
+        // uninitialized memory. SVD correction kernels use += accumulation,
+        // and residual connections add buffers together — garbage in any buffer
+        // spreads through the entire forward pass.
+        super::ffi::hip_memset(hidden.as_ptr(), 0, hidden.size())?;
+        super::ffi::hip_memset(normed.as_ptr(), 0, normed.size())?;
+        super::ffi::hip_memset(q_buf.as_ptr(), 0, q_buf.size())?;
+        super::ffi::hip_memset(k_buf.as_ptr(), 0, k_buf.size())?;
+        super::ffi::hip_memset(v_buf.as_ptr(), 0, v_buf.size())?;
+        super::ffi::hip_memset(attn_out.as_ptr(), 0, attn_out.size())?;
+        super::ffi::hip_memset(layer_out.as_ptr(), 0, layer_out.size())?;
+        super::ffi::hip_memset(gate.as_ptr(), 0, gate.size())?;
+        super::ffi::hip_memset(swiglu.as_ptr(), 0, swiglu.size())?;
+        super::ffi::hip_memset(logits.as_ptr(), 0, logits.size())?;
+        super::ffi::hip_memset(svd_scratch.as_ptr(), 0, svd_scratch.size())?;
+        // token_ids is written before use, no need to zero
 
         Ok(Self {
             seq_len,

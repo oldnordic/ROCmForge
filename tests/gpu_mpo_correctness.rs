@@ -7,6 +7,13 @@ use rocmforge::gpu::kernels::dispatch_mpo_apply_f32;
 use rocmforge::gpu::{GpuBuffer, GpuDevice};
 use serial_test::serial;
 
+fn skip_unless_experimental() {
+    if !rocmforge::gpu::safety::run_experimental_gpu_tests_enabled() {
+        eprintln!("Skipping — set ROCMFORGE_RUN_EXPERIMENTAL_GPU_TESTS=1 to enable experimental GPU tests");
+        std::process::exit(0);
+    }
+}
+
 fn upload_f32(data: &[f32]) -> rocmforge::gpu::GpuResult<GpuBuffer> {
     let mut buf = GpuBuffer::alloc(std::mem::size_of_val(data))?;
     let bytes = unsafe {
@@ -73,6 +80,7 @@ fn mpo_2site_reference(
 #[test]
 #[serial]
 fn test_mpo_apply_2site_basic() {
+    skip_unless_experimental();
     let device = init_device();
     let d1 = 8usize;
     let chi = 4usize;
@@ -132,6 +140,7 @@ fn test_mpo_apply_2site_basic() {
 #[test]
 #[serial]
 fn test_mpo_apply_2site_identity_like() {
+    skip_unless_experimental();
     let device = init_device();
     let d1 = 4usize;
     let chi = 2usize;
@@ -187,6 +196,7 @@ fn test_mpo_apply_2site_identity_like() {
 #[test]
 #[serial]
 fn test_mpo_apply_3site_basic() {
+    skip_unless_experimental();
     let device = init_device();
     let d1 = 4usize;
     let d2 = 3usize;

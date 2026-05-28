@@ -34,6 +34,7 @@ pub mod ops_batched;
 pub mod profile;
 pub mod quant;
 pub mod quant_wrapper;
+pub mod router;
 pub mod safety;
 pub mod speculative;
 pub mod vram_budget;
@@ -148,6 +149,12 @@ pub use safety::{
     RUN_EXPERIMENTAL_GPU_TESTS_ENV, RUN_GPU_BENCHES_ENV, RUN_REAL_MODEL_GPU_TESTS_ENV,
 };
 pub use speculative::SpeculativeEngine;
+pub use router::{check_path_vram, select_path, InferencePath, ModelProfile, QuantizationType};
+pub use vram_budget::VramSession;
+pub use vram_budget::{
+    check_allocation_fits, current_allocated_bytes, desktop_vram_reservation, format_vram_usage,
+    query_vram_budget, track_allocation, track_deallocation,
+};
 pub use weights::{
     GpuBuffer, GpuLayerWeights, GpuModelWeights, SvdCorrection, TensorRole, WeightMeta,
 };

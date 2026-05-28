@@ -454,7 +454,11 @@ pub fn gpu_dispatch_mpo_apply_on_stream(
 }
 
 /// Dispatch GEMV with automatic fallback to sparse CSR or MPO if available.
-/// Checks `sparse_weights` and `mpo_weights` first; falls back to dense GEMV.
+///
+/// **Safety:** sparse CSR and MPO kernels are experimental and gated by
+/// `ROCMFORGE_ENABLE_EXPERIMENTAL_GPU_KERNELS=1`.  Without that flag the
+/// dispatcher ignores sparse/MPO weights and falls back to the dense GEMV
+/// path, preventing untested kernels from running on a display-attached GPU.
 pub fn gpu_dispatch_gemv_with_fallback_on_stream(
     device: &GpuDevice,
     weights: &GpuBuffer,
@@ -469,16 +473,20 @@ pub fn gpu_dispatch_gemv_with_fallback_on_stream(
     temp_vector: *mut f32,
     stream: hipStream_t,
 ) -> GpuResult<()> {
-    if let Some(sparse) = sparse_weights {
-        return gpu_dispatch_sparse_csr_gemv_on_stream(
-            device, sparse, input, output, out_dim, in_dim, stream,
-        );
-    }
+    // Experimental kernels (sparse CSR, MPO) are opt-in only.
+    // Never dispatch them on a display-attached GPU unless explicitly enabled.
+    if super::super::safety::experimental_gpu_kernels_enabled() {
+        if let Some(sparse) = sparse_weights {
+            return gpu_dispatch_sparse_csr_gemv_on_stream(
+                device, sparse, input, output, out_dim, in_dim, stream,
+            );
+        }
 
-    if let Some(mpo) = mpo_weights {
-        return gpu_dispatch_mpo_apply_on_stream(
-            device, mpo, input, output, out_dim, in_dim, stream,
-        );
+        if let Some(mpo) = mpo_weights {
+            return gpu_dispatch_mpo_apply_on_stream(
+                device, mpo, input, output, out_dim, in_dim, stream,
+            );
+        }
     }
 
     gpu_dispatch_gemv_svd_on_stream(

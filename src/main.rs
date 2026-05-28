@@ -39,6 +39,9 @@ struct Args {
     draft_model: Option<String>,
     #[allow(dead_code)]
     speculative_tokens: usize,
+    #[allow(dead_code)]
+    /// If `Some(path)`, dump the post-prefill KV cache to this file.
+    kv_dump: Option<String>,
 }
 
 fn usage() -> ! {
@@ -59,6 +62,7 @@ fn usage() -> ! {
     eprintln!("  --debug                Show debug info (top logits, etc.)");
     eprintln!("  --gpu                  Use GPU backend (requires ROCm/HIP)");
     eprintln!("  --prefill-only-validate Run prefill only, exit with validation status");
+    eprintln!("  --kv-dump <path>       Dump post-prefill KV cache to binary file");
     eprintln!(
         "  --draft-model <path>   Path to draft GGUF/RFM model file for speculative decoding"
     );
@@ -84,6 +88,7 @@ fn parse_args() -> Args {
     let mut prefill_only_validate = false;
     let mut draft_model = None;
     let mut speculative_tokens = 4usize;
+    let mut kv_dump: Option<String> = None;
 
     while let Some(flag) = args.next() {
         match flag.as_str() {
@@ -115,6 +120,7 @@ fn parse_args() -> Args {
             "--debug" => debug = true,
             "--gpu" => gpu = true,
             "--prefill-only-validate" => prefill_only_validate = true,
+            "--kv-dump" => kv_dump = Some(args.next().unwrap_or_else(|| usage())),
             "--draft-model" => draft_model = Some(args.next().unwrap_or_else(|| usage())),
             "--speculative-tokens" => {
                 speculative_tokens = args
@@ -144,6 +150,7 @@ fn parse_args() -> Args {
         prefill_only_validate,
         draft_model,
         speculative_tokens,
+        kv_dump,
     }
 }
 
@@ -495,20 +502,37 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let gpu_caps = gpu::detect().ok_or("GPU requested but no AMD GPU detected")?;
     eprintln!("done");
     eprintln!("  GPU: {}", gpu_caps.device_name);
-    eprintln!(
-        "  VRAM: {:.1} GB / {:.1} GB",
-        gpu_caps.free_vram_gb(),
-        gpu_caps.total_vram_gb()
-    );
 
-    if let Ok(meta) = std::fs::metadata(&args.model) {
-        let model_size = meta.len() as usize;
-        if !gpu_caps.can_fit_model(model_size) {
-            eprintln!(
-                "Warning: model file is {:.1} GB and may exceed safe free VRAM headroom",
-                model_size as f64 / (1024.0 * 1024.0 * 1024.0)
-            );
-        }
+    // ── VRAM pre-flight ───────────────────────────────────────────────────────────
+    // Query current VRAM state before touching anything. This captures what the
+    // desktop and other processes are already using so we can compute the real
+    // inference budget and refuse to start if the workload won't fit.
+    let vram_session = gpu::VramSession::new(gpu_caps.device_id)
+        .map_err(|e| format!("VRAM query failed: {}", e))?;
+
+    // Open the model file early so we can read config for VRAM estimates.
+    let file = rocmforge::loader::ModelFile::open(&args.model)?;
+    let config = file.config()?;
+
+    // Estimate VRAM before allocating anything.
+    let model_file_bytes = std::fs::metadata(&args.model)
+        .map(|m| m.len() as usize)
+        .unwrap_or(0);
+    let max_seq_estimate = config.max_seq_len.min(args.max_tokens + 2048);
+    let kv_estimate = gpu::GpuKvCache::estimate_bytes(&config, max_seq_estimate);
+    let scratch_estimate = gpu::GpuForwardScratch::estimate_bytes(&config);
+
+    vram_session.print_startup_report(model_file_bytes, kv_estimate, scratch_estimate);
+    vram_session
+        .check_fits(model_file_bytes, kv_estimate, scratch_estimate)
+        .map_err(|e| format!("Insufficient VRAM: {}", e))?;
+    // ── end VRAM pre-flight ───────────────────────────────────────────────────────
+
+    // Warn if experimental GPU kernels are enabled (display-attached GPU safety)
+    if gpu::safety::experimental_gpu_kernels_enabled() {
+        eprintln!("  WARNING: ROCMFORGE_ENABLE_EXPERIMENTAL_GPU_KERNELS=1");
+        eprintln!("           Sparse CSR / MPO kernels are enabled. These can fault on");
+        eprintln!("           display-attached GPUs. Use only for testing.");
     }
 
     eprint!("Initializing GPU device... ");
@@ -516,10 +540,8 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         gpu::GpuDevice::init(gpu_caps.device_id).map_err(|e| format!("gpu init: {}", e))?;
     eprintln!("done");
 
-    let file = rocmforge::loader::ModelFile::open(&args.model)?;
     eprintln!("[Args] model path ({}): {}", file.format_name(), args.model);
 
-    let config = file.config()?;
     let tok = file.tokenizer();
     eprintln!(
         "[Tokenizer] bos_id={:?} eos_id={:?} add_bos={} add_eos={}",
@@ -573,172 +595,197 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         gpu::GpuLogitsMode::DownloadToHost
     };
 
-    // Check if we can use batched prefill for Q4_0 models
-    let can_use_batched_prefill = gpu_weights.uses_q4_0_quantization()
-        && prompt_tokens.len() > 1
-        && prompt_tokens.len() <= 512; // Limit batched prefill to reasonable sequence lengths
+    // ── Hotpath Router ────────────────────────────────────────────────────────────
+    // Build model profile from loaded weights and select the optimal inference path.
+    // This runs AFTER VRAM pre-flight (above) and BEFORE any scratch allocation.
+    let profile = gpu::ModelProfile::from_weights(&gpu_weights, &config);
+    let path = gpu::select_path(&profile, prompt_tokens.len(), &vram_session);
+    eprintln!("[Router] Model profile: {}", profile.summary());
+    eprintln!("[Router] Selected path: {}", path);
 
-    // VRAM safety gate: keep explicit headroom free for the desktop and driver.
-    let has_vram_headroom = if can_use_batched_prefill {
-        let prefill_bytes =
-            gpu::GpuPrefillScratch::estimate_total_bytes(&config, prompt_tokens.len());
-        let free_bytes = gpu_caps.free_vram_bytes;
-        let reserve_bytes = 5 * 1024 * 1024 * 1024usize;
-        let required_bytes = prefill_bytes.saturating_add(reserve_bytes);
-        if free_bytes < required_bytes {
-            eprintln!(
-                "Batched prefill VRAM check failed: need {:.1} MB total ({:.1} MB scratch + 5 GiB reserve), have {:.1} MB free. Using decode-style path.",
-                required_bytes as f64 / (1024.0 * 1024.0),
-                prefill_bytes as f64 / (1024.0 * 1024.0),
-                free_bytes as f64 / (1024.0 * 1024.0)
-            );
-            false
-        } else {
-            true
-        }
-    } else {
-        false
-    };
+    // Check path-specific VRAM requirements (e.g., batched prefill scratch).
+    if let Err(e) = gpu::check_path_vram(&path, &config, prompt_tokens.len(), &vram_session) {
+        eprintln!("[Router] Path VRAM check failed ({}), falling back to DecodeStyle", e);
+    }
 
-    let prompt_next_token = if can_use_batched_prefill && has_vram_headroom {
-        match gpu::GpuPrefillScratch::new(&config, prompt_tokens.len()) {
-            Ok(mut prefill_scratch) => {
-                eprintln!(
-                    "Using batched GPU prefill for Q4_0 model ({} tokens)",
-                    prompt_tokens.len()
-                );
-                match gpu::gpu_batched_prefill_forward_q4_0(
-                    &device,
-                    &gpu_weights,
-                    &cpu_weights,
-                    &mut kv,
-                    &mut prefill_scratch,
-                    &mut host_scratch,
-                    &prompt_tokens,
-                    0,
-                    &config,
-                    final_prompt_logits_mode,
-                ) {
-                    Ok(token) => token,
-                    Err(err) => {
-                        eprintln!("Batched GPU prefill failed ({}), falling back to decode-style prompt path", err);
-                        // Fallback to decode-style processing
-                        let mut prompt_next_token = None;
-                        for (pos, &token_id) in prompt_tokens.iter().enumerate() {
-                            gpu::gpu_embed_token_hybrid(
-                                &device,
-                                token_id,
-                                &gpu_weights,
-                                &cpu_weights,
-                                &mut gpu_scratch,
-                                &mut host_scratch,
-                                &config,
-                            )
-                            .map_err(|e| format!("gpu embed: {}", e))?;
-                            let logits_mode = if pos + 1 == prompt_tokens.len() {
-                                final_prompt_logits_mode
-                            } else {
-                                gpu::GpuLogitsMode::Skip
-                            };
-                            prompt_next_token = gpu::gpu_full_forward_hybrid(
-                                &device,
-                                &gpu_weights,
-                                &cpu_weights,
-                                &mut kv,
-                                &mut gpu_scratch,
-                                &mut host_scratch,
-                                pos,
-                                &config,
-                                logits_mode,
-                            )
-                            .map_err(|e| format!("gpu prefill/decode: {}", e))?;
-                        }
-                        prompt_next_token
-                    }
-                }
-            }
-            Err(err) => {
-                eprintln!(
-                    "Batched GPU prefill scratch allocation failed ({}), falling back to decode-style prompt path",
-                    err
-                );
-                // Fallback to decode-style processing
-                let mut prompt_next_token = None;
-                for (pos, &token_id) in prompt_tokens.iter().enumerate() {
-                    gpu::gpu_embed_token_hybrid(
-                        &device,
-                        token_id,
-                        &gpu_weights,
-                        &cpu_weights,
-                        &mut gpu_scratch,
-                        &mut host_scratch,
-                        &config,
-                    )
-                    .map_err(|e| format!("gpu embed: {}", e))?;
-                    let logits_mode = if pos + 1 == prompt_tokens.len() {
-                        final_prompt_logits_mode
-                    } else {
-                        gpu::GpuLogitsMode::Skip
-                    };
-                    prompt_next_token = gpu::gpu_full_forward_hybrid(
+    let prompt_next_token = match path {
+        gpu::InferencePath::BatchedPrefill { .. } => {
+            match gpu::GpuPrefillScratch::new(&config, prompt_tokens.len()) {
+                Ok(mut prefill_scratch) => {
+                    eprintln!(
+                        "Using batched GPU prefill for Q4_0 model ({} tokens)",
+                        prompt_tokens.len()
+                    );
+                    match gpu::gpu_batched_prefill_forward_q4_0(
                         &device,
                         &gpu_weights,
                         &cpu_weights,
                         &mut kv,
-                        &mut gpu_scratch,
+                        &mut prefill_scratch,
                         &mut host_scratch,
-                        pos,
+                        &prompt_tokens,
+                        0,
                         &config,
-                        logits_mode,
-                    )
-                    .map_err(|e| format!("gpu prefill/decode: {}", e))?;
+                        final_prompt_logits_mode,
+                    ) {
+                        Ok(token) => token,
+                        Err(err) => {
+                            eprintln!(
+                                "Batched GPU prefill failed ({}), falling back to decode-style prompt path",
+                                err
+                            );
+                            // Fallback to decode-style processing
+                            let mut prompt_next_token = None;
+                            for (pos, &token_id) in prompt_tokens.iter().enumerate() {
+                                gpu::gpu_embed_token_hybrid(
+                                    &device,
+                                    token_id,
+                                    &gpu_weights,
+                                    &cpu_weights,
+                                    &mut gpu_scratch,
+                                    &mut host_scratch,
+                                    &config,
+                                )
+                                .map_err(|e| format!("gpu embed: {}", e))?;
+                                let logits_mode = if pos + 1 == prompt_tokens.len() {
+                                    final_prompt_logits_mode
+                                } else {
+                                    gpu::GpuLogitsMode::Skip
+                                };
+                                prompt_next_token = gpu::gpu_full_forward_hybrid(
+                                    &device,
+                                    &gpu_weights,
+                                    &cpu_weights,
+                                    &mut kv,
+                                    &mut gpu_scratch,
+                                    &mut host_scratch,
+                                    pos,
+                                    &config,
+                                    logits_mode,
+                                )
+                                .map_err(|e| format!("gpu prefill/decode: {}", e))?;
+                            }
+                            prompt_next_token
+                        }
+                    }
                 }
-                prompt_next_token
+                Err(err) => {
+                    eprintln!(
+                        "Batched GPU prefill scratch allocation failed ({}), falling back to decode-style prompt path",
+                        err
+                    );
+                    // Fallback to decode-style processing
+                    let mut prompt_next_token = None;
+                    for (pos, &token_id) in prompt_tokens.iter().enumerate() {
+                        gpu::gpu_embed_token_hybrid(
+                            &device,
+                            token_id,
+                            &gpu_weights,
+                            &cpu_weights,
+                            &mut gpu_scratch,
+                            &mut host_scratch,
+                            &config,
+                        )
+                        .map_err(|e| format!("gpu embed: {}", e))?;
+                        let logits_mode = if pos + 1 == prompt_tokens.len() {
+                            final_prompt_logits_mode
+                        } else {
+                            gpu::GpuLogitsMode::Skip
+                        };
+                        prompt_next_token = gpu::gpu_full_forward_hybrid(
+                            &device,
+                            &gpu_weights,
+                            &cpu_weights,
+                            &mut kv,
+                            &mut gpu_scratch,
+                            &mut host_scratch,
+                            pos,
+                            &config,
+                            logits_mode,
+                        )
+                        .map_err(|e| format!("gpu prefill/decode: {}", e))?;
+                    }
+                    prompt_next_token
+                }
             }
         }
-    } else {
-        // Use decode-style processing for non-Q4_0 models or single tokens
-        if !gpu_weights.uses_q4_0_quantization() {
-            eprintln!("Batched GPU prefill only available for Q4_0 models, using decode-style prompt path");
-        } else if prompt_tokens.len() == 1 {
-            eprintln!("Single token prompt, using decode-style path");
-        } else {
-            eprintln!(
-                "Prompt too long for batched prefill ({}), using decode-style path",
-                prompt_tokens.len()
-            );
+        gpu::InferencePath::SvdOptimized => {
+            eprintln!("Using SVD-optimized decode-style path");
+            let mut prompt_next_token = None;
+            for (pos, &token_id) in prompt_tokens.iter().enumerate() {
+                gpu::gpu_embed_token_hybrid(
+                    &device,
+                    token_id,
+                    &gpu_weights,
+                    &cpu_weights,
+                    &mut gpu_scratch,
+                    &mut host_scratch,
+                    &config,
+                )
+                .map_err(|e| format!("gpu embed: {}", e))?;
+                let logits_mode = if pos + 1 == prompt_tokens.len() {
+                    final_prompt_logits_mode
+                } else {
+                    gpu::GpuLogitsMode::Skip
+                };
+                prompt_next_token = gpu::gpu_full_forward_hybrid(
+                    &device,
+                    &gpu_weights,
+                    &cpu_weights,
+                    &mut kv,
+                    &mut gpu_scratch,
+                    &mut host_scratch,
+                    pos,
+                    &config,
+                    logits_mode,
+                )
+                .map_err(|e| format!("gpu prefill/decode: {}", e))?;
+            }
+            prompt_next_token
         }
-        let mut prompt_next_token = None;
-        for (pos, &token_id) in prompt_tokens.iter().enumerate() {
-            gpu::gpu_embed_token_hybrid(
-                &device,
-                token_id,
-                &gpu_weights,
-                &cpu_weights,
-                &mut gpu_scratch,
-                &mut host_scratch,
-                &config,
-            )
-            .map_err(|e| format!("gpu embed: {}", e))?;
-            let logits_mode = if pos + 1 == prompt_tokens.len() {
-                final_prompt_logits_mode
+        gpu::InferencePath::DecodeStyle | gpu::InferencePath::CpuFallback { .. } => {
+            if !gpu_weights.uses_q4_0_quantization() {
+                eprintln!("Batched GPU prefill only available for Q4_0 models, using decode-style prompt path");
+            } else if prompt_tokens.len() == 1 {
+                eprintln!("Single token prompt, using decode-style path");
             } else {
-                gpu::GpuLogitsMode::Skip
-            };
-            prompt_next_token = gpu::gpu_full_forward_hybrid(
-                &device,
-                &gpu_weights,
-                &cpu_weights,
-                &mut kv,
-                &mut gpu_scratch,
-                &mut host_scratch,
-                pos,
-                &config,
-                logits_mode,
-            )
-            .map_err(|e| format!("gpu prefill/decode: {}", e))?;
+                eprintln!(
+                    "Prompt too long for batched prefill ({}), using decode-style path",
+                    prompt_tokens.len()
+                );
+            }
+            let mut prompt_next_token = None;
+            for (pos, &token_id) in prompt_tokens.iter().enumerate() {
+                gpu::gpu_embed_token_hybrid(
+                    &device,
+                    token_id,
+                    &gpu_weights,
+                    &cpu_weights,
+                    &mut gpu_scratch,
+                    &mut host_scratch,
+                    &config,
+                )
+                .map_err(|e| format!("gpu embed: {}", e))?;
+                let logits_mode = if pos + 1 == prompt_tokens.len() {
+                    final_prompt_logits_mode
+                } else {
+                    gpu::GpuLogitsMode::Skip
+                };
+                prompt_next_token = gpu::gpu_full_forward_hybrid(
+                    &device,
+                    &gpu_weights,
+                    &cpu_weights,
+                    &mut kv,
+                    &mut gpu_scratch,
+                    &mut host_scratch,
+                    pos,
+                    &config,
+                    logits_mode,
+                )
+                .map_err(|e| format!("gpu prefill/decode: {}", e))?;
+            }
+            prompt_next_token
         }
-        prompt_next_token
     };
 
     if args.debug {
@@ -751,6 +798,23 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         prefill_ms,
         prompt_tokens.len() as f64 / prefill_ms * 1000.0
     );
+
+    // Optional KV cache dump for compression research
+    if let Some(ref dump_path) = args.kv_dump {
+        eprint!("Dumping KV cache to {}... ", dump_path);
+        kv.dump_to_file(
+            std::path::Path::new(dump_path),
+            prompt_tokens.len(),
+            config.num_kv_heads,
+            config.head_dim,
+        )?;
+        eprintln!(
+            "done ({} layers × {} tokens × {} head_dim)",
+            config.num_layers,
+            prompt_tokens.len(),
+            config.head_dim
+        );
+    }
 
     // Prefill-only validation mode: exit after prefill with clear success/failure signal
     if args.prefill_only_validate {
@@ -1297,9 +1361,11 @@ mod main_tests {
             prefill_only_validate: false,
             draft_model: None,
             speculative_tokens: 0,
+            kv_dump: None,
         };
         assert!(!args.prefill_only_validate);
         assert!(args.draft_model.is_none());
         assert_eq!(args.speculative_tokens, 0);
+        assert!(args.kv_dump.is_none());
     }
 }

@@ -40,6 +40,12 @@ extern "C" __global__ void mpo_apply_f32_kernel(
         const int chi1 = site_dims[2];
         const int d1   = site_dims[5];
 
+        // Validate dimensions against buffer bounds
+        if (d0 <= 0 || chi1 <= 0 || d1 <= 0 || out_dim > d0 || in_dim > d1) {
+            if (out_idx < out_dim) y[out_idx] = 0.0f;
+            return;
+        }
+
         const float* site0 = sites;                     // [1, d0, chi1]
         const float* site1 = sites + d0 * chi1;         // [chi1, d1, 1]
 
@@ -69,6 +75,13 @@ extern "C" __global__ void mpo_apply_f32_kernel(
         const int d1   = site_dims[5];
         const int chi2 = site_dims[6];
         const int d2   = site_dims[9];
+
+        // Validate dimensions
+        if (d0 <= 0 || chi1 <= 0 || d1 <= 0 || chi2 <= 0 || d2 <= 0 ||
+            out_dim > d0 || in_dim > d2) {
+            if (out_idx < out_dim) y[out_idx] = 0.0f;
+            return;
+        }
 
         const float* site0 = sites;
         const float* site1 = sites + d0 * chi1;

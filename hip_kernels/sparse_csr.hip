@@ -32,7 +32,10 @@ extern "C" __global__ void sparse_csr_gemv_f32_kernel(
     // Each thread in the warp handles a subset of nonzeros in this row
     for (int idx = row_start + lane; idx < row_end; idx += 32) {
         const int col = col_indices[idx];
-        sum += values[idx] * x[col];
+        // Bounds check: col must be within [0, cols)
+        if (col >= 0 && col < cols) {
+            sum += values[idx] * x[col];
+        }
     }
 
     // Warp-level reduction

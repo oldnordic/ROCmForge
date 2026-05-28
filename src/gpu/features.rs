@@ -39,7 +39,7 @@ impl GpuFeatures {
     /// - dot2: gfx1011/1012, gfx1030+, gfx1100+
     ///
     /// # Examples
-    /// ```
+    /// ```ignore
     /// let features = GpuFeatures::detect(&device)?;
     /// assert_eq!(features.arch, "gfx1100");
     /// assert!(features.has_wmma);

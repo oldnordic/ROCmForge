@@ -7,6 +7,13 @@ use rocmforge::gpu::kernels::dispatch_sparse_csr_gemv_f32;
 use rocmforge::gpu::{GpuBuffer, GpuDevice};
 use serial_test::serial;
 
+fn skip_unless_experimental() {
+    if !rocmforge::gpu::safety::run_experimental_gpu_tests_enabled() {
+        eprintln!("Skipping — set ROCMFORGE_RUN_EXPERIMENTAL_GPU_TESTS=1 to enable experimental GPU tests");
+        std::process::exit(0);
+    }
+}
+
 fn upload_f32(data: &[f32]) -> rocmforge::gpu::GpuResult<GpuBuffer> {
     let mut buf = GpuBuffer::alloc(std::mem::size_of_val(data))?;
     let bytes = unsafe {
@@ -75,6 +82,7 @@ fn dense_to_csr(a: &[f32], rows: usize, cols: usize) -> (Vec<f32>, Vec<u32>, Vec
 #[test]
 #[serial]
 fn test_sparse_csr_gemv_basic() {
+    skip_unless_experimental();
     let device = init_device();
     let rows = 8usize;
     let cols = 6usize;
@@ -135,6 +143,7 @@ fn test_sparse_csr_gemv_basic() {
 #[test]
 #[serial]
 fn test_sparse_csr_gemv_identity() {
+    skip_unless_experimental();
     let device = init_device();
     let n = 8usize;
 
@@ -185,6 +194,7 @@ fn test_sparse_csr_gemv_identity() {
 #[test]
 #[serial]
 fn test_sparse_csr_gemv_diagonal() {
+    skip_unless_experimental();
     let device = init_device();
     let n = 16usize;
 
@@ -235,6 +245,7 @@ fn test_sparse_csr_gemv_diagonal() {
 #[test]
 #[serial]
 fn test_sparse_csr_gemv_empty_row() {
+    skip_unless_experimental();
     let device = init_device();
     let rows = 6usize;
     let cols = 4usize;

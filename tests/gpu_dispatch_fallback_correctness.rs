@@ -45,6 +45,10 @@ fn expect<T>(r: rocmforge::gpu::GpuResult<T>) -> T {
 #[test]
 #[serial]
 fn test_fallback_sparse_csr() {
+    if !rocmforge::gpu::safety::run_experimental_gpu_tests_enabled() {
+        eprintln!("Skipping test_fallback_sparse_csr — set ROCMFORGE_RUN_EXPERIMENTAL_GPU_TESTS=1 to enable");
+        return;
+    }
     let device = init_device();
     let rows = 4usize;
     let cols = 4usize;
@@ -113,6 +117,12 @@ fn test_fallback_sparse_csr() {
 #[test]
 #[serial]
 fn test_fallback_mpo() {
+    if !rocmforge::gpu::safety::run_experimental_gpu_tests_enabled() {
+        eprintln!(
+            "Skipping test_fallback_mpo — set ROCMFORGE_RUN_EXPERIMENTAL_GPU_TESTS=1 to enable"
+        );
+        return;
+    }
     let device = init_device();
 
     // 2-site MPO: d1=2, d2=2, chi=2

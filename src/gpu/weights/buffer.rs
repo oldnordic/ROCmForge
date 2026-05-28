@@ -62,6 +62,8 @@ impl GpuBuffer {
             hint: "hipMalloc returned null pointer".to_string(),
         })?;
 
+        super::super::vram_budget::track_allocation(size);
+
         Ok(Self {
             ptr: Some(nn),
             size,
@@ -251,6 +253,7 @@ impl Drop for GpuBuffer {
     fn drop(&mut self) {
         if let Some(nn) = self.ptr {
             ffi::hip_free(nn.as_ptr());
+            crate::gpu::vram_budget::track_deallocation(self.size);
             // Ignore errors in Drop - can't panic here
             self.ptr = None;
         }
