@@ -23,6 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     let mut svd_k: Option<u32> = None;
     let mut sparse_threshold: Option<f32> = None;
+    let mut residual_prune_threshold: Option<f32> = None;
     let mut mpo_chi_max: Option<u32> = None;
     let mut max_layers: Option<u32> = None;
     let mut input_path = String::new();
@@ -44,6 +45,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 idx += 2;
             } else {
                 eprintln!("Error: --sparse-threshold requires a value (e.g., 0.01)");
+                std::process::exit(1);
+            }
+        } else if args[idx] == "--residual-prune-threshold" {
+            if idx + 1 < args.len() {
+                residual_prune_threshold =
+                    Some(args[idx + 1].parse().expect("Invalid residual prune threshold"));
+                idx += 2;
+            } else {
+                eprintln!("Error: --residual-prune-threshold requires a magnitude value (e.g., 0.02)");
                 std::process::exit(1);
             }
         } else if args[idx] == "--mpo-chi-max" {
@@ -73,9 +83,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if input_path.is_empty() || output_path.is_empty() {
-        eprintln!(
-            "Usage: rocmforge-convert <input_gguf> <output_rfm> [--svd-k <K>] [--sparse-threshold <T>] [--mpo-chi-max <C>] [--max-layers <L>]"
-        );
+        eprintln!(concat!(
+            "Usage: rocmforge-convert <input_gguf> <output_rfm>\n",
+            "  [--svd-k <K>]                      SVD rank for low-rank correction\n",
+            "  [--sparse-threshold <T>]            Combined with --svd-k: store sparse residual\n",
+            "                                      when residual nnz ratio < T (0..1)\n",
+            "  [--residual-prune-threshold <M>]    Combined with --svd-k+--sparse-threshold:\n",
+            "                                      zero residual elements |r| < M before CSR\n",
+            "  [--mpo-chi-max <C>]                 MPO bond dimension for FFN compression\n",
+            "  [--max-layers <L>]                  Only convert first L layers (smoke testing)",
+        ));
         std::process::exit(1);
     }
 
@@ -181,7 +198,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok_or_else(|| format!("tensor disappeared during conversion: {}", tensor_name))?;
         align_offset(&mut out_file, &mut current_offset)?;
 
-        if let Some(k_val) = svd_k.filter(|_| should_svd_tensor(&tensor_name, &tensor)) {
+        // Combined SVD+sparse: when both --svd-k and --sparse-threshold are set
+        // for a suitable tensor, decompose with SVD, check if the residual is
+        // sparse, and store the residual as CSR.  Falls back to Q4 residual when
+        // the residual is too dense.
+        if let (Some(k_val), Some(threshold)) = (
+            svd_k.filter(|_| should_svd_tensor(&tensor_name, &tensor)),
+            sparse_threshold.filter(|_| should_compress_tensor(&tensor_name, &tensor)),
+        ) {
+            let used_sparse = convert_svd_sparse_tensor(
+                &tensor,
+                k_val,
+                threshold,
+                residual_prune_threshold,
+                &tensor_name,
+                &mut out_file,
+                &mut current_offset,
+                &mut entries,
+                &align_offset,
+            )?;
+            if used_sparse {
+                println!(
+                    "  SVD+sparse residual: {} rank {} (sparse CSR residual)",
+                    tensor_name, k_val
+                );
+            } else {
+                println!(
+                    "  SVD+sparse→dense fallback: {} rank {} (residual too dense, using Q4)",
+                    tensor_name, k_val
+                );
+            }
+        } else if let Some(k_val) = svd_k.filter(|_| should_svd_tensor(&tensor_name, &tensor)) {
             convert_svd_quant_tensor(
                 &tensor,
                 k_val,
@@ -192,7 +239,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &align_offset,
             )?;
             println!(
-                "  Decomposed & packed tensor: {} with SVD rank {}",
+                "  SVD: {} rank {}",
                 tensor_name, k_val
             );
         } else if let Some(threshold) =
@@ -914,6 +961,195 @@ fn quantize_matrix_q4_0(data: &[f32]) -> Vec<u8> {
         out.extend_from_slice(&q_block);
     }
     out
+}
+
+/// SVD + sparse-residual conversion.
+///
+/// 1. Dequantise tensor to F32.
+/// 2. Compute top-k SVD → low-rank approximation U·Vᵀ.
+/// 3. residual = W − U·Vᵀ.
+/// 4. If `residual_prune_threshold` is set, zero residual elements with
+///    |r| < threshold (magnitude pruning to introduce explicit sparsity).
+/// 5. If residual nnz_ratio < `sparse_threshold` → store residual as sparse CSR
+///    with type `SvdSparseCsr` and return `true`.
+/// 6. Otherwise fall back to `convert_svd_quant_tensor` (Q4 residual) and
+///    return `false`.
+fn convert_svd_sparse_tensor(
+    tensor: &TensorView,
+    k_rank: u32,
+    sparse_threshold: f32,
+    residual_prune_threshold: Option<f32>,
+    base_name: &str,
+    writer: &mut File,
+    current_offset: &mut u64,
+    entries: &mut Vec<RfmTensorEntry>,
+    align_offset: &impl Fn(&mut File, &mut u64) -> Result<(), std::io::Error>,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let in_dim = tensor.dims[0] as usize;
+    let out_dim = tensor.dims[1] as usize;
+
+    let w_f32 = match tensor.ggml_type {
+        GgmlType::Q4_0 => dequantize_q4_0_to_f32(tensor.data, tensor.element_count()),
+        GgmlType::Q4_K => {
+            let mut out = vec![0.0f32; tensor.element_count()];
+            rocmforge::cpu::quant::embed_q4_k(0, tensor.data, &mut out, tensor.element_count());
+            out
+        }
+        GgmlType::Q6_K => dequantize_q6_k_to_f32(tensor.data, tensor.element_count()),
+        GgmlType::F32 => bytes_to_f32(tensor.data),
+        other => {
+            return Err(
+                format!("Unsupported source type for SVD+sparse conversion: {:?}", other).into(),
+            )
+        }
+    };
+
+    let min_mn = out_dim.min(in_dim);
+    let k = (k_rank as usize).min(min_mn);
+    let (u_sigma, vt) = top_k_svd_quant(&w_f32, out_dim, in_dim, k);
+
+    let low_rank_approx = matmul(&u_sigma, &vt, out_dim, k, in_dim);
+
+    // residual = W - U·Vᵀ
+    let mut residual: Vec<f32> = w_f32
+        .iter()
+        .zip(low_rank_approx.iter())
+        .map(|(w, l)| w - l)
+        .collect();
+
+    // Optional magnitude pruning: zero out small residual elements to create
+    // explicit sparsity that CSR can exploit.
+    if let Some(prune_mag) = residual_prune_threshold {
+        let mut zeroed = 0usize;
+        for r in &mut residual {
+            if r.abs() < prune_mag {
+                *r = 0.0;
+                zeroed += 1;
+            }
+        }
+        println!(
+            "    magnitude pruned {}/{} residual elements (|r| < {:.4})",
+            zeroed,
+            residual.len(),
+            prune_mag
+        );
+    }
+
+    // Estimate sparsity of the residual (sample up to 4096 elements).
+    let count = residual.len();
+    let sample_size = count.min(4096);
+    let step = if count > sample_size { count / sample_size } else { 1 };
+    let nnz_sample = (0..sample_size)
+        .filter(|&i| {
+            let idx = i * step;
+            idx < residual.len() && residual[idx].abs() > 1e-6
+        })
+        .count();
+    let nnz_ratio = nnz_sample as f32 / sample_size as f32;
+
+    if nnz_ratio >= sparse_threshold {
+        // Residual too dense — fall back to Q4 quantised residual.
+        println!(
+            "    residual nnz {:.2}% >= threshold {:.2}% → Q4 fallback",
+            nnz_ratio * 100.0,
+            sparse_threshold * 100.0
+        );
+        convert_svd_quant_tensor(
+            tensor, k_rank, base_name, writer, current_offset, entries, align_offset,
+        )?;
+        return Ok(false);
+    }
+
+    // Build full CSR from residual.
+    let rows = out_dim;
+    let cols = in_dim;
+    let mut values: Vec<f32> = Vec::new();
+    let mut col_indices: Vec<u32> = Vec::new();
+    let mut row_offsets: Vec<u32> = vec![0u32; rows + 1];
+
+    for i in 0..rows {
+        for j in 0..cols {
+            let v = residual[i * cols + j];
+            if v.abs() > 1e-6 {
+                values.push(v);
+                col_indices.push(j as u32);
+            }
+        }
+        row_offsets[i + 1] = values.len() as u32;
+    }
+    let nnz = values.len();
+
+    // Write sparse residual payload.
+    align_offset(writer, current_offset)?;
+    let base_offset = *current_offset;
+    for &off in &row_offsets {
+        writer.write_all(&off.to_le_bytes())?;
+    }
+    for &col in &col_indices {
+        writer.write_all(&col.to_le_bytes())?;
+    }
+    for &val in &values {
+        writer.write_all(&val.to_le_bytes())?;
+    }
+    let base_size = ((rows + 1 + nnz) * 4 + nnz * 4) as u64;
+    *current_offset += base_size;
+
+    entries.push(RfmTensorEntry {
+        name: base_name.to_string(),
+        dims: tensor.dims.to_vec(),
+        wtype: RfmType::SvdSparseCsr {
+            k: k_rank,
+            rows: rows as u64,
+            cols: cols as u64,
+            nnz: nnz as u64,
+            index_bits: 32,
+            value_type: 0, // F32
+        },
+        offset: base_offset,
+        size: base_size,
+    });
+
+    // Write SVD U sub-tensor (F32 [out_dim, k]).
+    align_offset(writer, current_offset)?;
+    let u_offset = *current_offset;
+    for &x in &u_sigma {
+        writer.write_all(&x.to_le_bytes())?;
+    }
+    let u_size = (u_sigma.len() * 4) as u64;
+    *current_offset += u_size;
+    entries.push(RfmTensorEntry {
+        name: format!("{}.svd_u", base_name),
+        dims: vec![k_rank as u64, out_dim as u64],
+        wtype: RfmType::F32,
+        offset: u_offset,
+        size: u_size,
+    });
+
+    // Write SVD V sub-tensor (F32 [k, in_dim]).
+    align_offset(writer, current_offset)?;
+    let v_offset = *current_offset;
+    for &x in &vt {
+        writer.write_all(&x.to_le_bytes())?;
+    }
+    let v_size = (vt.len() * 4) as u64;
+    *current_offset += v_size;
+    entries.push(RfmTensorEntry {
+        name: format!("{}.svd_v", base_name),
+        dims: vec![in_dim as u64, k_rank as u64],
+        wtype: RfmType::F32,
+        offset: v_offset,
+        size: v_size,
+    });
+
+    println!(
+        "    residual nnz {:.2}% ({}/{} elements), sparse CSR {} nnz",
+        nnz_ratio * 100.0,
+        nnz,
+        rows * cols,
+        nnz
+    );
+
+    Ok(true)
 }
 
 fn convert_svd_quant_tensor(

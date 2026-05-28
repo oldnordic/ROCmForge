@@ -23,6 +23,19 @@ pub enum RfmType {
     GgufPassthrough(u32),
     /// Q4 Quantized weight with SVD outlier correction of rank k
     Q4SvdQuant { k: u32 },
+    /// SVD low-rank correction (U, V stored as `.svd_u` / `.svd_v` F32 entries) whose
+    /// residual (W − U·Vᵀ) is stored as sparse CSR instead of quantised Q4.
+    ///
+    /// The main tensor payload carries the sparse residual in the same layout as
+    /// `SparseCsr`.  The `.svd_u` / `.svd_v` companion tensors are F32.
+    SvdSparseCsr {
+        k: u32,
+        rows: u64,
+        cols: u64,
+        nnz: u64,
+        index_bits: u8,
+        value_type: u32,
+    },
     /// Sparse CSR matrix payload for mmap-backed CPU/RAM residency.
     ///
     /// Payload layout:
@@ -129,17 +142,28 @@ impl<'a> RfmTensorView<'a> {
         self.dims.iter().fold(1usize, |acc, &d| acc * d as usize)
     }
 
-    /// Interpret this tensor as sparse CSR when its RFM type is `SparseCsr`.
+    /// Interpret this tensor as sparse CSR.
+    ///
+    /// Matches both `SparseCsr` (residual-only) and `SvdSparseCsr` (SVD + sparse
+    /// residual).  Callers that need to distinguish can inspect `self.wtype`.
     pub fn as_sparse_csr(&self) -> Option<RfmSparseCsrView<'a>> {
-        let RfmType::SparseCsr {
-            rows,
-            cols,
-            nnz,
-            index_bits,
-            value_type,
-        } = self.wtype
-        else {
-            return None;
+        let (rows, cols, nnz, index_bits, value_type) = match self.wtype {
+            RfmType::SparseCsr {
+                rows,
+                cols,
+                nnz,
+                index_bits,
+                value_type,
+            } => (rows, cols, nnz, index_bits, value_type),
+            RfmType::SvdSparseCsr {
+                rows,
+                cols,
+                nnz,
+                index_bits,
+                value_type,
+                ..
+            } => (rows, cols, nnz, index_bits, value_type),
+            _ => return None,
         };
 
         let rows = rows as usize;

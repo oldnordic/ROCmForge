@@ -1022,7 +1022,7 @@ impl GpuLayerWeights {
 
                 let wtype = rfm_type_to_ggml(&t.wtype);
                 let svd_k = match t.wtype {
-                    RfmType::Q4SvdQuant { k } => Some(k),
+                    RfmType::Q4SvdQuant { k } | RfmType::SvdSparseCsr { k, .. } => Some(k),
                     _ => None,
                 };
                 let meta = WeightMeta {
@@ -1046,46 +1046,44 @@ impl GpuLayerWeights {
                         )?;
                         out_gpu_buf
                     }
-                    RfmType::SparseCsr { .. } | RfmType::Mpo { .. } => {
-                        // Upload raw data as-is; sparse/MPO dispatch will interpret it
+                    RfmType::SparseCsr { .. }
+                    | RfmType::SvdSparseCsr { .. }
+                    | RfmType::Mpo { .. } => {
                         upload_tensor_bytes_for_device(t.data, device_id)?
                     }
                     _ => upload_tensor_bytes_for_device(t.data, device_id)?,
                 };
 
-                let svd_corr = if let RfmType::Q4SvdQuant { k } = t.wtype {
-                    let u_name = format!("{}.svd_u", name);
-                    let v_name = format!("{}.svd_v", name);
-                    let u_t = file
-                        .tensor(&u_name)
-                        .map_err(|e| GpuError::HipApiError {
-                            code: -1,
-                            description: format!("SVD U lookup failed for {}: {}", name, e),
-                        })?
-                        .ok_or_else(|| GpuError::HipApiError {
-                            code: -1,
-                            description: format!("SVD U tensor not found: {}", u_name),
-                        })?;
-                    let v_t = file
-                        .tensor(&v_name)
-                        .map_err(|e| GpuError::HipApiError {
-                            code: -1,
-                            description: format!("SVD V lookup failed for {}: {}", name, e),
-                        })?
-                        .ok_or_else(|| GpuError::HipApiError {
-                            code: -1,
-                            description: format!("SVD V tensor not found: {}", v_name),
-                        })?;
-
-                    let u_buf = upload_tensor_bytes_for_device(u_t.data, device_id)?;
-                    let v_buf = upload_tensor_bytes_for_device(v_t.data, device_id)?;
-                    Some(SvdCorrection {
-                        u: u_buf,
-                        v: v_buf,
-                        k,
-                    })
-                } else {
-                    None
+                // Load SVD correction for both Q4SvdQuant and SvdSparseCsr types.
+                let svd_corr = match t.wtype {
+                    RfmType::Q4SvdQuant { k } | RfmType::SvdSparseCsr { k, .. } => {
+                        let u_name = format!("{}.svd_u", name);
+                        let v_name = format!("{}.svd_v", name);
+                        let u_t = file
+                            .tensor(&u_name)
+                            .map_err(|e| GpuError::HipApiError {
+                                code: -1,
+                                description: format!("SVD U lookup failed for {}: {}", name, e),
+                            })?
+                            .ok_or_else(|| GpuError::HipApiError {
+                                code: -1,
+                                description: format!("SVD U tensor not found: {}", u_name),
+                            })?;
+                        let v_t = file
+                            .tensor(&v_name)
+                            .map_err(|e| GpuError::HipApiError {
+                                code: -1,
+                                description: format!("SVD V lookup failed for {}: {}", name, e),
+                            })?
+                            .ok_or_else(|| GpuError::HipApiError {
+                                code: -1,
+                                description: format!("SVD V tensor not found: {}", v_name),
+                            })?;
+                        let u_buf = upload_tensor_bytes_for_device(u_t.data, device_id)?;
+                        let v_buf = upload_tensor_bytes_for_device(v_t.data, device_id)?;
+                        Some(SvdCorrection { u: u_buf, v: v_buf, k })
+                    }
+                    _ => None,
                 };
 
                 Ok((base_buf, meta, svd_corr))

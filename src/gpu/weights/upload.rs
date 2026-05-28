@@ -172,7 +172,9 @@ pub(super) fn rfm_type_to_ggml(t: &RfmType) -> GgmlType {
         RfmType::Q4Split | RfmType::Q4FusedGateUp => GgmlType::Q4_0,
         RfmType::Q4SvdQuant { .. } => GgmlType::Q4_0,
         RfmType::GgufPassthrough(v) => GgmlType::from_u32(*v).unwrap_or(GgmlType::Q4_0),
-        RfmType::SparseCsr { value_type, .. } | RfmType::Mpo { value_type, .. } => {
+        RfmType::SparseCsr { value_type, .. }
+        | RfmType::Mpo { value_type, .. }
+        | RfmType::SvdSparseCsr { value_type, .. } => {
             GgmlType::from_u32(*value_type).unwrap_or(GgmlType::F32)
         }
     }
@@ -276,6 +278,15 @@ pub(super) fn estimate_rfm_layer_vram(file: &RfmFile, layer: usize) -> GpuResult
                 }
                 RfmType::GgufPassthrough(_) => total += t.data.len(),
                 RfmType::SparseCsr { .. } | RfmType::Mpo { .. } => total += t.data.len(),
+                RfmType::SvdSparseCsr { k, .. } => {
+                    // Sparse residual + SVD U + SVD V
+                    total += t.data.len();
+                    if t.dims.len() >= 2 {
+                        let in_dim = t.dims[0] as usize;
+                        let out_dim = t.dims[1] as usize;
+                        total += (in_dim + out_dim) * (*k as usize) * 4;
+                    }
+                }
             }
         }
     }

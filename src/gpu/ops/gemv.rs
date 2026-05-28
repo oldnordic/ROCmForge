@@ -477,9 +477,25 @@ pub fn gpu_dispatch_gemv_with_fallback_on_stream(
     // Never dispatch them on a display-attached GPU unless explicitly enabled.
     if super::super::safety::experimental_gpu_kernels_enabled() {
         if let Some(sparse) = sparse_weights {
-            return gpu_dispatch_sparse_csr_gemv_on_stream(
+            // Compute y = sparse_residual * x.
+            gpu_dispatch_sparse_csr_gemv_on_stream(
                 device, sparse, input, output, out_dim, in_dim, stream,
-            );
+            )?;
+            // If SVD correction is also present (SvdSparseCsr type), add U·(V·x).
+            if let Some(svd_corr) = svd {
+                crate::gpu::kernels::elementwise::dispatch_svd_correction(
+                    stream,
+                    &svd_corr.u,
+                    &svd_corr.v,
+                    svd_corr.k,
+                    input,
+                    output,
+                    in_dim,
+                    out_dim,
+                    temp_vector,
+                )?;
+            }
+            return Ok(());
         }
 
         if let Some(mpo) = mpo_weights {

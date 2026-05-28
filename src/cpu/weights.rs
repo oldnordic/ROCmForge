@@ -531,7 +531,9 @@ fn rfm_type_to_ggml(t: &RfmType) -> GgmlType {
         RfmType::F32 => GgmlType::F32,
         RfmType::Q4Split | RfmType::Q4FusedGateUp | RfmType::Q4SvdQuant { .. } => GgmlType::Q4_0,
         RfmType::GgufPassthrough(v) => GgmlType::from_u32(*v).unwrap_or(GgmlType::Q4_0),
-        RfmType::SparseCsr { value_type, .. } | RfmType::Mpo { value_type, .. } => {
+        RfmType::SparseCsr { value_type, .. }
+        | RfmType::Mpo { value_type, .. }
+        | RfmType::SvdSparseCsr { value_type, .. } => {
             GgmlType::from_u32(*value_type).unwrap_or(GgmlType::F32)
         }
     }
@@ -649,6 +651,45 @@ fn unpack_q4_split(data: &[u8], num_elements: usize) -> Vec<u8> {
         out.push(scales[i * 2]);
         out.push(scales[i * 2 + 1]);
         out.extend_from_slice(&nibbles[i * 16..(i + 1) * 16]);
+    }
+    out
+}
+
+/// Unpack a sparse CSR payload into a dense F32 matrix stored as raw bytes.
+///
+/// Used by the CPU fallback path for `SvdSparseCsr` tensors where the SVD
+/// correction is GPU-only.  The CPU gets only the sparse residual (approximate).
+fn sparse_csr_to_dense_f32_bytes(data: &[u8], rows: usize, cols: usize, nnz: usize) -> Vec<u8> {
+    let row_bytes = (rows + 1) * 4;
+    let col_bytes = nnz * 4;
+    let row_offsets: &[u32] = unsafe {
+        std::slice::from_raw_parts(data.as_ptr() as *const u32, rows + 1)
+    };
+    let col_indices: &[u32] = unsafe {
+        std::slice::from_raw_parts(data[row_bytes..].as_ptr() as *const u32, nnz)
+    };
+    let values: &[f32] = unsafe {
+        std::slice::from_raw_parts(data[row_bytes + col_bytes..].as_ptr() as *const f32, nnz)
+    };
+
+    let mut dense = vec![0.0f32; rows * cols];
+    for r in 0..rows {
+        let start = row_offsets[r] as usize;
+        let end = row_offsets[r + 1] as usize;
+        for idx in start..end {
+            let c = col_indices[idx] as usize;
+            if c < cols {
+                dense[r * cols + c] = values[idx];
+            }
+        }
+    }
+    let mut out = vec![0u8; rows * cols * 4];
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            dense.as_ptr() as *const u8,
+            out.as_mut_ptr(),
+            out.len(),
+        );
     }
     out
 }
@@ -939,6 +980,10 @@ impl CpuLayerWeights {
                     unpack_q4_split(gate_view.data, gate_view.element_count())
                 }
                 RfmType::F32 | RfmType::GgufPassthrough(_) => gate_view.data.to_vec(),
+                RfmType::SvdSparseCsr { rows, cols, nnz, .. } => {
+                    // CPU fallback: unpack sparse residual to dense F32 (SVD correction GPU-only).
+                    sparse_csr_to_dense_f32_bytes(gate_view.data, rows as usize, cols as usize, nnz as usize)
+                }
                 RfmType::SparseCsr { .. } | RfmType::Mpo { .. } | RfmType::Q4FusedGateUp => {
                     return Err(WeightError::Load(LoadError::UnknownTensorType(999)));
                 }
@@ -948,6 +993,9 @@ impl CpuLayerWeights {
                     unpack_q4_split(up_view.data, up_view.element_count())
                 }
                 RfmType::F32 | RfmType::GgufPassthrough(_) => up_view.data.to_vec(),
+                RfmType::SvdSparseCsr { rows, cols, nnz, .. } => {
+                    sparse_csr_to_dense_f32_bytes(up_view.data, rows as usize, cols as usize, nnz as usize)
+                }
                 RfmType::SparseCsr { .. } | RfmType::Mpo { .. } | RfmType::Q4FusedGateUp => {
                     return Err(WeightError::Load(LoadError::UnknownTensorType(999)));
                 }
