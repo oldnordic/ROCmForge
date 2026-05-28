@@ -2,6 +2,119 @@
 
 ## [Unreleased]
 
+### [GPU Backend]
+
+**feat(gpu): MPO apply kernel + correctness tests**
+
+- **Date:** May 28, 2026
+- **Summary:** Implemented GPU kernel for MPO (Matrix Product Operator) apply: y = MPO * x, where the MPO is a chain of site tensors [chi_left, d_i, chi_right]. This is the first runtime execution path for MPO-compressed tensors in `.rfm`.
+- **Features:**
+  - Added `hip_kernels/mpo.hip` with `mpo_apply_f32_kernel` supporting 2-site, 3-site, and generic n-site contraction (up to 8 sites, chi <= 64).
+  - Contraction proceeds right-to-left: starts with input vector x, contracts with the last site, propagates bond vectors through the chain, and finishes with the first site producing output y.
+  - Added `src/gpu/kernels/mpo.rs` Rust dispatch wrapper `dispatch_mpo_apply_f32()` with null-pointer and dimension validation.
+  - Registered MPO kernel in `build.rs` and re-exported from `src/gpu/kernels/mod.rs`.
+  - Added `tests/gpu_mpo_correctness.rs` with 3 tests:
+    - `test_mpo_apply_2site_basic` — random 2-site MPO against CPU reference
+    - `test_mpo_apply_2site_identity_like` — structured identity-like MPO
+    - `test_mpo_apply_3site_basic` — 3-site MPO with two bond dimensions
+- **Important Pending Work:**
+  - MPO apply is a standalone kernel, not yet wired into `GpuGemvMode::MpoApply` dispatch in `src/gpu/ops/gemv.rs`.
+  - No batched MPO apply for prefill yet.
+  - chi > 64 falls back to zero output (shared memory limit); needs multi-block or global-memory fallback.
+- **Files Changed:**
+  - `hip_kernels/mpo.hip` (new)
+  - `src/gpu/kernels/mpo.rs` (new)
+  - `src/gpu/kernels/mod.rs` (re-export)
+  - `build.rs` (kernel registration)
+  - `tests/gpu_mpo_correctness.rs` (new)
+- **Verified:**
+  - `cargo fmt --all -- --check`
+  - `cargo check --all-targets --features gpu`
+  - `cargo clippy --all-targets --features gpu -- -D warnings`
+  - `cargo test --lib --features gpu` (298 passed)
+  - `cargo test --features gpu --test gpu_mpo_correctness` (7 passed)
+
+**feat(gpu/rfm): wire Qwen 3.6 MoE forward path and add sparse/MPO RFM containers**
+
+- **Date:** May 28, 2026
+- **Summary:** Continued Qwen 3.6 support by wiring MoE expert routing into the GPU decode path and extending `.rfm` so it can carry sparse CSR and MPO-compressed tensors for future CPU/RAM spillover execution.
+- **Completed:**
+  - Implemented Qwen-style MoE routing in the GPU layer forward path:
+    - Computes router logits on stream.
+    - Selects top-k experts (`k=8`) with softmax-normalized routing weights.
+    - Dispatches per-expert `ffn_gate`, `ffn_up`, and `ffn_down` GEMVs from 3D expert banks by pointer offset.
+    - Accumulates weighted expert outputs into the residual stream.
+  - Added shared expert execution for Qwen MoE tensors:
+    - Loads `ffn_gate_shexp.weight`, `ffn_up_shexp.weight`, `ffn_down_shexp.weight`, and `ffn_gate_inp_shexp.weight`.
+    - Applies the shared expert contribution with its learned gate scalar.
+  - Added GPU helper kernels/wrappers for weighted residual accumulation and F16/F32 dot products used by the shared expert gate.
+  - Added raw-pointer GEMV dispatch for expert-bank slices, avoiding per-expert buffer materialization.
+  - Extended `.rfm` with first-class sparse/MPO tensor metadata:
+    - `RfmType::SparseCsr { rows, cols, nnz, index_bits, value_type }`
+    - `RfmType::Mpo { n_sites, chi_max, value_type }`
+  - Added zero-copy mmap views for sparse CSR and MPO payloads:
+    - `RfmTensorView::as_sparse_csr()`
+    - `RfmTensorView::as_mpo()`
+  - Integrated sparse/MPO metadata into CPU/GPU RFM type mapping and VRAM estimation.
+  - Added explicit CPU/GPU loader rejection for sparse/MPO tensors in existing dense load paths so compressed tensors cannot be silently misread as dense weights.
+- **Generated Artifact:**
+  - Built `qwen3.6_full.rfm` at ~23 GB with 1790 tensors:
+    - 298 `Q4SvdQuant`
+    - 393 3D expert passthrough tensors
+    - 40 layers
+    - tokenizer embedded
+    - all 40 `ffn_gate_inp_shexp.weight` tensors stored without wasteful SVD.
+- **Important Pending Work:**
+  - Sparse CSR and MPO are format/container support only. Runtime execution is not implemented yet.
+  - `.rfm` conversion does not yet automatically choose SparseCsr/MPO layouts from tensor statistics.
+  - CPU/RAM spillover is not wired. Large tensors can be represented in `.rfm`, but there is no lazy page-in/offload scheduler or sparse/MPO GEMV backend yet.
+  - Need sparse CSR GEMV kernel/dispatch path, likely with a CPU fallback first and GPU acceleration later.
+  - MPO apply kernel exists (see May 28, 2026 entry) but is not yet wired into `GpuGemvMode::MpoApply` dispatch in `src/gpu/ops/gemv.rs`.
+  - Need policy/quality gates before enabling sparse/MPO conversion by default: sparsity thresholds, reconstruction error checks, and per-tensor fallback to dense/SVD-Quant.
+- **Files Changed:**
+  - `src/gpu/forward/layer.rs` (MoE routing, expert dispatch, shared expert execution)
+  - `src/gpu/weights/layer.rs` (MoE/shared expert loading, sparse/MPO dense-path rejection)
+  - `src/gpu/ops/gemv.rs` and `src/gpu/ops/mod.rs` (raw-pointer GEMV dispatch)
+  - `hip_kernels/elementwise.hip`, `src/gpu/kernels/elementwise.rs`, `src/gpu/kernels/mod.rs` (weighted add and dot helpers)
+  - `src/loader/rfm.rs` (Sparse CSR/MPO RFM variants and zero-copy views)
+  - `src/cpu/weights.rs`, `src/gpu/weights/upload.rs`, `src/gpu/weights/model.rs` (RFM type handling and explicit unsupported paths)
+- **Verified:**
+  - `cargo fmt --all -- --check`
+  - `cargo check --all-targets`
+  - `cargo test rfm --lib` (4 passed)
+  - `cargo test --lib` (149 passed)
+  - `cargo clippy --all-targets -- -D warnings`
+  - `cargo check --features gpu --all-targets`
+  - `cargo clippy --features gpu --all-targets -- -D warnings`
+  - `magellan refresh --db .magellan/rocmforge.db --output pretty`
+  - `magellan doctor --db .magellan/rocmforge.db`
+
+### [GPU Backend]
+
+**feat(gpu): SVD-Quant Low-Rank Outlier Acceleration for Qwen 3.6 MoE**
+
+- **Date:** May 27, 2026
+- **Summary:** Implemented SVD-Quant offline decomposition and active GPU inference acceleration in the `.rfm` format for Qwen 3.6 MoE, and validated weight loading and GPU-stream dual-kernel execution on AMD RDNA3 (Radeon RX 7900 XT).
+- **Features & Enhancements:**
+  - **SVD-Quant Converter & Jacobi SVD Sweeps:** Ported the `top_k_svd_quant` Jacobi SVD algorithm to `src/bin/convert.rs` to isolate top-k singular vectors from weights. Added a `--svd-k <K>` CLI flag to serialize low-rank matrices $U$ and $V^T$ into the `.rfm` format.
+  - **Smoke-Test Mode (`--max-layers`):** Added a `--max-layers <L>` flag to the converter to slice GGUF models down to a specified layer depth (e.g. 2 layers). Reduces full conversion from hours to 10 seconds, enabling ultra-fast verification of GPU weight loading and stream execution.
+  - **Generalized SVD Matching for Qwen 3.6 MoE:** Enhanced `should_svd_tensor` in `convert.rs` to capture non-standard naming schemes, including MoE experts (`_exps`), shared experts (`_shexp`), gates (`_inp`), and visual/MTP attention projections.
+  - **Qwen 3.6 MoE Architecture Registry (`qwen35moe`):** Registered the `"qwen35moe"` architecture to use `FusedQkv` layout mapping and the `GgufMoE` naming scheme.
+  - **Hardened MoE Weight Loaders:** Updated CPU/GPU weight loaders (`src/cpu/weights.rs` and `src/gpu/weights/layer.rs`) to dynamically fallback to `_exps` names when GgufMoE is active, preventing initialization crashes on missing dense FFN weight tensors.
+  - **On-Stream Low-Rank Correction Stream Dispatch:** Implemented dual-kernel asynchronous SVD corrections ($y += U_k \cdot (V_k \cdot x)$) in `dispatch_gemv_impl` (`src/gpu/ops/gemv.rs`), running parallel corrections alongside base quantized GEMV on the GPU stream.
+  - **Diagnostic Hardening & Precision Alignment:** Hardened Q8_0 block scale representations (`36` bytes total size) across FFI kernels (`q8_0_dequantize.hip`, `q8_0_verify.hip`, `q8_0_gemv.hip`), and resolved inline residual rounding divergences, aligning GPU dequantization to $<1\text{e-}6$ precision parity.
+- **Fidelity & Execution Findings:**
+  - Offline SVD sweep on Qwen 3.6 MoE yielded a $1.7\text{x}$ accuracy improvement at $k=1$ relative to naive quantization, reducing relative error from $6.62\%$ to $3.79\%$.
+  - Discovered that Qwen 3.6 MoE uses hybrid State Space Model (SSM/Mamba-style) layers. While `.rfm` weight packing and loader parsing succeed (consuming only ~670 MB VRAM for a 2-layer smoke model on the RX 7900 XT), standard GPU execution throws an `UnsupportedOperation` since native HIP Mamba kernels are not yet implemented in `rocmforge`.
+- **Files Changed:**
+  - `src/bin/convert.rs` (fused/MoE SVD parsing, `--max-layers`, Jacobi SVD implementation)
+  - `src/config/traits.rs` (registered `qwen35moe` architecture traits)
+  - `src/gpu/weights/layer.rs`, `src/cpu/weights.rs` (MoE fallback resolution, SvdCorrection weights structs)
+  - `src/gpu/ops/gemv.rs` (async low-rank correction stream dispatch)
+  - `src/gpu/quant/types.rs` (fixed Q8_0 block size memory mismatch to 36 bytes)
+  - `hip_kernels/quant/` (updated `q8_0_dequantize.hip`, `q8_0_verify.hip`, `q8_0_gemv.hip`)
+  - `tests/gpu_svd_correctness.rs` (new, end-to-end SVD execution correctness verify)
+
 ### [Research]
 
 **research: SVD-Quant and MPO weight compression analysis on Qwen3.5-4B**
