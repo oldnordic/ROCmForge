@@ -584,6 +584,31 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut kv = gpu::GpuKvCache::new(&config, max_seq).map_err(|e| format!("gpu kv: {}", e))?;
     let mut gpu_scratch =
         gpu::GpuForwardScratch::new(&config).map_err(|e| format!("gpu scratch: {}", e))?;
+
+    // Allocate per-expert GPU scratch if any layer has compressed MoE experts.
+    for layer in &gpu_weights.layers {
+        if let Some(ref c) = layer.ffn_gate_compressed {
+            let max_nnz = [
+                layer.ffn_gate_compressed.as_ref(),
+                layer.ffn_up_compressed.as_ref(),
+                layer.ffn_down_compressed.as_ref(),
+            ]
+            .iter()
+            .filter_map(|x| x.as_ref())
+            .map(|x| x.max_nnz())
+            .max()
+            .unwrap_or(1);
+            gpu_scratch
+                .init_expert_scratch(c.k as u32, c.rows, c.cols, max_nnz)
+                .map_err(|e| format!("expert scratch init: {}", e))?;
+            eprintln!(
+                "  Expert scratch: k={}, rows={}, cols={}, max_nnz={}",
+                c.k, c.rows, c.cols, max_nnz
+            );
+            break; // all layers share the same expert dimensions
+        }
+    }
+
     let mut host_scratch = CpuForwardScratch::new(&config);
     let use_greedy = args.top_p >= 1.0;
     let use_gpu_greedy_fastpath = use_greedy && !args.debug;
