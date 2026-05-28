@@ -31,6 +31,9 @@ mod gpu_build {
             ("matmul", "hip_kernels/matmul.hip"),
             ("elementwise", "hip_kernels/elementwise.hip"),
             ("attention", "hip_kernels/attention.hip"),
+            ("ssm", "hip_kernels/ssm.hip"),
+            ("sparse_csr", "hip_kernels/sparse_csr.hip"),
+            ("mpo", "hip_kernels/mpo.hip"),
         ];
 
         let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set");

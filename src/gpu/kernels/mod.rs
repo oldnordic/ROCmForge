@@ -7,12 +7,15 @@
 
 pub mod attention;
 pub mod elementwise;
+pub mod mpo;
 pub mod norm;
 pub mod q8_decode;
 pub mod q8_gemv;
 pub mod quant;
 pub mod quant_gqa;
 pub mod rope;
+pub mod sparse_csr;
+pub mod ssm;
 
 /// Check if a pointer is aligned to a given boundary.
 pub(crate) fn is_aligned<T>(ptr: *const T, alignment: usize) -> bool {
@@ -27,9 +30,10 @@ pub use attention::{
     kv_write_rope_from_state_on_stream, kv_write_rope_on_stream,
 };
 pub use elementwise::{
-    add, add_batched, add_on_stream, argmax_f32, argmax_f32_on_stream, embed_q4_0_batch,
-    embed_q4_0_token, embed_q8_0_batch, embed_q8_0_token, gelu, increment_decode_state_on_stream,
-    mul, mul_batched, mul_on_stream, scale, silu, silu_on_stream, zero_fill,
+    add, add_batched, add_on_stream, argmax_f32, argmax_f32_on_stream, dot_f16_f32_on_stream,
+    embed_q4_0_batch, embed_q4_0_token, embed_q8_0_batch, embed_q8_0_token, gelu,
+    increment_decode_state_on_stream, mul, mul_batched, mul_on_stream, scale, silu, silu_on_stream,
+    weighted_add_on_stream, zero_fill,
 };
 pub use norm::{rms_norm, rms_norm_batched, rms_norm_on_stream, rms_norm_vulkan_style};
 pub use q8_decode::{
@@ -77,7 +81,16 @@ pub use rope::{
     rope_heads_on_stream,
 };
 // Re-export batched kernels for prefill
+pub use mpo::dispatch_mpo_apply_f32;
 pub use quant::batched::{
     batched_fused_gate_up_q4_0_f32, batched_gemm_q4_0_f32, batched_gemm_q4_1_f32,
     wmma_matmul_q4_0_f32,
+};
+pub use sparse_csr::dispatch_sparse_csr_gemv_f32;
+pub use ssm::{
+    dispatch_batched_conv1d_silu, dispatch_batched_fused_qk_l2_norm_scale,
+    dispatch_batched_fused_sigmoid_alpha_gate, dispatch_batched_gated_delta_net,
+    dispatch_batched_gated_norm, dispatch_conv1d_silu, dispatch_fused_qk_l2_norm_scale,
+    dispatch_fused_sigmoid_alpha_gate, dispatch_gated_delta_net, dispatch_gated_norm,
+    dispatch_repeat_interleave_qk,
 };
