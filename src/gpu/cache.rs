@@ -784,6 +784,51 @@ pub struct GpuForwardScratch {
     decode_state_next_pos: Option<usize>,
     /// Cached executable graph for repeated decode work.
     captured_decode: Option<CapturedDecodeGraph>,
+    /// Pre-allocated GPU scratch for per-expert H2D upload during MoE decode.
+    /// None for non-MoE or non-compressed models.
+    pub expert_scratch: Option<GpuExpertScratch>,
+}
+
+/// Pre-allocated GPU buffers for uploading one expert's compressed data at decode time.
+///
+/// Allocated once when a compressed-expert model is detected; reused across all
+/// layers and tokens.  Sized for the largest expert dimensions in the model.
+pub struct GpuExpertScratch {
+    /// U factor upload buffer: [rows * k] F32
+    pub u: GpuBuffer,
+    /// V factor upload buffer: [k * cols] F32
+    pub v: GpuBuffer,
+    /// CSR values upload buffer: [max_nnz] F32
+    pub csr_values: GpuBuffer,
+    /// CSR col-index upload buffer: [max_nnz] u32
+    pub csr_col_idx: GpuBuffer,
+    /// CSR row-pointer upload buffer: [rows + 1] u32
+    pub csr_row_ptr: GpuBuffer,
+    /// Intermediate k-vector for V·x computation
+    pub temp_v: GpuBuffer,
+    pub k: u32,
+    pub rows: usize,
+    pub cols: usize,
+    pub max_nnz: usize,
+}
+
+impl GpuExpertScratch {
+    pub fn new(k: u32, rows: usize, cols: usize, max_nnz: usize) -> GpuResult<Self> {
+        let ku = k as usize;
+        let nnz = max_nnz.max(1); // avoid zero-size allocation
+        Ok(Self {
+            u:           GpuBuffer::alloc(rows * ku * 4)?,
+            v:           GpuBuffer::alloc(ku * cols * 4)?,
+            csr_values:  GpuBuffer::alloc(nnz * 4)?,
+            csr_col_idx: GpuBuffer::alloc(nnz * 4)?,
+            csr_row_ptr: GpuBuffer::alloc((rows + 1) * 4)?,
+            temp_v:      GpuBuffer::alloc(ku * 4)?,
+            k,
+            rows,
+            cols,
+            max_nnz: nnz,
+        })
+    }
 }
 
 impl GpuForwardScratch {
@@ -808,6 +853,21 @@ impl GpuForwardScratch {
                 + v            // logits
                 + 2 * argmax_partials  // argmax partial values + indices
                 + 3) // argmax_result_device (1) + decode_state (2)
+    }
+
+    /// Allocate expert scratch buffers for compressed MoE dispatch.
+    ///
+    /// Call once after detecting compressed experts in the loaded model.
+    /// Sizes the buffers for the given expert dimensions.
+    pub fn init_expert_scratch(
+        &mut self,
+        k: u32,
+        rows: usize,
+        cols: usize,
+        max_nnz: usize,
+    ) -> GpuResult<()> {
+        self.expert_scratch = Some(GpuExpertScratch::new(k, rows, cols, max_nnz)?);
+        Ok(())
     }
 
     /// Allocate scratch buffers in GPU VRAM.
@@ -986,6 +1046,7 @@ impl GpuForwardScratch {
             decode_state_host,
             decode_state_next_pos: None,
             captured_decode: None,
+            expert_scratch: None,
         })
     }
 

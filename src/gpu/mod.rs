@@ -41,7 +41,7 @@ pub mod vram_budget;
 pub mod weights;
 
 pub use arch::GpuArchitecture;
-pub use cache::{GpuForwardScratch, GpuKvCache, GpuPrefillScratch};
+pub use cache::{GpuExpertScratch, GpuForwardScratch, GpuKvCache, GpuPrefillScratch};
 pub use decode_profile::{
     decode_stage_profile_snapshot, reset_decode_stage_profile, GpuDecodeStageProfileSnapshot,
 };
