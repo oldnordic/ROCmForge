@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### [Docs]
+
+**docs: complete CLI reference in README and MANUAL**
+
+- **Date:** May 28, 2026
+- **Summary:** README and MANUAL CLI tables were missing `--kv-dump`, `--prefill-only-validate`, `--draft-model`, and `--speculative-tokens`. Both files now list every supported flag with description.
+- **Files Changed:** `README.md`, `MANUAL.md`
+
 ### [GPU Backend]
 
 **feat(gpu): InferencePath router with model-profile-driven hotpath selection**

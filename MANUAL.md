@@ -42,15 +42,21 @@ CPU fallback:
 
 Valid CLI options from current binary:
 
-- `--model <path>`
-- `--prompt <text>`
-- `--gpu`
-- `--max-tokens N`
-- `--temperature F`
-- `--top-p F`
-- `--no-template`
-- `--list-tensors`
-- `--debug`
+| Option | Description |
+|---|---|
+| `--model <path>` | GGUF or RFM model path |
+| `--prompt <text>` | Prompt text |
+| `--gpu` | Use GPU backend |
+| `--max-tokens N` | Max generated tokens (default: 256) |
+| `--temperature F` | Sampling temperature (default: 1.0) |
+| `--top-p F` | Nucleus sampling threshold (default: 0.9) |
+| `--no-template` | Disable chat template |
+| `--list-tensors` | Print tensors and exit |
+| `--debug` | Print top logits info |
+| `--kv-dump <path>` | Dump post-prefill KV cache to binary file (research tool, CPU copy, slow) |
+| `--prefill-only-validate` | Run prefill only; exits 0 on finite logits, 1 on NaN/Inf |
+| `--draft-model <path>` | Draft model for speculative decoding |
+| `--speculative-tokens N` | Speculative tokens per step (default: 4) |
 
 `--device` is not supported by the current CLI.
 

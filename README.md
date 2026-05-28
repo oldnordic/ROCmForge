@@ -56,7 +56,7 @@ Supported CLI options (from `--help`):
 
 | Option | Description |
 |---|---|
-| `--model <path>` | GGUF model path |
+| `--model <path>` | GGUF or RFM model path |
 | `--prompt <text>` | Prompt text |
 | `--gpu` | Use GPU backend |
 | `--max-tokens N` | Max generated tokens (default: 256) |
@@ -65,6 +65,10 @@ Supported CLI options (from `--help`):
 | `--no-template` | Disable chat template |
 | `--list-tensors` | Print tensors and exit |
 | `--debug` | Print debug logits info |
+| `--kv-dump <path>` | Dump post-prefill KV cache to binary file (research tool) |
+| `--prefill-only-validate` | Run prefill only, exit 0 on valid logits, 1 on NaN/Inf |
+| `--draft-model <path>` | Draft model path for speculative decoding |
+| `--speculative-tokens N` | Number of speculative tokens per step (default: 4) |
 
 Note: `--device` is not a valid flag in the current binary.
 
