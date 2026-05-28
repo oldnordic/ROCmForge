@@ -198,6 +198,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok_or_else(|| format!("tensor disappeared during conversion: {}", tensor_name))?;
         align_offset(&mut out_file, &mut current_offset)?;
 
+        // 3D MoE expert tensors: always use per-expert SVD+sparse when --svd-k is set.
+        // Must be checked BEFORE the 2D combined path to avoid falling through.
+        if tensor.dims.len() == 3 && should_svd_tensor(&tensor_name, &tensor) {
+            if let Some(k_val) = svd_k {
+                convert_moe_expert_svd_sparse(
+                    &tensor,
+                    k_val,
+                    residual_prune_threshold,
+                    &tensor_name,
+                    &mut out_file,
+                    &mut current_offset,
+                    &mut entries,
+                    &align_offset,
+                )?;
+                println!(
+                    "  MoE expert SVD+sparse: {} ({} experts, k={})",
+                    tensor_name, tensor.dims[2], k_val
+                );
+                continue;
+            }
+        }
+
         // Combined SVD+sparse: when both --svd-k and --sparse-threshold are set
         // for a suitable tensor, decompose with SVD, check if the residual is
         // sparse, and store the residual as CSR.  Falls back to Q4 residual when
@@ -424,6 +446,23 @@ fn parse_layer_idx(name: &str) -> Option<usize> {
 }
 
 fn should_svd_tensor(name: &str, tensor: &TensorView) -> bool {
+    // 3D MoE expert tensors: [cols, rows, n_experts]
+    if tensor.dims.len() == 3 {
+        let n_experts = tensor.dims[2] as usize;
+        let rows = tensor.dims[1] as usize;
+        let cols = tensor.dims[0] as usize;
+        if n_experts < 2 || rows < 64 || cols < 64 {
+            return false;
+        }
+        return matches!(
+            tensor.ggml_type,
+            GgmlType::Q4_0 | GgmlType::Q4_K | GgmlType::Q6_K | GgmlType::F32
+        ) && name.ends_with(".weight")
+            && (name.contains("ffn_gate_exps")
+                || name.contains("ffn_up_exps")
+                || name.contains("ffn_down_exps"));
+    }
+
     if tensor.dims.len() != 2 {
         return false;
     }
@@ -1150,6 +1189,136 @@ fn convert_svd_sparse_tensor(
     );
 
     Ok(true)
+}
+
+/// Per-expert SVD + magnitude-pruned sparse CSR residual for 3D MoE expert tensors.
+///
+/// Tensor dims: `[cols, rows, n_experts]` (GGUF convention).
+/// Expert `i` data in flat array: `w_f32[i * rows * cols .. (i+1) * rows * cols]`
+/// as a `[rows, cols]` matrix in row-major.
+///
+/// Payload layout written matches `MoeExpertSvdSparse`:
+/// U[n_experts*rows*k] | V[n_experts*k*cols] | row_ptr[n_experts*(rows+1)]
+/// | col_idx[total_nnz] | values[total_nnz] | expert_nnz[n_experts]
+fn convert_moe_expert_svd_sparse(
+    tensor: &TensorView,
+    k_rank: u32,
+    residual_prune_threshold: Option<f32>,
+    base_name: &str,
+    writer: &mut File,
+    current_offset: &mut u64,
+    entries: &mut Vec<RfmTensorEntry>,
+    align_offset: &impl Fn(&mut File, &mut u64) -> Result<(), std::io::Error>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_eq!(tensor.dims.len(), 3, "convert_moe_expert_svd_sparse requires 3D tensor");
+    let cols      = tensor.dims[0] as usize; // in_dim (fastest-varying in GGUF)
+    let rows      = tensor.dims[1] as usize; // out_dim
+    let n_experts = tensor.dims[2] as usize;
+    let k         = (k_rank as usize).min(rows.min(cols));
+    let total_elements = cols * rows * n_experts;
+
+    let w_f32 = match tensor.ggml_type {
+        GgmlType::Q4_0 => dequantize_q4_0_to_f32(tensor.data, total_elements),
+        GgmlType::Q4_K => {
+            let mut out = vec![0.0f32; total_elements];
+            rocmforge::cpu::quant::embed_q4_k(0, tensor.data, &mut out, total_elements);
+            out
+        }
+        GgmlType::Q6_K => dequantize_q6_k_to_f32(tensor.data, total_elements),
+        GgmlType::F32  => bytes_to_f32(tensor.data),
+        other => return Err(format!("unsupported type for MoE SVD+sparse: {:?}", other).into()),
+    };
+
+    let mut all_u    = Vec::<f32>::with_capacity(n_experts * rows * k);
+    let mut all_v    = Vec::<f32>::with_capacity(n_experts * k * cols);
+    let mut all_rp   = Vec::<u32>::with_capacity(n_experts * (rows + 1));
+    let mut all_ci   = Vec::<u32>::new();
+    let mut all_vals = Vec::<f32>::new();
+    let mut expert_nnz = Vec::<u32>::with_capacity(n_experts);
+
+    println!("    {} experts, rows={}, cols={}, k={}", n_experts, rows, cols, k);
+
+    for e in 0..n_experts {
+        let slice = &w_f32[e * rows * cols..(e + 1) * rows * cols];
+
+        let (u_sigma, vt) = top_k_svd_quant(slice, rows, cols, k);
+        let low_rank = matmul(&u_sigma, &vt, rows, k, cols);
+
+        let mut residual: Vec<f32> = slice.iter().zip(low_rank.iter()).map(|(w, l)| w - l).collect();
+        if let Some(mag) = residual_prune_threshold {
+            for r in &mut residual {
+                if r.abs() < mag {
+                    *r = 0.0;
+                }
+            }
+        }
+
+        let mut row_ptr = vec![0u32; rows + 1];
+        let mut col_idx = Vec::<u32>::new();
+        let mut values  = Vec::<f32>::new();
+        for r in 0..rows {
+            for c in 0..cols {
+                let v = residual[r * cols + c];
+                if v.abs() > 1e-9 {
+                    col_idx.push(c as u32);
+                    values.push(v);
+                }
+            }
+            row_ptr[r + 1] = values.len() as u32;
+        }
+        let nnz = values.len();
+
+        all_u.extend_from_slice(&u_sigma);
+        all_v.extend_from_slice(&vt);
+        all_rp.extend_from_slice(&row_ptr);
+        all_ci.extend_from_slice(&col_idx);
+        all_vals.extend_from_slice(&values);
+        expert_nnz.push(nnz as u32);
+    }
+
+    let total_nnz = all_ci.len();
+
+    align_offset(writer, current_offset)?;
+    let base_offset = *current_offset;
+
+    for &x in &all_u    { writer.write_all(&x.to_le_bytes())?; }
+    for &x in &all_v    { writer.write_all(&x.to_le_bytes())?; }
+    for &x in &all_rp   { writer.write_all(&x.to_le_bytes())?; }
+    for &x in &all_ci   { writer.write_all(&x.to_le_bytes())?; }
+    for &x in &all_vals { writer.write_all(&x.to_le_bytes())?; }
+    for &x in &expert_nnz { writer.write_all(&x.to_le_bytes())?; }
+
+    let payload_size = (all_u.len() + all_v.len() + all_vals.len()) as u64 * 4
+        + (all_rp.len() + all_ci.len() + expert_nnz.len()) as u64 * 4;
+    *current_offset += payload_size;
+
+    entries.push(RfmTensorEntry {
+        name: base_name.to_string(),
+        dims: tensor.dims.to_vec(),
+        wtype: RfmType::MoeExpertSvdSparse {
+            n_experts: n_experts as u32,
+            k: k as u32,
+            rows: rows as u64,
+            cols: cols as u64,
+            total_nnz: total_nnz as u64,
+            index_bits: 32,
+            value_type: 0, // F32
+        },
+        offset: base_offset,
+        size: payload_size,
+    });
+
+    let avg_nnz = if n_experts > 0 { total_nnz as f64 / n_experts as f64 } else { 0.0 };
+    let sparsity = 1.0 - avg_nnz / (rows * cols).max(1) as f64;
+    println!(
+        "    avg nnz {:.0}/{} per expert ({:.1}% sparse), total_nnz={}",
+        avg_nnz,
+        rows * cols,
+        sparsity * 100.0,
+        total_nnz
+    );
+
+    Ok(())
 }
 
 fn convert_svd_quant_tensor(
