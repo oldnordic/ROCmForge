@@ -59,6 +59,27 @@ pub enum RfmType {
         chi_max: u32,
         value_type: u32,
     },
+    /// Per-expert SVD low-rank + sparse CSR residual for MoE weight tensors.
+    ///
+    /// Original tensor shape: `[cols, rows, n_experts]` (GGUF convention —
+    /// `cols = dims[0]` is fastest-varying, `n_experts = dims[2]` is outermost).
+    ///
+    /// Payload layout (byte-exact):
+    /// - U matrices:      `[n_experts * rows * k]` F32 (packed row-major)
+    /// - V matrices:      `[n_experts * k * cols]` F32 (packed row-major)
+    /// - CSR row_ptr:     `[n_experts * (rows + 1)]` u32 (experts concatenated)
+    /// - CSR col_idx:     `[total_nnz]` u32
+    /// - CSR values:      `[total_nnz]` F32
+    /// - per-expert NNZ:  `[n_experts]` u32
+    MoeExpertSvdSparse {
+        n_experts: u32,
+        k: u32,
+        rows: u64,
+        cols: u64,
+        total_nnz: u64,
+        index_bits: u8,
+        value_type: u32,
+    },
 }
 
 /// An entry in the .rfm tensor table.
