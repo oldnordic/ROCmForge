@@ -287,7 +287,9 @@ impl CpuLayerWeights {
         };
 
         let (attn_o, attn_o_meta) = if layer_has_fused_qkv {
-            let meta = attn_qkv_meta.as_ref().ok_or(WeightError::Load(LoadError::UnknownTensorType(999)))?;
+            let meta = attn_qkv_meta
+                .as_ref()
+                .ok_or(WeightError::Load(LoadError::UnknownTensorType(999)))?;
             (Vec::new(), meta.clone())
         } else {
             load_weight(
@@ -816,7 +818,9 @@ impl CpuLayerWeights {
             )
         };
         let (attn_o, attn_o_meta) = if layer_has_fused_qkv {
-            let meta = attn_qkv_meta.as_ref().ok_or(WeightError::Load(LoadError::UnknownTensorType(999)))?;
+            let meta = attn_qkv_meta
+                .as_ref()
+                .ok_or(WeightError::Load(LoadError::UnknownTensorType(999)))?;
             (Vec::new(), meta.clone())
         } else {
             let o_view = file

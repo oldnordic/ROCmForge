@@ -446,7 +446,8 @@ mod tests {
     }
 
     #[test]
-    fn test_rfm_qwen35_fused_attention_metadata_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_rfm_qwen35_fused_attention_metadata_roundtrip() -> Result<(), Box<dyn std::error::Error>>
+    {
         let dir = std::env::temp_dir();
         let path = dir.join("test_qwen35_fused_attention.rfm");
 
@@ -520,7 +521,9 @@ mod tests {
         assert!(rfm.has_tensor("blk.0.ssm_out.weight"));
         assert!(!rfm.has_tensor("blk.0.attn_q.weight"));
 
-        let qkv = rfm.tensor("blk.0.attn_qkv.weight")?.ok_or("tensor not found")?;
+        let qkv = rfm
+            .tensor("blk.0.attn_qkv.weight")?
+            .ok_or("tensor not found")?;
         assert_eq!(qkv.dims, &[4096, 8192]);
         assert_eq!(qkv.wtype, RfmType::GgufPassthrough(12));
 

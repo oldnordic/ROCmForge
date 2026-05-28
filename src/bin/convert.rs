@@ -22,6 +22,8 @@ pub const RFM_VERSION: u32 = 1;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     let mut svd_k: Option<u32> = None;
+    let mut sparse_threshold: Option<f32> = None;
+    let mut mpo_chi_max: Option<u32> = None;
     let mut max_layers: Option<u32> = None;
     let mut input_path = String::new();
     let mut output_path = String::new();
@@ -34,6 +36,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 idx += 2;
             } else {
                 eprintln!("Error: --svd-k requires a rank value");
+                std::process::exit(1);
+            }
+        } else if args[idx] == "--sparse-threshold" {
+            if idx + 1 < args.len() {
+                sparse_threshold = Some(args[idx + 1].parse().expect("Invalid sparse threshold"));
+                idx += 2;
+            } else {
+                eprintln!("Error: --sparse-threshold requires a value (e.g., 0.01)");
+                std::process::exit(1);
+            }
+        } else if args[idx] == "--mpo-chi-max" {
+            if idx + 1 < args.len() {
+                mpo_chi_max = Some(args[idx + 1].parse().expect("Invalid MPO chi max"));
+                idx += 2;
+            } else {
+                eprintln!("Error: --mpo-chi-max requires a value");
                 std::process::exit(1);
             }
         } else if args[idx] == "--max-layers" {
@@ -56,7 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if input_path.is_empty() || output_path.is_empty() {
         eprintln!(
-            "Usage: rocmforge-convert <input_gguf> <output_rfm> [--svd-k <K>] [--max-layers <L>]"
+            "Usage: rocmforge-convert <input_gguf> <output_rfm> [--svd-k <K>] [--sparse-threshold <T>] [--mpo-chi-max <C>] [--max-layers <L>]"
         );
         std::process::exit(1);
     }
@@ -176,6 +194,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!(
                 "  Decomposed & packed tensor: {} with SVD rank {}",
                 tensor_name, k_val
+            );
+        } else if let Some(threshold) =
+            sparse_threshold.filter(|_| should_compress_tensor(&tensor_name, &tensor))
+        {
+            let nnz_ratio = estimate_nnz_ratio(&tensor);
+            if nnz_ratio < threshold {
+                convert_sparse_csr_tensor(
+                    &tensor,
+                    &tensor_name,
+                    &mut out_file,
+                    &mut current_offset,
+                    &mut entries,
+                    &align_offset,
+                )?;
+                println!(
+                    "  Converted to sparse CSR: {} (nnz ratio {:.2}%)",
+                    tensor_name,
+                    nnz_ratio * 100.0
+                );
+            } else {
+                let wtype = rfm_type_for_tensor(&tensor);
+                let payload_size = pack_tensor(&tensor, &mut out_file, wtype)?;
+                entries.push(RfmTensorEntry {
+                    name: tensor_name.clone(),
+                    dims: tensor.dims.to_vec(),
+                    wtype,
+                    offset: current_offset,
+                    size: payload_size,
+                });
+                current_offset += payload_size;
+                println!(
+                    "  Packed tensor: {} with type {:?} (sparse skipped: nnz ratio {:.2}%)",
+                    tensor_name,
+                    wtype,
+                    nnz_ratio * 100.0
+                );
+            }
+        } else if let Some(chi_max) =
+            mpo_chi_max.filter(|_| should_compress_tensor(&tensor_name, &tensor))
+        {
+            convert_mpo_tensor(
+                &tensor,
+                chi_max,
+                &tensor_name,
+                &mut out_file,
+                &mut current_offset,
+                &mut entries,
+                &align_offset,
+            )?;
+            println!(
+                "  Converted to MPO: {} with chi_max {}",
+                tensor_name, chi_max
             );
         } else {
             let wtype = rfm_type_for_tensor(&tensor);
@@ -332,6 +402,206 @@ fn should_svd_tensor(name: &str, tensor: &TensorView) -> bool {
             || name.contains("ffn_gate")
             || name.contains("ffn_up")
             || name.contains("ffn_down"))
+}
+
+fn should_compress_tensor(name: &str, tensor: &TensorView) -> bool {
+    if tensor.dims.len() != 2 {
+        return false;
+    }
+    if tensor.dims.iter().any(|&d| d < 64) {
+        return false;
+    }
+    matches!(
+        tensor.ggml_type,
+        GgmlType::F32 | GgmlType::Q4_0 | GgmlType::Q4_K | GgmlType::Q6_K
+    ) && name.ends_with(".weight")
+        && (name.contains("ffn_gate") || name.contains("ffn_up") || name.contains("ffn_down"))
+}
+
+/// Estimate the nnz ratio of a tensor by dequantizing a sample and counting nonzeros.
+fn estimate_nnz_ratio(tensor: &TensorView) -> f32 {
+    let count = tensor.element_count();
+    let sample_size = count.min(4096);
+    let step = if count > sample_size {
+        count / sample_size
+    } else {
+        1
+    };
+
+    let w_f32 = match tensor.ggml_type {
+        GgmlType::Q4_0 => dequantize_q4_0_to_f32(tensor.data, count),
+        GgmlType::Q4_K => {
+            let mut out = vec![0.0f32; count];
+            rocmforge::cpu::quant::embed_q4_k(0, tensor.data, &mut out, count);
+            out
+        }
+        GgmlType::Q6_K => dequantize_q6_k_to_f32(tensor.data, count),
+        GgmlType::F32 => bytes_to_f32(tensor.data),
+        _ => return 1.0f32, // Unknown type, don't compress
+    };
+
+    let mut nnz = 0usize;
+    for i in 0..sample_size {
+        let idx = i * step;
+        if idx < w_f32.len() && w_f32[idx].abs() > 1e-6 {
+            nnz += 1;
+        }
+    }
+
+    (nnz as f32) / (sample_size as f32)
+}
+
+/// Convert a dense tensor to sparse CSR format and write to RFM.
+fn convert_sparse_csr_tensor(
+    tensor: &TensorView,
+    base_name: &str,
+    writer: &mut File,
+    current_offset: &mut u64,
+    entries: &mut Vec<RfmTensorEntry>,
+    align_offset: &impl Fn(&mut File, &mut u64) -> Result<(), std::io::Error>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let rows = tensor.dims[0] as usize;
+    let cols = tensor.dims[1] as usize;
+
+    let w_f32 = match tensor.ggml_type {
+        GgmlType::Q4_0 => dequantize_q4_0_to_f32(tensor.data, tensor.element_count()),
+        GgmlType::Q4_K => {
+            let mut out = vec![0.0f32; tensor.element_count()];
+            rocmforge::cpu::quant::embed_q4_k(0, tensor.data, &mut out, tensor.element_count());
+            out
+        }
+        GgmlType::Q6_K => dequantize_q6_k_to_f32(tensor.data, tensor.element_count()),
+        GgmlType::F32 => bytes_to_f32(tensor.data),
+        other => {
+            return Err(format!(
+                "Unsupported source type for sparse CSR conversion: {:?}",
+                other
+            )
+            .into())
+        }
+    };
+
+    // Build CSR from dense
+    let mut values = Vec::new();
+    let mut col_indices = Vec::new();
+    let mut row_offsets = vec![0u32; rows + 1];
+
+    for i in 0..rows {
+        for j in 0..cols {
+            let v = w_f32[i * cols + j];
+            if v.abs() > 1e-6 {
+                values.push(v);
+                col_indices.push(j as u32);
+            }
+        }
+        row_offsets[i + 1] = values.len() as u32;
+    }
+
+    let nnz = values.len();
+    let index_bits: u8 = 32;
+    let value_type: u32 = 0; // F32
+
+    // Write payload: row_offsets (u32) + col_indices (u32) + values (f32)
+    align_offset(writer, current_offset)?;
+    let payload_offset = *current_offset;
+
+    for &off in &row_offsets {
+        writer.write_all(&off.to_le_bytes())?;
+    }
+    for &col in &col_indices {
+        writer.write_all(&col.to_le_bytes())?;
+    }
+    for &val in &values {
+        writer.write_all(&val.to_le_bytes())?;
+    }
+
+    let payload_size = (row_offsets.len() + col_indices.len()) * 4 + values.len() * 4;
+    *current_offset += payload_size as u64;
+
+    entries.push(RfmTensorEntry {
+        name: base_name.to_string(),
+        dims: tensor.dims.to_vec(),
+        wtype: RfmType::SparseCsr {
+            rows: rows as u64,
+            cols: cols as u64,
+            nnz: nnz as u64,
+            index_bits,
+            value_type,
+        },
+        offset: payload_offset,
+        size: payload_size as u64,
+    });
+
+    Ok(())
+}
+
+/// Convert a dense tensor to MPO (Matrix Product Operator) format using SVD-based tensor train.
+fn convert_mpo_tensor(
+    tensor: &TensorView,
+    chi_max: u32,
+    base_name: &str,
+    writer: &mut File,
+    current_offset: &mut u64,
+    entries: &mut Vec<RfmTensorEntry>,
+    align_offset: &impl Fn(&mut File, &mut u64) -> Result<(), std::io::Error>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let rows = tensor.dims[0] as usize;
+    let cols = tensor.dims[1] as usize;
+
+    let w_f32 = match tensor.ggml_type {
+        GgmlType::Q4_0 => dequantize_q4_0_to_f32(tensor.data, tensor.element_count()),
+        GgmlType::Q4_K => {
+            let mut out = vec![0.0f32; tensor.element_count()];
+            rocmforge::cpu::quant::embed_q4_k(0, tensor.data, &mut out, tensor.element_count());
+            out
+        }
+        GgmlType::Q6_K => dequantize_q6_k_to_f32(tensor.data, tensor.element_count()),
+        GgmlType::F32 => bytes_to_f32(tensor.data),
+        other => {
+            return Err(format!("Unsupported source type for MPO conversion: {:?}", other).into())
+        }
+    };
+
+    // Simple 2-site MPO decomposition: factor matrix into A1 * A2
+    // A1: [rows, chi], A2: [chi, cols]
+    // We use the existing top_k_svd_quant for this.
+    let chi = (chi_max as usize).min(rows.min(cols));
+    let (u_sigma, vt) = top_k_svd_quant(&w_f32, rows, cols, chi);
+
+    // site_dims layout: [chi_l, d_out, chi_r, 1] per site
+    // Site 0: [1, rows, chi, 1]
+    // Site 1: [chi, cols, 1, 1]
+    let site_dims: Vec<u64> = vec![1, rows as u64, chi as u64, 1, chi as u64, cols as u64, 1, 1];
+
+    // Flatten site data: u_sigma (rows * chi) followed by vt (chi * cols)
+    let mut site_data = Vec::with_capacity(u_sigma.len() + vt.len());
+    site_data.extend_from_slice(&u_sigma);
+    site_data.extend_from_slice(&vt);
+
+    // Write payload
+    align_offset(writer, current_offset)?;
+    let payload_offset = *current_offset;
+
+    for &val in &site_data {
+        writer.write_all(&val.to_le_bytes())?;
+    }
+
+    let payload_size = site_data.len() * 4;
+    *current_offset += payload_size as u64;
+
+    entries.push(RfmTensorEntry {
+        name: base_name.to_string(),
+        dims: site_dims,
+        wtype: RfmType::Mpo {
+            n_sites: 2,
+            chi_max,
+            value_type: 0, // F32
+        },
+        offset: payload_offset,
+        size: payload_size as u64,
+    });
+
+    Ok(())
 }
 
 /// Fuses two independent FFN Gate and Up Q4_0 tensors into a single interleaved layout.
@@ -832,5 +1102,169 @@ mod tests {
         let out = dequantize_q6_k_to_f32(&data, rocmforge::cpu::quant::Q6_K_BLOCK_ELEMS);
         assert_eq!(out.len(), rocmforge::cpu::quant::Q6_K_BLOCK_ELEMS);
         assert!(out.iter().all(|x| *x == 0.0));
+    }
+
+    #[test]
+    fn test_convert_sparse_csr_tensor_basic() -> Result<(), Box<dyn std::error::Error>> {
+        use std::fs;
+        use std::io::Read;
+
+        // Create a simple 4x4 dense matrix with some zeros
+        let mut data = vec![0.0f32; 16];
+        data[0] = 1.0;
+        data[2] = 2.0;
+        data[5] = 3.0;
+        data[14] = 4.0;
+        data[15] = 5.0;
+
+        let dims: Vec<u64> = vec![4, 4];
+        let tensor = TensorView {
+            name: "test.weight",
+            dims: &dims,
+            ggml_type: GgmlType::F32,
+            data: unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 4) },
+        };
+
+        let tmp_path = std::env::temp_dir().join("test_sparse_csr.rfm");
+        let mut file = File::create(&tmp_path)?;
+        let mut offset = 0u64;
+        let mut entries = Vec::new();
+
+        convert_sparse_csr_tensor(
+            &tensor,
+            "test.weight",
+            &mut file,
+            &mut offset,
+            &mut entries,
+            &|f, o| {
+                let rem = *o % 256;
+                if rem > 0 {
+                    let pad = vec![0u8; (256 - rem) as usize];
+                    f.write_all(&pad)?;
+                    *o += 256 - rem;
+                }
+                Ok(())
+            },
+        )?;
+        drop(file);
+
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.name, "test.weight");
+        assert_eq!(entry.dims, vec![4, 4]);
+
+        let RfmType::SparseCsr {
+            rows,
+            cols,
+            nnz,
+            index_bits,
+            value_type,
+        } = entry.wtype
+        else {
+            panic!("Expected SparseCsr type, got {:?}", entry.wtype);
+        };
+        assert_eq!(rows, 4);
+        assert_eq!(cols, 4);
+        assert_eq!(nnz, 5);
+        assert_eq!(index_bits, 32);
+        assert_eq!(value_type, 0);
+        assert_eq!(entry.size, 60);
+
+        // Verify payload bytes are written
+        let mut file = File::open(&tmp_path)?;
+        let mut payload = vec![0u8; entry.size as usize];
+        file.seek(std::io::SeekFrom::Start(entry.offset))?;
+        file.read_exact(&mut payload)?;
+
+        // First 5 u32s are row_offsets: [0, 2, 3, 3, 5]
+        let row_offsets: Vec<u32> = (0..5)
+            .map(|i| {
+                u32::from_le_bytes([
+                    payload[i * 4],
+                    payload[i * 4 + 1],
+                    payload[i * 4 + 2],
+                    payload[i * 4 + 3],
+                ])
+            })
+            .collect();
+        assert_eq!(row_offsets, vec![0, 2, 3, 3, 5]);
+
+        fs::remove_file(&tmp_path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_convert_mpo_tensor_basic() -> Result<(), Box<dyn std::error::Error>> {
+        use std::fs;
+        use std::io::Read;
+
+        let left = [1.0f32, 2.0, 3.0, 4.0];
+        let right = [0.5f32, 1.0, 1.5];
+        let mut data = vec![0.0f32; 12];
+        for row in 0..4 {
+            for col in 0..3 {
+                data[row * 3 + col] = left[row] * right[col];
+            }
+        }
+
+        let dims: Vec<u64> = vec![4, 3];
+        let tensor = TensorView {
+            name: "test.weight",
+            dims: &dims,
+            ggml_type: GgmlType::F32,
+            data: unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 4) },
+        };
+
+        let tmp_path = std::env::temp_dir().join("test_mpo.rfm");
+        let mut file = File::create(&tmp_path)?;
+        let mut offset = 0u64;
+        let mut entries = Vec::new();
+
+        convert_mpo_tensor(
+            &tensor,
+            2,
+            "test.weight",
+            &mut file,
+            &mut offset,
+            &mut entries,
+            &|f, o| {
+                let rem = *o % 256;
+                if rem > 0 {
+                    let pad = vec![0u8; (256 - rem) as usize];
+                    f.write_all(&pad)?;
+                    *o += 256 - rem;
+                }
+                Ok(())
+            },
+        )?;
+        drop(file);
+
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.name, "test.weight");
+
+        let RfmType::Mpo {
+            n_sites,
+            chi_max,
+            value_type,
+        } = entry.wtype
+        else {
+            panic!("Expected Mpo type, got {:?}", entry.wtype);
+        };
+        assert_eq!(n_sites, 2);
+        assert_eq!(chi_max, 2);
+        assert_eq!(value_type, 0);
+        assert_eq!(entry.dims, vec![1, 4, 2, 1, 2, 3, 1, 1]);
+        assert_eq!(entry.size, 56);
+
+        // Verify payload bytes
+        let mut file = File::open(&tmp_path)?;
+        let mut payload = vec![0u8; entry.size as usize];
+        file.seek(std::io::SeekFrom::Start(entry.offset))?;
+        file.read_exact(&mut payload)?;
+        assert_eq!(payload.len(), 56);
+
+        fs::remove_file(&tmp_path)?;
+        Ok(())
     }
 }

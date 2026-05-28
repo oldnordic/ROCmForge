@@ -66,7 +66,7 @@
     - all 40 `ffn_gate_inp_shexp.weight` tensors stored without wasteful SVD.
 - **Important Pending Work:**
   - ~~Sparse CSR and MPO are format/container support only. Runtime execution is not implemented yet.~~ **DONE** — both are now wired into the FFN forward path via `gpu_dispatch_gemv_with_fallback_on_stream()`.
-  - `.rfm` conversion does not yet automatically choose SparseCsr/MPO layouts from tensor statistics.
+  - ~~`.rfm` conversion does not yet automatically choose SparseCsr/MPO layouts from tensor statistics.~~ **DONE** — converter now supports `--sparse-threshold <T>` and `--mpo-chi-max <C>` flags.
   - CPU/RAM spillover is not wired. Large tensors can be represented in `.rfm`, but there is no lazy page-in/offload scheduler yet.
   - ~~Need sparse CSR GEMV kernel/dispatch path, likely with a CPU fallback first and GPU acceleration later.~~ **DONE** — `gpu_dispatch_sparse_csr_gemv_on_stream()` dispatches to `dispatch_sparse_csr_gemv_f32()`.
   - ~~MPO apply kernel exists (see May 28, 2026 entry) but is not yet wired into `GpuGemvMode::MpoApply` dispatch in `src/gpu/ops/gemv.rs`.~~ **DONE** — wired via `gpu_dispatch_gemv_with_fallback_on_stream()`.

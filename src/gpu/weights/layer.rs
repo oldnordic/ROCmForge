@@ -479,10 +479,12 @@ impl GpuLayerWeights {
                 .unwrap_or_default(),
         )?;
         let (attn_o, attn_o_meta) = if layer_has_fused_qkv {
-            let meta = attn_qkv_meta.as_ref().ok_or_else(|| GpuError::HipApiError {
-                code: -1,
-                description: "attn_qkv_meta missing for fused QKV layer".to_string(),
-            })?;
+            let meta = attn_qkv_meta
+                .as_ref()
+                .ok_or_else(|| GpuError::HipApiError {
+                    code: -1,
+                    description: "attn_qkv_meta missing for fused QKV layer".to_string(),
+                })?;
             (GpuBuffer::empty(), meta.clone())
         } else {
             load_weight(
@@ -1230,10 +1232,12 @@ impl GpuLayerWeights {
             )
         };
         let (attn_o, attn_o_meta, attn_o_svd) = if layer_has_fused_qkv {
-            let meta = attn_qkv_meta.as_ref().ok_or_else(|| GpuError::HipApiError {
-                code: -1,
-                description: "attn_qkv_meta missing for fused QKV layer".to_string(),
-            })?;
+            let meta = attn_qkv_meta
+                .as_ref()
+                .ok_or_else(|| GpuError::HipApiError {
+                    code: -1,
+                    description: "attn_qkv_meta missing for fused QKV layer".to_string(),
+                })?;
             (GpuBuffer::empty(), meta.clone(), None)
         } else {
             let o_view = file
