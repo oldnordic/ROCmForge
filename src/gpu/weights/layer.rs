@@ -390,6 +390,104 @@ fn try_load_mpo(file: &RfmFile, name: &str, device_id: i32) -> GpuResult<Option<
     }))
 }
 
+/// Parse a `MoeExpertSvdSparse` RFM tensor into CPU-resident `CpuCompressedExperts`.
+/// Returns `Ok(None)` if the tensor is absent or not the right type.
+fn try_load_compressed_experts(
+    file: &RfmFile,
+    name: &str,
+) -> GpuResult<Option<CpuCompressedExperts>> {
+    let t = match file.tensor(name) {
+        Ok(Some(t)) => t,
+        _ => return Ok(None),
+    };
+    let (n_experts, k, rows, cols, total_nnz, index_bits) = match t.wtype {
+        RfmType::MoeExpertSvdSparse {
+            n_experts,
+            k,
+            rows,
+            cols,
+            total_nnz,
+            index_bits,
+            ..
+        } => (
+            n_experts as usize,
+            k as usize,
+            rows as usize,
+            cols as usize,
+            total_nnz as usize,
+            index_bits,
+        ),
+        _ => return Ok(None),
+    };
+
+    if index_bits != 32 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!(
+                "MoeExpertSvdSparse tensor '{}' uses unsupported index_bits={}",
+                name, index_bits
+            ),
+        });
+    }
+
+    // Payload layout:
+    // U[n_experts*rows*k] | V[n_experts*k*cols] | row_ptr[n_experts*(rows+1)]
+    // | col_idx[total_nnz] | values[total_nnz] | expert_nnz[n_experts]
+    let u_count  = n_experts * rows * k;
+    let v_count  = n_experts * k * cols;
+    let rp_count = n_experts * (rows + 1);
+    let expected = (u_count + v_count + total_nnz + total_nnz) * 4
+        + rp_count * 4
+        + n_experts * 4;
+
+    if t.data.len() < expected {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!(
+                "MoeExpertSvdSparse '{}': payload {} bytes < expected {}",
+                name,
+                t.data.len(),
+                expected
+            ),
+        });
+    }
+
+    let read_f32 = |data: &[u8], count: usize| -> Vec<f32> {
+        data[..count * 4]
+            .chunks_exact(4)
+            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect()
+    };
+    let read_u32 = |data: &[u8], count: usize| -> Vec<u32> {
+        data[..count * 4]
+            .chunks_exact(4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect()
+    };
+
+    let mut off = 0usize;
+    let u_data      = read_f32(&t.data[off..], u_count);  off += u_count * 4;
+    let v_data      = read_f32(&t.data[off..], v_count);  off += v_count * 4;
+    let csr_row_ptr = read_u32(&t.data[off..], rp_count); off += rp_count * 4;
+    let csr_col_idx = read_u32(&t.data[off..], total_nnz); off += total_nnz * 4;
+    let csr_values  = read_f32(&t.data[off..], total_nnz); off += total_nnz * 4;
+    let nnz_raw     = read_u32(&t.data[off..], n_experts);
+    let expert_nnz: Vec<usize> = nnz_raw.iter().map(|&x| x as usize).collect();
+
+    Ok(Some(CpuCompressedExperts {
+        n_experts,
+        k,
+        rows,
+        cols,
+        u_data,
+        v_data,
+        csr_row_ptr,
+        csr_col_idx,
+        csr_values,
+        expert_nnz,
+    }))
+}
+
 impl GpuLayerWeights {
     /// Load a single layer's weights from GGUF file into GPU memory.
     ///
@@ -1721,6 +1819,9 @@ impl GpuLayerWeights {
         let ffn_gate_mpo = try_load_mpo(&file, &ffn_gate_name, device_id)?;
         let ffn_up_mpo = try_load_mpo(&file, &ffn_up_name, device_id)?;
         let ffn_down_mpo = try_load_mpo(&file, &ffn_down_name, device_id)?;
+        let ffn_gate_compressed = try_load_compressed_experts(&file, &ffn_gate_name)?;
+        let ffn_up_compressed   = try_load_compressed_experts(&file, &ffn_up_name)?;
+        let ffn_down_compressed = try_load_compressed_experts(&file, &ffn_down_name)?;
 
         Ok(Self {
             attn_norm,
@@ -1765,9 +1866,9 @@ impl GpuLayerWeights {
             ffn_gate_mpo,
             ffn_up_mpo,
             ffn_down_mpo,
-            ffn_gate_compressed: None,
-            ffn_up_compressed: None,
-            ffn_down_compressed: None,
+            ffn_gate_compressed,
+            ffn_up_compressed,
+            ffn_down_compressed,
         })
     }
 }
