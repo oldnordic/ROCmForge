@@ -147,6 +147,79 @@ fn sigmoid(x: f32) -> f32 {
     1.0 / (1.0 + (-x).exp())
 }
 
+/// Dispatch one compressed expert's GEMV: output = CSR_residual * input + U*(V*input).
+///
+/// Zeros `output` first (CSR kernel atomicAdds; we need a clean slate per expert).
+/// When `accumulate` is true, also does `weighted_add(output, accum, weight, rows)`.
+/// Set `accumulate=false` for gate/up (silu/mul still needed before accumulate),
+/// `accumulate=true` for down (result goes directly into the hidden accumulator).
+fn dispatch_compressed_expert(
+    device: &GpuDevice,
+    compressed: &crate::gpu::weights::CpuCompressedExperts,
+    scratch: &mut crate::gpu::cache::GpuExpertScratch,
+    expert_idx: usize,
+    input: *const f32,
+    output: *mut f32,
+    accum: *mut f32,
+    weight: f32,
+    rows: usize,
+    cols: usize,
+    accumulate: bool,
+    stream: crate::gpu::ffi::hipStream_t,
+) -> GpuResult<()> {
+    use crate::gpu::ffi;
+    use crate::gpu::kernels::{dispatch_sparse_csr_gemv_f32, elementwise::dispatch_svd_correction};
+
+    let u_bytes = compressed.u_bytes(expert_idx);
+    let v_bytes = compressed.v_bytes(expert_idx);
+    let (rp_bytes, ci_bytes, val_bytes, nnz) = compressed.csr_bytes(expert_idx);
+
+    // Upload U and V
+    ffi::hip_memcpy_h2d(scratch.u.as_ptr(), u_bytes.as_ptr(), u_bytes.len())?;
+    ffi::hip_memcpy_h2d(scratch.v.as_ptr(), v_bytes.as_ptr(), v_bytes.len())?;
+    // Upload CSR row pointers (always present)
+    ffi::hip_memcpy_h2d(scratch.csr_row_ptr.as_ptr(), rp_bytes.as_ptr(), rp_bytes.len())?;
+
+    // Zero output before atomicAdd-based CSR kernel
+    ffi::hip_memset(output as *mut u8, 0u8, rows * 4)?;
+
+    // Sparse residual contribution: output += CSR * input
+    if nnz > 0 {
+        ffi::hip_memcpy_h2d(scratch.csr_col_idx.as_ptr(), ci_bytes.as_ptr(), ci_bytes.len())?;
+        ffi::hip_memcpy_h2d(scratch.csr_values.as_ptr(), val_bytes.as_ptr(), val_bytes.len())?;
+        dispatch_sparse_csr_gemv_f32(
+            scratch.csr_values.as_ptr() as *const f32,
+            scratch.csr_col_idx.as_ptr() as *const u32,
+            scratch.csr_row_ptr.as_ptr() as *const u32,
+            nnz,
+            rows,
+            cols,
+            input,
+            output,
+            stream,
+        )?;
+    }
+
+    // SVD correction: output += U * (V * input)
+    dispatch_svd_correction(
+        stream,
+        &scratch.u,
+        &scratch.v,
+        scratch.k,
+        input,
+        output,
+        cols,
+        rows,
+        scratch.temp_v.as_ptr() as *mut f32,
+    )?;
+
+    if accumulate {
+        weighted_add_on_stream(output as *const f32, accum, weight, rows, stream)?;
+    }
+
+    Ok(())
+}
+
 fn gpu_dispatch_moe_ffn_on_stream(
     device: &GpuDevice,
     gpu_layer: &GpuLayerWeights,
@@ -207,61 +280,68 @@ fn gpu_dispatch_moe_ffn_on_stream(
             }
         })?;
 
-    for (expert_idx, weight) in selected {
-        let gate_ptr = unsafe { gpu_layer.ffn_gate.as_ptr().add(expert_idx * gate_stride) };
-        let up_ptr = unsafe { gpu_layer.ffn_up.as_ptr().add(expert_idx * up_stride) };
-        let down_ptr = unsafe { gpu_layer.ffn_down.as_ptr().add(expert_idx * down_stride) };
+    // Check if this layer has compressed (SVD+sparse) expert weights.
+    let use_compressed = gpu_layer.ffn_gate_compressed.is_some()
+        && gpu_layer.ffn_up_compressed.is_some()
+        && gpu_layer.ffn_down_compressed.is_some()
+        && crate::gpu::safety::experimental_gpu_kernels_enabled();
 
-        gpu_dispatch_gemv_ptr_on_stream(
-            device,
-            gate_ptr as *const u8,
-            &gate_meta,
-            scratch.normed.as_ptr() as *const f32,
-            scratch.gate.as_ptr() as *mut f32,
-            ff_size,
-            h,
-            stream,
-        )?;
-        gpu_dispatch_gemv_ptr_on_stream(
-            device,
-            up_ptr as *const u8,
-            &up_meta,
-            scratch.normed.as_ptr() as *const f32,
-            scratch.swiglu.as_ptr() as *mut f32,
-            ff_size,
-            h,
-            stream,
-        )?;
-        silu_on_stream(
-            scratch.gate.as_ptr() as *const f32,
-            scratch.gate.as_ptr() as *mut f32,
-            ff_size,
-            stream,
-        )?;
-        mul_on_stream(
-            scratch.gate.as_ptr() as *const f32,
-            scratch.swiglu.as_ptr() as *const f32,
-            scratch.swiglu.as_ptr() as *mut f32,
-            ff_size,
-            stream,
-        )?;
-        gpu_dispatch_gemv_ptr_on_stream(
-            device,
-            down_ptr as *const u8,
-            &down_meta,
-            scratch.swiglu.as_ptr() as *const f32,
-            scratch.layer_out.as_ptr() as *mut f32,
-            h,
-            ff_size,
-            stream,
-        )?;
-        weighted_add_on_stream(
-            scratch.layer_out.as_ptr() as *const f32,
-            scratch.hidden.as_ptr() as *mut f32,
-            weight,
-            h,
-            stream,
-        )?;
+    for (expert_idx, weight) in selected {
+        if use_compressed {
+            // Compressed path: H2D upload + CSR GEMV + SVD correction.
+            // use_compressed is only true when all three are Some, so these are always inhabited.
+            let (Some(gate_c), Some(up_c), Some(down_c)) = (
+                gpu_layer.ffn_gate_compressed.as_ref(),
+                gpu_layer.ffn_up_compressed.as_ref(),
+                gpu_layer.ffn_down_compressed.as_ref(),
+            ) else {
+                return Err(GpuError::HipApiError { code: -1, description: "compressed expert fields inconsistent".to_string() });
+            };
+            let escratch = scratch.expert_scratch.as_mut().ok_or_else(|| GpuError::HipApiError {
+                code: -1,
+                description: "expert_scratch not initialised — call init_expert_scratch before decode".to_string(),
+            })?;
+
+            // gate: output = CSR * normed + U*(V*normed)  [ff_size, h]
+            dispatch_compressed_expert(
+                device, gate_c, escratch, expert_idx,
+                scratch.normed.as_ptr() as *const f32,
+                scratch.gate.as_ptr() as *mut f32,
+                std::ptr::null_mut(),
+                1.0, ff_size, h, false, stream,
+            )?;
+            // up: output = CSR * normed + U*(V*normed)  [ff_size, h]
+            dispatch_compressed_expert(
+                device, up_c, escratch, expert_idx,
+                scratch.normed.as_ptr() as *const f32,
+                scratch.swiglu.as_ptr() as *mut f32,
+                std::ptr::null_mut(),
+                1.0, ff_size, h, false, stream,
+            )?;
+            // SwiGLU: gate = silu(gate) * up
+            silu_on_stream(scratch.gate.as_ptr() as *const f32, scratch.gate.as_ptr() as *mut f32, ff_size, stream)?;
+            mul_on_stream(scratch.gate.as_ptr() as *const f32, scratch.swiglu.as_ptr() as *const f32, scratch.swiglu.as_ptr() as *mut f32, ff_size, stream)?;
+            // down: hidden += weight * (CSR * swiglu + U*(V*swiglu))  [h, ff_size]
+            dispatch_compressed_expert(
+                device, down_c, escratch, expert_idx,
+                scratch.swiglu.as_ptr() as *const f32,
+                scratch.layer_out.as_ptr() as *mut f32,
+                scratch.hidden.as_ptr() as *mut f32,
+                weight, h, ff_size, true, stream,
+            )?;
+        } else {
+            // Dense path (original): stride into packed 3D expert buffer.
+            let gate_ptr = unsafe { gpu_layer.ffn_gate.as_ptr().add(expert_idx * gate_stride) };
+            let up_ptr   = unsafe { gpu_layer.ffn_up.as_ptr().add(expert_idx * up_stride) };
+            let down_ptr = unsafe { gpu_layer.ffn_down.as_ptr().add(expert_idx * down_stride) };
+
+            gpu_dispatch_gemv_ptr_on_stream(device, gate_ptr as *const u8, &gate_meta, scratch.normed.as_ptr() as *const f32, scratch.gate.as_ptr() as *mut f32, ff_size, h, stream)?;
+            gpu_dispatch_gemv_ptr_on_stream(device, up_ptr as *const u8,   &up_meta,   scratch.normed.as_ptr() as *const f32, scratch.swiglu.as_ptr() as *mut f32, ff_size, h, stream)?;
+            silu_on_stream(scratch.gate.as_ptr() as *const f32, scratch.gate.as_ptr() as *mut f32, ff_size, stream)?;
+            mul_on_stream(scratch.gate.as_ptr() as *const f32, scratch.swiglu.as_ptr() as *const f32, scratch.swiglu.as_ptr() as *mut f32, ff_size, stream)?;
+            gpu_dispatch_gemv_ptr_on_stream(device, down_ptr as *const u8, &down_meta, scratch.swiglu.as_ptr() as *const f32, scratch.layer_out.as_ptr() as *mut f32, h, ff_size, stream)?;
+            weighted_add_on_stream(scratch.layer_out.as_ptr() as *const f32, scratch.hidden.as_ptr() as *mut f32, weight, h, stream)?;
+        }
     }
 
     if let (
