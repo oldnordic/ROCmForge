@@ -585,27 +585,28 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut gpu_scratch =
         gpu::GpuForwardScratch::new(&config).map_err(|e| format!("gpu scratch: {}", e))?;
 
-    // Allocate per-expert GPU scratch if any layer has compressed MoE experts.
-    for layer in &gpu_weights.layers {
-        if let Some(ref c) = layer.ffn_gate_compressed {
-            let max_nnz = [
-                layer.ffn_gate_compressed.as_ref(),
-                layer.ffn_up_compressed.as_ref(),
-                layer.ffn_down_compressed.as_ref(),
-            ]
-            .iter()
-            .filter_map(|x| x.as_ref())
-            .map(|x| x.max_nnz())
-            .max()
-            .unwrap_or(1);
+    // Allocate per-expert GPU scratch sized for the maximum across gate/up/down expert dims.
+    // gate/up use [rows=ff_size, cols=hidden]; down uses [rows=hidden, cols=ff_size].
+    // The scratch must hold the largest U, V, CSR, and row_ptr across all three.
+    'expert_scratch: for layer in &gpu_weights.layers {
+        let all_compressed = [
+            layer.ffn_gate_compressed.as_ref(),
+            layer.ffn_up_compressed.as_ref(),
+            layer.ffn_down_compressed.as_ref(),
+        ];
+        if all_compressed.iter().all(|x| x.is_some()) {
+            let k = layer.ffn_gate_compressed.as_ref().map(|c| c.k).unwrap_or(32);
+            let max_rows = all_compressed.iter().filter_map(|x| *x).map(|c| c.rows).max().unwrap_or(1);
+            let max_cols = all_compressed.iter().filter_map(|x| *x).map(|c| c.cols).max().unwrap_or(1);
+            let max_nnz  = all_compressed.iter().filter_map(|x| *x).map(|c| c.max_nnz()).max().unwrap_or(1);
             gpu_scratch
-                .init_expert_scratch(c.k as u32, c.rows, c.cols, max_nnz)
+                .init_expert_scratch(k as u32, max_rows, max_cols, max_nnz)
                 .map_err(|e| format!("expert scratch init: {}", e))?;
             eprintln!(
-                "  Expert scratch: k={}, rows={}, cols={}, max_nnz={}",
-                c.k, c.rows, c.cols, max_nnz
+                "  Expert scratch: k={}, max_rows={}, max_cols={}, max_nnz={}",
+                k, max_rows, max_cols, max_nnz
             );
-            break; // all layers share the same expert dimensions
+            break 'expert_scratch;
         }
     }
 

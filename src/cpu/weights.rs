@@ -751,6 +751,12 @@ impl CpuLayerWeights {
                         unpack_q4_split(t.data, t.element_count())
                     }
                     RfmType::GgufPassthrough(_) => t.data.to_vec(),
+                    RfmType::MoeExpertSvdSparse { rows, cols, .. } => {
+                        // CPU fallback: zero placeholder for compressed MoE expert weights.
+                        // Real inference uses the GPU compressed path; the CPU path is
+                        // not used for MoE expert compute.
+                        vec![0u8; (rows * cols) as usize * 4]
+                    }
                     _ => return Err(WeightError::Load(LoadError::UnknownTensorType(999))),
                 };
 
@@ -985,9 +991,12 @@ impl CpuLayerWeights {
                     // CPU fallback: unpack sparse residual to dense F32 (SVD correction GPU-only).
                     sparse_csr_to_dense_f32_bytes(gate_view.data, rows as usize, cols as usize, nnz as usize)
                 }
+                RfmType::MoeExpertSvdSparse { rows, cols, .. } => {
+                    // CPU fallback: zero placeholder for GPU-compressed MoE expert weights.
+                    vec![0u8; (rows * cols) as usize * 4]
+                }
                 RfmType::SparseCsr { .. }
                 | RfmType::Mpo { .. }
-                | RfmType::MoeExpertSvdSparse { .. }
                 | RfmType::Q4FusedGateUp => {
                     return Err(WeightError::Load(LoadError::UnknownTensorType(999)));
                 }
@@ -1000,9 +1009,11 @@ impl CpuLayerWeights {
                 RfmType::SvdSparseCsr { rows, cols, nnz, .. } => {
                     sparse_csr_to_dense_f32_bytes(up_view.data, rows as usize, cols as usize, nnz as usize)
                 }
+                RfmType::MoeExpertSvdSparse { rows, cols, .. } => {
+                    vec![0u8; (rows * cols) as usize * 4]
+                }
                 RfmType::SparseCsr { .. }
                 | RfmType::Mpo { .. }
-                | RfmType::MoeExpertSvdSparse { .. }
                 | RfmType::Q4FusedGateUp => {
                     return Err(WeightError::Load(LoadError::UnknownTensorType(999)));
                 }
