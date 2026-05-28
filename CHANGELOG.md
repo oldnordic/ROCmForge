@@ -4,6 +4,71 @@
 
 ### [GPU Backend]
 
+**feat(gpu): InferencePath router with model-profile-driven hotpath selection**
+
+- **Date:** May 28, 2026
+- **Summary:** Replaced ad-hoc path selection logic in `main.rs` with a centralized router that inspects model metadata and selects the optimal inference path. This is the foundation for multi-hotpath support.
+- **Features:**
+  - Added `src/gpu/router.rs` with `ModelProfile` struct that detects quantization type, SVD, sparse CSR, MPO, MoE, and SSM flags from loaded `GpuModelWeights`.
+  - Added `InferencePath` enum: `BatchedPrefill`, `DecodeStyle`, `SvdOptimized`, `CpuFallback`.
+  - Added `select_path()` — single decision point for all inference routing. Replaces scattered `if` blocks in `main.rs`.
+  - Added `check_path_vram()` — path-specific VRAM validation (e.g., batched prefill scratch sizing).
+  - Router runs AFTER `VramSession` pre-flight check and BEFORE any scratch allocation.
+  - Router output is user-visible: `[Router] Model profile: arch=llama, quant=Q4_0, svd` and `[Router] Selected path: DecodeStyle`.
+  - Added 6 unit tests covering all routing decisions (Q4_0 batched, single token decode, sparse fallback, MPO fallback, SVD without experimental flag, mixed quant).
+- **Routing Rules:**
+  - Sparse/MPO models → `DecodeStyle` (experimental kernels gated separately)
+  - MoE/SSM models → `DecodeStyle` (no batched kernels yet)
+  - SVD models → `SvdOptimized` only when `ROCMFORGE_ENABLE_EXPERIMENTAL_GPU_KERNELS=1`
+  - Q4_0 standard transformer + prompt 2-512 tokens → `BatchedPrefill`
+  - Everything else → `DecodeStyle`
+- **Files Changed:**
+  - `src/gpu/router.rs` (new)
+  - `src/gpu/mod.rs` (re-export)
+  - `src/main.rs` (integrated router, removed duplicated ad-hoc logic)
+- **Verified:**
+  - `cargo check --all-targets --features gpu`
+  - `cargo clippy --all-targets --features gpu -- -D warnings`
+  - `cargo test --lib --features gpu` (307 passed)
+  - `cargo test --features gpu -- --test-threads=1` (all integration tests passed)
+  - `llama3.2_svd_smoke.rfm` routes correctly to `DecodeStyle` (no experimental flag) and `SvdOptimized` (with flag)
+  - `qwen3.5_svd_smoke.rfm` correctly detects `quant=mixed, svd, ssm` and routes to `DecodeStyle`
+
+**feat(gpu): defense-in-depth VRAM safety and experimental kernel gating**
+
+- **Date:** May 28, 2026
+- **Summary:** Implemented comprehensive VRAM management and safety gating to prevent GPU kernel crashes from exhausting VRAM on display-attached GPUs. This was a direct response to desktop crashes caused by buggy experimental kernels.
+- **VRAM Management:**
+  - Added `VramSession` in `src/gpu/vram_budget.rs` with startup VRAM capture, desktop reservation, and inference budget calculation.
+  - Added runtime VRAM tracking with `AtomicUsize` counters (`track_allocation`, `track_deallocation`, `current_allocated_bytes`).
+  - Added `desktop_vram_reservation()` configurable via `ROCMFORGE_DESKTOP_VRAM_GB` environment variable (default 4 GB).
+  - Integrated pre-flight VRAM check in `main.rs` before any GPU allocation. Prints human-readable VRAM status table.
+  - Zero-initialize all `GpuPrefillScratch` and `GpuForwardScratch` buffers with `hip_memset` after allocation to prevent NaN propagation from uninitialized memory.
+- **Experimental Kernel Safety:**
+  - Gate sparse CSR and MPO dispatch in `gpu_dispatch_gemv_with_fallback_on_stream()` behind `experimental_gpu_kernels_enabled()`.
+  - Add bounds check in `sparse_csr.hip` kernel (`col < cols` before `x[col]` access).
+  - Add dimension validation in `mpo.hip` kernel for `n_sites=2` and `n_sites=3` paths.
+  - Gate all experimental GPU tests (sparse CSR, MPO, fallback correctness) behind `run_experimental_gpu_tests_enabled()`.
+- **Fixes:**
+  - Fixed NaN logits in `llama3.2_svd_smoke.rfm` caused by uninitialized scratch buffers. The SVD correction `+=` operation was propagating garbage from uninitialized GPU memory.
+  - `qwen3.5_svd_smoke.rfm` still has pre-existing NaN (separate decode-path issue, not caused by these changes).
+- **Files Changed:**
+  - `src/gpu/vram_budget.rs` (VramSession, runtime tracking)
+  - `src/gpu/cache.rs` (zero-initialization)
+  - `src/gpu/weights/buffer.rs` (allocation tracking hooks)
+  - `src/gpu/ops/gemv.rs` (experimental gating)
+  - `hip_kernels/sparse_csr.hip` (bounds check)
+  - `hip_kernels/mpo.hip` (dimension validation)
+  - `tests/gpu_dispatch_fallback_correctness.rs` (test gating)
+  - `tests/gpu_sparse_csr_correctness.rs` (test gating)
+  - `tests/gpu_mpo_correctness.rs` (test gating)
+- **Verified:**
+  - `cargo check --all-targets --features gpu`
+  - `cargo clippy --all-targets --features gpu -- -D warnings`
+  - `cargo test --lib --features gpu` (307 passed)
+  - `cargo test --features gpu -- --test-threads=1` (all integration tests passed)
+  - Release binary tested with `llama3.2_svd_smoke.rfm` — produces valid logits and generation
+
 **feat(gpu): MPO apply kernel + correctness tests**
 
 - **Date:** May 28, 2026

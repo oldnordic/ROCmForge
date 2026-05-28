@@ -71,6 +71,52 @@ ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH=1 \
 ./target/release/rocmforge --model /path/to/model.gguf --prompt "Hello" --gpu
 ```
 
+### VRAM Management (display-attached GPU safety)
+
+For systems where the discrete GPU also powers the desktop compositor:
+
+```bash
+# Default: reserve 4 GB for desktop/compositor
+./target/release/rocmforge --model /path/to/model.gguf --prompt "Hello" --gpu
+
+# Single-monitor setup: reduce reservation to 2 GB
+ROCMFORGE_DESKTOP_VRAM_GB=2.0 \
+./target/release/rocmforge --model /path/to/model.gguf --prompt "Hello" --gpu
+
+# Multi-monitor 4K setup: increase reservation to 6 GB
+ROCMFORGE_DESKTOP_VRAM_GB=6.0 \
+./target/release/rocmforge --model /path/to/model.gguf --prompt "Hello" --gpu
+```
+
+The startup output shows a VRAM budget table:
+
+```
+VRAM status (device 0):
+  Total              19.98 GB
+  Used (other)        0.10 GB
+  Free               19.89 GB
+  Desktop reserved    4.00 GB  (ROCMFORGE_DESKTOP_VRAM_GB to change)
+  For inference      15.89 GB
+Estimated usage:
+  Model weights         0.29 GB
+  KV cache              0.02 GB
+  Scratch buffers       0.00 GB
+  Total required        0.31 GB  [OK]
+```
+
+### Experimental Kernels (opt-in, potentially unsafe)
+
+Sparse CSR and MPO kernels are gated behind an experimental flag. Only enable if you are testing compressed model formats:
+
+```bash
+ROCMFORGE_ENABLE_EXPERIMENTAL_GPU_KERNELS=1 \
+./target/release/rocmforge --model /path/to/model.rfm --prompt "Hello" --gpu
+```
+
+When enabled, the router may select `SvdOptimized` path for models with SVD-corrected weights.
+
+**Warning:** Experimental kernels can fault on display-attached GPUs. Always ensure adequate VRAM headroom before enabling.
+
 Current 7B development command:
 
 ```bash
@@ -164,3 +210,12 @@ If performance is unexpectedly low:
 4. Check whether decode graph is enabled when expected.
 5. Confirm your ROCm runtime environment is loaded so the binary can resolve `libamdhip64.so.7`.
 6. Re-run section 6.1 benchmark and compare against this manual.
+
+If the process aborts with GPU fault / desktop crash:
+
+1. Check VRAM budget in startup output — ensure `Total required` fits within `For inference`.
+2. Increase desktop reservation: `ROCMFORGE_DESKTOP_VRAM_GB=6.0` (or higher).
+3. Do NOT set `ROCMFORGE_ENABLE_EXPERIMENTAL_GPU_KERNELS=1` unless testing compressed models.
+4. Check if the model uses sparse/MPO weights — these use experimental kernels.
+5. Run with `ROCMFORGE_GPU_SAFE_MODE=1` to disable all fastpaths and graphs.
+6. Report the `[Router] Selected path: ...` line from the output — this tells us which code path faulted.

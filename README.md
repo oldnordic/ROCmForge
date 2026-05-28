@@ -68,6 +68,29 @@ Supported CLI options (from `--help`):
 
 Note: `--device` is not a valid flag in the current binary.
 
+## Inference Path Router
+
+ROCmForge uses a model-profile-driven router to select the optimal inference path:
+
+```
+[Router] Model profile: arch=qwen2, quant=Q4_0
+[Router] Selected path: BatchedPrefill(max_seq=512)
+```
+
+The router inspects loaded model metadata (quantization type, SVD/MPO/sparse flags, architecture) and selects from:
+
+| Path | When Selected | Description |
+|------|--------------|-------------|
+| `BatchedPrefill` | Q4_0 model, prompt 2-512 tokens | Fastest path, processes all prompt tokens in one kernel launch |
+| `DecodeStyle` | Mixed quant, single token, or unsafe model | Token-by-token processing, universal fallback |
+| `SvdOptimized` | SVD model + experimental flag enabled | Uses SVD correction kernels for attention |
+| `CpuFallback` | Incompatible or unsafe configuration | Falls back to CPU inference |
+
+Safety rules:
+- Sparse/MPO models always route to `DecodeStyle` (experimental kernels are opt-in)
+- MoE/SSM models route to `DecodeStyle` (no batched kernels yet)
+- SVD models only use `SvdOptimized` when `ROCMFORGE_ENABLE_EXPERIMENTAL_GPU_KERNELS=1`
+
 ## Runtime safety controls
 
 - `ROCMFORGE_GPU_SAFE_MODE=1`
@@ -79,6 +102,15 @@ Note: `--device` is not a valid flag in the current binary.
 
 - `ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH=1`
   - Enables the Q8 activation fastpath used in decode kernels.
+
+- `ROCMFORGE_DESKTOP_VRAM_GB=<float>`
+  - Configures VRAM reserved for desktop/compositor (default: 4.0).
+  - Lower for single-monitor setups (2.0), higher for multi-monitor 4K (6.0+).
+  - Prevents inference from stealing memory needed by the display.
+
+- `ROCMFORGE_ENABLE_EXPERIMENTAL_GPU_KERNELS=1`
+  - Enables sparse CSR and MPO kernels (potentially unsafe on display-attached GPUs).
+  - Only use when testing compressed `.rfm` models with sparse/MPO weights.
 
 Conservative run:
 
@@ -248,6 +280,8 @@ cargo bench --bench kernel_performance
 ## Positioning
 
 - The main value today is that it is a small pure-HIP codebase that AMD developers can inspect, build, profile, and compare against other runtimes.
+- **VRAM safety first:** The inference engine now respects your GPU by checking available VRAM before allocating, reserving headroom for the desktop compositor, and gating experimental kernels behind explicit opt-in flags.
+- **Model-aware routing:** The router automatically selects the best inference path based on model metadata — no manual tuning needed for standard models.
 - Expect more work on decode throughput, launch tuning, and profiling workflow before calling it broadly production-ready.
 
 ## License
