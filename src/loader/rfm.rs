@@ -21,6 +21,31 @@ pub enum RfmType {
     Q4FusedGateUp,
     /// Passthrough GGUF tensor format (stores raw GGUF bytes).
     GgufPassthrough(u32),
+    /// Q4 Quantized weight with SVD outlier correction of rank k
+    Q4SvdQuant { k: u32 },
+    /// Sparse CSR matrix payload for mmap-backed CPU/RAM residency.
+    ///
+    /// Payload layout:
+    /// - row_offsets: `rows + 1` little-endian indices
+    /// - col_indices: `nnz` little-endian indices
+    /// - values: `nnz` values encoded as `value_type`
+    SparseCsr {
+        rows: u64,
+        cols: u64,
+        nnz: u64,
+        index_bits: u8,
+        value_type: u32,
+    },
+    /// Matrix Product Operator payload for tensor-network compressed weights.
+    ///
+    /// Payload stores all site tensors contiguously as `value_type` values.
+    /// Per-site shapes are stored in the tensor entry `dims` as
+    /// `[chi_l, d_out, d_in, chi_r]` chunks.
+    Mpo {
+        n_sites: u32,
+        chi_max: u32,
+        value_type: u32,
+    },
 }
 
 /// An entry in the .rfm tensor table.
@@ -73,10 +98,121 @@ pub struct RfmTensorView<'a> {
     pub data: &'a [u8],
 }
 
+/// Zero-copy sparse CSR tensor view.
+#[derive(Debug, Clone, Copy)]
+pub struct RfmSparseCsrView<'a> {
+    pub name: &'a str,
+    pub rows: usize,
+    pub cols: usize,
+    pub nnz: usize,
+    pub index_bits: u8,
+    pub value_type: u32,
+    pub row_offsets: &'a [u8],
+    pub col_indices: &'a [u8],
+    pub values: &'a [u8],
+}
+
+/// Zero-copy MPO tensor view.
+#[derive(Debug, Clone, Copy)]
+pub struct RfmMpoView<'a> {
+    pub name: &'a str,
+    pub n_sites: usize,
+    pub chi_max: usize,
+    pub value_type: u32,
+    pub site_dims: &'a [u64],
+    pub data: &'a [u8],
+}
+
 impl<'a> RfmTensorView<'a> {
     /// Returns the total number of elements in this tensor.
     pub fn element_count(&self) -> usize {
         self.dims.iter().fold(1usize, |acc, &d| acc * d as usize)
+    }
+
+    /// Interpret this tensor as sparse CSR when its RFM type is `SparseCsr`.
+    pub fn as_sparse_csr(&self) -> Option<RfmSparseCsrView<'a>> {
+        let RfmType::SparseCsr {
+            rows,
+            cols,
+            nnz,
+            index_bits,
+            value_type,
+        } = self.wtype
+        else {
+            return None;
+        };
+
+        let rows = rows as usize;
+        let cols = cols as usize;
+        let nnz = nnz as usize;
+        let index_bytes = match index_bits {
+            32 => 4usize,
+            64 => 8usize,
+            _ => return None,
+        };
+        let value_bytes = GgmlValueType(value_type).bytes_per_value()?;
+        let row_bytes = rows.checked_add(1)?.checked_mul(index_bytes)?;
+        let col_bytes = nnz.checked_mul(index_bytes)?;
+        let val_bytes = nnz.checked_mul(value_bytes)?;
+        let total = row_bytes.checked_add(col_bytes)?.checked_add(val_bytes)?;
+        if self.data.len() != total {
+            return None;
+        }
+
+        let col_start = row_bytes;
+        let value_start = row_bytes + col_bytes;
+        Some(RfmSparseCsrView {
+            name: self.name,
+            rows,
+            cols,
+            nnz,
+            index_bits,
+            value_type,
+            row_offsets: &self.data[..col_start],
+            col_indices: &self.data[col_start..value_start],
+            values: &self.data[value_start..],
+        })
+    }
+
+    /// Interpret this tensor as an MPO when its RFM type is `Mpo`.
+    pub fn as_mpo(&self) -> Option<RfmMpoView<'a>> {
+        let RfmType::Mpo {
+            n_sites,
+            chi_max,
+            value_type,
+        } = self.wtype
+        else {
+            return None;
+        };
+
+        let n_sites = n_sites as usize;
+        if self.dims.len() != n_sites.checked_mul(4)? {
+            return None;
+        }
+
+        Some(RfmMpoView {
+            name: self.name,
+            n_sites,
+            chi_max: chi_max as usize,
+            value_type,
+            site_dims: self.dims,
+            data: self.data,
+        })
+    }
+}
+
+struct GgmlValueType(u32);
+
+impl GgmlValueType {
+    fn bytes_per_value(self) -> Option<usize> {
+        match self.0 {
+            0 => Some(4), // F32
+            1 => Some(2), // F16
+            2 => None,    // Q4_0 is block encoded, not scalar CSR value encoded
+            3 => None,    // Q4_1
+            8 => Some(1), // Q8_0 scalar values are stored as i8 in sparse payloads
+            _ => None,
+        }
     }
 }
 
@@ -307,5 +443,138 @@ mod tests {
 
         // Cleanup
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_rfm_qwen35_fused_attention_metadata_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = std::env::temp_dir();
+        let path = dir.join("test_qwen35_fused_attention.rfm");
+
+        let metadata = RfmMetadata {
+            num_layers: 1,
+            hidden_size: 4096,
+            num_heads: 16,
+            num_kv_heads: 16,
+            head_dim: 256,
+            intermediate_size: 12288,
+            vocab_size: 248320,
+            max_seq_len: 262144,
+            rms_norm_eps: 1e-6,
+            rope_theta: 10_000_000.0,
+            rope_neox: false,
+            use_attention_bias: false,
+            architecture: "qwen35".to_string(),
+            tokens: vec![],
+            merges: vec![],
+            bos_token_id: None,
+            eos_token_id: None,
+            unk_token_id: None,
+            tokenizer_model: None,
+            tokenizer_pre: None,
+            add_bos: false,
+            add_eos: false,
+        };
+
+        let metadata_bytes = serde_json::to_vec(&metadata)?;
+        let entries = vec![
+            RfmTensorEntry {
+                name: "blk.0.attn_qkv.weight".to_string(),
+                dims: vec![4096, 8192],
+                wtype: RfmType::GgufPassthrough(12),
+                offset: 0,
+                size: 16,
+            },
+            RfmTensorEntry {
+                name: "blk.0.attn_gate.weight".to_string(),
+                dims: vec![4096, 4096],
+                wtype: RfmType::GgufPassthrough(12),
+                offset: 256,
+                size: 16,
+            },
+            RfmTensorEntry {
+                name: "blk.0.ssm_out.weight".to_string(),
+                dims: vec![4096, 4096],
+                wtype: RfmType::GgufPassthrough(12),
+                offset: 512,
+                size: 16,
+            },
+        ];
+        let table_bytes = serde_json::to_vec(&entries)?;
+        let payload_start = 24 + metadata_bytes.len() + table_bytes.len();
+        let total_len = payload_start + 528;
+
+        let mut file = File::create(&path)?;
+        file.write_all(b"RFM\0")?;
+        file.write_all(&1u32.to_le_bytes())?;
+        file.write_all(&(metadata_bytes.len() as u64).to_le_bytes())?;
+        file.write_all(&(table_bytes.len() as u64).to_le_bytes())?;
+        file.write_all(&metadata_bytes)?;
+        file.write_all(&table_bytes)?;
+        file.write_all(&vec![0u8; total_len - payload_start])?;
+        drop(file);
+
+        let rfm = RfmFile::open(&path)?;
+        assert_eq!(rfm.metadata.architecture, "qwen35");
+        assert!(rfm.has_tensor("blk.0.attn_qkv.weight"));
+        assert!(rfm.has_tensor("blk.0.attn_gate.weight"));
+        assert!(rfm.has_tensor("blk.0.ssm_out.weight"));
+        assert!(!rfm.has_tensor("blk.0.attn_q.weight"));
+
+        let qkv = rfm.tensor("blk.0.attn_qkv.weight")?.ok_or("tensor not found")?;
+        assert_eq!(qkv.dims, &[4096, 8192]);
+        assert_eq!(qkv.wtype, RfmType::GgufPassthrough(12));
+
+        let _ = std::fs::remove_file(&path);
+        Ok(())
+    }
+
+    #[test]
+    fn test_sparse_csr_tensor_view_splits_payload() {
+        let tensor = RfmTensorView {
+            name: "blk.0.ffn_sparse.weight",
+            dims: &[3, 4],
+            wtype: RfmType::SparseCsr {
+                rows: 3,
+                cols: 4,
+                nnz: 5,
+                index_bits: 32,
+                value_type: 0,
+            },
+            data: &[
+                // row_offsets: 4 * u32
+                0, 0, 0, 0, 2, 0, 0, 0, 4, 0, 0, 0, 5, 0, 0, 0, // col_indices: 5 * u32
+                0, 0, 0, 0, 3, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0,
+                // values: 5 * f32
+                0, 0, 128, 63, 0, 0, 0, 64, 0, 0, 64, 64, 0, 0, 128, 64, 0, 0, 160, 64,
+            ],
+        };
+
+        let sparse = tensor.as_sparse_csr().expect("valid sparse CSR view");
+        assert_eq!(sparse.rows, 3);
+        assert_eq!(sparse.cols, 4);
+        assert_eq!(sparse.nnz, 5);
+        assert_eq!(sparse.row_offsets.len(), 16);
+        assert_eq!(sparse.col_indices.len(), 20);
+        assert_eq!(sparse.values.len(), 20);
+    }
+
+    #[test]
+    fn test_mpo_tensor_view_validates_site_dims() {
+        let tensor = RfmTensorView {
+            name: "blk.0.ffn_mpo.weight",
+            dims: &[1, 4, 4, 2, 2, 4, 4, 1],
+            wtype: RfmType::Mpo {
+                n_sites: 2,
+                chi_max: 2,
+                value_type: 0,
+            },
+            data: &[0; 160],
+        };
+
+        let mpo = tensor.as_mpo().expect("valid MPO view");
+        assert_eq!(mpo.n_sites, 2);
+        assert_eq!(mpo.chi_max, 2);
+        assert_eq!(mpo.site_dims, &[1, 4, 4, 2, 2, 4, 4, 1]);
+        assert_eq!(mpo.data.len(), 160);
     }
 }

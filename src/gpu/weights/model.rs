@@ -43,30 +43,7 @@ impl GpuModelWeights {
         total += self.output_norm.size();
         total += self.lm_head.size();
         for layer in &self.layers {
-            total += layer.attn_norm.size();
-            total += layer.attn_q.size();
-            if let Some(ref b) = layer.attn_q_bias {
-                total += b.size();
-            }
-            total += layer.attn_k.size();
-            if let Some(ref b) = layer.attn_k_bias {
-                total += b.size();
-            }
-            total += layer.attn_v.size();
-            if let Some(ref b) = layer.attn_v_bias {
-                total += b.size();
-            }
-            total += layer.attn_o.size();
-            total += layer.ffn_norm.size();
-            total += layer.ffn_gate.size();
-            total += layer.ffn_up.size();
-            if let Some(ref b) = layer.ffn_gate_up_interleaved {
-                total += b.size();
-            }
-            if let Some(ref b) = layer.ffn_gate_up_interleaved_tile4 {
-                total += b.size();
-            }
-            total += layer.ffn_down.size();
+            total += layer.estimate_vram_usage();
         }
         total
     }
@@ -241,6 +218,19 @@ impl GpuModelWeights {
                 || layer.attn_k_meta.wtype == GgmlType::Q6_K
                 || layer.attn_v_meta.wtype == GgmlType::Q6_K
                 || layer.attn_o_meta.wtype == GgmlType::Q6_K
+                || layer
+                    .attn_qkv_meta
+                    .as_ref()
+                    .is_some_and(|m| m.wtype == GgmlType::Q6_K)
+                || layer
+                    .attn_gate_meta
+                    .as_ref()
+                    .is_some_and(|m| m.wtype == GgmlType::Q6_K)
+                || layer.ssm.as_ref().is_some_and(|ssm| {
+                    ssm.alpha_meta.wtype == GgmlType::Q6_K
+                        || ssm.beta_meta.wtype == GgmlType::Q6_K
+                        || ssm.out_meta.wtype == GgmlType::Q6_K
+                })
                 || layer.ffn_gate_meta.wtype == GgmlType::Q6_K
                 || layer.ffn_up_meta.wtype == GgmlType::Q6_K
                 || layer.ffn_down_meta.wtype == GgmlType::Q6_K
@@ -257,6 +247,9 @@ impl GpuModelWeights {
         // Check all attention layers - must be Q4_0 for batched prefill
         // FFN layers can be other types since we don't use batched kernels for them yet
         for layer in &self.layers {
+            if layer.attn_qkv_meta.is_some() {
+                return false;
+            }
             if layer.attn_q_meta.wtype != GgmlType::Q4_0
                 || layer.attn_k_meta.wtype != GgmlType::Q4_0
                 || layer.attn_v_meta.wtype != GgmlType::Q4_0
@@ -301,6 +294,13 @@ impl GpuModelWeights {
         let token_emb_wtype = rfm_type_to_ggml(&token_emb_view.wtype);
         let token_emb_unpacked_size = match token_emb_view.wtype {
             RfmType::Q4Split => (token_emb_view.element_count() / 32) * 18,
+            RfmType::SparseCsr { .. } | RfmType::Mpo { .. } => {
+                return Err(GpuError::UnsupportedOperation {
+                    operation: format!("load RFM tensor {}", token_emb_name),
+                    reason: "sparse CSR and MPO embeddings require a lazy/offload execution path"
+                        .to_string(),
+                });
+            }
             _ => token_emb_view.data.len(),
         };
 
@@ -319,6 +319,13 @@ impl GpuModelWeights {
                 )?;
                 out_gpu_buf
             }
+            RfmType::SparseCsr { .. } | RfmType::Mpo { .. } => {
+                return Err(GpuError::UnsupportedOperation {
+                    operation: format!("load RFM tensor {}", token_emb_name),
+                    reason: "sparse CSR and MPO embeddings require a lazy/offload execution path"
+                        .to_string(),
+                });
+            }
             _ => upload_tensor_bytes_for_device(token_emb_view.data, device_id)?,
         };
 
@@ -327,6 +334,7 @@ impl GpuModelWeights {
             dims: token_emb_view.dims.to_vec(),
             needs_transpose: false,
             role: TensorRole::Generic,
+            svd_k: None,
         };
         estimated_vram_used += token_emb.size();
 
@@ -366,6 +374,14 @@ impl GpuModelWeights {
 
             let lm_unpacked_size = match lm_view.wtype {
                 RfmType::Q4Split => (lm_view.element_count() / 32) * 18,
+                RfmType::SparseCsr { .. } | RfmType::Mpo { .. } => {
+                    return Err(GpuError::UnsupportedOperation {
+                        operation: format!("load RFM tensor {}", lm_head_name),
+                        reason:
+                            "sparse CSR and MPO output heads require a lazy/offload execution path"
+                                .to_string(),
+                    });
+                }
                 _ => lm_view.data.len(),
             };
 
@@ -384,6 +400,14 @@ impl GpuModelWeights {
                     )?;
                     out_gpu_buf
                 }
+                RfmType::SparseCsr { .. } | RfmType::Mpo { .. } => {
+                    return Err(GpuError::UnsupportedOperation {
+                        operation: format!("load RFM tensor {}", lm_head_name),
+                        reason:
+                            "sparse CSR and MPO output heads require a lazy/offload execution path"
+                                .to_string(),
+                    });
+                }
                 _ => upload_tensor_bytes_for_device(lm_view.data, device_id)?,
             };
 
@@ -392,6 +416,7 @@ impl GpuModelWeights {
                 dims: lm_view.dims.to_vec(),
                 needs_transpose,
                 role: TensorRole::LmHead,
+                svd_k: None,
             };
             estimated_vram_used += buf.size();
             (buf, meta, false)
@@ -455,11 +480,25 @@ fn gpu_layer_weights_binding_tag(layer: &GpuLayerWeights) -> u64 {
     tag = mix_binding_tag(
         tag,
         layer
+            .attn_q_norm
+            .as_ref()
+            .map_or(0usize, |buf| buf.as_ptr() as usize),
+    );
+    tag = mix_binding_tag(
+        tag,
+        layer
             .attn_q_bias
             .as_ref()
             .map_or(0usize, |buf| buf.as_ptr() as usize),
     );
     tag = mix_binding_tag(tag, layer.attn_k.as_ptr() as usize);
+    tag = mix_binding_tag(
+        tag,
+        layer
+            .attn_k_norm
+            .as_ref()
+            .map_or(0usize, |buf| buf.as_ptr() as usize),
+    );
     tag = mix_binding_tag(
         tag,
         layer
@@ -475,6 +514,29 @@ fn gpu_layer_weights_binding_tag(layer: &GpuLayerWeights) -> u64 {
             .as_ref()
             .map_or(0usize, |buf| buf.as_ptr() as usize),
     );
+    tag = mix_binding_tag(
+        tag,
+        layer
+            .attn_qkv
+            .as_ref()
+            .map_or(0usize, |buf| buf.as_ptr() as usize),
+    );
+    tag = mix_binding_tag(
+        tag,
+        layer
+            .attn_gate
+            .as_ref()
+            .map_or(0usize, |buf| buf.as_ptr() as usize),
+    );
+    if let Some(ssm) = &layer.ssm {
+        tag = mix_binding_tag(tag, ssm.a.as_ptr() as usize);
+        tag = mix_binding_tag(tag, ssm.dt.as_ptr() as usize);
+        tag = mix_binding_tag(tag, ssm.norm.as_ptr() as usize);
+        tag = mix_binding_tag(tag, ssm.conv1d.as_ptr() as usize);
+        tag = mix_binding_tag(tag, ssm.alpha.as_ptr() as usize);
+        tag = mix_binding_tag(tag, ssm.beta.as_ptr() as usize);
+        tag = mix_binding_tag(tag, ssm.out.as_ptr() as usize);
+    }
     tag = mix_binding_tag(tag, layer.attn_o.as_ptr() as usize);
     tag = mix_binding_tag(tag, layer.ffn_norm.as_ptr() as usize);
     tag = mix_binding_tag(tag, layer.ffn_gate.as_ptr() as usize);
@@ -592,19 +654,19 @@ fn prepare_tied_lm_head_q8(
 
     // 2. Quantize the float32 matrix to Q8_0 format row-by-row
     let num_blocks_per_row = hidden_size / 32;
-    let mut q8_data = vec![0u8; vocab_size * num_blocks_per_row * 34];
+    let mut q8_data = vec![0u8; vocab_size * num_blocks_per_row * 36];
 
     for id in 0..vocab_size {
         let f32_row = &f32_data[id * hidden_size..(id + 1) * hidden_size];
-        let q8_row = &mut q8_data[id * num_blocks_per_row * 34..(id + 1) * num_blocks_per_row * 34];
+        let q8_row = &mut q8_data[id * num_blocks_per_row * 36..(id + 1) * num_blocks_per_row * 36];
 
         for b in 0..num_blocks_per_row {
             let src_block = &f32_row[b * 32..(b + 1) * 32];
-            let dst_block = &mut q8_row[b * 34..(b + 1) * 34];
+            let dst_block = &mut q8_row[b * 36..(b + 1) * 36];
 
-            let scale = crate::cpu::quant::quantize_f32_to_q8_0(src_block, &mut dst_block[2..34]);
-            let scale_bytes = crate::cpu::quant::store_f16_scale(scale);
-            dst_block[0..2].copy_from_slice(&scale_bytes);
+            let scale = crate::cpu::quant::quantize_f32_to_q8_0(src_block, &mut dst_block[4..36]);
+            let scale_bytes = scale.to_le_bytes();
+            dst_block[0..4].copy_from_slice(&scale_bytes);
         }
     }
 
@@ -617,6 +679,7 @@ fn prepare_tied_lm_head_q8(
         dims: token_emb_meta.dims.clone(),
         needs_transpose: false,
         role: TensorRole::TiedLmHead,
+        svd_k: None,
     };
 
     Ok((buf, meta))

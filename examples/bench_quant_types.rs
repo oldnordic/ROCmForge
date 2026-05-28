@@ -165,6 +165,7 @@ fn bench_gemv(hidden: usize, intermediate: usize, qt: &QuantType) -> f64 {
         wtype: qt.ggml_type,
         dims: vec![in_dim as u64, out_dim as u64],
         needs_transpose: false,
+        svd_k: None,
     };
 
     // Warmup
@@ -201,6 +202,7 @@ fn bench_gemm(hidden: usize, intermediate: usize, qt: &QuantType) -> f64 {
         wtype: qt.ggml_type,
         dims: vec![k as u64, n as u64],
         needs_transpose: false,
+        svd_k: None,
     };
 
     // Warmup

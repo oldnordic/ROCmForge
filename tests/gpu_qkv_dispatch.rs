@@ -138,12 +138,14 @@ fn test_gpu_dispatch_fused_qkv_q4_0_matches_cpu_reference() {
         dims: vec![q_size as u64, n_rows as u64],
         needs_transpose: false,
         role: TensorRole::Generic,
+        svd_k: None,
     };
     let kv_meta = WeightMeta {
         wtype: GgmlType::Q4_0,
         dims: vec![kv_size as u64, n_rows as u64],
         needs_transpose: false,
         role: TensorRole::Generic,
+        svd_k: None,
     };
 
     let d_input = upload_f32(&input).expect("Upload input");

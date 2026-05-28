@@ -166,6 +166,17 @@ pub fn hip_free(ptr: *mut u8) {
     }
 }
 
+/// Fill GPU memory with a specific byte value.
+pub fn hip_memset(dst: *mut u8, value: u8, size: usize) -> GpuResult<()> {
+    if dst.is_null() || size == 0 {
+        return Ok(());
+    }
+    unsafe {
+        let code = hipMemset(dst as *mut c_void, value as c_int, size);
+        hip_check(code)
+    }
+}
+
 /// Copy data from host (CPU) to device (GPU).
 pub fn hip_memcpy_h2d(dst: *mut u8, src: *const u8, size: usize) -> GpuResult<()> {
     unsafe {
@@ -662,6 +673,7 @@ extern "C" {
     // DISABLED: hipGetDeviceName not available in current ROCm version
     // fn hipGetDeviceName(name: *mut c_char, len: i32, device: i32) -> hipError_t;
     fn hipMalloc(ptr: *mut *mut u8, size: usize) -> hipError_t;
+    fn hipMemset(ptr: *mut c_void, value: c_int, size: usize) -> hipError_t;
     fn hipFree(ptr: *mut u8) -> hipError_t;
     fn hipHostMalloc(ptr: *mut *mut c_void, size: usize, flags: u32) -> hipError_t;
     fn hipHostFree(ptr: *mut c_void) -> hipError_t;

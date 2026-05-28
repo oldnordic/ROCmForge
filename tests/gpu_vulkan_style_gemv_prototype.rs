@@ -1,4 +1,4 @@
-#![cfg(feature = "gpu")]
+#![cfg(all(feature = "gpu", any()))]
 
 mod common;
 

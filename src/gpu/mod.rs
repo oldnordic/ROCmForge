@@ -148,7 +148,9 @@ pub use safety::{
     RUN_EXPERIMENTAL_GPU_TESTS_ENV, RUN_GPU_BENCHES_ENV, RUN_REAL_MODEL_GPU_TESTS_ENV,
 };
 pub use speculative::SpeculativeEngine;
-pub use weights::{GpuBuffer, GpuLayerWeights, GpuModelWeights, TensorRole, WeightMeta};
+pub use weights::{
+    GpuBuffer, GpuLayerWeights, GpuModelWeights, SvdCorrection, TensorRole, WeightMeta,
+};
 
 /// Detect AMD GPU capabilities (safe wrapper).
 pub fn detect() -> Option<GpuCapabilities> {

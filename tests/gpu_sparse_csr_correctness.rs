@@ -39,25 +39,37 @@ fn expect<T>(r: rocmforge::gpu::GpuResult<T>) -> T {
     r.expect("GPU operation should succeed")
 }
 
-/// Build a sparse CSR matrix from dense, returning (values, col_indices, row_offsets, nnz)
-fn dense_to_csr(matrix: &[f32], rows: usize, cols: usize) -> (Vec<f32>, Vec<u32>, Vec<u32>, usize) {
+/// CPU reference: y = A * x where A is dense
+fn dense_gemv_reference(a: &[f32], rows: usize, cols: usize, x: &[f32]) -> Vec<f32> {
+    let mut y = vec![0.0f32; rows];
+    for i in 0..rows {
+        let mut sum = 0.0f32;
+        for j in 0..cols {
+            sum += a[i * cols + j] * x[j];
+        }
+        y[i] = sum;
+    }
+    y
+}
+
+/// Convert dense matrix to CSR format
+fn dense_to_csr(a: &[f32], rows: usize, cols: usize) -> (Vec<f32>, Vec<u32>, Vec<u32>) {
     let mut values = Vec::new();
     let mut col_indices = Vec::new();
     let mut row_offsets = vec![0u32; rows + 1];
 
-    for r in 0..rows {
-        for c in 0..cols {
-            let v = matrix[r * cols + c];
-            if v != 0.0 {
+    for i in 0..rows {
+        for j in 0..cols {
+            let v = a[i * cols + j];
+            if v != 0.0f32 {
                 values.push(v);
-                col_indices.push(c as u32);
+                col_indices.push(j as u32);
             }
         }
-        row_offsets[r + 1] = values.len() as u32;
+        row_offsets[i + 1] = values.len() as u32;
     }
 
-    let nnz = values.len();
-    (values, col_indices, row_offsets, nnz)
+    (values, col_indices, row_offsets)
 }
 
 #[test]
@@ -65,47 +77,38 @@ fn dense_to_csr(matrix: &[f32], rows: usize, cols: usize) -> (Vec<f32>, Vec<u32>
 fn test_sparse_csr_gemv_basic() {
     let device = init_device();
     let rows = 8usize;
-    let cols = 16usize;
+    let cols = 6usize;
 
-    // Build a sparse matrix with ~25% nonzeros
-    let mut dense = vec![0.0f32; rows * cols];
-    for r in 0..rows {
-        for c in 0..cols {
-            if (r + c * 3) % 4 == 0 {
-                dense[r * cols + c] = ((r * cols + c) as f32) * 0.01 - 0.5;
-            }
-        }
+    // Random-ish dense matrix
+    let mut a = vec![0.0f32; rows * cols];
+    for (i, v) in a.iter_mut().enumerate() {
+        *v = (i as f32) * 0.01 - 0.15;
+    }
+    // Make it sparse: zero out ~half
+    for i in (0..a.len()).step_by(3) {
+        a[i] = 0.0f32;
     }
 
     let mut x = vec![0.0f32; cols];
     for (i, v) in x.iter_mut().enumerate() {
-        *v = (i as f32) * 0.05 - 0.3;
+        *v = (i as f32) * 0.03 - 0.1;
     }
 
-    // CPU reference: y = A * x
-    let mut ref_y = vec![0.0f32; rows];
-    for r in 0..rows {
-        let mut sum = 0.0f32;
-        for c in 0..cols {
-            sum += dense[r * cols + c] * x[c];
-        }
-        ref_y[r] = sum;
-    }
+    let ref_y = dense_gemv_reference(&a, rows, cols, &x);
 
-    // Convert to CSR
-    let (values, col_indices, row_offsets, nnz) = dense_to_csr(&dense, rows, cols);
+    let (values, col_indices, row_offsets) = dense_to_csr(&a, rows, cols);
+    let nnz = values.len();
 
-    // GPU execution
     let gpu_values = expect(upload_f32(&values));
-    let gpu_col_idx = expect(upload_u32(&col_indices));
-    let gpu_row_off = expect(upload_u32(&row_offsets));
+    let gpu_cols = expect(upload_u32(&col_indices));
+    let gpu_rows = expect(upload_u32(&row_offsets));
     let gpu_x = expect(upload_f32(&x));
     let gpu_y = expect(upload_f32(&vec![0.0f32; rows]));
 
     expect(dispatch_sparse_csr_gemv_f32(
         gpu_values.as_ptr() as *const f32,
-        gpu_col_idx.as_ptr() as *const u32,
-        gpu_row_off.as_ptr() as *const u32,
+        gpu_cols.as_ptr() as *const u32,
+        gpu_rows.as_ptr() as *const u32,
         nnz,
         rows,
         cols,
@@ -121,7 +124,7 @@ fn test_sparse_csr_gemv_basic() {
     for i in 0..rows {
         assert!(
             (out_y[i] - ref_y[i]).abs() < 1e-4,
-            "sparse CSR GEMV mismatch at {}: actual={}, ref={}",
+            "Sparse CSR GEMV mismatch at {}: actual={}, ref={}",
             i,
             out_y[i],
             ref_y[i]
@@ -131,49 +134,34 @@ fn test_sparse_csr_gemv_basic() {
 
 #[test]
 #[serial]
-fn test_sparse_csr_gemv_all_nonzero() {
+fn test_sparse_csr_gemv_identity() {
     let device = init_device();
-    let rows = 4usize;
-    let cols = 8usize;
+    let n = 8usize;
 
-    // Dense matrix (all non-zero → still valid CSR)
-    let mut dense = vec![0.0f32; rows * cols];
-    for r in 0..rows {
-        for c in 0..cols {
-            dense[r * cols + c] = (r as f32) * 0.1 + (c as f32) * 0.05 - 0.3;
-        }
+    // Identity matrix as sparse CSR
+    let mut a = vec![0.0f32; n * n];
+    for i in 0..n {
+        a[i * n + i] = 1.0f32;
     }
 
-    let mut x = vec![0.0f32; cols];
-    for (i, v) in x.iter_mut().enumerate() {
-        *v = (i as f32) * 0.02 - 0.1;
-    }
+    let x: Vec<f32> = (0..n).map(|i| (i as f32) * 0.1 + 0.5).collect();
+    let ref_y = dense_gemv_reference(&a, n, n, &x);
 
-    // CPU reference
-    let mut ref_y = vec![0.0f32; rows];
-    for r in 0..rows {
-        let mut sum = 0.0f32;
-        for c in 0..cols {
-            sum += dense[r * cols + c] * x[c];
-        }
-        ref_y[r] = sum;
-    }
-
-    let (values, col_indices, row_offsets, nnz) = dense_to_csr(&dense, rows, cols);
+    let (values, col_indices, row_offsets) = dense_to_csr(&a, n, n);
 
     let gpu_values = expect(upload_f32(&values));
-    let gpu_col_idx = expect(upload_u32(&col_indices));
-    let gpu_row_off = expect(upload_u32(&row_offsets));
+    let gpu_cols = expect(upload_u32(&col_indices));
+    let gpu_rows = expect(upload_u32(&row_offsets));
     let gpu_x = expect(upload_f32(&x));
-    let gpu_y = expect(upload_f32(&vec![0.0f32; rows]));
+    let gpu_y = expect(upload_f32(&vec![0.0f32; n]));
 
     expect(dispatch_sparse_csr_gemv_f32(
         gpu_values.as_ptr() as *const f32,
-        gpu_col_idx.as_ptr() as *const u32,
-        gpu_row_off.as_ptr() as *const u32,
-        nnz,
-        rows,
-        cols,
+        gpu_cols.as_ptr() as *const u32,
+        gpu_rows.as_ptr() as *const u32,
+        values.len(),
+        n,
+        n,
         gpu_x.as_ptr() as *const f32,
         gpu_y.as_ptr() as *mut f32,
         device.stream(),
@@ -181,12 +169,12 @@ fn test_sparse_csr_gemv_all_nonzero() {
 
     expect(device.synchronize());
 
-    let out_y = expect(download_f32(&gpu_y, rows));
+    let out_y = expect(download_f32(&gpu_y, n));
 
-    for i in 0..rows {
+    for i in 0..n {
         assert!(
             (out_y[i] - ref_y[i]).abs() < 1e-4,
-            "dense-as-CSR GEMV mismatch at {}: actual={}, ref={}",
+            "Sparse CSR identity mismatch at {}: actual={}, ref={}",
             i,
             out_y[i],
             ref_y[i]
@@ -196,52 +184,88 @@ fn test_sparse_csr_gemv_all_nonzero() {
 
 #[test]
 #[serial]
-fn test_sparse_csr_gemv_empty_rows() {
+fn test_sparse_csr_gemv_diagonal() {
+    let device = init_device();
+    let n = 16usize;
+
+    // Diagonal matrix with varying values
+    let mut a = vec![0.0f32; n * n];
+    for i in 0..n {
+        a[i * n + i] = (i as f32 + 1.0) * 0.5;
+    }
+
+    let x: Vec<f32> = (0..n).map(|i| (i as f32) * 0.1 - 0.3).collect();
+    let ref_y = dense_gemv_reference(&a, n, n, &x);
+
+    let (values, col_indices, row_offsets) = dense_to_csr(&a, n, n);
+
+    let gpu_values = expect(upload_f32(&values));
+    let gpu_cols = expect(upload_u32(&col_indices));
+    let gpu_rows = expect(upload_u32(&row_offsets));
+    let gpu_x = expect(upload_f32(&x));
+    let gpu_y = expect(upload_f32(&vec![0.0f32; n]));
+
+    expect(dispatch_sparse_csr_gemv_f32(
+        gpu_values.as_ptr() as *const f32,
+        gpu_cols.as_ptr() as *const u32,
+        gpu_rows.as_ptr() as *const u32,
+        values.len(),
+        n,
+        n,
+        gpu_x.as_ptr() as *const f32,
+        gpu_y.as_ptr() as *mut f32,
+        device.stream(),
+    ));
+
+    expect(device.synchronize());
+
+    let out_y = expect(download_f32(&gpu_y, n));
+
+    for i in 0..n {
+        assert!(
+            (out_y[i] - ref_y[i]).abs() < 1e-4,
+            "Sparse CSR diagonal mismatch at {}: actual={}, ref={}",
+            i,
+            out_y[i],
+            ref_y[i]
+        );
+    }
+}
+
+#[test]
+#[serial]
+fn test_sparse_csr_gemv_empty_row() {
     let device = init_device();
     let rows = 6usize;
-    let cols = 8usize;
+    let cols = 4usize;
 
-    // Row 2 and row 4 are completely zero
-    let mut dense = vec![0.0f32; rows * cols];
-    for r in 0..rows {
-        if r == 2 || r == 4 {
+    // Matrix where row 2 is all zeros
+    let mut a = vec![0.0f32; rows * cols];
+    for i in 0..rows {
+        if i == 2 {
             continue;
         }
-        for c in 0..cols {
-            if c % 2 == 0 {
-                dense[r * cols + c] = (r as f32) * 0.2 + (c as f32) * 0.1;
-            }
+        for j in 0..cols {
+            a[i * cols + j] = (i as f32) * 0.1 + (j as f32) * 0.05;
         }
     }
 
-    let mut x = vec![0.0f32; cols];
-    for (i, v) in x.iter_mut().enumerate() {
-        *v = (i as f32) * 0.03 - 0.12;
-    }
+    let x: Vec<f32> = (0..cols).map(|i| (i as f32) * 0.2 + 0.1).collect();
+    let ref_y = dense_gemv_reference(&a, rows, cols, &x);
 
-    // CPU reference
-    let mut ref_y = vec![0.0f32; rows];
-    for r in 0..rows {
-        let mut sum = 0.0f32;
-        for c in 0..cols {
-            sum += dense[r * cols + c] * x[c];
-        }
-        ref_y[r] = sum;
-    }
-
-    let (values, col_indices, row_offsets, nnz) = dense_to_csr(&dense, rows, cols);
+    let (values, col_indices, row_offsets) = dense_to_csr(&a, rows, cols);
 
     let gpu_values = expect(upload_f32(&values));
-    let gpu_col_idx = expect(upload_u32(&col_indices));
-    let gpu_row_off = expect(upload_u32(&row_offsets));
+    let gpu_cols = expect(upload_u32(&col_indices));
+    let gpu_rows = expect(upload_u32(&row_offsets));
     let gpu_x = expect(upload_f32(&x));
     let gpu_y = expect(upload_f32(&vec![0.0f32; rows]));
 
     expect(dispatch_sparse_csr_gemv_f32(
         gpu_values.as_ptr() as *const f32,
-        gpu_col_idx.as_ptr() as *const u32,
-        gpu_row_off.as_ptr() as *const u32,
-        nnz,
+        gpu_cols.as_ptr() as *const u32,
+        gpu_rows.as_ptr() as *const u32,
+        values.len(),
         rows,
         cols,
         gpu_x.as_ptr() as *const f32,
@@ -256,7 +280,7 @@ fn test_sparse_csr_gemv_empty_rows() {
     for i in 0..rows {
         assert!(
             (out_y[i] - ref_y[i]).abs() < 1e-4,
-            "empty-row CSR GEMV mismatch at {}: actual={}, ref={}",
+            "Sparse CSR empty-row mismatch at {}: actual={}, ref={}",
             i,
             out_y[i],
             ref_y[i]

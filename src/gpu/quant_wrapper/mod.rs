@@ -70,8 +70,8 @@ mod tests {
     }
 
     #[test]
-    fn q8_0_block_size_is_34() {
-        assert_eq!(Q8_0_BLOCK_SIZE, 34, "Q8_0_BLOCK_SIZE must be 34 bytes");
+    fn q8_0_block_size_is_36() {
+        assert_eq!(Q8_0_BLOCK_SIZE, 36, "Q8_0_BLOCK_SIZE must be 36 bytes");
     }
 
     #[test]

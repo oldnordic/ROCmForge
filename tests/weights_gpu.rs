@@ -41,6 +41,7 @@ fn test_weight_metadata_calculations() {
         dims: vec![1024, 768],
         needs_transpose: false,
         role: TensorRole::Generic,
+        svd_k: None,
     };
 
     assert_eq!(meta.num_elements(), 1024 * 768);
@@ -137,6 +138,7 @@ fn test_gpu_weights_lm_head_tied() {
         dims: vec![32000, 1024],
         needs_transpose: false,
         role: TensorRole::Generic,
+        svd_k: None,
     };
 
     // Simulate tied weights
@@ -145,6 +147,7 @@ fn test_gpu_weights_lm_head_tied() {
         dims: token_emb_meta.dims.clone(),
         needs_transpose: true, // LM head needs transpose
         role: TensorRole::TiedLmHead,
+        svd_k: None,
     };
 
     assert_eq!(tied_meta.wtype, rocmforge::loader::GgmlType::Q4_0);

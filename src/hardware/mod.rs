@@ -5,7 +5,7 @@
 //!
 //! ## Usage
 //!
-//! ```no_run
+//! ```ignore
 //! use rocmforge::hardware::{CpuCapabilities, BatchConfig, detect, derive_batch_config};
 //!
 //! // Detect hardware capabilities

@@ -144,6 +144,7 @@ fn test_gpu_dispatch_q4_0_uses_q8_activation_fastpath_and_matches_cpu_oracle() {
         dims: vec![in_dim as u64, out_dim as u64],
         needs_transpose: false,
         role: TensorRole::Generic,
+        svd_k: None,
     };
 
     let d_weights =
@@ -454,6 +455,7 @@ fn test_gpu_dispatch_fused_gate_up_uses_q8_fastpath_when_enabled() {
         dims: vec![in_dim as u64, ff_dim as u64],
         needs_transpose: false,
         role: TensorRole::Generic,
+        svd_k: None,
     };
 
     let d_gate =

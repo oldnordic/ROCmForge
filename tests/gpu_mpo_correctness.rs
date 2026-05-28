@@ -198,15 +198,11 @@ fn test_mpo_apply_3site_basic() {
     // Flattened: A1 is [d1, chi1], A2 is [chi1, d2, chi2], A3 is [chi2, d3]
     // Actually per MPO convention: site i has shape [chi_left, d_i, chi_right]
     // So A1: [1, d1, chi1], A2: [chi1, d2, chi2], A3: [chi2, d3, 1]
-    let a1: Vec<f32> = (0..(d1 * chi1))
-        .map(|i| (i as f32) * 0.01 - 0.1)
-        .collect();
+    let a1: Vec<f32> = (0..(d1 * chi1)).map(|i| (i as f32) * 0.01 - 0.1).collect();
     let a2: Vec<f32> = (0..(chi1 * d2 * chi2))
         .map(|i| (i as f32) * 0.02 + 0.05)
         .collect();
-    let a3: Vec<f32> = (0..(chi2 * d3))
-        .map(|i| (i as f32) * 0.03 - 0.05)
-        .collect();
+    let a3: Vec<f32> = (0..(chi2 * d3)).map(|i| (i as f32) * 0.03 - 0.05).collect();
 
     let mut x = vec![0.0f32; d3];
     for (i, v) in x.iter_mut().enumerate() {

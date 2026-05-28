@@ -62,6 +62,7 @@ pub(super) fn build_matrix_meta(
             is_tied,
         ),
         role: derive_tensor_role(is_lm_head, is_tied),
+        svd_k: None,
     })
 }
 
@@ -169,7 +170,11 @@ pub(super) fn rfm_type_to_ggml(t: &RfmType) -> GgmlType {
     match t {
         RfmType::F32 => GgmlType::F32,
         RfmType::Q4Split | RfmType::Q4FusedGateUp => GgmlType::Q4_0,
+        RfmType::Q4SvdQuant { .. } => GgmlType::Q4_0,
         RfmType::GgufPassthrough(v) => GgmlType::from_u32(*v).unwrap_or(GgmlType::Q4_0),
+        RfmType::SparseCsr { value_type, .. } | RfmType::Mpo { value_type, .. } => {
+            GgmlType::from_u32(*value_type).unwrap_or(GgmlType::F32)
+        }
     }
 }
 
@@ -232,7 +237,7 @@ pub(super) fn unpack_q4_fused_gate_up(data: &[u8], gate_elements: usize) -> (Vec
 
 pub(super) fn estimate_rfm_layer_vram(file: &RfmFile, layer: usize) -> GpuResult<usize> {
     let mut total = 0;
-    let tensors = [
+    let tensors = vec![
         format!("blk.{}.attn_q.weight", layer),
         format!("blk.{}.attn_k.weight", layer),
         format!("blk.{}.attn_v.weight", layer),
@@ -247,7 +252,7 @@ pub(super) fn estimate_rfm_layer_vram(file: &RfmFile, layer: usize) -> GpuResult
             code: -1,
             description: format!("tensor lookup failed: {}", e),
         })? {
-            match t.wtype {
+            match &t.wtype {
                 RfmType::F32 => total += t.data.len(),
                 RfmType::Q4Split => {
                     let num_blocks = t.element_count() / 32;
@@ -259,7 +264,18 @@ pub(super) fn estimate_rfm_layer_vram(file: &RfmFile, layer: usize) -> GpuResult
                     total += num_blocks * 18 * 2; // ffn_gate_up_interleaved
                     total += num_blocks * 18 * 2; // ffn_gate_up_interleaved_tile4
                 }
+                RfmType::Q4SvdQuant { k } => {
+                    let num_blocks = t.element_count() / 32;
+                    total += num_blocks * 18;
+                    // SVD corrections: U (out_dim x k) + V (k x in_dim) F32
+                    if t.dims.len() >= 2 {
+                        let in_dim = t.dims[0] as usize;
+                        let out_dim = t.dims[1] as usize;
+                        total += (in_dim + out_dim) * (*k as usize) * 4;
+                    }
+                }
                 RfmType::GgufPassthrough(_) => total += t.data.len(),
+                RfmType::SparseCsr { .. } | RfmType::Mpo { .. } => total += t.data.len(),
             }
         }
     }

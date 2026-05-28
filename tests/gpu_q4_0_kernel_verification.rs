@@ -151,7 +151,7 @@ fn test_q4_0_transposed_kernel_behavior() {
     );
 
     // GPU should match CPU transposed (the correct implementation)
-    // Tolerance adjusted to 10.0 to accommodate floating-point accumulation reordering 
+    // Tolerance adjusted to 10.0 to accommodate floating-point accumulation reordering
     // artifacts introduced by high-performance factored dequantization optimization.
     assert!(
         gpu_vs_transposed < 10.0,

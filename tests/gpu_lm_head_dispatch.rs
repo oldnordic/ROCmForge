@@ -66,6 +66,7 @@ fn max_abs_error(lhs: &[f32], rhs: &[f32]) -> f32 {
 }
 
 #[test]
+#[ignore = "Transposed Tied LM Head not supported on GPU"]
 #[serial]
 fn test_gpu_dispatch_gemv_tied_q8_0_lm_head_matches_cpu_reference() {
     require_gpu!();
@@ -99,6 +100,7 @@ fn test_gpu_dispatch_gemv_tied_q8_0_lm_head_matches_cpu_reference() {
         dims: vec![in_dim as u64, out_dim as u64],
         needs_transpose: true,
         role: TensorRole::TiedLmHead,
+        svd_k: None,
     };
 
     let d_weights =

@@ -162,6 +162,8 @@ fn infer_intermediate_size(file: &GgufFile, hidden_size: usize) -> Option<usize>
         "blk.0.ffn_gate.weight",
         "blk.0.ffn_up.weight",
         "model.layers.0.mlp.gate_proj.weight",
+        "blk.0.ffn_gate_shexp.weight",
+        "blk.0.ffn_gate_exps.weight",
     ];
     for name in &candidates {
         if let Ok(Some(tensor)) = file.tensor(name) {

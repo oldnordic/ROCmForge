@@ -201,12 +201,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         );
     }
-    println!(
-        "\nFor reference: Q4_0 uses 4.5 bits/weight = 56.25% of F32 size"
-    );
-    println!(
-        "For reference: Q8_0 uses 8.5 bits/weight = 26.6% of F32 size"
-    );
+    println!("\nFor reference: Q4_0 uses 4.5 bits/weight = 56.25% of F32 size");
+    println!("For reference: Q8_0 uses 8.5 bits/weight = 26.6% of F32 size");
 
     Ok(())
 }
@@ -240,15 +236,16 @@ fn dequantize_tensor(tv: &TensorView) -> Option<Vec<f32>> {
     match tv.ggml_type {
         GgmlType::F32 => {
             let n = tv.element_count();
-            let mut out = vec![0.0f32; n];
-            for i in 0..n {
-                out[i] = f32::from_le_bytes([
-                    tv.data[i * 4],
-                    tv.data[i * 4 + 1],
-                    tv.data[i * 4 + 2],
-                    tv.data[i * 4 + 3],
-                ]);
-            }
+            let out = (0..n)
+                .map(|i| {
+                    f32::from_le_bytes([
+                        tv.data[i * 4],
+                        tv.data[i * 4 + 1],
+                        tv.data[i * 4 + 2],
+                        tv.data[i * 4 + 3],
+                    ])
+                })
+                .collect();
             Some(out)
         }
         GgmlType::Q4_0 => Some(dequantize_q4_0_to_f32(tv.data, tv.element_count())),
@@ -379,16 +376,14 @@ fn compress_mpo(weights: &[f32], n_out: usize, n_in: usize, chi_max: usize) -> M
         for col in 0..n_in {
             let mut interleaved = 0usize;
             for k in 0..n_sites {
-                let io_k = if do_strides[k] > 0 {
-                    (row / do_strides[k]) % out_factors[k]
-                } else {
-                    0
-                };
-                let ii_k = if di_strides[k] > 0 {
-                    (col / di_strides[k]) % in_factors[k]
-                } else {
-                    0
-                };
+                let io_k = row
+                    .checked_div(do_strides[k])
+                    .map(|q| q % out_factors[k])
+                    .unwrap_or(0);
+                let ii_k = col
+                    .checked_div(di_strides[k])
+                    .map(|q| q % in_factors[k])
+                    .unwrap_or(0);
                 interleaved += (io_k * in_factors[k] + ii_k) * pair_strides[k];
             }
             w_t[interleaved] = weights[row * n_in + col];
@@ -412,8 +407,7 @@ fn compress_mpo(weights: &[f32], n_out: usize, n_in: usize, chi_max: usize) -> M
             for ip in 0..phys_k {
                 let row = il * phys_k + ip;
                 for col in 0..n_svd {
-                    unfolded[row * n_svd + col] =
-                        current[il * total_right + ip * n_svd + col];
+                    unfolded[row * n_svd + col] = current[il * total_right + ip * n_svd + col];
                 }
             }
         }
@@ -446,7 +440,11 @@ fn compress_mpo(weights: &[f32], n_out: usize, n_in: usize, chi_max: usize) -> M
                 for ii in 0..d_in_k {
                     let u_row = il * phys_k + io * d_in_k + ii;
                     for ir in 0..chi_right {
-                        let u_val = if ir < k_svd { u[u_row * k_svd + ir] } else { 0.0 };
+                        let u_val = if ir < k_svd {
+                            u[u_row * k_svd + ir]
+                        } else {
+                            0.0
+                        };
                         let s_val = if ir < k_svd { sigma[ir] } else { 0.0 };
                         data[il * d_out_k * d_in_k * chi_right
                             + io * d_in_k * chi_right
@@ -565,13 +563,12 @@ fn mpo_apply(mpo: &MpoResult, x: &[f32]) -> Vec<f32> {
                 let chi_r = site.chi_right;
                 let mut next = vec![0.0f32; chi_r];
                 for (il, &bond_val) in bond.iter().enumerate() {
-                    for ir in 0..chi_r {
-                        next[ir] += bond_val
-                            * site.data
-                                [il * site.d_out * site.d_in * chi_r
-                                    + io[k] * site.d_in * chi_r
-                                    + ii[k] * chi_r
-                                    + ir];
+                    for (ir, next_val) in next.iter_mut().enumerate().take(chi_r) {
+                        *next_val += bond_val
+                            * site.data[il * site.d_out * site.d_in * chi_r
+                                + io[k] * site.d_in * chi_r
+                                + ii[k] * chi_r
+                                + ir];
                     }
                 }
                 bond = next;
@@ -689,7 +686,11 @@ fn svd_thin_tall(a: &[f32], m: usize, n: usize) -> (Vec<f32>, Vec<f32>, Vec<f32>
     let mut sigma: Vec<f32> = (0..n).map(|i| c[i * n + i].max(0.0).sqrt()).collect();
 
     let mut order: Vec<usize> = (0..n).collect();
-    order.sort_by(|&a, &b| sigma[b].partial_cmp(&sigma[a]).unwrap_or(std::cmp::Ordering::Equal));
+    order.sort_by(|&a, &b| {
+        sigma[b]
+            .partial_cmp(&sigma[a])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     sigma = order.iter().map(|&i| sigma[i]).collect();
     let mut v_sorted = vec![0.0f32; n * n];
     for (new_col, &old_col) in order.iter().enumerate() {

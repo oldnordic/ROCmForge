@@ -280,6 +280,7 @@ fn test_gpu_batched_qkv_projection_q4_0_validation() {
         dims: vec![1024, 4096],
         needs_transpose: false,
         role: TensorRole::Generic,
+        svd_k: None,
     };
 
     let invalid_meta_q4_1 = WeightMeta {
@@ -287,6 +288,7 @@ fn test_gpu_batched_qkv_projection_q4_0_validation() {
         dims: vec![1024, 4096],
         needs_transpose: false,
         role: TensorRole::Generic,
+        svd_k: None,
     };
 
     // Test weight type validation

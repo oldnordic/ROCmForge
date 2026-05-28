@@ -55,7 +55,11 @@ impl SafeTensorsFile {
                     let dtype = m["dtype"].as_str().unwrap_or("").to_string();
                     let shape = m["shape"]
                         .as_array()
-                        .map(|a| a.iter().filter_map(|v| v.as_u64().map(|x| x as usize)).collect())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_u64().map(|x| x as usize))
+                                .collect()
+                        })
                         .unwrap_or_default();
                     let offsets = if let Some(arr) = m["data_offsets"].as_array() {
                         (
@@ -65,7 +69,14 @@ impl SafeTensorsFile {
                     } else {
                         (0, 0)
                     };
-                    tensors.insert(name.clone(), SafeTensorInfo { dtype, shape, offsets });
+                    tensors.insert(
+                        name.clone(),
+                        SafeTensorInfo {
+                            dtype,
+                            shape,
+                            offsets,
+                        },
+                    );
                 }
             }
         }
@@ -92,7 +103,12 @@ impl SafeTensorsFile {
             "F32" => {
                 let mut out = vec![0.0f32; n];
                 for i in 0..n {
-                    out[i] = f32::from_le_bytes([data[i * 4], data[i * 4 + 1], data[i * 4 + 2], data[i * 4 + 3]]);
+                    out[i] = f32::from_le_bytes([
+                        data[i * 4],
+                        data[i * 4 + 1],
+                        data[i * 4 + 2],
+                        data[i * 4 + 3],
+                    ]);
                 }
                 Some(out)
             }
@@ -145,19 +161,17 @@ impl ShardedSafeTensors {
             let mut weight_map = BTreeMap::new();
 
             if let serde_json::Value::Object(map) = index {
-                if let Some(wm) = map.get("weight_map") {
-                    if let serde_json::Value::Object(wm_map) = wm {
-                        for (tensor_name, file_val) in wm_map {
-                            let fname = file_val.as_str().unwrap_or("");
-                            let idx = if let Some(&i) = file_set.get(fname) {
-                                i
-                            } else {
-                                let i = file_set.len();
-                                file_set.insert(fname.to_string(), i);
-                                i
-                            };
-                            weight_map.insert(tensor_name.clone(), idx);
-                        }
+                if let Some(serde_json::Value::Object(wm_map)) = map.get("weight_map") {
+                    for (tensor_name, file_val) in wm_map {
+                        let fname = file_val.as_str().unwrap_or("");
+                        let idx = if let Some(&i) = file_set.get(fname) {
+                            i
+                        } else {
+                            let i = file_set.len();
+                            file_set.insert(fname.to_string(), i);
+                            i
+                        };
+                        weight_map.insert(tensor_name.clone(), idx);
                     }
                 }
             }
@@ -173,7 +187,10 @@ impl ShardedSafeTensors {
         } else if single_path.exists() {
             let f = SafeTensorsFile::open(&single_path)?;
             let weight_map = f.tensor_names().map(|n| (n.to_string(), 0)).collect();
-            Ok(Self { files: vec![f], weight_map })
+            Ok(Self {
+                files: vec![f],
+                weight_map,
+            })
         } else {
             Err("No safetensors found in directory".into())
         }
@@ -199,7 +216,7 @@ impl ShardedSafeTensors {
 // ── Unified input ────────────────────────────────────────────────────────
 
 enum ModelInput {
-    Gguf(rocmforge::loader::GgufFile),
+    Gguf(Box<rocmforge::loader::GgufFile>),
     Safetensors(ShardedSafeTensors),
 }
 
@@ -214,12 +231,15 @@ fn open_model(path: &str) -> Result<ModelInput, Box<dyn std::error::Error>> {
     let p = Path::new(path);
     if p.is_dir() {
         let st = ShardedSafeTensors::open(p)?;
-        println!("Opened safetensors directory: {} tensors", st.tensor_names().len());
+        println!(
+            "Opened safetensors directory: {} tensors",
+            st.tensor_names().len()
+        );
         Ok(ModelInput::Safetensors(st))
     } else {
         let gguf = rocmforge::loader::GgufFile::open(path)?;
         println!("Opened GGUF: {} tensors", gguf.tensor_count());
-        Ok(ModelInput::Gguf(gguf))
+        Ok(ModelInput::Gguf(Box::new(gguf)))
     }
 }
 
@@ -230,7 +250,10 @@ fn collect_tensors(model: &ModelInput, max_layers: Option<usize>) -> Vec<TensorM
     }
 }
 
-fn collect_gguf_tensors(gguf: &rocmforge::loader::GgufFile, max_layers: Option<usize>) -> Vec<TensorMeta> {
+fn collect_gguf_tensors(
+    gguf: &rocmforge::loader::GgufFile,
+    max_layers: Option<usize>,
+) -> Vec<TensorMeta> {
     use rocmforge::loader::GgmlType;
 
     let mut names: Vec<String> = gguf.tensor_names().map(str::to_string).collect();
@@ -259,20 +282,27 @@ fn collect_gguf_tensors(gguf: &rocmforge::loader::GgufFile, max_layers: Option<u
         None
     };
 
-    names.iter()
+    names
+        .iter()
         .filter(|n| is_weight_tensor_gguf(n))
         .filter_map(|name| {
             let tv = gguf.tensor(name).ok()??;
-            if tv.dims.len() != 2 { return None; }
+            if tv.dims.len() != 2 {
+                return None;
+            }
             let in_dim = tv.dims[0] as usize;
             let out_dim = tv.dims[1] as usize;
-            if in_dim < 4 || out_dim < 4 { return None; }
+            if in_dim < 4 || out_dim < 4 {
+                return None;
+            }
 
             if let Some(ref ls) = layer_set {
                 if let Some(idx) = name.find("blk.") {
                     let rest = &name[idx + 5..];
                     let end = rest.find('.').unwrap_or(rest.len());
-                    if !ls.contains(&rest[..end].to_string()) { return None; }
+                    if !ls.contains(&rest[..end].to_string()) {
+                        return None;
+                    }
                 }
             }
 
@@ -290,27 +320,34 @@ fn collect_gguf_tensors(gguf: &rocmforge::loader::GgufFile, max_layers: Option<u
                 name: name.clone(),
                 rows: out_dim,
                 cols: in_dim,
-    orig_bytes: ((out_dim * in_dim) as f64 * type_size) as usize,
+                orig_bytes: ((out_dim * in_dim) as f64 * type_size) as usize,
             })
         })
         .collect()
 }
 
-fn collect_safetensors_tensors(st: &ShardedSafeTensors, max_layers: Option<usize>) -> Vec<TensorMeta> {
+fn collect_safetensors_tensors(
+    st: &ShardedSafeTensors,
+    max_layers: Option<usize>,
+) -> Vec<TensorMeta> {
     let names = st.tensor_names();
 
     let layer_set = if let Some(max) = max_layers {
         let mut set = std::collections::BTreeSet::new();
         let mut count = 0usize;
         for name in &names {
-            if !is_weight_tensor_st(name) { continue; }
+            if !is_weight_tensor_st(name) {
+                continue;
+            }
             if let Some(idx) = name.find("layers.") {
                 let rest = &name[idx + 7..];
                 let end = rest.find('.').unwrap_or(rest.len());
                 if let Ok(layer_num) = rest[..end].parse::<usize>() {
                     if set.insert(layer_num) {
                         count += 1;
-                        if count > max { break; }
+                        if count > max {
+                            break;
+                        }
                     }
                 }
             }
@@ -320,21 +357,28 @@ fn collect_safetensors_tensors(st: &ShardedSafeTensors, max_layers: Option<usize
         None
     };
 
-    names.iter()
+    names
+        .iter()
         .filter(|n| is_weight_tensor_st(n))
         .filter_map(|name| {
             let shape = st.shape(name)?;
-            if shape.len() != 2 { return None; }
+            if shape.len() != 2 {
+                return None;
+            }
             let rows = shape[0];
             let cols = shape[1];
-            if rows < 4 || cols < 4 { return None; }
+            if rows < 4 || cols < 4 {
+                return None;
+            }
 
             if let Some(ref ls) = layer_set {
                 if let Some(idx) = name.find("layers.") {
                     let rest = &name[idx + 7..];
                     let end = rest.find('.').unwrap_or(rest.len());
                     if let Ok(layer_num) = rest[..end].parse::<usize>() {
-                        if !ls.contains(&layer_num) { return None; }
+                        if !ls.contains(&layer_num) {
+                            return None;
+                        }
                     }
                 }
             }
@@ -364,10 +408,16 @@ fn dequantize_gguf(tv: &rocmforge::loader::TensorView) -> Option<Vec<f32>> {
     let n = tv.element_count();
     match tv.ggml_type {
         GgmlType::F32 => {
-            let mut out = vec![0.0f32; n];
-            for i in 0..n {
-                out[i] = f32::from_le_bytes([tv.data[i*4], tv.data[i*4+1], tv.data[i*4+2], tv.data[i*4+3]]);
-            }
+            let out = (0..n)
+                .map(|i| {
+                    f32::from_le_bytes([
+                        tv.data[i * 4],
+                        tv.data[i * 4 + 1],
+                        tv.data[i * 4 + 2],
+                        tv.data[i * 4 + 3],
+                    ])
+                })
+                .collect();
             Some(out)
         }
         GgmlType::Q4_0 => Some(deq_q4_0(tv.data, n)),
@@ -391,11 +441,15 @@ fn deq_q4_0(data: &[u8], n: usize) -> Vec<f32> {
     let mut out = vec![0.0f32; n];
     for i in 0..nb {
         let off = i * 18;
-        let s = half::f16::from_bits(u16::from_le_bytes([data[off], data[off+1]])).to_f32();
+        let s = half::f16::from_bits(u16::from_le_bytes([data[off], data[off + 1]])).to_f32();
         for j in 0..32 {
-            let b = data[off + 2 + j/2];
-            let nib = if j % 2 == 0 { b & 0x0F } else { (b >> 4) & 0x0F };
-            out[i*32+j] = ((nib as i8) - 8) as f32 * s;
+            let b = data[off + 2 + j / 2];
+            let nib = if j % 2 == 0 {
+                b & 0x0F
+            } else {
+                (b >> 4) & 0x0F
+            };
+            out[i * 32 + j] = ((nib as i8) - 8) as f32 * s;
         }
     }
     out
@@ -406,24 +460,36 @@ fn deq_q8_0(data: &[u8], n: usize) -> Vec<f32> {
     let mut out = vec![0.0f32; n];
     for i in 0..nb {
         let off = i * 34;
-        let s = half::f16::from_bits(u16::from_le_bytes([data[off], data[off+1]])).to_f32();
-        for j in 0..32 { out[i*32+j] = data[off+2+j] as i8 as f32 * s; }
+        let s = half::f16::from_bits(u16::from_le_bytes([data[off], data[off + 1]])).to_f32();
+        for j in 0..32 {
+            out[i * 32 + j] = data[off + 2 + j] as i8 as f32 * s;
+        }
     }
     out
 }
 
 fn is_weight_tensor_gguf(name: &str) -> bool {
     name.ends_with(".weight")
-        && (name.contains("attn_q") || name.contains("attn_k") || name.contains("attn_v")
-            || name.contains("attn_output") || name.contains("attn_qkv")
-            || name.contains("ffn_gate") || name.contains("ffn_up") || name.contains("ffn_down"))
+        && (name.contains("attn_q")
+            || name.contains("attn_k")
+            || name.contains("attn_v")
+            || name.contains("attn_output")
+            || name.contains("attn_qkv")
+            || name.contains("ffn_gate")
+            || name.contains("ffn_up")
+            || name.contains("ffn_down"))
 }
 
 fn is_weight_tensor_st(name: &str) -> bool {
     name.ends_with(".weight")
-        && (name.contains("q_proj") || name.contains("k_proj") || name.contains("v_proj")
-            || name.contains("o_proj") || name.contains("qkv_proj")
-            || name.contains("gate_proj") || name.contains("up_proj") || name.contains("down_proj"))
+        && (name.contains("q_proj")
+            || name.contains("k_proj")
+            || name.contains("v_proj")
+            || name.contains("o_proj")
+            || name.contains("qkv_proj")
+            || name.contains("gate_proj")
+            || name.contains("up_proj")
+            || name.contains("down_proj"))
 }
 
 // ── SVD (power iteration from convert.rs) ────────────────────────────────
@@ -433,7 +499,9 @@ fn matmul(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
     c.par_chunks_mut(n).enumerate().for_each(|(i, row)| {
         for p in 0..k {
             let aip = a[i * k + p];
-            for j in 0..n { row[j] += aip * b[p * n + j]; }
+            for j in 0..n {
+                row[j] += aip * b[p * n + j];
+            }
         }
     });
     c
@@ -441,25 +509,34 @@ fn matmul(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
 
 fn normalize(v: &mut [f32]) -> f32 {
     let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if norm > 1e-12 { let inv = 1.0 / norm; for x in v.iter_mut() { *x *= inv; } }
+    if norm > 1e-12 {
+        let inv = 1.0 / norm;
+        for x in v.iter_mut() {
+            *x *= inv;
+        }
+    }
     norm
 }
 
 fn orthogonalize(v: &mut [f32], basis: &[Vec<f32>]) {
     for b in basis {
         let dot: f32 = v.iter().zip(b).map(|(x, y)| x * y).sum();
-        for (x, y) in v.iter_mut().zip(b) { *x -= dot * y; }
+        for (x, y) in v.iter_mut().zip(b) {
+            *x -= dot * y;
+        }
     }
 }
 
 fn matvec_w(a: &[f32], m: usize, n: usize, v: &[f32]) -> Vec<f32> {
-    a.par_chunks(n).take(m)
+    a.par_chunks(n)
+        .take(m)
         .map(|row| row.iter().zip(v).map(|(x, y)| x * y).sum())
         .collect()
 }
 
 fn matvec_wt(a: &[f32], m: usize, n: usize, u: &[f32]) -> Vec<f32> {
-    (0..n).into_par_iter()
+    (0..n)
+        .into_par_iter()
         .map(|col| (0..m).map(|row| a[row * n + col] * u[row]).sum())
         .collect()
 }
@@ -468,7 +545,9 @@ fn seed_vector(len: usize, component: usize) -> Vec<f32> {
     let mut state = 0x9e37_79b9_7f4a_7c15u64 ^ ((component as u64 + 1) * 0xbf58_476d_1ce4_e5b9);
     let mut v = Vec::with_capacity(len);
     for _ in 0..len {
-        state ^= state >> 12; state ^= state << 25; state ^= state >> 27;
+        state ^= state >> 12;
+        state ^= state << 25;
+        state ^= state >> 27;
         let bits = state.wrapping_mul(0x2545_f491_4f6c_dd1d);
         v.push(((bits >> 40) as f32) / ((1u64 << 24) as f32) * 2.0 - 1.0);
     }
@@ -486,22 +565,30 @@ fn top_k_svd(a: &[f32], m: usize, n: usize, k: usize) -> (Vec<f32>, Vec<f32>) {
     for component in 0..k {
         let mut v = seed_vector(n, component);
         orthogonalize(&mut v, &v_basis);
-        if normalize(&mut v) <= 1e-12 { break; }
+        if normalize(&mut v) <= 1e-12 {
+            break;
+        }
 
         let mut u = vec![0.0f32; m];
         for _ in 0..iters {
             u = matvec_w(a, m, n, &v);
             orthogonalize(&mut u, &u_basis);
-            if normalize(&mut u) <= 1e-12 { break; }
+            if normalize(&mut u) <= 1e-12 {
+                break;
+            }
             v = matvec_wt(a, m, n, &u);
             orthogonalize(&mut v, &v_basis);
-            if normalize(&mut v) <= 1e-12 { break; }
+            if normalize(&mut v) <= 1e-12 {
+                break;
+            }
         }
 
         u = matvec_w(a, m, n, &v);
         orthogonalize(&mut u, &u_basis);
         let sigma = normalize(&mut u);
-        if sigma <= 1e-8 { break; }
+        if sigma <= 1e-8 {
+            break;
+        }
 
         u_basis.push(u);
         v_basis.push(v);
@@ -512,8 +599,12 @@ fn top_k_svd(a: &[f32], m: usize, n: usize, k: usize) -> (Vec<f32>, Vec<f32>) {
     let mut u_sigma = vec![0.0f32; m * k];
     let mut vt = vec![0.0f32; k * n];
     for col in 0..actual_k {
-        for row in 0..m { u_sigma[row * k + col] = u_basis[col][row] * sigmas[col]; }
-        for j in 0..n { vt[col * n + j] = v_basis[col][j]; }
+        for row in 0..m {
+            u_sigma[row * k + col] = u_basis[col][row] * sigmas[col];
+        }
+        for j in 0..n {
+            vt[col * n + j] = v_basis[col][j];
+        }
     }
     (u_sigma, vt)
 }
@@ -523,7 +614,10 @@ fn top_k_svd(a: &[f32], m: usize, n: usize, k: usize) -> (Vec<f32>, Vec<f32>) {
 fn parse_k_args(args: &[String]) -> Vec<usize> {
     for i in 0..args.len() {
         if args[i] == "--k" && i + 1 < args.len() {
-            return args[i+1].split(',').filter_map(|s| s.trim().parse().ok()).collect();
+            return args[i + 1]
+                .split(',')
+                .filter_map(|s| s.trim().parse().ok())
+                .collect();
         }
     }
     vec![1, 2, 4, 8, 16]
@@ -532,7 +626,7 @@ fn parse_k_args(args: &[String]) -> Vec<usize> {
 fn parse_max_layers(args: &[String]) -> Option<usize> {
     for i in 0..args.len() {
         if args[i] == "--max-layers" && i + 1 < args.len() {
-            return args[i+1].trim().parse().ok();
+            return args[i + 1].trim().parse().ok();
         }
     }
     None
@@ -541,7 +635,7 @@ fn parse_max_layers(args: &[String]) -> Option<usize> {
 fn parse_error_target(args: &[String]) -> f32 {
     for i in 0..args.len() {
         if args[i] == "--error-target" && i + 1 < args.len() {
-            return args[i+1].trim().parse().unwrap_or(0.05);
+            return args[i + 1].trim().parse().unwrap_or(0.05);
         }
     }
     0.05
@@ -551,11 +645,22 @@ fn parse_error_target(args: &[String]) -> f32 {
 
 fn q4_quant_block(block: &[f32]) -> (f32, Vec<i8>) {
     let mut max_abs = 0.0f32;
-    for &x in block { if x.abs() > max_abs { max_abs = x.abs(); } }
+    for &x in block {
+        if x.abs() > max_abs {
+            max_abs = x.abs();
+        }
+    }
     let scale = max_abs / 8.0;
-    let quant: Vec<i8> = block.iter().map(|&x| {
-        if scale > 1e-10 { (x / scale).round().clamp(-8.0, 7.0) as i8 } else { 0 }
-    }).collect();
+    let quant: Vec<i8> = block
+        .iter()
+        .map(|&x| {
+            if scale > 1e-10 {
+                (x / scale).round().clamp(-8.0, 7.0) as i8
+            } else {
+                0
+            }
+        })
+        .collect();
     (scale, quant)
 }
 
@@ -577,9 +682,17 @@ fn quantize_dequantize_matrix(w: &[f32], rows: usize, cols: usize, block_size: u
 }
 
 fn frob_rel_error(original: &[f32], reconstructed: &[f32]) -> f32 {
-    let diff_sq: f32 = original.iter().zip(reconstructed).map(|(a, b)| (a - b) * (a - b)).sum();
+    let diff_sq: f32 = original
+        .iter()
+        .zip(reconstructed)
+        .map(|(a, b)| (a - b) * (a - b))
+        .sum();
     let norm_sq: f32 = original.iter().map(|x| x * x).sum();
-    if norm_sq < 1e-10 { 0.0 } else { (diff_sq / norm_sq).sqrt() }
+    if norm_sq < 1e-10 {
+        0.0
+    } else {
+        (diff_sq / norm_sq).sqrt()
+    }
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────
@@ -638,15 +751,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let low_rank = matmul(&u_sigma, &vt, meta.rows, k, meta.cols);
 
             let mut residual = vec![0.0f32; meta.rows * meta.cols];
-            for i in 0..meta.rows * meta.cols { residual[i] = w_f32[i] - low_rank[i]; }
+            for i in 0..meta.rows * meta.cols {
+                residual[i] = w_f32[i] - low_rank[i];
+            }
 
             let q4_residual = quantize_dequantize_matrix(&residual, meta.rows, meta.cols, 32);
 
             let mut reconstructed = vec![0.0f32; meta.rows * meta.cols];
-            for i in 0..meta.rows * meta.cols { reconstructed[i] = q4_residual[i] + low_rank[i]; }
+            for i in 0..meta.rows * meta.cols {
+                reconstructed[i] = q4_residual[i] + low_rank[i];
+            }
 
             let svd_q4_err = frob_rel_error(&w_f32, &reconstructed);
-            let improvement = if naive_err > 1e-6 { naive_err / svd_q4_err } else { 1.0 };
+            let improvement = if naive_err > 1e-6 {
+                naive_err / svd_q4_err
+            } else {
+                1.0
+            };
 
             let svd_mb = (meta.rows * k + k * meta.cols) as f64 * 2.0 / 1e6;
             let q4_mb = (meta.rows * meta.cols) as f64 * 0.5 / 1e6;
@@ -658,8 +779,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             println!(
                 "{:<55} {:>5} {:>5} {:>4} {:>7.2}% {:>7.2}% {:>5.1}x {:>5}",
-                meta.name, meta.rows, meta.cols, k,
-                naive_err * 100.0, svd_q4_err * 100.0, improvement, elapsed
+                meta.name,
+                meta.rows,
+                meta.cols,
+                k,
+                naive_err * 100.0,
+                svd_q4_err * 100.0,
+                improvement,
+                elapsed
             );
 
             if svd_q4_err < error_target && (best_k == 0 || k < best_k) {
@@ -671,14 +798,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if best_k > 0 {
-            optimal_k.push((meta.name.clone(), best_k, best_err, best_naive, meta.rows, meta.cols));
+            optimal_k.push((
+                meta.name.clone(),
+                best_k,
+                best_err,
+                best_naive,
+                meta.rows,
+                meta.cols,
+            ));
         }
     }
 
     println!("{}", "-".repeat(104));
-    println!("\n=== OPTIMAL k (SVD+Q4 error <{:.1}%) ===", error_target * 100.0);
-    println!("{:<55} {:>4} {:>8} {:>8} {:>8} {:>8}",
-        "Tensor", "k", "NaiveQ4", "SVD+Q4", "Improv", "Ratio");
+    println!(
+        "\n=== OPTIMAL k (SVD+Q4 error <{:.1}%) ===",
+        error_target * 100.0
+    );
+    println!(
+        "{:<55} {:>4} {:>8} {:>8} {:>8} {:>8}",
+        "Tensor", "k", "NaiveQ4", "SVD+Q4", "Improv", "Ratio"
+    );
     println!("{}", "-".repeat(96));
 
     for (name, k, err, naive, rows, cols) in &optimal_k {
@@ -688,8 +827,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let q4_bytes = n_elems as f64 * 0.5;
         let svd_bytes = (*rows * *k + *k * *cols) as f64 * 2.0; // FP16 for U/V
         let ratio = (q4_bytes + svd_bytes) / orig_bytes;
-        println!("{:<55} {:>4} {:>7.2}% {:>7.2}% {:>6.1}x {:>7.1}%",
-            name, k, naive * 100.0, err * 100.0, improv, ratio * 100.0);
+        println!(
+            "{:<55} {:>4} {:>7.2}% {:>7.2}% {:>6.1}x {:>7.1}%",
+            name,
+            k,
+            naive * 100.0,
+            err * 100.0,
+            improv,
+            ratio * 100.0
+        );
     }
 
     Ok(())

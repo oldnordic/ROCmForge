@@ -235,6 +235,7 @@ mod tests {
             dims: vec![1024, 4096],
             needs_transpose: false,
             role: crate::gpu::TensorRole::Generic,
+            svd_k: None,
         };
 
         // Test both orientations
@@ -252,6 +253,7 @@ mod tests {
             dims: vec![1024, 4096],
             needs_transpose: false,
             role: crate::gpu::TensorRole::Generic,
+            svd_k: None,
         };
 
         let result = validate_gemm_layout(&meta, 2048, 1024);
@@ -265,6 +267,7 @@ mod tests {
             dims: vec![1024, 4096, 8],
             needs_transpose: false,
             role: crate::gpu::TensorRole::Generic,
+            svd_k: None,
         };
 
         let result = validate_gemm_layout(&meta, 4096, 1024);

@@ -7,21 +7,24 @@ use super::super::kernels::{
 };
 use super::super::launch_autotune::{lookup_qkv_variant, select_qkv_variant, VariantId};
 use super::super::safety::launch_autotune_enabled;
-use super::super::weights::{GpuBuffer, WeightMeta};
+use super::super::weights::{GpuBuffer, SvdCorrection, WeightMeta};
 use crate::loader::GgmlType;
 
-use super::gemv::gpu_dispatch_gemv_on_stream;
+use super::gemv::{gpu_dispatch_gemv_on_stream, gpu_dispatch_gemv_svd_on_stream};
 
 pub fn gpu_dispatch_fused_qkv_on_stream(
     device: &GpuDevice,
     w_q: &GpuBuffer,
     q_meta: &WeightMeta,
+    q_svd: Option<&SvdCorrection>,
     q_bias: Option<&GpuBuffer>,
     w_k: &GpuBuffer,
     k_meta: &WeightMeta,
+    k_svd: Option<&SvdCorrection>,
     k_bias: Option<&GpuBuffer>,
     w_v: &GpuBuffer,
     v_meta: &WeightMeta,
+    v_svd: Option<&SvdCorrection>,
     v_bias: Option<&GpuBuffer>,
     input: *const f32,
     out_q: *mut f32,
@@ -30,8 +33,65 @@ pub fn gpu_dispatch_fused_qkv_on_stream(
     q_size: usize,
     kv_size: usize,
     h: usize,
+    temp_vector: *mut f32,
     stream: hipStream_t,
 ) -> GpuResult<()> {
+    if q_svd.is_some() || k_svd.is_some() || v_svd.is_some() {
+        gpu_dispatch_gemv_svd_on_stream(
+            device,
+            w_q,
+            q_meta,
+            q_svd,
+            input,
+            out_q,
+            q_size,
+            h,
+            temp_vector,
+            stream,
+        )?;
+        gpu_dispatch_gemv_svd_on_stream(
+            device,
+            w_k,
+            k_meta,
+            k_svd,
+            input,
+            out_k,
+            kv_size,
+            h,
+            temp_vector,
+            stream,
+        )?;
+        gpu_dispatch_gemv_svd_on_stream(
+            device,
+            w_v,
+            v_meta,
+            v_svd,
+            input,
+            out_v,
+            kv_size,
+            h,
+            temp_vector,
+            stream,
+        )?;
+
+        if let Some(bias) = q_bias {
+            unsafe {
+                add_on_stream(out_q, bias.as_ptr() as *const f32, out_q, q_size, stream)?;
+            }
+        }
+        if let Some(bias) = k_bias {
+            unsafe {
+                add_on_stream(out_k, bias.as_ptr() as *const f32, out_k, kv_size, stream)?;
+            }
+        }
+        if let Some(bias) = v_bias {
+            unsafe {
+                add_on_stream(out_v, bias.as_ptr() as *const f32, out_v, kv_size, stream)?;
+            }
+        }
+        return Ok(());
+    }
+
     if q_meta.wtype == GgmlType::Q4_0
         && k_meta.wtype == GgmlType::Q4_0
         && v_meta.wtype == GgmlType::Q4_0
@@ -243,12 +303,15 @@ pub fn gpu_dispatch_fused_qkv(
         device,
         w_q,
         q_meta,
+        None,
         q_bias,
         w_k,
         k_meta,
+        None,
         k_bias,
         w_v,
         v_meta,
+        None,
         v_bias,
         input,
         out_q,
@@ -257,6 +320,7 @@ pub fn gpu_dispatch_fused_qkv(
         q_size,
         kv_size,
         h,
+        std::ptr::null_mut(),
         hipStream_t::null(),
     )
 }

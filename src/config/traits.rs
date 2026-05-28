@@ -99,6 +99,30 @@ fn registry() -> &'static HashMap<&'static str, ModelTraits> {
         for arch in &["qwen3", "qwen3moe"] {
             m.insert(*arch, qwen3.clone());
         }
+
+        // Qwen3.5 / Qwen3.6 fused MoE family
+        let qwen35moe = ModelTraits {
+            attention_layout: AttentionLayout::FusedQkv,
+            ..qwen3.clone()
+        };
+        m.insert("qwen35moe", qwen35moe);
+
+        // Qwen3.5 hybrid checkpoints store text attention as fused QKV and add
+        // SSM/attention-gate tensors. Runtime support is handled explicitly by
+        // the Qwen35 loader/forward path instead of pretending these are split
+        // Q/K/V transformer blocks.
+        m.insert(
+            "qwen35",
+            ModelTraits {
+                rope_style: RopeStyle::Normal,
+                attention_layout: AttentionLayout::FusedQkv,
+                use_attention_bias: false,
+                default_rope_theta: 10_000_000.0,
+                default_norm_eps: 1e-6,
+                tensor_naming: TensorNamingScheme::Gguf,
+            },
+        );
+
         // Legacy Qwen1: lower rope theta, no QK norm
         m.insert(
             "qwen",
@@ -211,6 +235,14 @@ mod tests {
     fn qwen3moe_uses_gguf_moe_scheme() {
         let traits = ModelTraits::for_arch("qwen3moe");
         assert_eq!(traits.tensor_naming, TensorNamingScheme::GgufMoE);
+    }
+
+    #[test]
+    fn qwen35_uses_fused_qkv_and_gguf_scheme() {
+        let traits = ModelTraits::for_arch("qwen35");
+        assert_eq!(traits.attention_layout, AttentionLayout::FusedQkv);
+        assert_eq!(traits.tensor_naming, TensorNamingScheme::Gguf);
+        assert!(!traits.use_attention_bias);
     }
 
     #[test]

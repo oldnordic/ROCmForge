@@ -27,6 +27,7 @@ fn test_gemv_q4_0_lds_fallback() {
         wtype: GgmlType::Q4_0,
         role: TensorRole::Generic,
         needs_transpose: false,
+        svd_k: None,
     };
 
     // Create input/output

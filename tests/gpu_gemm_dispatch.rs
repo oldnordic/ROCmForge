@@ -102,6 +102,7 @@ fn test_gpu_dispatch_gemm_q4_0_batched_matches_cpu_reference() {
         dims: vec![out_dim as u64, n_rows as u64],
         needs_transpose: false,
         role: TensorRole::Generic,
+        svd_k: None,
     };
 
     let d_weights =

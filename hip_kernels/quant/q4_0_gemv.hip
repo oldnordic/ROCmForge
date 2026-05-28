@@ -264,25 +264,6 @@ __global__ void gemv_q4_0_f32_multi_row_kernel(
     const int col_base = (blockIdx.x * N_WAVES + wave_id) * 4;
     const int n_blocks_total = n_rows / QK4_0;
 
-    // CRITICAL TEST: Write OBVIOUS pattern to ENTIRE output buffer
-    // ALL threads participate to ensure complete overwrite
-    if (blockIdx.x == 0 && wave_id == 0 && lane_id == 0) {
-        // First thread writes entire buffer
-        for (int i = 0; i < ncols_dst && i < 10; ++i) {
-            output[i] = 77777.0f + i;  // OBVIOUS pattern: 77777, 77778, 77779, ...
-        }
-    }
-    __syncthreads();  // Ensure marker is written
-    if (blockIdx.x == 0) return;  // ALL threads in first block return after marker
-    if (col_base >= ncols_dst) return;
-
-    // DIAGNOSTIC: Write marker to output to confirm kernel execution
-    if (blockIdx.x == 0 && wave_id == 0 && lane_id == 0) {
-        if (col_base < ncols_dst) {
-            output[col_base] = -99999.0f;  // Unique marker for multi-row kernel
-        }
-    }
-
     if (col_base >= ncols_dst) return;
 
     extern __shared__ float s_input[];
@@ -354,10 +335,6 @@ __global__ void gemv_q4_0_f32_multi_row_kernel(
         #pragma unroll
         for (int c = 0; c < 4; ++c) {
             if (col_base + c < ncols_dst) {
-                // DIAGNOSTIC: Add marker to confirm multi-row kernel execution
-                if (col_base + c == 0) {
-                    sums[c] += 100000.0f;  // Unique marker
-                }
                 output[col_base + c] = sums[c];
             }
         }
@@ -565,14 +542,13 @@ __global__ void gemv_q4_0_f32_q8_inline_residual_multi_row_kernel(
         }
 
         const float scale = fmaxf(__shfl(max_val, 0, WARP_SIZE) / 127.0f, 1e-30f);
-        const half scale_h = __float2half(scale);
-        const float scale_f = __half2float(scale_h);
         if (lane_id == 0) {
-            s_input_q8[block_idx].d = scale_h;
+            s_input_q8[block_idx].d = scale;
         }
 
-        const float inv_scale = 1.0f / scale_f;
-        const float qf = fminf(fmaxf(val * inv_scale, -127.0f), 127.0f);
+        const float inv_scale = 1.0f / scale;
+        const float x0_rounded = roundf(val * inv_scale);
+        const float qf = fminf(fmaxf(x0_rounded, -127.0f), 127.0f);
         s_input_q8[block_idx].qs[lane_id] = static_cast<int8_t>(qf);
     }
     __syncthreads();
@@ -707,12 +683,6 @@ extern "C" hipError_t gemv_q4_0_f32_launch(
     int ncols_dst,
     hipStream_t stream
 ) {
-    // CRITICAL: Write OBVIOUS pattern to ALL output values
-    if (ncols_dst >= 10) {
-        float markers[10] = {11111.0f, 22222.0f, 33333.0f, 44444.0f, 55555.0f, 66666.0f, 77777.0f, 88888.0f, 99999.0f, 101010.0f};
-        hipMemcpyAsync(output, markers, 10 * sizeof(float), hipMemcpyHostToDevice, stream);
-    }
-
     if (n_rows <= 0 || ncols_dst <= 0) return hipErrorInvalidValue;
 
     const int n_waves = select_multi_row_waves_q4_0(ncols_dst);

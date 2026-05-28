@@ -12,7 +12,10 @@ mod qkv;
 
 pub use gate_up::{gpu_dispatch_fused_gate_up, gpu_dispatch_fused_gate_up_on_stream};
 pub use gemm::gpu_dispatch_gemm;
-pub use gemv::{gpu_dispatch_gemv, gpu_dispatch_gemv_on_stream};
+pub use gemv::{
+    gpu_dispatch_gemv, gpu_dispatch_gemv_on_stream, gpu_dispatch_gemv_ptr_on_stream,
+    gpu_dispatch_gemv_svd_on_stream, gpu_dispatch_gemv_with_fallback_on_stream,
+};
 pub use gemv_residual::gpu_dispatch_gemv_residual_on_stream;
 pub use norm::gpu_dispatch_rms_norm;
 pub use qkv::{
@@ -26,7 +29,7 @@ use crate::loader::GgmlType;
 fn supports_gemv_type(wtype: GgmlType) -> bool {
     matches!(
         wtype,
-        GgmlType::Q4_0 | GgmlType::Q4_1 | GgmlType::Q8_0 | GgmlType::Q6_K
+        GgmlType::Q4_0 | GgmlType::Q4_1 | GgmlType::Q8_0 | GgmlType::Q4_K | GgmlType::Q6_K
     )
 }
 

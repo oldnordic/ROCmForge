@@ -5,6 +5,7 @@ target/
 
 # CMake build artifacts
 hip_kernels/quant/build/
+hip_kernels/quant/CMakeBuild/
 **/build/
 *.o
 *.a
@@ -37,6 +38,13 @@ CLAUDE.md
 *.mirage.md
 .worktrees/
 .claude/settings.json
+
+# Local profiler/runtime outputs that Magellan should not index.
+.git/
+.perf/
+.rocprofv3/
+old/
+*.log
 
 # Temporary session continuation files
 *this-session-is-being-continued-from-a-previous-c.txt

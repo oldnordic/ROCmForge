@@ -5,6 +5,7 @@
 use super::super::error::{GpuError, GpuResult};
 use super::super::ffi::{hipError_t, hipStream_t};
 use super::super::GpuDevice;
+use crate::gpu::GpuBuffer;
 use std::os::raw::c_int;
 
 /// Element-wise add: out = x + y
@@ -65,6 +66,72 @@ pub fn mul_on_stream(
         return Err(GpuError::HipApiError {
             code: result as i32,
             description: format!("mul kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+/// Element-wise weighted add: dst[i] += src[i] * weight
+pub fn weighted_add_on_stream(
+    src: *const f32,
+    dst: *mut f32,
+    weight: f32,
+    n: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    if n == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "Elementwise weighted_add: n cannot be zero".to_string(),
+        });
+    }
+    if src.is_null() || dst.is_null() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "Elementwise weighted_add: pointers must be non-null".to_string(),
+        });
+    }
+
+    let result = unsafe { gpu_weighted_add_on_stream(src, dst, weight, n as c_int, stream) };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("weighted_add kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+/// Dot one F16 vector with an F32 vector, writing a single F32 scalar.
+pub fn dot_f16_f32_on_stream(
+    weights: *const u8,
+    input: *const f32,
+    output: *mut f32,
+    n: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    if n == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "dot_f16_f32: n cannot be zero".to_string(),
+        });
+    }
+    if weights.is_null() || input.is_null() || output.is_null() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "dot_f16_f32: pointers must be non-null".to_string(),
+        });
+    }
+
+    let result = unsafe { gpu_dot_f16_f32_on_stream(weights, input, output, n as c_int, stream) };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("dot_f16_f32 kernel failed: {:?}", result),
         });
     }
 
@@ -549,6 +616,75 @@ pub fn increment_decode_state_on_stream(state: *mut i32, stream: hipStream_t) ->
     Ok(())
 }
 
+/// Dispatches the low-rank SVD correction y_out = U_k * (V_k * x) and adds it to the output.
+///
+/// Runs asynchronously on the given stream.
+pub fn dispatch_svd_correction(
+    stream: hipStream_t,
+    u_buf: &GpuBuffer,
+    v_buf: &GpuBuffer,
+    k: u32,
+    input: *const f32,
+    output: *mut f32,
+    in_dim: usize,
+    out_dim: usize,
+    temp_vector: *mut f32, // scratch workspace of size k in GPU memory
+) -> GpuResult<()> {
+    if k == 0 || in_dim == 0 || out_dim == 0 {
+        return Ok(());
+    }
+    if input.is_null() || output.is_null() || temp_vector.is_null() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "dispatch_svd_correction: pointers must be non-null".to_string(),
+        });
+    }
+
+    // 1. Compute intermediate t = V_k * x
+    let res1 = unsafe {
+        gpu_gemv_f32_k(
+            v_buf.as_ptr() as *const f32,
+            input,
+            temp_vector,
+            in_dim as c_int,
+            k as c_int,
+            stream,
+        )
+    };
+    if res1 != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: res1 as i32,
+            description: format!(
+                "dispatch_svd_correction (V_k * x) kernel failed: {:?}",
+                res1
+            ),
+        });
+    }
+
+    // 2. Compute y_out += U_k * t
+    let res2 = unsafe {
+        gpu_gemv_f32_add_k(
+            u_buf.as_ptr() as *const f32,
+            temp_vector,
+            output,
+            out_dim as c_int,
+            k as c_int,
+            stream,
+        )
+    };
+    if res2 != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: res2 as i32,
+            description: format!(
+                "dispatch_svd_correction (U_k * t) kernel failed: {:?}",
+                res2
+            ),
+        });
+    }
+
+    Ok(())
+}
+
 // FFI declarations - will be linked from compiled HIP kernels
 unsafe extern "C" {
     fn gpu_add(
@@ -565,6 +701,22 @@ unsafe extern "C" {
         x: *const f32,
         y: *const f32,
         out: *mut f32,
+        n: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
+    fn gpu_weighted_add_on_stream(
+        src: *const f32,
+        dst: *mut f32,
+        weight: f32,
+        n: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
+    fn gpu_dot_f16_f32_on_stream(
+        weights: *const u8,
+        input: *const f32,
+        output: *mut f32,
         n: c_int,
         stream: hipStream_t,
     ) -> hipError_t;
@@ -652,6 +804,24 @@ unsafe extern "C" {
     fn gpu_zero_fill(ptr: *mut f32, n: c_int, stream: hipStream_t) -> hipError_t;
 
     fn gpu_increment_decode_state_on_stream(state: *mut i32, stream: hipStream_t) -> hipError_t;
+
+    fn gpu_gemv_f32_k(
+        d_V: *const f32,
+        d_x: *const f32,
+        d_t: *mut f32,
+        in_dim: c_int,
+        k: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
+    fn gpu_gemv_f32_add_k(
+        d_U: *const f32,
+        d_t: *const f32,
+        d_y: *mut f32,
+        out_dim: c_int,
+        k: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
 }
 
 #[cfg(test)]

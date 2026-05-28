@@ -18,7 +18,7 @@
     - `test_mpo_apply_2site_identity_like` — structured identity-like MPO
     - `test_mpo_apply_3site_basic` — 3-site MPO with two bond dimensions
 - **Important Pending Work:**
-  - MPO apply is a standalone kernel, not yet wired into `GpuGemvMode::MpoApply` dispatch in `src/gpu/ops/gemv.rs`.
+  - ~~MPO apply is a standalone kernel, not yet wired into `GpuGemvMode::MpoApply` dispatch in `src/gpu/ops/gemv.rs`.~~ **DONE** — wired via `gpu_dispatch_gemv_with_fallback_on_stream()` in `src/gpu/ops/gemv.rs`.
   - No batched MPO apply for prefill yet.
   - chi > 64 falls back to zero output (shared memory limit); needs multi-block or global-memory fallback.
 - **Files Changed:**
@@ -65,19 +65,18 @@
     - tokenizer embedded
     - all 40 `ffn_gate_inp_shexp.weight` tensors stored without wasteful SVD.
 - **Important Pending Work:**
-  - Sparse CSR and MPO are format/container support only. Runtime execution is not implemented yet.
+  - ~~Sparse CSR and MPO are format/container support only. Runtime execution is not implemented yet.~~ **DONE** — both are now wired into the FFN forward path via `gpu_dispatch_gemv_with_fallback_on_stream()`.
   - `.rfm` conversion does not yet automatically choose SparseCsr/MPO layouts from tensor statistics.
-  - CPU/RAM spillover is not wired. Large tensors can be represented in `.rfm`, but there is no lazy page-in/offload scheduler or sparse/MPO GEMV backend yet.
-  - Need sparse CSR GEMV kernel/dispatch path, likely with a CPU fallback first and GPU acceleration later.
-  - MPO apply kernel exists (see May 28, 2026 entry) but is not yet wired into `GpuGemvMode::MpoApply` dispatch in `src/gpu/ops/gemv.rs`.
+  - CPU/RAM spillover is not wired. Large tensors can be represented in `.rfm`, but there is no lazy page-in/offload scheduler yet.
+  - ~~Need sparse CSR GEMV kernel/dispatch path, likely with a CPU fallback first and GPU acceleration later.~~ **DONE** — `gpu_dispatch_sparse_csr_gemv_on_stream()` dispatches to `dispatch_sparse_csr_gemv_f32()`.
+  - ~~MPO apply kernel exists (see May 28, 2026 entry) but is not yet wired into `GpuGemvMode::MpoApply` dispatch in `src/gpu/ops/gemv.rs`.~~ **DONE** — wired via `gpu_dispatch_gemv_with_fallback_on_stream()`.
   - Need policy/quality gates before enabling sparse/MPO conversion by default: sparsity thresholds, reconstruction error checks, and per-tensor fallback to dense/SVD-Quant.
 - **Files Changed:**
   - `src/gpu/forward/layer.rs` (MoE routing, expert dispatch, shared expert execution)
-  - `src/gpu/weights/layer.rs` (MoE/shared expert loading, sparse/MPO dense-path rejection)
-  - `src/gpu/ops/gemv.rs` and `src/gpu/ops/mod.rs` (raw-pointer GEMV dispatch)
-  - `hip_kernels/elementwise.hip`, `src/gpu/kernels/elementwise.rs`, `src/gpu/kernels/mod.rs` (weighted add and dot helpers)
-  - `src/loader/rfm.rs` (Sparse CSR/MPO RFM variants and zero-copy views)
-  - `src/cpu/weights.rs`, `src/gpu/weights/upload.rs`, `src/gpu/weights/model.rs` (RFM type handling and explicit unsupported paths)
+  - `src/gpu/weights/layer.rs` (MoE/shared expert loading, sparse/MPO dense-path rejection, `GpuSparseCsrWeights`/`GpuMpoWeights` structs, `try_load_sparse_csr()`/`try_load_mpo()` helpers)
+  - `src/gpu/ops/gemv.rs` and `src/gpu/ops/mod.rs` (raw-pointer GEMV dispatch, `gpu_dispatch_gemv_with_fallback_on_stream()`, `gpu_dispatch_sparse_csr_gemv_on_stream()`, `gpu_dispatch_mpo_apply_on_stream()`)
+  - `src/gpu/forward/layer.rs` (FFN path now uses fallback dispatch for sparse/MPO weights)
+  - `src/gpu/weights/mod.rs` (re-export `GpuSparseCsrWeights`/`GpuMpoWeights`)
 - **Verified:**
   - `cargo fmt --all -- --check`
   - `cargo check --all-targets`
@@ -86,6 +85,10 @@
   - `cargo clippy --all-targets -- -D warnings`
   - `cargo check --features gpu --all-targets`
   - `cargo clippy --features gpu --all-targets -- -D warnings`
+  - `cargo test --lib --features gpu` (298 passed)
+  - `cargo test --features gpu --test gpu_sparse_csr_correctness` (8 passed)
+  - `cargo test --features gpu --test gpu_mpo_correctness` (7 passed)
+  - `cargo test --features gpu --test gpu_dispatch_fallback_correctness` (6 passed)
   - `magellan refresh --db .magellan/rocmforge.db --output pretty`
   - `magellan doctor --db .magellan/rocmforge.db`
 

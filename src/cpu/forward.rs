@@ -25,6 +25,17 @@ pub fn cpu_layer_forward(
     config: &ModelConfig,
     debug: bool,
 ) -> Result<(), CpuError> {
+    if config.architecture == "qwen35"
+        || weights.attn_qkv.is_some()
+        || weights.ssm.is_some()
+        || weights.attn_q_norm.is_some()
+        || weights.attn_k_norm.is_some()
+    {
+        return Err(CpuError::InvalidOperation(
+            "qwen35 hybrid attention/SSM CPU forward is not implemented yet".to_string(),
+        ));
+    }
+
     let h = config.hidden_size;
     let q_size = config.num_heads * config.head_dim;
     let kv_size = config.num_kv_heads * config.head_dim;

@@ -3,10 +3,12 @@
 #[path = "common/mod.rs"]
 mod common;
 
-use rocmforge::cpu::quant::{load_f16_scale, Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS, Q8_BLOCK_BYTES};
+use rocmforge::cpu::quant::{load_f16_scale, Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS};
 use rocmforge::gpu::{detect, GpuBuffer, GpuDevice, GpuQuant, WeightMeta};
 use rocmforge::loader::GgmlType;
 use serial_test::serial;
+
+const Q8_BLOCK_BYTES: usize = 36;
 
 fn upload_f32(data: &[f32]) -> rocmforge::gpu::GpuResult<GpuBuffer> {
     let mut buf = GpuBuffer::alloc(std::mem::size_of_val(data))?;
@@ -79,9 +81,13 @@ fn q4_0_q8_0_residual_cpu_oracle(
             let w_block = &weights[col_offset + block_idx * Q4_BLOCK_BYTES
                 ..col_offset + (block_idx + 1) * Q4_BLOCK_BYTES];
             let x_block = &input_q8[block_idx * Q8_BLOCK_BYTES..(block_idx + 1) * Q8_BLOCK_BYTES];
-            let scale = load_f16_scale(&w_block[..2]) * load_f16_scale(&x_block[..2]);
+
+            let w_scale = load_f16_scale(&w_block[..2]);
+            let x_scale = f32::from_le_bytes([x_block[0], x_block[1], x_block[2], x_block[3]]);
+            let scale = w_scale * x_scale;
+
             let qs = &w_block[2..18];
-            let x_qs = &x_block[2..];
+            let x_qs = &x_block[4..];
 
             let mut block_sum = 0i32;
             for i in 0..16 {
@@ -149,6 +155,7 @@ fn test_gpu_dispatch_q4_0_residual_uses_q8_activation_fastpath_and_matches_cpu_o
         dims: vec![in_dim as u64, out_dim as u64],
         needs_transpose: false,
         role: rocmforge::gpu::TensorRole::Generic,
+        svd_k: None,
     };
 
     let d_weights =

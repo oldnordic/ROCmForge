@@ -32,6 +32,8 @@ pub struct WeightMeta {
     /// This allows dispatch to specialize important tensors without
     /// hardcoding model names or architecture-specific assumptions.
     pub role: TensorRole,
+    /// If this weight uses SVD outlier correction, this is the SVD rank k
+    pub svd_k: Option<u32>,
 }
 
 impl WeightMeta {
@@ -42,6 +44,7 @@ impl WeightMeta {
             dims: desc.dims.clone(),
             needs_transpose,
             role: TensorRole::Generic,
+            svd_k: None,
         }
     }
 
@@ -82,6 +85,7 @@ mod tests {
             dims: vec![100, 200],
             needs_transpose: false,
             role: TensorRole::Generic,
+            svd_k: None,
         };
         assert_eq!(meta.byte_size(), 100 * 200);
     }

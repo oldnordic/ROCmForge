@@ -25,6 +25,10 @@ pub struct GpuKvCache {
     k: Vec<GpuBuffer>,
     /// Value cache: [num_layers][max_seq_len * kv_size]
     v: Vec<GpuBuffer>,
+    /// Persistent SSM state matrices per layer: [num_layers][num_heads * head_dim * head_dim]
+    pub ssm_state: Option<Vec<GpuBuffer>>,
+    /// Persistent SSM convolution states per layer: [num_layers][qkv_dim * (kernel_size - 1)]
+    pub ssm_conv_state: Option<Vec<GpuBuffer>>,
     /// Maximum sequence length this cache can hold
     pub max_seq_len: usize,
     /// Size of K/V per position: num_kv_heads * head_dim
@@ -44,6 +48,16 @@ impl GpuKvCache {
         }
         for buf in &self.v {
             total += buf.size();
+        }
+        if let Some(ref states) = self.ssm_state {
+            for buf in states {
+                total += buf.size();
+            }
+        }
+        if let Some(ref conv_states) = self.ssm_conv_state {
+            for buf in conv_states {
+                total += buf.size();
+            }
         }
         total
     }
@@ -99,14 +113,84 @@ impl GpuKvCache {
 
         let decode_binding_tag = compute_kv_binding_tag(&k, &v);
 
+        let is_hybrid = config.architecture.contains("qwen35");
+        let mut ssm_state = None;
+        let mut ssm_conv_state = None;
+
+        if is_hybrid {
+            let mut states = Vec::with_capacity(config.num_layers);
+            let mut conv_states = Vec::with_capacity(config.num_layers);
+
+            let ssm_heads = std::cmp::max(config.num_heads * 2, 32);
+            let ssm_state_bytes = ssm_heads * 128 * 128 * std::mem::size_of::<f32>();
+            let qkv_dim =
+                std::cmp::max(config.num_kv_heads * 128 * 2 + config.num_heads * 128, 8192);
+            let ssm_conv_bytes = qkv_dim * 3 * std::mem::size_of::<f32>();
+
+            for layer in 0..config.num_layers {
+                let s_buf = GpuBuffer::alloc(ssm_state_bytes).map_err(|e| {
+                    GpuError::CacheAllocationFailed {
+                        reason: format!("SSM state layer {} allocation failed: {}", layer, e),
+                    }
+                })?;
+                // Zero-initialize SSM state
+                super::ffi::hip_memset(s_buf.as_ptr(), 0, ssm_state_bytes)?;
+                states.push(s_buf);
+
+                let c_buf = GpuBuffer::alloc(ssm_conv_bytes).map_err(|e| {
+                    GpuError::CacheAllocationFailed {
+                        reason: format!("SSM conv state layer {} allocation failed: {}", layer, e),
+                    }
+                })?;
+                // Zero-initialize SSM conv state
+                super::ffi::hip_memset(c_buf.as_ptr(), 0, ssm_conv_bytes)?;
+                conv_states.push(c_buf);
+            }
+
+            ssm_state = Some(states);
+            ssm_conv_state = Some(conv_states);
+        }
+
         Ok(Self {
             k,
             v,
+            ssm_state,
+            ssm_conv_state,
             max_seq_len,
             kv_size,
             num_layers: config.num_layers,
             decode_binding_tag,
         })
+    }
+
+    /// Get GPU pointer to SSM state cache for a layer.
+    pub fn ssm_state_ptr(&self, layer: usize) -> GpuResult<Option<*mut f32>> {
+        if layer >= self.num_layers {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: format!("Layer {} exceeds num_layers {}", layer, self.num_layers),
+            });
+        }
+        if let Some(ref states) = self.ssm_state {
+            Ok(Some(states[layer].as_ptr() as *mut f32))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get GPU pointer to SSM conv state cache for a layer.
+    pub fn ssm_conv_state_ptr(&self, layer: usize) -> GpuResult<Option<*mut f32>> {
+        if layer >= self.num_layers {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: format!("Layer {} exceeds num_layers {}", layer, self.num_layers),
+            });
+        }
+        if let Some(ref conv_states) = self.ssm_conv_state {
+            Ok(Some(conv_states[layer].as_ptr() as *mut f32))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Get GPU pointer to K cache for a layer.
@@ -236,14 +320,26 @@ impl GpuKvCache {
             zero_fill(v_ptr, elements_per_layer, device)?;
         }
 
+        // Zero out SSM buffers if present
+        if let Some(ref states) = self.ssm_state {
+            for layer in 0..self.num_layers {
+                let size = states[layer].size();
+                super::ffi::hip_memset(states[layer].as_ptr(), 0, size)?;
+            }
+        }
+        if let Some(ref conv_states) = self.ssm_conv_state {
+            for layer in 0..self.num_layers {
+                let size = conv_states[layer].size();
+                super::ffi::hip_memset(conv_states[layer].as_ptr(), 0, size)?;
+            }
+        }
+
         Ok(())
     }
 
     /// Get total VRAM usage in bytes.
     pub fn memory_bytes(&self) -> usize {
-        let bytes_per_layer = self.max_seq_len * self.kv_size * std::mem::size_of::<f32>();
-        let total_bytes = 2 * self.num_layers * bytes_per_layer; // K + V
-        total_bytes
+        self.vram_bytes()
     }
 
     /// Cached pointer-mix used by decode-graph key construction.
@@ -378,6 +474,8 @@ pub struct GpuForwardScratch {
     pub gate: GpuBuffer,
     /// FFN SwiGLU output [intermediate_size]
     pub swiglu: GpuBuffer,
+    /// Temporary GPU workspace for SVD-Quant outlier corrections [32]
+    pub svd_scratch: GpuBuffer,
     /// Final logits [vocab_size]
     pub logits: GpuBuffer,
     /// Partial argmax values for greedy decode [ceil(vocab_size / 1024)]
@@ -410,9 +508,21 @@ impl GpuForwardScratch {
     /// Ok(GpuForwardScratch) if all allocations succeed
     pub fn new(config: &ModelConfig) -> GpuResult<Self> {
         let h = config.hidden_size;
-        let q = config.num_heads * config.head_dim;
+        // For qwen35, the attention Q weight is [h, 8192] while config.num_heads*head_dim=4096
+        // (config reflects SSM head dims). Allocate enough for the larger attention Q projection.
+        let q = if config.architecture.contains("qwen35") {
+            std::cmp::max(config.num_heads * config.head_dim, h * 2)
+        } else {
+            config.num_heads * config.head_dim
+        };
+        // kv_size uses config values; for qwen35 attention layers kv_size (1024) < config (4096),
+        // so no overflow — but ensure it's at least as large as a single attention kv row.
         let kv = config.num_kv_heads * config.head_dim;
-        let ff = config.intermediate_size;
+        let ff = if config.architecture.contains("qwen35") {
+            std::cmp::max(config.intermediate_size, 16384)
+        } else {
+            config.intermediate_size
+        };
         let v = config.vocab_size;
         let argmax_partials = v.div_ceil(GPU_ARGMAX_ITEMS_PER_BLOCK);
 
@@ -468,6 +578,12 @@ impl GpuForwardScratch {
         let swiglu = GpuBuffer::alloc(ff * std::mem::size_of::<f32>()).map_err(|e| {
             GpuError::CacheAllocationFailed {
                 reason: format!("swiglu buffer allocation failed: {}", e),
+            }
+        })?;
+
+        let svd_scratch = GpuBuffer::alloc(32 * std::mem::size_of::<f32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("SVD scratch buffer allocation failed: {}", e),
             }
         })?;
 
@@ -527,6 +643,7 @@ impl GpuForwardScratch {
             layer_out,
             gate,
             swiglu,
+            svd_scratch,
             logits,
             argmax_partial_values,
             argmax_partial_indices,
@@ -767,6 +884,7 @@ pub struct GpuPrefillScratch {
     pub swiglu: GpuBuffer,
     pub token_ids: GpuBuffer,
     pub logits: GpuBuffer,
+    pub svd_scratch: GpuBuffer,
 }
 
 impl GpuPrefillScratch {
@@ -840,6 +958,13 @@ impl GpuPrefillScratch {
                 }
             })?;
 
+        let svd_scratch =
+            GpuBuffer::alloc(seq_len * 32 * std::mem::size_of::<f32>()).map_err(|e| {
+                GpuError::CacheAllocationFailed {
+                    reason: format!("prefill SVD scratch allocation failed: {}", e),
+                }
+            })?;
+
         Ok(Self {
             seq_len,
             hidden,
@@ -853,6 +978,7 @@ impl GpuPrefillScratch {
             swiglu,
             token_ids,
             logits,
+            svd_scratch,
         })
     }
 

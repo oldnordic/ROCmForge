@@ -1916,6 +1916,7 @@ fn test_fused_gate_up_q4_1_fallback_matches_cpu_oracle() {
         dims: vec![n_rows as u64, n_ff as u64],
         needs_transpose: false,
         role: TensorRole::Generic,
+        svd_k: None,
     };
 
     rocmforge::gpu::ops::gpu_dispatch_fused_gate_up_on_stream(

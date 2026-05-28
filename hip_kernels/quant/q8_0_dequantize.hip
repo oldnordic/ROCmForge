@@ -1,15 +1,15 @@
 #include "common.hip"
 
 #define QK8_0 32
-#define Q8_0_BLOCK_SIZE 34
+#define Q8_0_BLOCK_SIZE 36
 
 //! Q8_0 dequantization kernel
 //!
 //! Dequantizes Q8_0 format back to f32.
 //! Reference-inspired from llama.cpp ggml_quants.c dequantize_row_q8_0.
 //!
-//! Q8_0 format (34 bytes for 32 f32 values):
-//! - d: f16 scale (2 bytes)
+//! Q8_0 format (36 bytes for 32 f32 values):
+//! - d: f32 scale (4 bytes)
 //! - qs[32]: 8-bit quantized values (32 bytes)
 //!
 //! Algorithm:
@@ -18,7 +18,7 @@
 
 /// Dequantize Q8_0 block to 32 f32 values (device kernel)
 __global__ void dequantize_q8_0_device(
-    const void* __restrict__ input,   // [n/32 * 34] Q8_0 quantized input
+    const void* __restrict__ input,   // [n/32 * 36] Q8_0 quantized input
     float* __restrict__ output,       // [n] f32 output data
     int n                              // Total number of elements
 ) {
@@ -28,21 +28,21 @@ __global__ void dequantize_q8_0_device(
     const int block_end = min(block_start + QK8_0, n);
 
     // Shared memory for scale (all threads need it)
-    __shared__ half s_scale;
+    __shared__ float s_scale;
 
     // Thread 0 reads the scale from block header
     if (threadIdx.x == 0) {
         const uint8_t* in = static_cast<const uint8_t*>(input) + block_idx * Q8_0_BLOCK_SIZE;
-        s_scale = *reinterpret_cast<const half*>(in);  // First 2 bytes = scale (f16)
+        s_scale = *reinterpret_cast<const float*>(in);  // First 4 bytes = scale (f32)
     }
     __syncthreads();
 
     // Convert scale to f32 once
-    const float scale = __half2float(s_scale);
+    const float scale = s_scale;
 
-    // Read quantized values and dequantize
+    // Read quantized values and dequantize (starting at byte 4)
     const int8_t* qs = reinterpret_cast<const int8_t*>(
-        static_cast<const uint8_t*>(input) + block_idx * Q8_0_BLOCK_SIZE + 2
+        static_cast<const uint8_t*>(input) + block_idx * Q8_0_BLOCK_SIZE + 4
     );
 
     // Each thread processes one element (32 threads = QK8_0)
@@ -53,7 +53,7 @@ __global__ void dequantize_q8_0_device(
 
 /// Batched dequantization for parallel processing (device kernel)
 __global__ void dequantize_q8_0_batched_device(
-    const void* __restrict__ input,   // [batch_size][n/32 * 34]
+    const void* __restrict__ input,   // [batch_size][n/32 * 36]
     float* __restrict__ output,       // [batch_size][n]
     int n,                             // Elements per batch
     int batch_size                     // Number of batches
@@ -69,20 +69,20 @@ __global__ void dequantize_q8_0_batched_device(
     const size_t batch_output_offset = static_cast<size_t>(batch_idx) * n;
 
     // Shared memory for scale
-    __shared__ half s_scale;
+    __shared__ float s_scale;
 
     // Thread 0 reads the scale
     if (threadIdx.x == 0) {
         const uint8_t* in = static_cast<const uint8_t*>(input) + batch_input_offset + block_idx * Q8_0_BLOCK_SIZE;
-        s_scale = *reinterpret_cast<const half*>(in);
+        s_scale = *reinterpret_cast<const float*>(in);  // First 4 bytes = scale (f32)
     }
     __syncthreads();
 
-    const float scale = __half2float(s_scale);
+    const float scale = s_scale;
 
-    // Read and dequantize values
+    // Read and dequantize values (starting at byte 4)
     const int8_t* qs = reinterpret_cast<const int8_t*>(
-        static_cast<const uint8_t*>(input) + batch_input_offset + block_idx * Q8_0_BLOCK_SIZE + 2
+        static_cast<const uint8_t*>(input) + batch_input_offset + block_idx * Q8_0_BLOCK_SIZE + 4
     );
     float* out_ptr = output + batch_output_offset;
 

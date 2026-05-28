@@ -14,7 +14,7 @@
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 #define QK8_0 32
-#define Q8_0_BLOCK_SIZE 34
+#define Q8_0_BLOCK_SIZE 36
 
 // ── Main Kernel ─────────────────────────────────────────────────────────────────
 
@@ -51,13 +51,12 @@ __global__ void verify_q8_0_accuracy_device(
     __shared__ float s_scale;
 
     if (threadIdx.x == 0) {
-        half scale_val = *reinterpret_cast<const half*>(quant_ptr);
-        s_scale = __half2float(scale_val);
+        s_scale = *reinterpret_cast<const float*>(quant_ptr);
     }
     __syncthreads();
 
     // Dequantize and compute errors
-    const int8_t* qs = reinterpret_cast<const int8_t*>(quant_ptr + 2);
+    const int8_t* qs = reinterpret_cast<const int8_t*>(quant_ptr + 4);
 
     float local_max_error = 0.0f;
     float local_mse = 0.0f;

@@ -26,6 +26,19 @@ __global__ void mul_kernel(
     }
 }
 
+/// Element-wise weighted add kernel: dst += src * weight
+__global__ void weighted_add_kernel(
+    const float* __restrict__ src,
+    float* __restrict__ dst,
+    const float weight,
+    const int n
+) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        dst[i] += src[i] * weight;
+    }
+}
+
 /// Element-wise scale kernel: out = x * scale
 __global__ void scale_kernel(
     const float* __restrict__ x,
@@ -99,6 +112,35 @@ __global__ void increment_decode_state_kernel(
     if (blockIdx.x == 0 && threadIdx.x == 0) {
         state[0] += 1;
         state[1] += 1;
+    }
+}
+
+__global__ void dot_f16_f32_kernel(
+    const half* __restrict__ weights,
+    const float* __restrict__ input,
+    float* __restrict__ output,
+    const int n
+) {
+    const int tid = threadIdx.x;
+    float sum = 0.0f;
+
+    for (int i = tid; i < n; i += blockDim.x) {
+        sum += __half2float(weights[i]) * input[i];
+    }
+
+    extern __shared__ float sdata[];
+    sdata[tid] = sum;
+    __syncthreads();
+
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (tid < stride) {
+            sdata[tid] += sdata[tid + stride];
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        output[0] = sdata[0];
     }
 }
 
@@ -356,6 +398,55 @@ __global__ void embed_q4_0_batch_kernel(
     out[static_cast<size_t>(s) * hidden_size + i] = static_cast<float>(q) * scale;
 }
 
+__global__ void gemv_f32_k_kernel(
+    const float* __restrict__ V_k,
+    const float* __restrict__ x,
+    float* __restrict__ t,
+    int in_dim
+) {
+    int i = blockIdx.x; // row index in V_k
+    int tid = threadIdx.x;
+    int block_size = blockDim.x;
+
+    float sum = 0.0f;
+    for (int j = tid; j < in_dim; j += block_size) {
+        sum += V_k[i * in_dim + j] * x[j];
+    }
+
+    // Shared memory reduction
+    extern __shared__ float sdata[];
+    sdata[tid] = sum;
+    __syncthreads();
+
+    for (unsigned int s = block_size / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            sdata[tid] += sdata[tid + s];
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        t[i] = sdata[0];
+    }
+}
+
+__global__ void gemv_f32_add_k_kernel(
+    const float* __restrict__ U_k,
+    const float* __restrict__ t,
+    float* __restrict__ y,
+    int out_dim,
+    int k
+) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < out_dim) {
+        float sum = 0.0f;
+        for (int j = 0; j < k; ++j) {
+            sum += U_k[i * k + j] * t[j];
+        }
+        y[i] += sum;
+    }
+}
+
 // C wrapper functions for dynamic linking
 extern "C" {
 
@@ -363,6 +454,22 @@ hipError_t gpu_mul_on_stream(
     const float* d_x,
     const float* d_y,
     float* d_out,
+    const int n,
+    hipStream_t stream
+);
+
+hipError_t gpu_weighted_add_on_stream(
+    const float* d_src,
+    float* d_dst,
+    const float weight,
+    const int n,
+    hipStream_t stream
+);
+
+hipError_t gpu_dot_f16_f32_on_stream(
+    const uint8_t* d_weights,
+    const float* d_input,
+    float* d_output,
     const int n,
     hipStream_t stream
 );
@@ -416,6 +523,50 @@ hipError_t gpu_mul_on_stream(
         mul_kernel,
         grid_size, block_size, 0, stream,
         d_x, d_y, d_out, n
+    );
+
+    return hipGetLastError();
+}
+
+hipError_t gpu_weighted_add_on_stream(
+    const float* d_src,
+    float* d_dst,
+    const float weight,
+    const int n,
+    hipStream_t stream
+) {
+    if (d_src == nullptr || d_dst == nullptr || n <= 0) {
+        return hipErrorInvalidValue;
+    }
+
+    const int block_size = 256;
+    const int grid_size = (n + block_size - 1) / block_size;
+
+    hipLaunchKernelGGL(
+        weighted_add_kernel,
+        grid_size, block_size, 0, stream,
+        d_src, d_dst, weight, n
+    );
+
+    return hipGetLastError();
+}
+
+hipError_t gpu_dot_f16_f32_on_stream(
+    const uint8_t* d_weights,
+    const float* d_input,
+    float* d_output,
+    const int n,
+    hipStream_t stream
+) {
+    if (d_weights == nullptr || d_input == nullptr || d_output == nullptr || n <= 0) {
+        return hipErrorInvalidValue;
+    }
+
+    const int block_size = 256;
+    hipLaunchKernelGGL(
+        dot_f16_f32_kernel,
+        1, block_size, block_size * sizeof(float), stream,
+        reinterpret_cast<const half*>(d_weights), d_input, d_output, n
     );
 
     return hipGetLastError();
@@ -713,6 +864,47 @@ hipError_t gpu_embed_q4_0_batch(
         d_embedding, d_token_ids, d_out, hidden_size, vocab_size, seq_len
     );
 
+    return hipGetLastError();
+}
+
+hipError_t gpu_gemv_f32_k(
+    const float* d_V,
+    const float* d_x,
+    float* d_t,
+    int in_dim,
+    int k,
+    hipStream_t stream
+) {
+    if (d_V == nullptr || d_x == nullptr || d_t == nullptr || in_dim <= 0 || k <= 0) {
+        return hipErrorInvalidValue;
+    }
+    const int block_size = 256;
+    hipLaunchKernelGGL(
+        gemv_f32_k_kernel,
+        dim3(k), dim3(block_size), block_size * sizeof(float), stream,
+        d_V, d_x, d_t, in_dim
+    );
+    return hipGetLastError();
+}
+
+hipError_t gpu_gemv_f32_add_k(
+    const float* d_U,
+    const float* d_t,
+    float* d_y,
+    int out_dim,
+    int k,
+    hipStream_t stream
+) {
+    if (d_U == nullptr || d_t == nullptr || d_y == nullptr || out_dim <= 0 || k <= 0) {
+        return hipErrorInvalidValue;
+    }
+    const int block_size = 256;
+    const int grid_size = (out_dim + block_size - 1) / block_size;
+    hipLaunchKernelGGL(
+        gemv_f32_add_k_kernel,
+        dim3(grid_size), dim3(block_size), 0, stream,
+        d_U, d_t, d_y, out_dim, k
+    );
     return hipGetLastError();
 }
 

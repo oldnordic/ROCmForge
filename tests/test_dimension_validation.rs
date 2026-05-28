@@ -53,6 +53,7 @@ fn test_dispatch_gemv_rejects_misaligned_dimensions() {
         wtype: GgmlType::Q4_0,
         dims: vec![33, 100],
         needs_transpose: false,
+        svd_k: None,
     };
 
     let result = dispatch_gemv(&w, &meta, &x, &mut y, 100, 33, None);
@@ -74,6 +75,7 @@ fn test_dispatch_gemm_rejects_misaligned_dimensions() {
         wtype: GgmlType::Q6_K,
         dims: vec![300, 100],
         needs_transpose: false,
+        svd_k: None,
     };
 
     let result = dispatch_gemm(&w, &meta, &x, &mut y, 100, 300);
@@ -95,6 +97,7 @@ fn test_dispatch_gemv_accepts_aligned_dimensions() {
         wtype: GgmlType::Q4_0,
         dims: vec![32, 100],
         needs_transpose: false,
+        svd_k: None,
     };
 
     // Should not panic

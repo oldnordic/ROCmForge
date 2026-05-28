@@ -34,22 +34,6 @@ pub fn gpu_dispatch_gemv_residual_on_stream(
     unsafe {
         match meta.wtype {
             GgmlType::Q4_0 => {
-                let features = super::super::features::GpuFeatures::detect(device).ok();
-                let is_rdna3 = features.map_or(false, |f| f.arch.starts_with("gfx11"));
-
-                if is_rdna3 {
-                    gemv_q4_0_f32_wave32_residual_on_stream_unchecked(
-                        weights.as_ptr() as *const u8,
-                        input,
-                        residual,
-                        output,
-                        in_dim,
-                        out_dim,
-                        stream,
-                    )?;
-                    return Ok(true);
-                }
-
                 if experimental_q8_activation_fastpath_enabled() {
                     let capture_active = matches!(
                         hip_stream_is_capturing(stream),
@@ -132,6 +116,22 @@ pub fn gpu_dispatch_gemv_residual_on_stream(
                     ) {
                         return Ok(true);
                     }
+                }
+
+                let features = super::super::features::GpuFeatures::detect(device).ok();
+                let is_rdna3 = features.map_or(false, |f| f.arch.starts_with("gfx11"));
+
+                if is_rdna3 {
+                    gemv_q4_0_f32_wave32_residual_on_stream_unchecked(
+                        weights.as_ptr() as *const u8,
+                        input,
+                        residual,
+                        output,
+                        in_dim,
+                        out_dim,
+                        stream,
+                    )?;
+                    return Ok(true);
                 }
 
                 gemv_q4_0_f32_residual_on_stream_unchecked(
