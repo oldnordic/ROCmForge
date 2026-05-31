@@ -137,6 +137,42 @@ unsafe extern "C" {
         stream: hipStream_t,
     ) -> hipError_t;
 
+    fn gpu_kv_write_turboquant(
+        d_k_cache: *mut u8,
+        d_v_cache: *mut u8,
+        d_k: *const f32,
+        d_v: *const f32,
+        d_pos: *const c_int,
+        num_kv_heads: c_int,
+        head_dim: c_int,
+        theta_base: c_float,
+        neox: c_int,
+        kv_lora_dim: c_int,
+        d_centroids: *const f32,
+        qjl_scale: c_float,
+        w_down_k: *const f32,
+        w_down_v: *const f32,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
+    fn gpu_flash_attn_decode_turboquant(
+        d_out: *mut f32,
+        d_q: *const f32,
+        d_k_cache: *const u8,
+        d_v_cache: *const u8,
+        seq_len: c_int,
+        num_heads: c_int,
+        num_kv_heads: c_int,
+        head_dim: c_int,
+        scale: c_float,
+        kv_lora_dim: c_int,
+        d_centroids: *const f32,
+        qjl_scale: c_float,
+        w_up_k: *const f32,
+        w_up_v: *const f32,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
     fn gpu_kv_write_batched_compressed(
         d_k_cache: *mut f32,
         d_v_cache: *mut f32,
@@ -282,22 +318,43 @@ pub fn kv_write_rope_on_stream(
             .map(|w| w[layer_idx].as_ptr() as *const f32)
             .unwrap_or(std::ptr::null());
 
-        kv_write_compressed(
-            kv.k_ptr(layer_idx)? as *mut f32,
-            kv.v_ptr(layer_idx)? as *mut f32,
-            d_k,
-            d_v,
-            d_pos.as_ptr() as *const i32,
-            num_kv_heads,
-            head_dim,
-            theta_base,
-            neox,
-            dc,
-            kv.kv_frame_codec_enabled,
-            w_down_k,
-            w_down_v,
-            stream,
-        )
+        if kv.kv_quant_bits.is_some() {
+            let centroids = kv.centroids_ptr()?;
+            kv_write_turboquant(
+                kv.k_ptr(layer_idx)? as *mut u8,
+                kv.v_ptr(layer_idx)? as *mut u8,
+                d_k,
+                d_v,
+                d_pos.as_ptr() as *const i32,
+                num_kv_heads,
+                head_dim,
+                theta_base,
+                neox,
+                dc,
+                centroids,
+                kv.qjl_scale,
+                w_down_k,
+                w_down_v,
+                stream,
+            )
+        } else {
+            kv_write_compressed(
+                kv.k_ptr(layer_idx)? as *mut f32,
+                kv.v_ptr(layer_idx)? as *mut f32,
+                d_k,
+                d_v,
+                d_pos.as_ptr() as *const i32,
+                num_kv_heads,
+                head_dim,
+                theta_base,
+                neox,
+                dc,
+                kv.kv_frame_codec_enabled,
+                w_down_k,
+                w_down_v,
+                stream,
+            )
+        }
     } else {
         let result = unsafe {
             gpu_kv_write_rope(
@@ -416,22 +473,43 @@ pub fn kv_write_rope_from_state_on_stream(
             .map(|w| w[layer_idx].as_ptr() as *const f32)
             .unwrap_or(std::ptr::null());
 
-        kv_write_compressed(
-            kv.k_ptr(layer_idx)? as *mut f32,
-            kv.v_ptr(layer_idx)? as *mut f32,
-            k,
-            v,
-            pos_ptr,
-            num_kv_heads,
-            head_dim,
-            theta_base,
-            neox,
-            dc,
-            kv.kv_frame_codec_enabled,
-            w_down_k,
-            w_down_v,
-            stream,
-        )
+        if kv.kv_quant_bits.is_some() {
+            let centroids = kv.centroids_ptr()?;
+            kv_write_turboquant(
+                kv.k_ptr(layer_idx)? as *mut u8,
+                kv.v_ptr(layer_idx)? as *mut u8,
+                k,
+                v,
+                pos_ptr,
+                num_kv_heads,
+                head_dim,
+                theta_base,
+                neox,
+                dc,
+                centroids,
+                kv.qjl_scale,
+                w_down_k,
+                w_down_v,
+                stream,
+            )
+        } else {
+            kv_write_compressed(
+                kv.k_ptr(layer_idx)? as *mut f32,
+                kv.v_ptr(layer_idx)? as *mut f32,
+                k,
+                v,
+                pos_ptr,
+                num_kv_heads,
+                head_dim,
+                theta_base,
+                neox,
+                dc,
+                kv.kv_frame_codec_enabled,
+                w_down_k,
+                w_down_v,
+                stream,
+            )
+        }
     } else {
         let result = unsafe {
             gpu_kv_write_rope_state(
@@ -898,6 +976,127 @@ pub fn reconstruct_kv_cache_prefix_sum(
             code: result as i32,
             description: format!(
                 "reconstruct_kv_cache_prefix_sum kernel failed: {:?}",
+                result
+            ),
+        });
+    }
+
+    Ok(())
+}
+
+/// Write compressed K/V using TurboQuant (3-bit Lloyd-Max centroids + 1-bit QJL residual signs).
+pub fn kv_write_turboquant(
+    k_cache: *mut u8,
+    v_cache: *mut u8,
+    k: *const f32,
+    v: *const f32,
+    pos_ptr: *const i32,
+    num_kv_heads: usize,
+    head_dim: usize,
+    theta_base: f32,
+    neox: bool,
+    kv_lora_dim: usize,
+    centroids: *const f32,
+    qjl_scale: f32,
+    w_down_k: *const f32,
+    w_down_v: *const f32,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    if k_cache.is_null()
+        || v_cache.is_null()
+        || k.is_null()
+        || v.is_null()
+        || pos_ptr.is_null()
+        || centroids.is_null()
+    {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "KV write TurboQuant: pointer arguments cannot be null".to_string(),
+        });
+    }
+
+    let result = unsafe {
+        gpu_kv_write_turboquant(
+            k_cache,
+            v_cache,
+            k,
+            v,
+            pos_ptr,
+            num_kv_heads as c_int,
+            head_dim as c_int,
+            theta_base,
+            neox as c_int,
+            kv_lora_dim as c_int,
+            centroids,
+            qjl_scale,
+            w_down_k,
+            w_down_v,
+            stream,
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("kv_write_turboquant kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+/// Run decoding multi-head attention using TurboQuant dequantization & QJL residuals.
+pub fn flash_attn_decode_turboquant(
+    out: *mut f32,
+    q: *const f32,
+    k_cache: *const u8,
+    v_cache: *const u8,
+    seq_len: usize,
+    num_heads: usize,
+    num_kv_heads: usize,
+    head_dim: usize,
+    scale: f32,
+    kv_lora_dim: usize,
+    centroids: *const f32,
+    qjl_scale: f32,
+    w_up_k: *const f32,
+    w_up_v: *const f32,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    if out.is_null() || q.is_null() || k_cache.is_null() || v_cache.is_null() || centroids.is_null()
+    {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "Flash attention decode TurboQuant: pointer arguments cannot be null"
+                .to_string(),
+        });
+    }
+
+    let result = unsafe {
+        gpu_flash_attn_decode_turboquant(
+            out,
+            q,
+            k_cache,
+            v_cache,
+            seq_len as c_int,
+            num_heads as c_int,
+            num_kv_heads as c_int,
+            head_dim as c_int,
+            scale,
+            kv_lora_dim as c_int,
+            centroids,
+            qjl_scale,
+            w_up_k,
+            w_up_v,
+            stream,
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!(
+                "gpu_flash_attn_decode_turboquant kernel failed: {:?}",
                 result
             ),
         });

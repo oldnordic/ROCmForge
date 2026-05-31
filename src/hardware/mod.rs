@@ -88,6 +88,9 @@ mod tests {
             kv_lora_dim: None,
             kv_frame_codec_enabled: None,
             adastate_anchors_enabled: None,
+            kv_quant_bits: None,
+            turboquant_centroids: None,
+            qjl_scale: None,
         };
 
         let batch = derive_batch_config(&caps, &config);

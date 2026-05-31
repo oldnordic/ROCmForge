@@ -486,6 +486,17 @@ pub fn cpu_embed_token(
             };
             super::quant::embed_f32(token_id as usize, emb, &mut hidden[..h]);
         }
+        GgmlType::F16 => {
+            let emb = unsafe {
+                std::slice::from_raw_parts(
+                    weights.token_emb.as_ptr() as *const half::f16,
+                    weights.token_emb.len() / 2,
+                )
+            };
+            for i in 0..h {
+                hidden[i] = emb[token_id as usize * h + i].to_f32();
+            }
+        }
         GgmlType::Q4_0 => {
             super::quant::embed_q4_0(token_id as usize, &weights.token_emb, &mut hidden[..h], h);
         }

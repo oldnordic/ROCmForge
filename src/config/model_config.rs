@@ -41,6 +41,9 @@ pub struct ModelConfig {
     pub kv_lora_dim: Option<usize>,
     pub kv_frame_codec_enabled: Option<bool>,
     pub adastate_anchors_enabled: Option<bool>,
+    pub kv_quant_bits: Option<usize>,
+    pub turboquant_centroids: Option<Vec<f32>>,
+    pub qjl_scale: Option<f32>,
 }
 
 impl ModelConfig {
@@ -95,6 +98,9 @@ impl ModelConfig {
             kv_lora_dim: None,
             kv_frame_codec_enabled: None,
             adastate_anchors_enabled: None,
+            kv_quant_bits: None,
+            turboquant_centroids: None,
+            qjl_scale: None,
         };
 
         config.validate()?;
@@ -121,9 +127,12 @@ impl ModelConfig {
             attention_layout: traits.attention_layout,
             architecture: meta.architecture.clone(),
             tensor_registry: TensorNameRegistry::from_scheme(&traits.tensor_naming),
-            kv_lora_dim: meta.kv_lora_dim,
+            kv_lora_dim: meta.kv_lora_dim.map(|d| d.next_power_of_two()),
             kv_frame_codec_enabled: meta.kv_frame_codec_enabled,
             adastate_anchors_enabled: meta.adastate_anchors_enabled,
+            kv_quant_bits: meta.kv_quant_bits,
+            turboquant_centroids: meta.turboquant_centroids.clone(),
+            qjl_scale: meta.qjl_scale,
         };
 
         config.validate()?;
@@ -247,6 +256,9 @@ mod tests {
             kv_lora_dim: None,
             kv_frame_codec_enabled: None,
             adastate_anchors_enabled: None,
+            kv_quant_bits: None,
+            turboquant_centroids: None,
+            qjl_scale: None,
         };
         assert!(cfg.validate().is_err());
     }
@@ -273,6 +285,9 @@ mod tests {
             kv_lora_dim: None,
             kv_frame_codec_enabled: None,
             adastate_anchors_enabled: None,
+            kv_quant_bits: None,
+            turboquant_centroids: None,
+            qjl_scale: None,
         };
         assert!(cfg.validate().is_err());
     }

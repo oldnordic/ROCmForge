@@ -4,8 +4,8 @@ use crate::gpu::device::GpuDevice;
 use crate::gpu::error::{GpuError, GpuResult};
 use crate::gpu::kernels::attention::{
     flash_attn_decode_strided_multi_head_from_state_on_stream,
-    flash_attn_decode_strided_multi_head_on_stream, kv_write_from_state_on_stream,
-    kv_write_rope_from_state_on_stream, kv_write_rope_on_stream,
+    flash_attn_decode_strided_multi_head_on_stream, flash_attn_decode_turboquant,
+    kv_write_from_state_on_stream, kv_write_rope_from_state_on_stream, kv_write_rope_on_stream,
 };
 use crate::gpu::kernels::gemv_norm_qkv_rope_kvwrite_q4_0_f32_dp4a_on_stream;
 use crate::gpu::kernels::rope::{rope_heads_from_state_on_stream, rope_heads_on_stream};
@@ -56,22 +56,43 @@ pub(super) fn gpu_attention_decode(
         .map(|w| w[layer_idx].as_ptr() as *const f32)
         .unwrap_or(std::ptr::null());
 
-    flash_attn_decode_strided_multi_head_on_stream(
-        out_base,
-        q_base,
-        k_cache,
-        v_cache,
-        seq_len,
-        num_q_heads,
-        num_kv_heads,
-        head_dim,
-        scale,
-        kv_lora_dim,
-        kv.adastate_anchors_enabled,
-        w_up_k,
-        w_up_v,
-        device.stream(),
-    )
+    if kv.kv_quant_bits.is_some() {
+        let centroids = kv.centroids_ptr()?;
+        flash_attn_decode_turboquant(
+            out_base,
+            q_base,
+            k_cache as *const u8,
+            v_cache as *const u8,
+            seq_len,
+            num_q_heads,
+            num_kv_heads,
+            head_dim,
+            scale,
+            kv_lora_dim,
+            centroids,
+            kv.qjl_scale,
+            w_up_k,
+            w_up_v,
+            device.stream(),
+        )
+    } else {
+        flash_attn_decode_strided_multi_head_on_stream(
+            out_base,
+            q_base,
+            k_cache,
+            v_cache,
+            seq_len,
+            num_q_heads,
+            num_kv_heads,
+            head_dim,
+            scale,
+            kv_lora_dim,
+            kv.adastate_anchors_enabled,
+            w_up_k,
+            w_up_v,
+            device.stream(),
+        )
+    }
 }
 
 pub(super) fn gpu_attention_decode_from_state(
@@ -102,22 +123,44 @@ pub(super) fn gpu_attention_decode_from_state(
         .map(|w| w[layer_idx].as_ptr() as *const f32)
         .unwrap_or(std::ptr::null());
 
-    flash_attn_decode_strided_multi_head_from_state_on_stream(
-        out_base,
-        q_base,
-        k_cache,
-        v_cache,
-        scratch.decode_seq_len_ptr(),
-        num_q_heads,
-        num_kv_heads,
-        head_dim,
-        scale,
-        kv_lora_dim,
-        kv.adastate_anchors_enabled,
-        w_up_k,
-        w_up_v,
-        device.stream(),
-    )
+    if kv.kv_quant_bits.is_some() {
+        let seq_len = scratch.decode_state_next_pos().unwrap_or(0) + 1;
+        let centroids = kv.centroids_ptr()?;
+        flash_attn_decode_turboquant(
+            out_base,
+            q_base,
+            k_cache as *const u8,
+            v_cache as *const u8,
+            seq_len,
+            num_q_heads,
+            num_kv_heads,
+            head_dim,
+            scale,
+            kv_lora_dim,
+            centroids,
+            kv.qjl_scale,
+            w_up_k,
+            w_up_v,
+            device.stream(),
+        )
+    } else {
+        flash_attn_decode_strided_multi_head_from_state_on_stream(
+            out_base,
+            q_base,
+            k_cache,
+            v_cache,
+            scratch.decode_seq_len_ptr(),
+            num_q_heads,
+            num_kv_heads,
+            head_dim,
+            scale,
+            kv_lora_dim,
+            kv.adastate_anchors_enabled,
+            w_up_k,
+            w_up_v,
+            device.stream(),
+        )
+    }
 }
 
 const QWEN_MOE_TOP_K: usize = 8;

@@ -29,9 +29,15 @@ fn vram_guard_bytes() -> usize {
 
 // ── FFI ───────────────────────────────────────────────────────────────────────
 
-#[expect(non_camel_case_types, reason = "ROCSolver C API uses C naming conventions")]
+#[expect(
+    non_camel_case_types,
+    reason = "ROCSolver C API uses C naming conventions"
+)]
 type rocblas_handle = *mut std::ffi::c_void;
-#[expect(non_camel_case_types, reason = "ROCSolver C API uses C naming conventions")]
+#[expect(
+    non_camel_case_types,
+    reason = "ROCSolver C API uses C naming conventions"
+)]
 type rocblas_int = c_int;
 
 /// Values from /opt/rocm/include/rocblas/rocblas-types.h — NOT ASCII codes.
@@ -220,7 +226,9 @@ pub fn gpu_svd_batch(
         let input_bytes: &[u8] = if transposed {
             unsafe { std::slice::from_raw_parts(src.as_ptr() as *const u8, a_bytes) }
         } else {
-            let cm_ref = col_major_storage.as_ref().expect("invariant: col_major_storage set when !transposed");
+            let cm_ref = col_major_storage
+                .as_ref()
+                .expect("invariant: col_major_storage set when !transposed");
             unsafe { std::slice::from_raw_parts(cm_ref.as_ptr() as *const u8, a_bytes) }
         };
         a_buf.copy_from_host(input_bytes)?;

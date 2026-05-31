@@ -332,7 +332,9 @@ pub fn gpu_batched_prefill_forward_q4_0(
                 h,
                 Some(&mut q8_scratch),
             )
-            .expect("M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path");
+            .expect(
+                "M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path",
+            );
             cpu_dispatch_gemv(
                 &layer_weights.attn_k,
                 &layer_weights.attn_k_meta,
@@ -342,7 +344,9 @@ pub fn gpu_batched_prefill_forward_q4_0(
                 h,
                 Some(&mut q8_scratch),
             )
-            .expect("M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path");
+            .expect(
+                "M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path",
+            );
             cpu_dispatch_gemv(
                 &layer_weights.attn_v,
                 &layer_weights.attn_v_meta,
@@ -352,7 +356,9 @@ pub fn gpu_batched_prefill_forward_q4_0(
                 h,
                 Some(&mut q8_scratch),
             )
-            .expect("M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path");
+            .expect(
+                "M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path",
+            );
 
             if let Some(bq) = &layer_weights.attn_q_bias {
                 crate::cpu::ops::add_bias(&mut t_q, bq);
@@ -418,7 +424,9 @@ pub fn gpu_batched_prefill_forward_q4_0(
                 q_size,
                 Some(&mut q8_scratch),
             )
-            .expect("M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path");
+            .expect(
+                "M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path",
+            );
             layer_out_attn[pos * h..(pos + 1) * h].copy_from_slice(&t_layer_out_attn);
 
             // 6. Attn Residual
@@ -448,7 +456,9 @@ pub fn gpu_batched_prefill_forward_q4_0(
                 h,
                 Some(&mut q8_scratch),
             )
-            .expect("M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path");
+            .expect(
+                "M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path",
+            );
             cpu_dispatch_gemv(
                 &layer_weights.ffn_up,
                 &layer_weights.ffn_up_meta,
@@ -458,7 +468,9 @@ pub fn gpu_batched_prefill_forward_q4_0(
                 h,
                 Some(&mut q8_scratch),
             )
-            .expect("M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path");
+            .expect(
+                "M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path",
+            );
             gate[pos * ff_size..(pos + 1) * ff_size].copy_from_slice(&t_gate);
 
             crate::cpu::ops::silu_fuse(&t_gate, &mut t_swiglu);
@@ -475,7 +487,9 @@ pub fn gpu_batched_prefill_forward_q4_0(
                 ff_size,
                 Some(&mut q8_scratch),
             )
-            .expect("M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path");
+            .expect(
+                "M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path",
+            );
             layer_out_ffn[pos * h..(pos + 1) * h].copy_from_slice(&t_layer_out_ffn);
 
             // 10. FFN Residual
@@ -507,7 +521,13 @@ pub fn gpu_batched_prefill_forward_q4_0(
 
     if debug_prefill {
         let gpu_val = download_gpu_buffer(&scratch.hidden, seq_len * h);
-        let max_err = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").hidden_in, &gpu_val);
+        let max_err = max_abs_error_slice(
+            &cpu_acts
+                .as_ref()
+                .expect("invariant: cpu_acts populated before validation block")
+                .hidden_in,
+            &gpu_val,
+        );
         println!(
             "DEBUG PREFILL: embed_prompt_tokens hidden max_abs_error = {}",
             max_err
@@ -539,7 +559,13 @@ pub fn gpu_batched_prefill_forward_q4_0(
 
         if debug_prefill && layer_idx == 0 {
             let gpu_val = download_gpu_buffer(&scratch.normed, seq_len * h);
-            let max_err = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").normed_attn, &gpu_val);
+            let max_err = max_abs_error_slice(
+                &cpu_acts
+                    .as_ref()
+                    .expect("invariant: cpu_acts populated before validation block")
+                    .normed_attn,
+                &gpu_val,
+            );
             println!(
                 "DEBUG PREFILL: layer0 RMSNorm Attn max_abs_error = {}",
                 max_err
@@ -571,9 +597,27 @@ pub fn gpu_batched_prefill_forward_q4_0(
             let gpu_q = download_gpu_buffer(&scratch.q, seq_len * q_size);
             let gpu_k = download_gpu_buffer(&scratch.k, seq_len * kv_size);
             let gpu_v = download_gpu_buffer(&scratch.v, seq_len * kv_size);
-            let err_q = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").q, &gpu_q);
-            let err_k = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").k, &gpu_k);
-            let err_v = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").v, &gpu_v);
+            let err_q = max_abs_error_slice(
+                &cpu_acts
+                    .as_ref()
+                    .expect("invariant: cpu_acts populated before validation block")
+                    .q,
+                &gpu_q,
+            );
+            let err_k = max_abs_error_slice(
+                &cpu_acts
+                    .as_ref()
+                    .expect("invariant: cpu_acts populated before validation block")
+                    .k,
+                &gpu_k,
+            );
+            let err_v = max_abs_error_slice(
+                &cpu_acts
+                    .as_ref()
+                    .expect("invariant: cpu_acts populated before validation block")
+                    .v,
+                &gpu_v,
+            );
             println!(
                 "DEBUG PREFILL: layer0 QKV max_abs_error: Q={}, K={}, V={}",
                 err_q, err_k, err_v
@@ -660,8 +704,20 @@ pub fn gpu_batched_prefill_forward_q4_0(
         if debug_prefill && layer_idx == 0 {
             let gpu_q = download_gpu_buffer(&scratch.q, seq_len * q_size);
             let gpu_k = download_gpu_buffer(&scratch.k, seq_len * kv_size);
-            let err_q = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").q_rope, &gpu_q);
-            let err_k = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").k_rope, &gpu_k);
+            let err_q = max_abs_error_slice(
+                &cpu_acts
+                    .as_ref()
+                    .expect("invariant: cpu_acts populated before validation block")
+                    .q_rope,
+                &gpu_q,
+            );
+            let err_k = max_abs_error_slice(
+                &cpu_acts
+                    .as_ref()
+                    .expect("invariant: cpu_acts populated before validation block")
+                    .k_rope,
+                &gpu_k,
+            );
             println!(
                 "DEBUG PREFILL: layer0 RoPE max_abs_error: Q={}, K={}",
                 err_q, err_k
@@ -669,6 +725,7 @@ pub fn gpu_batched_prefill_forward_q4_0(
         }
 
         // Write K/V to cache (batched)
+        device.synchronize()?;
         kv.write_batched(
             layer_idx,
             start_pos,
@@ -705,8 +762,16 @@ pub fn gpu_batched_prefill_forward_q4_0(
             flash_attn_prefill_strided(
                 scratch.attn_out.as_ptr() as *mut f32,
                 scratch.q.as_ptr() as *const f32,
-                kv.k_ptr(layer_idx)? as *const f32,
-                kv.v_ptr(layer_idx)? as *const f32,
+                if kv.kv_quant_bits.is_some() {
+                    scratch.k.as_ptr() as *const f32
+                } else {
+                    kv.k_ptr(layer_idx)? as *const f32
+                },
+                if kv.kv_quant_bits.is_some() {
+                    scratch.v.as_ptr() as *const f32
+                } else {
+                    kv.v_ptr(layer_idx)? as *const f32
+                },
                 seq_len,
                 config.head_dim,
                 q_size,
@@ -716,16 +781,34 @@ pub fn gpu_batched_prefill_forward_q4_0(
                 q_offset,
                 kv_offset,
                 scale,
-                kv_lora_dim,
-                w_up_k,
-                w_up_v,
+                if kv.kv_quant_bits.is_some() {
+                    0
+                } else {
+                    kv_lora_dim
+                },
+                if kv.kv_quant_bits.is_some() {
+                    std::ptr::null()
+                } else {
+                    w_up_k
+                },
+                if kv.kv_quant_bits.is_some() {
+                    std::ptr::null()
+                } else {
+                    w_up_v
+                },
             )?;
         }
         device.synchronize()?;
 
         if debug_prefill && layer_idx == 0 {
             let gpu_val = download_gpu_buffer(&scratch.attn_out, seq_len * q_size);
-            let max_err = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").attn_out, &gpu_val);
+            let max_err = max_abs_error_slice(
+                &cpu_acts
+                    .as_ref()
+                    .expect("invariant: cpu_acts populated before validation block")
+                    .attn_out,
+                &gpu_val,
+            );
             println!(
                 "DEBUG PREFILL: layer0 Flash Attn max_abs_error = {}",
                 max_err
@@ -773,7 +856,13 @@ pub fn gpu_batched_prefill_forward_q4_0(
 
         if debug_prefill && layer_idx == 0 {
             let gpu_val = download_gpu_buffer(&scratch.layer_out, seq_len * h);
-            let max_err = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").layer_out_attn, &gpu_val);
+            let max_err = max_abs_error_slice(
+                &cpu_acts
+                    .as_ref()
+                    .expect("invariant: cpu_acts populated before validation block")
+                    .layer_out_attn,
+                &gpu_val,
+            );
             println!(
                 "DEBUG PREFILL: layer0 Attn Out Projection max_abs_error = {}",
                 max_err
@@ -792,8 +881,13 @@ pub fn gpu_batched_prefill_forward_q4_0(
 
         if debug_prefill && layer_idx == 0 {
             let gpu_val = download_gpu_buffer(&scratch.hidden, seq_len * h);
-            let max_err =
-                max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").hidden_after_attn, &gpu_val);
+            let max_err = max_abs_error_slice(
+                &cpu_acts
+                    .as_ref()
+                    .expect("invariant: cpu_acts populated before validation block")
+                    .hidden_after_attn,
+                &gpu_val,
+            );
             println!(
                 "DEBUG PREFILL: layer0 Attn Residual max_abs_error = {}",
                 max_err
@@ -813,7 +907,13 @@ pub fn gpu_batched_prefill_forward_q4_0(
 
         if debug_prefill && layer_idx == 0 {
             let gpu_val = download_gpu_buffer(&scratch.normed, seq_len * h);
-            let max_err = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").normed_ffn, &gpu_val);
+            let max_err = max_abs_error_slice(
+                &cpu_acts
+                    .as_ref()
+                    .expect("invariant: cpu_acts populated before validation block")
+                    .normed_ffn,
+                &gpu_val,
+            );
             println!(
                 "DEBUG PREFILL: layer0 RMSNorm FFN max_abs_error = {}",
                 max_err
@@ -911,8 +1011,20 @@ pub fn gpu_batched_prefill_forward_q4_0(
         if debug_prefill && layer_idx == 0 {
             let gpu_gate = download_gpu_buffer(&scratch.gate, seq_len * ff_size);
             let gpu_swiglu = download_gpu_buffer(&scratch.swiglu, seq_len * ff_size);
-            let err_gate = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").gate, &gpu_gate);
-            let err_swiglu = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").swiglu, &gpu_swiglu);
+            let err_gate = max_abs_error_slice(
+                &cpu_acts
+                    .as_ref()
+                    .expect("invariant: cpu_acts populated before validation block")
+                    .gate,
+                &gpu_gate,
+            );
+            let err_swiglu = max_abs_error_slice(
+                &cpu_acts
+                    .as_ref()
+                    .expect("invariant: cpu_acts populated before validation block")
+                    .swiglu,
+                &gpu_swiglu,
+            );
             println!(
                 "DEBUG PREFILL: layer0 FFN Gate-Up max_abs_error: Gate={}, SwiGLU={}",
                 err_gate, err_swiglu
@@ -959,7 +1071,13 @@ pub fn gpu_batched_prefill_forward_q4_0(
 
         if debug_prefill && layer_idx == 0 {
             let gpu_val = download_gpu_buffer(&scratch.layer_out, seq_len * h);
-            let max_err = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").layer_out_ffn, &gpu_val);
+            let max_err = max_abs_error_slice(
+                &cpu_acts
+                    .as_ref()
+                    .expect("invariant: cpu_acts populated before validation block")
+                    .layer_out_ffn,
+                &gpu_val,
+            );
             println!(
                 "DEBUG PREFILL: layer0 FFN Down Projection max_abs_error = {}",
                 max_err
@@ -978,7 +1096,13 @@ pub fn gpu_batched_prefill_forward_q4_0(
 
         if debug_prefill && layer_idx == 0 {
             let gpu_val = download_gpu_buffer(&scratch.hidden, seq_len * h);
-            let max_err = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").hidden_out, &gpu_val);
+            let max_err = max_abs_error_slice(
+                &cpu_acts
+                    .as_ref()
+                    .expect("invariant: cpu_acts populated before validation block")
+                    .hidden_out,
+                &gpu_val,
+            );
             println!(
                 "DEBUG PREFILL: layer0 FFN Residual max_abs_error = {}",
                 max_err

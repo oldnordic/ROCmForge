@@ -643,6 +643,17 @@ fn prepare_tied_lm_head_q8(
                 };
                 crate::cpu::quant::embed_f32(id, f32_emb, out_row);
             }
+            GgmlType::F16 => {
+                let f16_emb = unsafe {
+                    std::slice::from_raw_parts(
+                        data_to_use.as_ptr() as *const half::f16,
+                        data_to_use.len() / 2,
+                    )
+                };
+                for i in 0..hidden_size {
+                    out_row[i] = f16_emb[id * hidden_size + i].to_f32();
+                }
+            }
             other => {
                 return Err(GpuError::UnsupportedWeightType {
                     tensor: "tied_lm_head_dequant".to_string(),

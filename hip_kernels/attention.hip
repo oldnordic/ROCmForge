@@ -473,6 +473,72 @@ extern "C" hipError_t gpu_flash_attn_decode_strided_multi_head_state(
     return hipGetLastError();
 }
 
+__device__ inline float project_k_no_rope(
+    const float* k,
+    const float* w_down_k,
+    int j,
+    int kv_size
+) {
+    float val = 0.0f;
+    if (w_down_k != nullptr) {
+        for (int i = 0; i < kv_size; ++i) {
+            val += k[i] * w_down_k[j * kv_size + i];
+        }
+    } else {
+        if (j < kv_size) {
+            val = k[j];
+        }
+    }
+    return val;
+}
+
+__device__ inline float project_k_with_rope(
+    const float* k,
+    const float* w_down_k,
+    int j,
+    int kv_size,
+    int pos,
+    int num_kv_heads,
+    int head_dim,
+    float theta_base,
+    int neox
+) {
+    if (theta_base <= 0.0f) {
+        return project_k_no_rope(k, w_down_k, j, kv_size);
+    }
+    float val = 0.0f;
+    if (w_down_k != nullptr) {
+        for (int i = 0; i < kv_size; ++i) {
+            float k_rope = get_rope_k(i, k, pos, num_kv_heads, head_dim, theta_base, neox);
+            val += k_rope * w_down_k[j * kv_size + i];
+        }
+    } else {
+        if (j < kv_size) {
+            val = get_rope_k(j, k, pos, num_kv_heads, head_dim, theta_base, neox);
+        }
+    }
+    return val;
+}
+
+__device__ inline float project_v(
+    const float* v,
+    const float* w_down_v,
+    int j,
+    int kv_size
+) {
+    float val = 0.0f;
+    if (w_down_v != nullptr) {
+        for (int i = 0; i < kv_size; ++i) {
+            val += v[i] * w_down_v[j * kv_size + i];
+        }
+    } else {
+        if (j < kv_size) {
+            val = v[j];
+        }
+    }
+    return val;
+}
+
 __global__ void kv_write_compressed_kernel(
     float* __restrict__ k_cache,
     float* __restrict__ v_cache,
@@ -494,29 +560,8 @@ __global__ void kv_write_compressed_kernel(
 
     if (j >= kv_lora_dim) return;
 
-    float val_k = 0.0f;
-    float val_v = 0.0f;
-
-    if (w_down_k != nullptr) {
-        for (int i = 0; i < kv_size; ++i) {
-            float k_rope = get_rope_k(i, k, pos, num_kv_heads, head_dim, theta_base, neox);
-            val_k += k_rope * w_down_k[j * kv_size + i];
-        }
-    } else {
-        if (j < kv_size) {
-            val_k = get_rope_k(j, k, pos, num_kv_heads, head_dim, theta_base, neox);
-        }
-    }
-
-    if (w_down_v != nullptr) {
-        for (int i = 0; i < kv_size; ++i) {
-            val_v += v[i] * w_down_v[j * kv_size + i];
-        }
-    } else {
-        if (j < kv_size) {
-            val_v = v[j];
-        }
-    }
+    float val_k = project_k_with_rope(k, w_down_k, j, kv_size, pos, num_kv_heads, head_dim, theta_base, neox);
+    float val_v = project_v(v, w_down_v, j, kv_size);
 
     if (kv_frame_codec_enabled && pos > 0) {
         float delta_k = val_k - k_cache[(size_t)(pos - 1) * kv_lora_dim + j];
@@ -555,27 +600,11 @@ __global__ void kv_write_batched_compressed_kernel(
     if (s < seq_len && j < kv_lora_dim) {
         const int pos = start_pos + s;
         
-        float val_k = 0.0f;
-        float val_v = 0.0f;
-        
         const float* step_k = k + (size_t)s * kv_size;
         const float* step_v = v + (size_t)s * kv_size;
 
-        if (w_down_k != nullptr) {
-            for (int i = 0; i < kv_size; ++i) {
-                val_k += step_k[i] * w_down_k[j * kv_size + i];
-            }
-        } else {
-            if (j < kv_size) val_k = step_k[j];
-        }
-
-        if (w_down_v != nullptr) {
-            for (int i = 0; i < kv_size; ++i) {
-                val_v += step_v[i] * w_down_v[j * kv_size + i];
-            }
-        } else {
-            if (j < kv_size) val_v = step_v[j];
-        }
+        float val_k = project_k_no_rope(step_k, w_down_k, j, kv_size);
+        float val_v = project_v(step_v, w_down_v, j, kv_size);
 
         if (kv_frame_codec_enabled && pos > 0) {
             float prev_k = 0.0f;
@@ -583,16 +612,8 @@ __global__ void kv_write_batched_compressed_kernel(
             if (s > 0) {
                 const float* prev_step_k = k + (size_t)(s - 1) * kv_size;
                 const float* prev_step_v = v + (size_t)(s - 1) * kv_size;
-                if (w_down_k != nullptr) {
-                    for (int i = 0; i < kv_size; ++i) prev_k += prev_step_k[i] * w_down_k[j * kv_size + i];
-                } else {
-                    if (j < kv_size) prev_k = prev_step_k[j];
-                }
-                if (w_down_v != nullptr) {
-                    for (int i = 0; i < kv_size; ++i) prev_v += prev_step_v[i] * w_down_v[j * kv_size + i];
-                } else {
-                    if (j < kv_size) prev_v = prev_step_v[j];
-                }
+                prev_k = project_k_no_rope(prev_step_k, w_down_k, j, kv_size);
+                prev_v = project_v(prev_step_v, w_down_v, j, kv_size);
             } else {
                 prev_k = k_cache[(size_t)(pos - 1) * kv_lora_dim + j];
                 prev_v = v_cache[(size_t)(pos - 1) * kv_lora_dim + j];
@@ -1001,3 +1022,454 @@ hipError_t gpu_reconstruct_kv_cache_prefix_sum(
 }
 
 } // extern "C"
+
+// ── TurboQuant Helpers ─────────────────────────────────────────────────────────────
+
+__device__ inline float get_random_projection_sign(int i, int j) {
+    unsigned int seed = i * 1664525 + j + 1013904223;
+    seed = seed * 1103515245 + 12345;
+    return (seed & 1) ? 1.0f : -1.0f;
+}
+
+__device__ inline void pack_3bit(uint8_t* dest, const int* src_indices, int d) {
+    for (int i = 0; i < d; i += 8) {
+        int x0 = src_indices[i];
+        int x1 = src_indices[i+1];
+        int x2 = src_indices[i+2];
+        int x3 = src_indices[i+3];
+        int x4 = src_indices[i+4];
+        int x5 = src_indices[i+5];
+        int x6 = src_indices[i+6];
+        int x7 = src_indices[i+7];
+        
+        int byte_idx = (i / 8) * 3;
+        dest[byte_idx]   = (x0 & 7) | ((x1 & 7) << 3) | ((x2 & 3) << 6);
+        dest[byte_idx+1] = ((x2 >> 2) & 1) | ((x3 & 7) << 1) | ((x4 & 7) << 4) | ((x5 & 1) << 7);
+        dest[byte_idx+2] = ((x5 >> 1) & 3) | ((x6 & 7) << 2) | ((x7 & 7) << 5);
+    }
+}
+
+__device__ inline int get_unpacked_3bit(const uint8_t* src, int j) {
+    int group = j / 8;
+    int offset = j % 8;
+    int byte_idx = group * 3;
+    uint8_t b0 = src[byte_idx];
+    uint8_t b1 = src[byte_idx+1];
+    uint8_t b2 = src[byte_idx+2];
+    if (offset == 0) return b0 & 7;
+    if (offset == 1) return (b0 >> 3) & 7;
+    if (offset == 2) return (b0 >> 6) | ((b1 & 1) << 2);
+    if (offset == 3) return (b1 >> 1) & 7;
+    if (offset == 4) return (b1 >> 4) & 7;
+    if (offset == 5) return (b1 >> 7) | ((b2 & 3) << 1);
+    if (offset == 6) return (b2 >> 2) & 7;
+    if (offset == 7) return (b2 >> 5) & 7;
+    return 0;
+}
+
+__device__ inline int get_unpacked_1bit(const uint8_t* src, int i) {
+    int byte_idx = i / 8;
+    int bit_offset = i % 8;
+    return (src[byte_idx] >> bit_offset) & 1;
+}
+
+__device__ void parallel_fwht(float* s_data, int N, int tid, int num_threads) {
+    for (int len = 1; len < N; len <<= 1) {
+        __syncthreads();
+        for (int idx = tid; idx < N / 2; idx += num_threads) {
+            int base = (idx / len) * (len * 2);
+            int offset = idx % len;
+            int idx0 = base + offset;
+            int idx1 = idx0 + len;
+            float u = s_data[idx0];
+            float v = s_data[idx1];
+            s_data[idx0] = u + v;
+            s_data[idx1] = u - v;
+        }
+    }
+    __syncthreads();
+}
+
+// ── TurboQuant Kernels ─────────────────────────────────────────────────────────────
+
+__global__ void kv_write_turboquant_kernel(
+    uint8_t* __restrict__ k_cache,
+    uint8_t* __restrict__ v_cache,
+    const float* __restrict__ k,
+    const float* __restrict__ v,
+    const int* __restrict__ pos_ptr,
+    const int num_kv_heads,
+    const int head_dim,
+    const float theta_base,
+    const int neox,
+    const int kv_lora_dim,
+    const float* __restrict__ centroids,
+    const float qjl_scale,
+    const float* __restrict__ w_down_k,
+    const float* __restrict__ w_down_v
+) {
+    const int pos = pos_ptr ? *pos_ptr : 0;
+    const int kv_size = num_kv_heads * head_dim;
+    const int j = threadIdx.x;
+
+    if (j >= kv_lora_dim) return;
+
+    float val_k = project_k_with_rope(k, w_down_k, j, kv_size, pos, num_kv_heads, head_dim, theta_base, neox);
+    float val_v = project_v(v, w_down_v, j, kv_size);
+
+    extern __shared__ float s_mem[];
+    float* s_k = s_mem;
+    float* s_v = s_mem + kv_lora_dim;
+    int* s_k_idx = (int*)(s_mem + kv_lora_dim * 2);
+    int* s_v_idx = s_k_idx + kv_lora_dim;
+    int* s_k_sign = s_v_idx + kv_lora_dim;
+    int* s_v_sign = s_k_sign + kv_lora_dim;
+
+    s_k[j] = val_k;
+    s_v[j] = val_v;
+    __syncthreads();
+
+    // Compute dynamic RMS scaling parameters
+    __shared__ float s_rms_k;
+    __shared__ float s_rms_v;
+    if (j == 0) {
+        float sum_sq_k = 0.0f;
+        float sum_sq_v = 0.0f;
+        for (int c = 0; c < kv_lora_dim; ++c) {
+            sum_sq_k += s_k[c] * s_k[c];
+            sum_sq_v += s_v[c] * s_v[c];
+        }
+        s_rms_k = sqrtf(sum_sq_k / (float)kv_lora_dim);
+        s_rms_v = sqrtf(sum_sq_v / (float)kv_lora_dim);
+    }
+    __syncthreads();
+
+    float rms_k = s_rms_k != 0.0f ? s_rms_k : 1.0f;
+    float rms_v = s_rms_v != 0.0f ? s_rms_v : 1.0f;
+
+    // if (j == 0) {
+    //     printf("GPU: rms_k = %f, rms_v = %f\n", rms_k, rms_v);
+    // }
+
+    // Scale coordinates into optimal standard normal distribution range
+    float scale_k = rms_k * sqrtf((float)kv_lora_dim);
+    float scale_v = rms_v * sqrtf((float)kv_lora_dim);
+
+    s_k[j] = val_k / scale_k;
+    s_v[j] = val_v / scale_v;
+    __syncthreads();
+
+    parallel_fwht(s_k, kv_lora_dim, j, blockDim.x);
+    parallel_fwht(s_v, kv_lora_dim, j, blockDim.x);
+
+    float y_k = s_k[j];
+    float y_v = s_v[j];
+
+    // if (j == 0) {
+    //     printf("GPU y_v: ");
+    //     for (int c = 0; c < 16; ++c) {
+    //         printf("%f ", s_v[c]);
+    //     }
+    //     printf("\n");
+    // }
+
+    int idx_k = 0;
+    float min_dist_k = fabsf(y_k - centroids[0]);
+    for (int c = 1; c < 8; ++c) {
+        float dist = fabsf(y_k - centroids[c]);
+        if (dist < min_dist_k) {
+            min_dist_k = dist;
+            idx_k = c;
+        }
+    }
+
+    int idx_v = 0;
+    float min_dist_v = fabsf(y_v - centroids[0]);
+    for (int c = 1; c < 8; ++c) {
+        float dist = fabsf(y_v - centroids[c]);
+        if (dist < min_dist_v) {
+            min_dist_v = dist;
+            idx_v = c;
+        }
+    }
+
+    s_k_idx[j] = idx_k;
+    s_v_idx[j] = idx_v;
+
+    s_k[j] = y_k - centroids[idx_k];
+    s_v[j] = y_v - centroids[idx_v];
+    __syncthreads();
+
+    // if (j == 0) {
+    //     printf("GPU idx_v: ");
+    //     for (int c = 0; c < 16; ++c) {
+    //         printf("%d ", s_v_idx[c]);
+    //     }
+    //     printf("\n");
+    // }
+
+    float sum_k = 0.0f;
+    float sum_v = 0.0f;
+    for (int col = 0; col < kv_lora_dim; ++col) {
+        float R_jc = get_random_projection_sign(j, col);
+        sum_k += R_jc * s_k[col];
+        sum_v += R_jc * s_v[col];
+    }
+
+    s_k_sign[j] = (sum_k >= 0.0f) ? 1 : 0;
+    s_v_sign[j] = (sum_v >= 0.0f) ? 1 : 0;
+    __syncthreads();
+
+    if (j == 0) {
+        size_t pack_bytes = (kv_lora_dim * 3 + 7) / 8;
+        size_t qjl_bytes = (kv_lora_dim + 7) / 8;
+        size_t aligned_pos_bytes = (pack_bytes + qjl_bytes + 31) & ~31;
+
+        uint8_t* pos_k_base = k_cache + (size_t)pos * aligned_pos_bytes;
+        uint8_t* pos_v_base = v_cache + (size_t)pos * aligned_pos_bytes;
+
+        pack_3bit(pos_k_base, s_k_idx, kv_lora_dim);
+        pack_3bit(pos_v_base, s_v_idx, kv_lora_dim);
+
+        uint8_t* qjl_k_base = pos_k_base + pack_bytes;
+        uint8_t* qjl_v_base = pos_v_base + pack_bytes;
+
+        for (int i = 0; i < kv_lora_dim; i += 8) {
+            uint8_t b_k = 0;
+            for (int bit = 0; bit < 8; ++bit) {
+                b_k |= (s_k_sign[i + bit] << bit);
+            }
+            qjl_k_base[i / 8] = b_k;
+        }
+
+        // Store dynamic RMS values in the unused QJL V cache space (takes 8 bytes)
+        float* scales_dest = (float*)qjl_v_base;
+        scales_dest[0] = rms_k;
+        scales_dest[1] = rms_v;
+    }
+}
+
+__global__ void flash_attn_decode_turboquant_kernel(
+    float* __restrict__ out,
+    const float* __restrict__ q,
+    const uint8_t* __restrict__ k_cache,
+    const uint8_t* __restrict__ v_cache,
+    const int seq_len,
+    const int num_heads,
+    const int num_kv_heads,
+    const int head_dim,
+    const float scale,
+    const int kv_lora_dim,
+    const float* __restrict__ centroids,
+    const float qjl_scale,
+    const float* __restrict__ w_up_k,
+    const float* __restrict__ w_up_v
+) {
+    const int head_idx = blockIdx.x;
+    const int tid = threadIdx.x;
+    const int ratio = num_heads / num_kv_heads;
+    const int kv_head_idx = (ratio > 0) ? (head_idx / ratio) : 0;
+    const int kv_size = num_kv_heads * head_dim;
+    const int head_offset = kv_head_idx * head_dim;
+
+    if (head_idx >= num_heads) return;
+
+    const float* head_q = q + head_idx * head_dim;
+
+    extern __shared__ float s_scores[];
+    float* s_reduce = s_scores + kDecodeScoreCapacity;
+    float* s_q_latent = s_scores + kDecodeScoreCapacity + kDecodeReductionScratch;
+    int* s_q_sign = (int*)(s_q_latent + kv_lora_dim);
+    float* s_v = s_q_latent + kv_lora_dim * 2;
+
+    if (tid < kv_lora_dim) {
+        float val = 0.0f;
+        if (w_up_k != nullptr) {
+            for (int i = 0; i < head_dim; ++i) {
+                val += head_q[i] * w_up_k[(head_offset + i) * kv_lora_dim + tid];
+            }
+        } else {
+            val = (tid >= head_offset && tid < head_offset + head_dim) ? head_q[tid - head_offset] : 0.0f;
+        }
+        s_q_latent[tid] = val;
+    }
+    __syncthreads();
+
+    parallel_fwht(s_q_latent, kv_lora_dim, tid, blockDim.x);
+
+    if (tid < kv_lora_dim) {
+        float sum_q = 0.0f;
+        for (int col = 0; col < kv_lora_dim; ++col) {
+            float R_tc = get_random_projection_sign(tid, col);
+            sum_q += R_tc * s_q_latent[col];
+        }
+        s_q_sign[tid] = (sum_q >= 0.0f) ? 1 : 0;
+    }
+    __syncthreads();
+
+    size_t pack_bytes = (kv_lora_dim * 3 + 7) / 8;
+    size_t qjl_bytes = (kv_lora_dim + 7) / 8;
+    size_t aligned_pos_bytes = (pack_bytes + qjl_bytes + 31) & ~31;
+
+    for (int pos = tid; pos < seq_len; pos += blockDim.x) {
+        const uint8_t* pos_k_base = k_cache + (size_t)pos * aligned_pos_bytes;
+        const uint8_t* qjl_k_base = pos_k_base + pack_bytes;
+        const uint8_t* pos_v_base = v_cache + (size_t)pos * aligned_pos_bytes;
+        const uint8_t* qjl_v_base = pos_v_base + pack_bytes;
+
+        const float* scales_src = (const float*)qjl_v_base;
+        float rms_k = scales_src[0];
+
+        // if (tid == 0) {
+        //     printf("GPU DECODE: rms_k = %f, rms_v = %f\n", rms_k, scales_src[1]);
+        // }
+
+        float score_base = 0.0f;
+        for (int j = 0; j < kv_lora_dim; ++j) {
+            int idx_k = get_unpacked_3bit(pos_k_base, j);
+            score_base += s_q_latent[j] * centroids[idx_k];
+        }
+        score_base = (score_base / sqrtf((float)kv_lora_dim)) * rms_k;
+
+        float sum_corr = 0.0f;
+        for (int i = 0; i < kv_lora_dim; ++i) {
+            float q_s = s_q_sign[i] ? 1.0f : -1.0f;
+            float k_s = get_unpacked_1bit(qjl_k_base, i) ? 1.0f : -1.0f;
+            sum_corr += q_s * k_s;
+        }
+        float correction = (rms_k / sqrtf((float)kv_lora_dim)) * sum_corr;
+
+        s_scores[pos] = (score_base + correction) * scale;
+    }
+    __syncthreads();
+
+    float local_max = kNegInf;
+    for (int pos = tid; pos < seq_len; pos += blockDim.x) {
+        local_max = fmaxf(local_max, s_scores[pos]);
+    }
+    const float m = block_reduce_max(local_max, s_reduce);
+
+    float local_sum = 0.0f;
+    for (int pos = tid; pos < seq_len; pos += blockDim.x) {
+        const float weight = expf(s_scores[pos] - m);
+        s_scores[pos] = weight;
+        local_sum += weight;
+    }
+    const float s_sum = block_reduce_sum(local_sum, s_reduce);
+
+    const float inv_sum = 1.0f / s_sum;
+    float* head_out = out + head_idx * head_dim;
+
+    float thread_val = 0.0f;
+    for (int pos = 0; pos < seq_len; ++pos) {
+        const uint8_t* pos_v_base = v_cache + (size_t)pos * aligned_pos_bytes;
+        const uint8_t* qjl_v_base = pos_v_base + pack_bytes;
+
+        const float* scales_src = (const float*)qjl_v_base;
+        float rms_v = scales_src[1];
+        
+        if (tid < kv_lora_dim) {
+            int idx_v = get_unpacked_3bit(pos_v_base, tid);
+            s_v[tid] = centroids[idx_v] * (rms_v / sqrtf((float)kv_lora_dim));
+        }
+        __syncthreads();
+
+        // if (tid == 0) {
+        //     printf("GPU BEFORE FWHT: s_v[0] = %f, idx_v[0] = %d\n", s_v[0], get_unpacked_3bit(pos_v_base, 0));
+        // }
+
+        parallel_fwht(s_v, kv_lora_dim, tid, blockDim.x);
+        
+        // if (tid == 0) {
+        //     printf("GPU AFTER FWHT: s_v[0] = %f\n", s_v[0]);
+        // }
+        
+        float v_val = 0.0f;
+        if (tid < head_dim) {
+            if (w_up_v != nullptr) {
+                for (int j = 0; j < kv_lora_dim; ++j) {
+                    v_val += s_v[j] * w_up_v[(head_offset + tid) * kv_lora_dim + j];
+                }
+            } else {
+                v_val = (head_offset + tid < kv_lora_dim) ? s_v[head_offset + tid] : 0.0f;
+            }
+            thread_val += s_scores[pos] * v_val;
+        }
+        __syncthreads();
+    }
+
+    if (tid < head_dim) {
+        head_out[tid] = thread_val * inv_sum;
+    }
+}
+
+// ── TurboQuant FFI Launchers ───────────────────────────────────────────────────────
+
+extern "C" {
+
+hipError_t gpu_kv_write_turboquant(
+    uint8_t* d_k_cache,
+    uint8_t* d_v_cache,
+    const float* d_k,
+    const float* d_v,
+    const int* d_pos,
+    const int num_kv_heads,
+    const int head_dim,
+    const float theta_base,
+    const int neox,
+    const int kv_lora_dim,
+    const float* d_centroids,
+    const float qjl_scale,
+    const float* w_down_k,
+    const float* w_down_v,
+    hipStream_t stream
+) {
+    if (kv_lora_dim <= 0) return hipErrorInvalidValue;
+    
+    // Grid: 1 block to process all kv_lora_dim coordinates
+    // Block: kv_lora_dim threads
+    size_t shared_mem_bytes = (kv_lora_dim * 2 * sizeof(float)) + (kv_lora_dim * 4 * sizeof(int));
+    
+    hipLaunchKernelGGL(kv_write_turboquant_kernel, 1, kv_lora_dim, shared_mem_bytes, stream,
+                       d_k_cache, d_v_cache, d_k, d_v, d_pos,
+                       num_kv_heads, head_dim, theta_base, neox,
+                       kv_lora_dim, d_centroids, qjl_scale, w_down_k, w_down_v);
+                       
+    return hipGetLastError();
+}
+
+hipError_t gpu_flash_attn_decode_turboquant(
+    float* d_out,
+    const float* d_q,
+    const uint8_t* d_k_cache,
+    const uint8_t* d_v_cache,
+    const int seq_len,
+    const int num_heads,
+    const int num_kv_heads,
+    const int head_dim,
+    const float scale,
+    const int kv_lora_dim,
+    const float* d_centroids,
+    const float qjl_scale,
+    const float* w_up_k,
+    const float* w_up_v,
+    hipStream_t stream
+) {
+    if (kv_lora_dim <= 0) return hipErrorInvalidValue;
+
+    // Grid: num_heads blocks
+    // Block: kv_lora_dim threads (or 256 fallback) to cover all latent dimension loading
+    int threads_per_block = (kv_lora_dim > 256) ? kv_lora_dim : 256;
+    size_t smem_size = (kDecodeScoreCapacity + kDecodeReductionScratch) * sizeof(float)
+                     + (kv_lora_dim * 2 * sizeof(float)) + (kv_lora_dim * sizeof(int));
+
+    hipLaunchKernelGGL(flash_attn_decode_turboquant_kernel, num_heads, threads_per_block, smem_size, stream,
+                       d_out, d_q, d_k_cache, d_v_cache, seq_len,
+                       num_heads, num_kv_heads, head_dim, scale,
+                       kv_lora_dim, d_centroids, qjl_scale, w_up_k, w_up_v);
+
+    return hipGetLastError();
+}
+
+} // extern "C"
+

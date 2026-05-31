@@ -32,6 +32,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut kv_lora_dim: Option<usize> = None;
     let mut kv_frame_codec = false;
     let mut adastate_anchors = false;
+    let mut kv_quant_bits: Option<usize> = None;
+    let mut qjl_scale: Option<f32> = None;
     let mut svd_attn_only = false;
     let mut input_path = String::new();
     let mut output_path = String::new();
@@ -95,10 +97,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             idx += 1;
         } else if args[idx] == "--kv-lora-dim" {
             if idx + 1 < args.len() {
-                kv_lora_dim = Some(args[idx + 1].parse().expect("Invalid KV LoRA dim"));
+                let dim: usize = args[idx + 1].parse().expect("Invalid KV LoRA dim");
+                let padded = dim.next_power_of_two();
+                if padded != dim {
+                    println!("💡 Model Converter: Padding --kv-lora-dim from {} to {} to satisfy Walsh-Hadamard power-of-two constraint.", dim, padded);
+                }
+                kv_lora_dim = Some(padded);
                 idx += 2;
             } else {
                 eprintln!("Error: --kv-lora-dim requires a value");
+                std::process::exit(1);
+            }
+        } else if args[idx] == "--kv-quant-bits" {
+            if idx + 1 < args.len() {
+                kv_quant_bits = Some(args[idx + 1].parse().expect("Invalid KV quant bits"));
+                idx += 2;
+            } else {
+                eprintln!("Error: --kv-quant-bits requires a value");
+                std::process::exit(1);
+            }
+        } else if args[idx] == "--qjl-scale" {
+            if idx + 1 < args.len() {
+                qjl_scale = Some(args[idx + 1].parse().expect("Invalid QJL scale"));
+                idx += 2;
+            } else {
+                eprintln!("Error: --qjl-scale requires a value");
                 std::process::exit(1);
             }
         } else if args[idx] == "--kv-frame-codec" {
@@ -134,6 +157,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "  [--gpu]                             Force GPU SVD (requires rocsolver & --features gpu)\n",
             "  [--cpu]                             Force CPU SVD (use power-iteration, slow)\n",
             "  [--kv-lora-dim <D>]                 Set latent KV cache compression dimension\n",
+            "  [--kv-quant-bits <B>]               Set KV cache quantization bits (e.g. 3 for TurboQuant)\n",
             "  [--kv-frame-codec]                  Enable differential KV cache compression\n",
             "  [--svd-attn-only]                   Only apply SVD to attention projections (Q, K, V, O)\n",
             "  [--adastate-anchors]                Enable AdaState self-evolving dynamic anchors",
@@ -231,6 +255,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         kv_lora_dim,
         kv_frame_codec_enabled: Some(kv_frame_codec),
         adastate_anchors_enabled: Some(adastate_anchors),
+        kv_quant_bits,
+        turboquant_centroids: kv_quant_bits
+            .map(|_| vec![-2.152, -1.344, -0.756, -0.245, 0.245, 0.756, 1.344, 2.152]),
+        qjl_scale: kv_quant_bits.map(|_| qjl_scale.unwrap_or(0.25f32)),
     };
 
     let metadata_bytes = serde_json::to_vec(&metadata)?;

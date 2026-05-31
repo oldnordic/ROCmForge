@@ -138,6 +138,12 @@ pub struct RfmMetadata {
     pub kv_frame_codec_enabled: Option<bool>,
     #[serde(default)]
     pub adastate_anchors_enabled: Option<bool>,
+    #[serde(default)]
+    pub kv_quant_bits: Option<usize>,
+    #[serde(default)]
+    pub turboquant_centroids: Option<Vec<f32>>,
+    #[serde(default)]
+    pub qjl_scale: Option<f32>,
 }
 
 /// Zero-copy view of one tensor's data inside the mmap of an RFM file.
@@ -434,6 +440,9 @@ mod tests {
             kv_lora_dim: Some(128),
             kv_frame_codec_enabled: Some(true),
             adastate_anchors_enabled: Some(true),
+            kv_quant_bits: None,
+            turboquant_centroids: None,
+            qjl_scale: None,
         };
 
         let metadata_bytes = serde_json::to_vec(&metadata).unwrap();
@@ -546,6 +555,9 @@ mod tests {
             kv_lora_dim: None,
             kv_frame_codec_enabled: None,
             adastate_anchors_enabled: None,
+            kv_quant_bits: None,
+            turboquant_centroids: None,
+            qjl_scale: None,
         };
 
         let metadata_bytes = serde_json::to_vec(&metadata)?;

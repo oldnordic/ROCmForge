@@ -225,3 +225,25 @@ If the process aborts with GPU fault / desktop crash:
 4. Check if the model uses sparse/MPO weights — these use experimental kernels.
 5. Run with `ROCMFORGE_GPU_SAFE_MODE=1` to disable all fastpaths and graphs.
 6. Report the `[Router] Selected path: ...` line from the output — this tells us which code path faulted.
+
+## 10. Model Selection & Quantization Guidelines (TurboQuant Invariants)
+
+To get the most out of TurboQuant ultra-low-bit KV cache compression without degrading model intelligence, follow these core guidelines:
+
+### 10.1 The Compounding Quantization Penalty
+Avoid running TurboQuant KV cache compression (3-bit Lloyd-Max + 1-bit QJL) on top of standard lossy mixed weight quantizations (like `Q4_K_M`, `Q5_K_M`, etc.). 
+* **The Penalty:** Mixed-precision weight quantizations generate chaotic, noisy, and high-variance activations that vary across layers. This noise degrades the performance of the Fast Walsh-Hadamard Transform (FWHT) pre-rotation and prevents the offline-computed Lloyd-Max centroids from fitting the distribution uniformly.
+* **The Sweet Spot:** Use a **high-precision base model (FP32, FP16, or high-fidelity Q8_0)** GGUF as the input. Pristine base weights generate highly stable, low-variance activations. The base model's self-attention blocks are exceptionally resilient, absorbing the minor noise of the 4-bit KV Cache while achieving up to **4x dynamic VRAM savings** during decoding.
+
+### 10.2 Transcoding & Preservation Safety
+The `rocmforge-convert` tool guarantees that a high-precision input remains high-precision during the `.rfm` binary conversion:
+* **Float32 (`F32`):** Copied directly as float32.
+* **Q4_0 (`Q4Split`):** Transposed and rearranged for maximum GPU memory bus transaction efficiency (no precision loss relative to the original Q4_0).
+* **Other Quantizations (e.g. `Q8_0`):** Packed directly into `GgufPassthrough` block-for-block, ensuring zero metadata or weight loss.
+
+### 10.3 Dynamic Metadata-Driven Routing
+ROCmForge automatically prevents hardcoded architectural mismatches or overlaps. When a model is loaded:
+1. `ModelConfig` ingests metadata flags (e.g. `kv_quant_bits`, `kv_lora_dim`).
+2. `gpu::router::select_path` inspects layer weight characteristics (checking for MoE, SSM, SVD) and automatically dispatches to the correct `InferencePath` (e.g. `BatchedPrefill`, `SvdOptimized`, or `DecodeStyle`).
+3. Under GQA-only mode (unprojected weights), the GPU kernels bypass MLA projection blocks dynamically to guarantee bit-level attention score correctness.
+

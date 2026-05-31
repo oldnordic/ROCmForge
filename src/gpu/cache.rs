@@ -11,7 +11,7 @@ use super::ffi::hipStream_t;
 use super::graph::{CapturedDecodeGraph, DecodeGraphKey};
 use super::kernels::{
     kv_write, kv_write_batched, kv_write_batched_compressed, kv_write_compressed,
-    kv_write_on_stream, reconstruct_kv_cache_prefix_sum, zero_fill,
+    kv_write_on_stream, kv_write_turboquant, reconstruct_kv_cache_prefix_sum, zero_fill,
 };
 use super::vram_budget::query_vram_budget;
 use super::weights::{GpuBuffer, GpuPinnedBuffer};
@@ -51,6 +51,9 @@ pub struct GpuKvCache {
     pub w_up_v: Option<Vec<GpuBuffer>>,
     pub num_kv_heads: usize,
     pub head_dim: usize,
+    pub kv_quant_bits: Option<usize>,
+    pub centroids: Option<GpuBuffer>,
+    pub qjl_scale: f32,
 }
 
 impl GpuKvCache {
@@ -93,6 +96,9 @@ impl GpuKvCache {
                 total += buf.size();
             }
         }
+        if let Some(ref buf) = self.centroids {
+            total += buf.size();
+        }
         total
     }
 
@@ -101,11 +107,21 @@ impl GpuKvCache {
     /// Use this for pre-flight VRAM checks before calling `new`.
     pub fn estimate_bytes(config: &ModelConfig, max_seq_len: usize) -> usize {
         let kv_size = config.num_kv_heads * config.head_dim;
-        let effective_size = config.kv_lora_dim.unwrap_or(kv_size);
-        let layer_bytes = max_seq_len * effective_size * std::mem::size_of::<f32>();
+        let d = config.kv_lora_dim.unwrap_or(kv_size);
+        let layer_bytes = if let Some(_bits) = config.kv_quant_bits {
+            let pack_bytes = (d * 3 + 7) / 8;
+            let qjl_bytes = (d + 7) / 8;
+            let aligned_pos_bytes = (pack_bytes + qjl_bytes + 31) & !31;
+            max_seq_len * aligned_pos_bytes
+        } else {
+            max_seq_len * d * std::mem::size_of::<f32>()
+        };
         let mut total = 2 * config.num_layers * layer_bytes;
         if let Some(dc) = config.kv_lora_dim {
             total += 4 * config.num_layers * (dc * kv_size * std::mem::size_of::<f32>());
+        }
+        if let Some(ref centroids) = config.turboquant_centroids {
+            total += centroids.len() * std::mem::size_of::<f32>();
         }
         total
     }
@@ -120,12 +136,22 @@ impl GpuKvCache {
     /// Ok(GpuKvCache) if all allocations succeed, Err if any fail (all freed via RAII)
     pub fn new(config: &ModelConfig, max_seq_len: usize) -> GpuResult<Self> {
         let kv_size = config.num_kv_heads * config.head_dim;
-        let effective_kv_size = config.kv_lora_dim.unwrap_or(kv_size);
-        let layer_bytes = max_seq_len * effective_kv_size * std::mem::size_of::<f32>();
+        let d = config.kv_lora_dim.unwrap_or(kv_size);
+        let layer_bytes = if let Some(_bits) = config.kv_quant_bits {
+            let pack_bytes = (d * 3 + 7) / 8;
+            let qjl_bytes = (d + 7) / 8;
+            let aligned_pos_bytes = (pack_bytes + qjl_bytes + 31) & !31;
+            max_seq_len * aligned_pos_bytes
+        } else {
+            max_seq_len * d * std::mem::size_of::<f32>()
+        };
         let mut total_cache_bytes = 2 * config.num_layers * layer_bytes;
         if let Some(dc) = config.kv_lora_dim {
             total_cache_bytes +=
                 4 * config.num_layers * (dc * kv_size * std::mem::size_of::<f32>());
+        }
+        if let Some(ref centroids) = config.turboquant_centroids {
+            total_cache_bytes += centroids.len() * std::mem::size_of::<f32>();
         }
 
         let budget = query_vram_budget(super::vram_budget::active_or_default_device_id())?;
@@ -283,6 +309,23 @@ impl GpuKvCache {
         let adastate_anchors_enabled = config.adastate_anchors_enabled.unwrap_or(false);
         let kv_frame_codec_enabled = config.kv_frame_codec_enabled.unwrap_or(false);
 
+        let mut centroids = None;
+        if let Some(ref host_centroids) = config.turboquant_centroids {
+            let mut buf = GpuBuffer::alloc(host_centroids.len() * std::mem::size_of::<f32>())
+                .map_err(|e| GpuError::CacheAllocationFailed {
+                    reason: format!("TurboQuant centroids allocation failed: {}", e),
+                })?;
+            let bytes = unsafe {
+                std::slice::from_raw_parts(
+                    host_centroids.as_ptr() as *const u8,
+                    host_centroids.len() * std::mem::size_of::<f32>(),
+                )
+            };
+            buf.copy_from_host(bytes)?;
+            centroids = Some(buf);
+        }
+        let qjl_scale = config.qjl_scale.unwrap_or(0.0f32);
+
         Ok(Self {
             k,
             v,
@@ -301,7 +344,19 @@ impl GpuKvCache {
             w_up_v,
             num_kv_heads: config.num_kv_heads,
             head_dim: config.head_dim,
+            kv_quant_bits: config.kv_quant_bits,
+            centroids,
+            qjl_scale,
         })
+    }
+
+    /// Get pointer to TurboQuant centroids in GPU VRAM.
+    pub fn centroids_ptr(&self) -> GpuResult<*const f32> {
+        if let Some(ref buf) = self.centroids {
+            Ok(buf.as_ptr() as *const f32)
+        } else {
+            Ok(std::ptr::null())
+        }
     }
 
     /// Get GPU pointer to SSM state cache for a layer.
@@ -388,10 +443,69 @@ impl GpuKvCache {
         v_gpu: *const f32,
         stream: hipStream_t,
     ) -> GpuResult<()> {
+        self.write_on_stream_impl(layer, pos, k_gpu, v_gpu, 10000.0, false, stream)
+    }
+
+    fn write_on_stream_impl(
+        &self,
+        layer: usize,
+        pos: usize,
+        k_gpu: *const f32,
+        v_gpu: *const f32,
+        theta_base: f32,
+        neox: bool,
+        stream: hipStream_t,
+    ) -> GpuResult<()> {
         let k_cache = self.k_ptr(layer)?;
         let v_cache = self.v_ptr(layer)?;
 
-        if let Some(dc) = self.kv_lora_dim {
+        if self.kv_quant_bits.is_some() {
+            let dc = self.kv_lora_dim.ok_or_else(|| GpuError::HipApiError {
+                code: -1,
+                description: "TurboQuant requires kv_lora_dim".to_string(),
+            })?;
+            let temp_pos = pos as i32;
+            let mut d_pos = GpuBuffer::alloc(4)?;
+            let bytes = unsafe {
+                std::slice::from_raw_parts(
+                    &temp_pos as *const i32 as *const u8,
+                    std::mem::size_of::<i32>(),
+                )
+            };
+            d_pos.copy_from_host(bytes)?;
+
+            let w_down_k = self
+                .w_down_k
+                .as_ref()
+                .map(|w| w[layer].as_ptr() as *const f32)
+                .unwrap_or(std::ptr::null());
+            let w_down_v = self
+                .w_down_v
+                .as_ref()
+                .map(|w| w[layer].as_ptr() as *const f32)
+                .unwrap_or(std::ptr::null());
+            let centroids = self.centroids_ptr()?;
+
+            kv_write_turboquant(
+                k_cache as *mut u8,
+                v_cache as *mut u8,
+                k_gpu,
+                v_gpu,
+                d_pos.as_ptr() as *const i32,
+                self.num_kv_heads,
+                self.head_dim,
+                theta_base,
+                neox,
+                dc,
+                centroids,
+                self.qjl_scale,
+                w_down_k,
+                w_down_v,
+                stream,
+            )?;
+            super::ffi::hip_stream_synchronize(stream)?;
+            Ok(())
+        } else if let Some(dc) = self.kv_lora_dim {
             let temp_pos = pos as i32;
             let mut d_pos = GpuBuffer::alloc(4)?;
             let bytes = unsafe {
@@ -421,14 +535,16 @@ impl GpuKvCache {
                 d_pos.as_ptr() as *const i32,
                 self.num_kv_heads,
                 self.head_dim,
-                10000.0, // Default theta base
-                false,   // Default neox
+                theta_base,
+                neox,
                 dc,
                 self.kv_frame_codec_enabled,
                 w_down_k,
                 w_down_v,
                 stream,
-            )
+            )?;
+            super::ffi::hip_stream_synchronize(stream)?;
+            Ok(())
         } else {
             kv_write_on_stream(
                 k_cache,
@@ -461,7 +577,23 @@ impl GpuKvCache {
         let k_cache = self.k_ptr(layer)?;
         let v_cache = self.v_ptr(layer)?;
 
-        if let Some(dc) = self.kv_lora_dim {
+        if self.kv_quant_bits.is_some() {
+            for s in 0..seq_len {
+                let pos = start_pos + s;
+                let k_ptr = unsafe { k_gpu.add(s * self.kv_size) };
+                let v_ptr = unsafe { v_gpu.add(s * self.kv_size) };
+                self.write_on_stream_impl(
+                    layer,
+                    pos,
+                    k_ptr,
+                    v_ptr,
+                    0.0f32,
+                    false,
+                    hipStream_t::null(),
+                )?;
+            }
+            Ok(())
+        } else if let Some(dc) = self.kv_lora_dim {
             let w_down_k = self
                 .w_down_k
                 .as_ref()
@@ -785,6 +917,9 @@ mod tests {
             kv_lora_dim: None,
             kv_frame_codec_enabled: None,
             adastate_anchors_enabled: None,
+            kv_quant_bits: None,
+            turboquant_centroids: None,
+            qjl_scale: None,
         }
     }
 
@@ -1714,6 +1849,9 @@ mod scratch_tests {
             kv_lora_dim: None,
             kv_frame_codec_enabled: None,
             adastate_anchors_enabled: None,
+            kv_quant_bits: None,
+            turboquant_centroids: None,
+            qjl_scale: None,
         }
     }
 
