@@ -80,6 +80,16 @@ pub enum RfmType {
         index_bits: u8,
         value_type: u32,
     },
+    /// Per-expert SVD low-rank + sparse CSR residual with Fast Walsh-Hadamard Transform.
+    MoeExpertSvdFwhtSparse {
+        n_experts: u32,
+        k: u32,
+        rows: u64,
+        cols: u64,
+        total_nnz: u64,
+        index_bits: u8,
+        value_type: u32,
+    },
 }
 
 /// An entry in the .rfm tensor table.
@@ -120,6 +130,14 @@ pub struct RfmMetadata {
     pub tokenizer_pre: Option<String>,
     pub add_bos: bool,
     pub add_eos: bool,
+
+    // Compression and cache extensions
+    #[serde(default)]
+    pub kv_lora_dim: Option<usize>,
+    #[serde(default)]
+    pub kv_frame_codec_enabled: Option<bool>,
+    #[serde(default)]
+    pub adastate_anchors_enabled: Option<bool>,
 }
 
 /// Zero-copy view of one tensor's data inside the mmap of an RFM file.
@@ -413,6 +431,9 @@ mod tests {
             tokenizer_pre: None,
             add_bos: true,
             add_eos: false,
+            kv_lora_dim: Some(128),
+            kv_frame_codec_enabled: Some(true),
+            adastate_anchors_enabled: Some(true),
         };
 
         let metadata_bytes = serde_json::to_vec(&metadata).unwrap();
@@ -468,6 +489,9 @@ mod tests {
         assert_eq!(rfm.metadata.num_layers, 12);
         assert_eq!(rfm.metadata.architecture, "llama");
         assert_eq!(rfm.metadata.tokens[0], b"hello");
+        assert_eq!(rfm.metadata.kv_lora_dim, Some(128));
+        assert_eq!(rfm.metadata.kv_frame_codec_enabled, Some(true));
+        assert_eq!(rfm.metadata.adastate_anchors_enabled, Some(true));
         assert_eq!(rfm.tensor_count(), 2);
 
         // Verify token_embd.weight
@@ -519,6 +543,9 @@ mod tests {
             tokenizer_pre: None,
             add_bos: false,
             add_eos: false,
+            kv_lora_dim: None,
+            kv_frame_codec_enabled: None,
+            adastate_anchors_enabled: None,
         };
 
         let metadata_bytes = serde_json::to_vec(&metadata)?;

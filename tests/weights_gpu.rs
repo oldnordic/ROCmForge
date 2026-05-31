@@ -27,6 +27,9 @@ fn make_test_config() -> ModelConfig {
         attention_layout: rocmforge::config::AttentionLayout::SplitQkv,
         architecture: "test".to_string(),
         tensor_registry: TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf),
+        kv_lora_dim: None,
+        kv_frame_codec_enabled: None,
+        adastate_anchors_enabled: None,
     }
 }
 

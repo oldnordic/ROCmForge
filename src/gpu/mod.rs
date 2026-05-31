@@ -34,6 +34,7 @@ pub mod ops_batched;
 pub mod profile;
 pub mod quant;
 pub mod quant_wrapper;
+pub mod rocsolver;
 pub mod router;
 pub mod safety;
 pub mod speculative;
@@ -139,6 +140,7 @@ pub use quant::{
     QK4_0, QK4_1, QK8_0, QK_K,
 };
 pub use quant_wrapper::GpuQuant;
+pub use router::{check_path_vram, select_path, InferencePath, ModelProfile, QuantizationType};
 pub use safety::{
     decode_graph_enabled, experimental_ffn_fastpath_enabled, experimental_gpu_kernels_enabled,
     experimental_q8_activation_fastpath_enabled, gpu_safe_mode_enabled,
@@ -149,7 +151,6 @@ pub use safety::{
     RUN_EXPERIMENTAL_GPU_TESTS_ENV, RUN_GPU_BENCHES_ENV, RUN_REAL_MODEL_GPU_TESTS_ENV,
 };
 pub use speculative::SpeculativeEngine;
-pub use router::{check_path_vram, select_path, InferencePath, ModelProfile, QuantizationType};
 pub use vram_budget::VramSession;
 pub use vram_budget::{
     check_allocation_fits, current_allocated_bytes, desktop_vram_reservation, format_vram_usage,

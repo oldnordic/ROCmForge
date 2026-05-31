@@ -534,7 +534,8 @@ fn rfm_type_to_ggml(t: &RfmType) -> GgmlType {
         RfmType::SparseCsr { value_type, .. }
         | RfmType::Mpo { value_type, .. }
         | RfmType::SvdSparseCsr { value_type, .. }
-        | RfmType::MoeExpertSvdSparse { value_type, .. } => {
+        | RfmType::MoeExpertSvdSparse { value_type, .. }
+        | RfmType::MoeExpertSvdFwhtSparse { value_type, .. } => {
             GgmlType::from_u32(*value_type).unwrap_or(GgmlType::F32)
         }
     }
@@ -663,12 +664,10 @@ fn unpack_q4_split(data: &[u8], num_elements: usize) -> Vec<u8> {
 fn sparse_csr_to_dense_f32_bytes(data: &[u8], rows: usize, cols: usize, nnz: usize) -> Vec<u8> {
     let row_bytes = (rows + 1) * 4;
     let col_bytes = nnz * 4;
-    let row_offsets: &[u32] = unsafe {
-        std::slice::from_raw_parts(data.as_ptr() as *const u32, rows + 1)
-    };
-    let col_indices: &[u32] = unsafe {
-        std::slice::from_raw_parts(data[row_bytes..].as_ptr() as *const u32, nnz)
-    };
+    let row_offsets: &[u32] =
+        unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u32, rows + 1) };
+    let col_indices: &[u32] =
+        unsafe { std::slice::from_raw_parts(data[row_bytes..].as_ptr() as *const u32, nnz) };
     let values: &[f32] = unsafe {
         std::slice::from_raw_parts(data[row_bytes + col_bytes..].as_ptr() as *const f32, nnz)
     };
@@ -686,11 +685,7 @@ fn sparse_csr_to_dense_f32_bytes(data: &[u8], rows: usize, cols: usize, nnz: usi
     }
     let mut out = vec![0u8; rows * cols * 4];
     unsafe {
-        std::ptr::copy_nonoverlapping(
-            dense.as_ptr() as *const u8,
-            out.as_mut_ptr(),
-            out.len(),
-        );
+        std::ptr::copy_nonoverlapping(dense.as_ptr() as *const u8, out.as_mut_ptr(), out.len());
     }
     out
 }
@@ -751,7 +746,8 @@ impl CpuLayerWeights {
                         unpack_q4_split(t.data, t.element_count())
                     }
                     RfmType::GgufPassthrough(_) => t.data.to_vec(),
-                    RfmType::MoeExpertSvdSparse { rows, cols, .. } => {
+                    RfmType::MoeExpertSvdSparse { rows, cols, .. }
+                    | RfmType::MoeExpertSvdFwhtSparse { rows, cols, .. } => {
                         // CPU fallback: zero placeholder for compressed MoE expert weights.
                         // Real inference uses the GPU compressed path; the CPU path is
                         // not used for MoE expert compute.
@@ -987,17 +983,23 @@ impl CpuLayerWeights {
                     unpack_q4_split(gate_view.data, gate_view.element_count())
                 }
                 RfmType::F32 | RfmType::GgufPassthrough(_) => gate_view.data.to_vec(),
-                RfmType::SvdSparseCsr { rows, cols, nnz, .. } => {
+                RfmType::SvdSparseCsr {
+                    rows, cols, nnz, ..
+                } => {
                     // CPU fallback: unpack sparse residual to dense F32 (SVD correction GPU-only).
-                    sparse_csr_to_dense_f32_bytes(gate_view.data, rows as usize, cols as usize, nnz as usize)
+                    sparse_csr_to_dense_f32_bytes(
+                        gate_view.data,
+                        rows as usize,
+                        cols as usize,
+                        nnz as usize,
+                    )
                 }
-                RfmType::MoeExpertSvdSparse { rows, cols, .. } => {
+                RfmType::MoeExpertSvdSparse { rows, cols, .. }
+                | RfmType::MoeExpertSvdFwhtSparse { rows, cols, .. } => {
                     // CPU fallback: zero placeholder for GPU-compressed MoE expert weights.
                     vec![0u8; (rows * cols) as usize * 4]
                 }
-                RfmType::SparseCsr { .. }
-                | RfmType::Mpo { .. }
-                | RfmType::Q4FusedGateUp => {
+                RfmType::SparseCsr { .. } | RfmType::Mpo { .. } | RfmType::Q4FusedGateUp => {
                     return Err(WeightError::Load(LoadError::UnknownTensorType(999)));
                 }
             };
@@ -1006,15 +1008,19 @@ impl CpuLayerWeights {
                     unpack_q4_split(up_view.data, up_view.element_count())
                 }
                 RfmType::F32 | RfmType::GgufPassthrough(_) => up_view.data.to_vec(),
-                RfmType::SvdSparseCsr { rows, cols, nnz, .. } => {
-                    sparse_csr_to_dense_f32_bytes(up_view.data, rows as usize, cols as usize, nnz as usize)
-                }
-                RfmType::MoeExpertSvdSparse { rows, cols, .. } => {
+                RfmType::SvdSparseCsr {
+                    rows, cols, nnz, ..
+                } => sparse_csr_to_dense_f32_bytes(
+                    up_view.data,
+                    rows as usize,
+                    cols as usize,
+                    nnz as usize,
+                ),
+                RfmType::MoeExpertSvdSparse { rows, cols, .. }
+                | RfmType::MoeExpertSvdFwhtSparse { rows, cols, .. } => {
                     vec![0u8; (rows * cols) as usize * 4]
                 }
-                RfmType::SparseCsr { .. }
-                | RfmType::Mpo { .. }
-                | RfmType::Q4FusedGateUp => {
+                RfmType::SparseCsr { .. } | RfmType::Mpo { .. } | RfmType::Q4FusedGateUp => {
                     return Err(WeightError::Load(LoadError::UnknownTensorType(999)));
                 }
             };

@@ -26,6 +26,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut residual_prune_threshold: Option<f32> = None;
     let mut mpo_chi_max: Option<u32> = None;
     let mut max_layers: Option<u32> = None;
+    let mut use_fwht = false;
+    let mut force_gpu = false;
+    let mut force_cpu = false;
+    let mut kv_lora_dim: Option<usize> = None;
+    let mut kv_frame_codec = false;
+    let mut adastate_anchors = false;
+    let mut svd_attn_only = false;
     let mut input_path = String::new();
     let mut output_path = String::new();
 
@@ -49,11 +56,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         } else if args[idx] == "--residual-prune-threshold" {
             if idx + 1 < args.len() {
-                residual_prune_threshold =
-                    Some(args[idx + 1].parse().expect("Invalid residual prune threshold"));
+                residual_prune_threshold = Some(
+                    args[idx + 1]
+                        .parse()
+                        .expect("Invalid residual prune threshold"),
+                );
                 idx += 2;
             } else {
-                eprintln!("Error: --residual-prune-threshold requires a magnitude value (e.g., 0.02)");
+                eprintln!(
+                    "Error: --residual-prune-threshold requires a magnitude value (e.g., 0.02)"
+                );
                 std::process::exit(1);
             }
         } else if args[idx] == "--mpo-chi-max" {
@@ -72,6 +84,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("Error: --max-layers requires a value");
                 std::process::exit(1);
             }
+        } else if args[idx] == "--use-fwht" {
+            use_fwht = true;
+            idx += 1;
+        } else if args[idx] == "--gpu" {
+            force_gpu = true;
+            idx += 1;
+        } else if args[idx] == "--cpu" {
+            force_cpu = true;
+            idx += 1;
+        } else if args[idx] == "--kv-lora-dim" {
+            if idx + 1 < args.len() {
+                kv_lora_dim = Some(args[idx + 1].parse().expect("Invalid KV LoRA dim"));
+                idx += 2;
+            } else {
+                eprintln!("Error: --kv-lora-dim requires a value");
+                std::process::exit(1);
+            }
+        } else if args[idx] == "--kv-frame-codec" {
+            kv_frame_codec = true;
+            idx += 1;
+        } else if args[idx] == "--adastate-anchors" {
+            adastate_anchors = true;
+            idx += 1;
+        } else if args[idx] == "--svd-attn-only" {
+            svd_attn_only = true;
+            idx += 1;
         } else {
             if input_path.is_empty() {
                 input_path = args[idx].clone();
@@ -90,10 +128,67 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "                                      when residual nnz ratio < T (0..1)\n",
             "  [--residual-prune-threshold <M>]    Combined with --svd-k+--sparse-threshold:\n",
             "                                      zero residual elements |r| < M before CSR\n",
+            "  [--use-fwht]                        Apply Fast Walsh-Hadamard Transform before SVD\n",
             "  [--mpo-chi-max <C>]                 MPO bond dimension for FFN compression\n",
-            "  [--max-layers <L>]                  Only convert first L layers (smoke testing)",
+            "  [--max-layers <L>]                  Only convert first L layers (smoke testing)\n",
+            "  [--gpu]                             Force GPU SVD (requires rocsolver & --features gpu)\n",
+            "  [--cpu]                             Force CPU SVD (use power-iteration, slow)\n",
+            "  [--kv-lora-dim <D>]                 Set latent KV cache compression dimension\n",
+            "  [--kv-frame-codec]                  Enable differential KV cache compression\n",
+            "  [--svd-attn-only]                   Only apply SVD to attention projections (Q, K, V, O)\n",
+            "  [--adastate-anchors]                Enable AdaState self-evolving dynamic anchors",
         ));
         std::process::exit(1);
+    }
+
+    if force_gpu && force_cpu {
+        eprintln!("Error: Cannot specify both --gpu and --cpu");
+        std::process::exit(1);
+    }
+
+    let use_gpu = if force_cpu {
+        false
+    } else if force_gpu {
+        #[cfg(not(feature = "gpu"))]
+        {
+            eprintln!("Error: GPU support was not enabled at compile time. Please build with --features gpu.");
+            std::process::exit(1);
+        }
+        #[cfg(feature = "gpu")]
+        {
+            true
+        }
+    } else {
+        cfg!(feature = "gpu")
+    };
+
+    if use_gpu {
+        println!("⚡ GPU acceleration enabled (rocSOLVER SVD)");
+        #[cfg(feature = "gpu")]
+        {
+            println!("⚡ Initializing GPU device & checking VRAM safety...");
+            let caps = match rocmforge::gpu::detect() {
+                Some(c) => c,
+                None => {
+                    eprintln!("Error: GPU detection failed (no compatible GPU found). Refusing to proceed with GPU SVD.");
+                    std::process::exit(1);
+                }
+            };
+            match rocmforge::gpu::GpuDevice::init(caps.device_id) {
+                Ok(_) => {
+                    println!(
+                        "⚡ GPU initialized successfully on device {} ({})",
+                        caps.device_id, caps.device_name
+                    );
+                }
+                Err(e) => {
+                    eprintln!("Error: GPU initialization failed: {e}. Build with CPU support or fix ROCm environment.");
+                    std::process::exit(1);
+                }
+            }
+        }
+    } else {
+        println!("⚠️ Running SVD on CPU (GPU acceleration not enabled)");
     }
 
     println!("[1/4] Opening GGUF model: {}...", input_path);
@@ -133,6 +228,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokenizer_pre: tok_data.pre.clone(),
         add_bos: tok_data.add_bos,
         add_eos: tok_data.add_eos,
+        kv_lora_dim,
+        kv_frame_codec_enabled: Some(kv_frame_codec),
+        adastate_anchors_enabled: Some(adastate_anchors),
     };
 
     let metadata_bytes = serde_json::to_vec(&metadata)?;
@@ -200,22 +298,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // 3D MoE expert tensors: always use per-expert SVD+sparse when --svd-k is set.
         // Must be checked BEFORE the 2D combined path to avoid falling through.
-        if tensor.dims.len() == 3 && should_svd_tensor(&tensor_name, &tensor) {
+        if tensor.dims.len() == 3 && should_svd_tensor(&tensor_name, &tensor, svd_attn_only) {
             if let Some(k_val) = svd_k {
-                convert_moe_expert_svd_sparse(
+                let used_sparse = convert_moe_expert_svd_sparse(
                     &tensor,
                     k_val,
+                    use_gpu,
+                    sparse_threshold,
                     residual_prune_threshold,
+                    use_fwht,
                     &tensor_name,
                     &mut out_file,
                     &mut current_offset,
                     &mut entries,
                     &align_offset,
                 )?;
-                println!(
-                    "  MoE expert SVD+sparse: {} ({} experts, k={})",
-                    tensor_name, tensor.dims[2], k_val
-                );
+                if used_sparse {
+                    println!(
+                        "  MoE expert SVD+sparse (FWHT={}): {} ({} experts, k={})",
+                        use_fwht, tensor_name, tensor.dims[2], k_val
+                    );
+                } else {
+                    println!("  MoE passthrough: {} (residual too dense)", tensor_name);
+                }
                 continue;
             }
         }
@@ -225,12 +330,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // sparse, and store the residual as CSR.  Falls back to Q4 residual when
         // the residual is too dense.
         if let (Some(k_val), Some(threshold)) = (
-            svd_k.filter(|_| should_svd_tensor(&tensor_name, &tensor)),
+            svd_k.filter(|_| should_svd_tensor(&tensor_name, &tensor, svd_attn_only)),
             sparse_threshold.filter(|_| should_compress_tensor(&tensor_name, &tensor)),
         ) {
             let used_sparse = convert_svd_sparse_tensor(
                 &tensor,
                 k_val,
+                use_gpu,
                 threshold,
                 residual_prune_threshold,
                 &tensor_name,
@@ -250,20 +356,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     tensor_name, k_val
                 );
             }
-        } else if let Some(k_val) = svd_k.filter(|_| should_svd_tensor(&tensor_name, &tensor)) {
+        } else if let Some(k_val) =
+            svd_k.filter(|_| should_svd_tensor(&tensor_name, &tensor, svd_attn_only))
+        {
             convert_svd_quant_tensor(
                 &tensor,
                 k_val,
+                use_gpu,
                 &tensor_name,
                 &mut out_file,
                 &mut current_offset,
                 &mut entries,
                 &align_offset,
             )?;
-            println!(
-                "  SVD: {} rank {}",
-                tensor_name, k_val
-            );
+            println!("  SVD: {} rank {}", tensor_name, k_val);
         } else if let Some(threshold) =
             sparse_threshold.filter(|_| should_compress_tensor(&tensor_name, &tensor))
         {
@@ -306,6 +412,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             convert_mpo_tensor(
                 &tensor,
                 chi_max,
+                use_gpu,
                 &tensor_name,
                 &mut out_file,
                 &mut current_offset,
@@ -445,9 +552,12 @@ fn parse_layer_idx(name: &str) -> Option<usize> {
     }
 }
 
-fn should_svd_tensor(name: &str, tensor: &TensorView) -> bool {
+fn should_svd_tensor(name: &str, tensor: &TensorView, svd_attn_only: bool) -> bool {
     // 3D MoE expert tensors: [cols, rows, n_experts]
     if tensor.dims.len() == 3 {
+        if svd_attn_only {
+            return false;
+        }
         let n_experts = tensor.dims[2] as usize;
         let rows = tensor.dims[1] as usize;
         let cols = tensor.dims[0] as usize;
@@ -471,6 +581,18 @@ fn should_svd_tensor(name: &str, tensor: &TensorView) -> bool {
     // (e.g. ffn_gate_inp_shexp.weight with dims=[2048,1]).
     if tensor.dims.iter().any(|&d| d < 64) {
         return false;
+    }
+
+    if svd_attn_only {
+        return matches!(
+            tensor.ggml_type,
+            GgmlType::F32 | GgmlType::Q4_0 | GgmlType::Q4_K | GgmlType::Q6_K
+        ) && name.ends_with(".weight")
+            && (name.contains("attn_q")
+                || name.contains("attn_k")
+                || name.contains("attn_v")
+                || name.contains("attn_output")
+                || name.contains("attn_gate"));
     }
 
     matches!(
@@ -625,6 +747,7 @@ fn convert_sparse_csr_tensor(
 fn convert_mpo_tensor(
     tensor: &TensorView,
     chi_max: u32,
+    use_gpu: bool,
     base_name: &str,
     writer: &mut File,
     current_offset: &mut u64,
@@ -650,9 +773,8 @@ fn convert_mpo_tensor(
 
     // Simple 2-site MPO decomposition: factor matrix into A1 * A2
     // A1: [rows, chi], A2: [chi, cols]
-    // We use the existing top_k_svd_quant for this.
     let chi = (chi_max as usize).min(rows.min(cols));
-    let (u_sigma, vt) = top_k_svd_quant(&w_f32, rows, cols, chi);
+    let (u_sigma, vt) = svd_decompose(&w_f32, rows, cols, chi, base_name, use_gpu)?;
 
     // site_dims layout: [chi_l, d_out, chi_r, 1] per site
     // Site 0: [1, rows, chi, 1]
@@ -847,6 +969,65 @@ fn deterministic_seed_vector(len: usize, component: usize) -> Vec<f32> {
     v
 }
 
+/// Compute top-k SVD for a single `[m, n]` row-major matrix.
+/// Uses GPU (rocSOLVER) when the `gpu` feature is enabled and use_gpu is true;
+/// falls back to CPU power iteration if GPU is unavailable or returns an error.
+/// Returns `(u_scaled [m*k], vt [k*n])` — same layout as `top_k_svd_quant`.
+fn svd_decompose(
+    a: &[f32],
+    m: usize,
+    n: usize,
+    k: usize,
+    name: &str,
+    use_gpu: bool,
+) -> Result<(Vec<f32>, Vec<f32>), Box<dyn std::error::Error>> {
+    if use_gpu {
+        #[cfg(feature = "gpu")]
+        {
+            match rocmforge::gpu::rocsolver::gpu_svd_single(a, m, n, k) {
+                Ok(r) => return Ok(r),
+                Err(e) => eprintln!("  GPU SVD failed for {name}: {e} — using CPU"),
+            }
+        }
+    }
+    let _ = name;
+    Ok(top_k_svd_quant(a, m, n, k))
+}
+
+/// Compute top-k SVD for `n_experts` row-major `[rows, cols]` matrices packed contiguously.
+/// Uses GPU batch SVD when the `gpu` feature is enabled and use_gpu is true;
+/// falls back to per-expert CPU power iteration if GPU is unavailable or returns an error.
+/// Returns `(all_u_scaled [n_experts*rows*k], all_vt [n_experts*k*cols])`.
+fn svd_batch_experts(
+    matrices: &[f32],
+    rows: usize,
+    cols: usize,
+    k: usize,
+    n_experts: usize,
+    name: &str,
+    use_gpu: bool,
+) -> Result<(Vec<f32>, Vec<f32>), Box<dyn std::error::Error>> {
+    if use_gpu {
+        #[cfg(feature = "gpu")]
+        {
+            match rocmforge::gpu::rocsolver::gpu_svd_batch(matrices, rows, cols, k, n_experts) {
+                Ok(r) => return Ok(r),
+                Err(e) => eprintln!("  GPU batch SVD failed for {name}: {e} — using CPU"),
+            }
+        }
+    }
+    let _ = name;
+    let mut all_u = Vec::<f32>::with_capacity(n_experts * rows * k);
+    let mut all_v = Vec::<f32>::with_capacity(n_experts * k * cols);
+    for e in 0..n_experts {
+        let slice = &matrices[e * rows * cols..(e + 1) * rows * cols];
+        let (u, v) = top_k_svd_quant(slice, rows, cols, k);
+        all_u.extend_from_slice(&u);
+        all_v.extend_from_slice(&v);
+    }
+    Ok((all_u, all_v))
+}
+
 /// Deterministic top-k low-rank decomposition for SVD-Quant conversion.
 ///
 /// The converter only stores rank-k correction matrices, so building a full
@@ -1016,6 +1197,7 @@ fn quantize_matrix_q4_0(data: &[f32]) -> Vec<u8> {
 fn convert_svd_sparse_tensor(
     tensor: &TensorView,
     k_rank: u32,
+    use_gpu: bool,
     sparse_threshold: f32,
     residual_prune_threshold: Option<f32>,
     base_name: &str,
@@ -1037,15 +1219,17 @@ fn convert_svd_sparse_tensor(
         GgmlType::Q6_K => dequantize_q6_k_to_f32(tensor.data, tensor.element_count()),
         GgmlType::F32 => bytes_to_f32(tensor.data),
         other => {
-            return Err(
-                format!("Unsupported source type for SVD+sparse conversion: {:?}", other).into(),
+            return Err(format!(
+                "Unsupported source type for SVD+sparse conversion: {:?}",
+                other
             )
+            .into())
         }
     };
 
     let min_mn = out_dim.min(in_dim);
     let k = (k_rank as usize).min(min_mn);
-    let (u_sigma, vt) = top_k_svd_quant(&w_f32, out_dim, in_dim, k);
+    let (u_sigma, vt) = svd_decompose(&w_f32, out_dim, in_dim, k, base_name, use_gpu)?;
 
     let low_rank_approx = matmul(&u_sigma, &vt, out_dim, k, in_dim);
 
@@ -1077,7 +1261,11 @@ fn convert_svd_sparse_tensor(
     // Estimate sparsity of the residual (sample up to 4096 elements).
     let count = residual.len();
     let sample_size = count.min(4096);
-    let step = if count > sample_size { count / sample_size } else { 1 };
+    let step = if count > sample_size {
+        count / sample_size
+    } else {
+        1
+    };
     let nnz_sample = (0..sample_size)
         .filter(|&i| {
             let idx = i * step;
@@ -1094,7 +1282,14 @@ fn convert_svd_sparse_tensor(
             sparse_threshold * 100.0
         );
         convert_svd_quant_tensor(
-            tensor, k_rank, base_name, writer, current_offset, entries, align_offset,
+            tensor,
+            k_rank,
+            use_gpu,
+            base_name,
+            writer,
+            current_offset,
+            entries,
+            align_offset,
         )?;
         return Ok(false);
     }
@@ -1191,6 +1386,23 @@ fn convert_svd_sparse_tensor(
     Ok(true)
 }
 
+fn fwht_inplace(a: &mut [f32]) {
+    let n = a.len();
+    assert!(n.is_power_of_two(), "FWHT length must be a power of 2");
+    let mut h = 1;
+    while h < n {
+        for i in (0..n).step_by(h * 2) {
+            for j in 0..h {
+                let x = a[i + j];
+                let y = a[i + j + h];
+                a[i + j] = x + y;
+                a[i + j + h] = x - y;
+            }
+        }
+        h *= 2;
+    }
+}
+
 /// Per-expert SVD + magnitude-pruned sparse CSR residual for 3D MoE expert tensors.
 ///
 /// Tensor dims: `[cols, rows, n_experts]` (GGUF convention).
@@ -1203,21 +1415,28 @@ fn convert_svd_sparse_tensor(
 fn convert_moe_expert_svd_sparse(
     tensor: &TensorView,
     k_rank: u32,
+    use_gpu: bool,
+    sparse_threshold: Option<f32>,
     residual_prune_threshold: Option<f32>,
+    use_fwht: bool,
     base_name: &str,
     writer: &mut File,
     current_offset: &mut u64,
     entries: &mut Vec<RfmTensorEntry>,
     align_offset: &impl Fn(&mut File, &mut u64) -> Result<(), std::io::Error>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    assert_eq!(tensor.dims.len(), 3, "convert_moe_expert_svd_sparse requires 3D tensor");
-    let cols      = tensor.dims[0] as usize; // in_dim (fastest-varying in GGUF)
-    let rows      = tensor.dims[1] as usize; // out_dim
+) -> Result<bool, Box<dyn std::error::Error>> {
+    assert_eq!(
+        tensor.dims.len(),
+        3,
+        "convert_moe_expert_svd_sparse requires 3D tensor"
+    );
+    let cols = tensor.dims[0] as usize; // in_dim (fastest-varying in GGUF)
+    let rows = tensor.dims[1] as usize; // out_dim
     let n_experts = tensor.dims[2] as usize;
-    let k         = (k_rank as usize).min(rows.min(cols));
+    let k = (k_rank as usize).min(rows.min(cols));
     let total_elements = cols * rows * n_experts;
 
-    let w_f32 = match tensor.ggml_type {
+    let mut w_f32 = match tensor.ggml_type {
         GgmlType::Q4_0 => dequantize_q4_0_to_f32(tensor.data, total_elements),
         GgmlType::Q4_K => {
             let mut out = vec![0.0f32; total_elements];
@@ -1225,26 +1444,52 @@ fn convert_moe_expert_svd_sparse(
             out
         }
         GgmlType::Q6_K => dequantize_q6_k_to_f32(tensor.data, total_elements),
-        GgmlType::F32  => bytes_to_f32(tensor.data),
+        GgmlType::F32 => bytes_to_f32(tensor.data),
         other => return Err(format!("unsupported type for MoE SVD+sparse: {:?}", other).into()),
     };
 
-    let mut all_u    = Vec::<f32>::with_capacity(n_experts * rows * k);
-    let mut all_v    = Vec::<f32>::with_capacity(n_experts * k * cols);
-    let mut all_rp   = Vec::<u32>::with_capacity(n_experts * (rows + 1));
-    let mut all_ci   = Vec::<u32>::new();
+    if use_fwht {
+        println!("    [FWHT] Rotating MoE expert weights before SVD...");
+        let scale = 1.0 / (cols as f32).sqrt();
+        for e in 0..n_experts {
+            let offset = e * rows * cols;
+            let expert_w = &mut w_f32[offset..offset + rows * cols];
+            for r in 0..rows {
+                let row_slice = &mut expert_w[r * cols..(r + 1) * cols];
+                fwht_inplace(row_slice);
+                for x in row_slice.iter_mut() {
+                    *x *= scale;
+                }
+            }
+        }
+    }
+
+    let mut all_rp = Vec::<u32>::with_capacity(n_experts * (rows + 1));
+    let mut all_ci = Vec::<u32>::new();
     let mut all_vals = Vec::<f32>::new();
     let mut expert_nnz = Vec::<u32>::with_capacity(n_experts);
 
-    println!("    {} experts, rows={}, cols={}, k={}", n_experts, rows, cols, k);
+    println!(
+        "    {} experts, rows={}, cols={}, k={}",
+        n_experts, rows, cols, k
+    );
 
+    let (all_u, all_v) = svd_batch_experts(&w_f32, rows, cols, k, n_experts, base_name, use_gpu)?;
+
+    // ── CPU residual, prune, and CSR build (fast per expert) ─────────────
     for e in 0..n_experts {
         let slice = &w_f32[e * rows * cols..(e + 1) * rows * cols];
+        let u_sigma = &all_u[e * rows * k..(e + 1) * rows * k];
+        let vt = &all_v[e * k * cols..(e + 1) * k * cols];
 
-        let (u_sigma, vt) = top_k_svd_quant(slice, rows, cols, k);
-        let low_rank = matmul(&u_sigma, &vt, rows, k, cols);
+        // low_rank = U_k * Vt_k  [rows, cols]
+        let low_rank = matmul(u_sigma, vt, rows, k, cols);
 
-        let mut residual: Vec<f32> = slice.iter().zip(low_rank.iter()).map(|(w, l)| w - l).collect();
+        let mut residual: Vec<f32> = slice
+            .iter()
+            .zip(low_rank.iter())
+            .map(|(w, l)| w - l)
+            .collect();
         if let Some(mag) = residual_prune_threshold {
             for r in &mut residual {
                 if r.abs() < mag {
@@ -1255,7 +1500,7 @@ fn convert_moe_expert_svd_sparse(
 
         let mut row_ptr = vec![0u32; rows + 1];
         let mut col_idx = Vec::<u32>::new();
-        let mut values  = Vec::<f32>::new();
+        let mut values = Vec::<f32>::new();
         for r in 0..rows {
             for c in 0..cols {
                 let v = residual[r * cols + c];
@@ -1268,8 +1513,6 @@ fn convert_moe_expert_svd_sparse(
         }
         let nnz = values.len();
 
-        all_u.extend_from_slice(&u_sigma);
-        all_v.extend_from_slice(&vt);
         all_rp.extend_from_slice(&row_ptr);
         all_ci.extend_from_slice(&col_idx);
         all_vals.extend_from_slice(&values);
@@ -1277,25 +1520,59 @@ fn convert_moe_expert_svd_sparse(
     }
 
     let total_nnz = all_ci.len();
+    let avg_density = total_nnz as f64 / (rows * cols * n_experts).max(1) as f64;
+
+    // CSR is only smaller than the original quantized tensor below ~7% density.
+    // When the residual is denser than the threshold, fall back to the original
+    // bytes verbatim — guaranteed no larger than the source.
+    if sparse_threshold.map_or(false, |t| avg_density > t as f64) {
+        println!(
+            "    residual {:.1}% dense > threshold → passthrough original",
+            avg_density * 100.0
+        );
+        align_offset(writer, current_offset)?;
+        let base_offset = *current_offset;
+        let wtype = rfm_type_for_tensor(tensor);
+        let payload_size = pack_tensor(tensor, writer, wtype.clone())?;
+        *current_offset += payload_size;
+        entries.push(RfmTensorEntry {
+            name: base_name.to_string(),
+            dims: tensor.dims.to_vec(),
+            wtype,
+            offset: base_offset,
+            size: payload_size,
+        });
+        return Ok(false);
+    }
 
     align_offset(writer, current_offset)?;
     let base_offset = *current_offset;
 
-    for &x in &all_u    { writer.write_all(&x.to_le_bytes())?; }
-    for &x in &all_v    { writer.write_all(&x.to_le_bytes())?; }
-    for &x in &all_rp   { writer.write_all(&x.to_le_bytes())?; }
-    for &x in &all_ci   { writer.write_all(&x.to_le_bytes())?; }
-    for &x in &all_vals { writer.write_all(&x.to_le_bytes())?; }
-    for &x in &expert_nnz { writer.write_all(&x.to_le_bytes())?; }
+    for &x in &all_u {
+        writer.write_all(&x.to_le_bytes())?;
+    }
+    for &x in &all_v {
+        writer.write_all(&x.to_le_bytes())?;
+    }
+    for &x in &all_rp {
+        writer.write_all(&x.to_le_bytes())?;
+    }
+    for &x in &all_ci {
+        writer.write_all(&x.to_le_bytes())?;
+    }
+    for &x in &all_vals {
+        writer.write_all(&x.to_le_bytes())?;
+    }
+    for &x in &expert_nnz {
+        writer.write_all(&x.to_le_bytes())?;
+    }
 
     let payload_size = (all_u.len() + all_v.len() + all_vals.len()) as u64 * 4
         + (all_rp.len() + all_ci.len() + expert_nnz.len()) as u64 * 4;
     *current_offset += payload_size;
 
-    entries.push(RfmTensorEntry {
-        name: base_name.to_string(),
-        dims: tensor.dims.to_vec(),
-        wtype: RfmType::MoeExpertSvdSparse {
+    let wtype = if use_fwht {
+        RfmType::MoeExpertSvdFwhtSparse {
             n_experts: n_experts as u32,
             k: k as u32,
             rows: rows as u64,
@@ -1303,12 +1580,32 @@ fn convert_moe_expert_svd_sparse(
             total_nnz: total_nnz as u64,
             index_bits: 32,
             value_type: 0, // F32
-        },
+        }
+    } else {
+        RfmType::MoeExpertSvdSparse {
+            n_experts: n_experts as u32,
+            k: k as u32,
+            rows: rows as u64,
+            cols: cols as u64,
+            total_nnz: total_nnz as u64,
+            index_bits: 32,
+            value_type: 0, // F32
+        }
+    };
+
+    entries.push(RfmTensorEntry {
+        name: base_name.to_string(),
+        dims: tensor.dims.to_vec(),
+        wtype,
         offset: base_offset,
         size: payload_size,
     });
 
-    let avg_nnz = if n_experts > 0 { total_nnz as f64 / n_experts as f64 } else { 0.0 };
+    let avg_nnz = if n_experts > 0 {
+        total_nnz as f64 / n_experts as f64
+    } else {
+        0.0
+    };
     let sparsity = 1.0 - avg_nnz / (rows * cols).max(1) as f64;
     println!(
         "    avg nnz {:.0}/{} per expert ({:.1}% sparse), total_nnz={}",
@@ -1318,12 +1615,13 @@ fn convert_moe_expert_svd_sparse(
         total_nnz
     );
 
-    Ok(())
+    Ok(true)
 }
 
 fn convert_svd_quant_tensor(
     tensor: &TensorView,
     k_rank: u32,
+    use_gpu: bool,
     base_name: &str,
     writer: &mut File,
     current_offset: &mut u64,
@@ -1350,7 +1648,7 @@ fn convert_svd_quant_tensor(
     println!("    Running SVD-Quant offline decomposition...");
     let min_mn = out_dim.min(in_dim);
     let k = (k_rank as usize).min(min_mn);
-    let (u_k, vt_k) = top_k_svd_quant(&w_f32, out_dim, in_dim, k);
+    let (u_k, vt_k) = svd_decompose(&w_f32, out_dim, in_dim, k, base_name, use_gpu)?;
 
     let low_rank_approx = matmul(&u_k, &vt_k, out_dim, k, in_dim);
 
@@ -1628,6 +1926,7 @@ mod tests {
         convert_mpo_tensor(
             &tensor,
             2,
+            false,
             "test.weight",
             &mut file,
             &mut offset,

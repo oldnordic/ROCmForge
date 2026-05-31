@@ -61,6 +61,8 @@ pub struct CpuCompressedExperts {
     pub csr_values: Vec<f32>,
     /// NNZ per expert — indexes into col_idx / values.
     pub expert_nnz: Vec<usize>,
+    /// Flag indicating whether Fast Walsh-Hadamard Transform is needed for inputs before SVD GEMV
+    pub needs_fwht_input: bool,
 }
 
 impl CpuCompressedExperts {
@@ -87,7 +89,8 @@ impl CpuCompressedExperts {
         let col_idx = &self.csr_col_idx[nnz_start..nnz_start + nnz];
         let values = &self.csr_values[nnz_start..nnz_start + nnz];
         unsafe {
-            let rp_bytes = std::slice::from_raw_parts(row_ptr.as_ptr() as *const u8, (self.rows + 1) * 4);
+            let rp_bytes =
+                std::slice::from_raw_parts(row_ptr.as_ptr() as *const u8, (self.rows + 1) * 4);
             let ci_bytes = std::slice::from_raw_parts(col_idx.as_ptr() as *const u8, nnz * 4);
             let val_bytes = std::slice::from_raw_parts(values.as_ptr() as *const u8, nnz * 4);
             (rp_bytes, ci_bytes, val_bytes, nnz)
@@ -390,7 +393,7 @@ fn try_load_mpo(file: &RfmFile, name: &str, device_id: i32) -> GpuResult<Option<
     }))
 }
 
-/// Parse a `MoeExpertSvdSparse` RFM tensor into CPU-resident `CpuCompressedExperts`.
+/// Parse a `MoeExpertSvdSparse` or `MoeExpertSvdFwhtSparse` RFM tensor into CPU-resident `CpuCompressedExperts`.
 /// Returns `Ok(None)` if the tensor is absent or not the right type.
 fn try_load_compressed_experts(
     file: &RfmFile,
@@ -400,7 +403,7 @@ fn try_load_compressed_experts(
         Ok(Some(t)) => t,
         _ => return Ok(None),
     };
-    let (n_experts, k, rows, cols, total_nnz, index_bits) = match t.wtype {
+    let (n_experts, k, rows, cols, total_nnz, index_bits, needs_fwht_input) = match t.wtype {
         RfmType::MoeExpertSvdSparse {
             n_experts,
             k,
@@ -416,6 +419,24 @@ fn try_load_compressed_experts(
             cols as usize,
             total_nnz as usize,
             index_bits,
+            false,
+        ),
+        RfmType::MoeExpertSvdFwhtSparse {
+            n_experts,
+            k,
+            rows,
+            cols,
+            total_nnz,
+            index_bits,
+            ..
+        } => (
+            n_experts as usize,
+            k as usize,
+            rows as usize,
+            cols as usize,
+            total_nnz as usize,
+            index_bits,
+            true,
         ),
         _ => return Ok(None),
     };
@@ -424,7 +445,7 @@ fn try_load_compressed_experts(
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
-                "MoeExpertSvdSparse tensor '{}' uses unsupported index_bits={}",
+                "MoeExpertSvdSparse/MoeExpertSvdFwhtSparse tensor '{}' uses unsupported index_bits={}",
                 name, index_bits
             ),
         });
@@ -433,18 +454,16 @@ fn try_load_compressed_experts(
     // Payload layout:
     // U[n_experts*rows*k] | V[n_experts*k*cols] | row_ptr[n_experts*(rows+1)]
     // | col_idx[total_nnz] | values[total_nnz] | expert_nnz[n_experts]
-    let u_count  = n_experts * rows * k;
-    let v_count  = n_experts * k * cols;
+    let u_count = n_experts * rows * k;
+    let v_count = n_experts * k * cols;
     let rp_count = n_experts * (rows + 1);
-    let expected = (u_count + v_count + total_nnz + total_nnz) * 4
-        + rp_count * 4
-        + n_experts * 4;
+    let expected = (u_count + v_count + total_nnz + total_nnz) * 4 + rp_count * 4 + n_experts * 4;
 
     if t.data.len() < expected {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
-                "MoeExpertSvdSparse '{}': payload {} bytes < expected {}",
+                "MoeExpertSvdSparse/MoeExpertSvdFwhtSparse '{}': payload {} bytes < expected {}",
                 name,
                 t.data.len(),
                 expected
@@ -466,12 +485,17 @@ fn try_load_compressed_experts(
     };
 
     let mut off = 0usize;
-    let u_data      = read_f32(&t.data[off..], u_count);  off += u_count * 4;
-    let v_data      = read_f32(&t.data[off..], v_count);  off += v_count * 4;
-    let csr_row_ptr = read_u32(&t.data[off..], rp_count); off += rp_count * 4;
-    let csr_col_idx = read_u32(&t.data[off..], total_nnz); off += total_nnz * 4;
-    let csr_values  = read_f32(&t.data[off..], total_nnz); off += total_nnz * 4;
-    let nnz_raw     = read_u32(&t.data[off..], n_experts);
+    let u_data = read_f32(&t.data[off..], u_count);
+    off += u_count * 4;
+    let v_data = read_f32(&t.data[off..], v_count);
+    off += v_count * 4;
+    let csr_row_ptr = read_u32(&t.data[off..], rp_count);
+    off += rp_count * 4;
+    let csr_col_idx = read_u32(&t.data[off..], total_nnz);
+    off += total_nnz * 4;
+    let csr_values = read_f32(&t.data[off..], total_nnz);
+    off += total_nnz * 4;
+    let nnz_raw = read_u32(&t.data[off..], n_experts);
     let expert_nnz: Vec<usize> = nnz_raw.iter().map(|&x| x as usize).collect();
 
     Ok(Some(CpuCompressedExperts {
@@ -485,6 +509,7 @@ fn try_load_compressed_experts(
         csr_col_idx,
         csr_values,
         expert_nnz,
+        needs_fwht_input,
     }))
 }
 
@@ -1216,9 +1241,7 @@ impl GpuLayerWeights {
                     }
                     RfmType::SparseCsr { .. }
                     | RfmType::SvdSparseCsr { .. }
-                    | RfmType::Mpo { .. } => {
-                        upload_tensor_bytes_for_device(t.data, device_id)?
-                    }
+                    | RfmType::Mpo { .. } => upload_tensor_bytes_for_device(t.data, device_id)?,
                     _ => upload_tensor_bytes_for_device(t.data, device_id)?,
                 };
 
@@ -1249,7 +1272,11 @@ impl GpuLayerWeights {
                             })?;
                         let u_buf = upload_tensor_bytes_for_device(u_t.data, device_id)?;
                         let v_buf = upload_tensor_bytes_for_device(v_t.data, device_id)?;
-                        Some(SvdCorrection { u: u_buf, v: v_buf, k })
+                        Some(SvdCorrection {
+                            u: u_buf,
+                            v: v_buf,
+                            k,
+                        })
                     }
                     _ => None,
                 };
@@ -1820,7 +1847,7 @@ impl GpuLayerWeights {
         let ffn_up_mpo = try_load_mpo(&file, &ffn_up_name, device_id)?;
         let ffn_down_mpo = try_load_mpo(&file, &ffn_down_name, device_id)?;
         let ffn_gate_compressed = try_load_compressed_experts(&file, &ffn_gate_name)?;
-        let ffn_up_compressed   = try_load_compressed_experts(&file, &ffn_up_name)?;
+        let ffn_up_compressed = try_load_compressed_experts(&file, &ffn_up_name)?;
         let ffn_down_compressed = try_load_compressed_experts(&file, &ffn_down_name)?;
 
         Ok(Self {

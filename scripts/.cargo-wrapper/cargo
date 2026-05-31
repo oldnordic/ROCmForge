@@ -4,7 +4,7 @@
 REAL_CARGO="/home/feanor/.cargo/bin/cargo"
 
 # Check if command is check, test, clippy, or build
-if [[ "$1" == "check" || "$1" == "test" || "$1" == "clippy" || "$1" == "build" ]]; then
+if [[ "$1" == "check" || "$1" == "test" || "$1" == "clippy" || "$1" == "build" || "$1" == "run" ]]; then
     # Check if --features is already present in the arguments
     has_features=false
     for arg in "$@"; do

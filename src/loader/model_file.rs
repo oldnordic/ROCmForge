@@ -97,4 +97,23 @@ impl ModelFile {
             _ => None,
         }
     }
+
+    /// Returns the byte size of a named tensor, or 0 if not present.
+    /// Used for VRAM pre-flight estimation without triggering a full load.
+    pub fn tensor_byte_size(&self, name: &str) -> usize {
+        match self {
+            Self::Gguf(f) => f
+                .tensor(name)
+                .ok()
+                .flatten()
+                .map(|t| t.data.len())
+                .unwrap_or(0),
+            Self::Rfm(f) => f
+                .tensor(name)
+                .ok()
+                .flatten()
+                .map(|t| t.data.len())
+                .unwrap_or(0),
+        }
+    }
 }

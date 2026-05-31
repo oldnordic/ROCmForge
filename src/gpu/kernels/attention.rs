@@ -81,6 +81,9 @@ unsafe extern "C" {
         q_head_offset: c_int,
         kv_head_offset: c_int,
         scale: c_float,
+        kv_lora_dim: c_int,
+        w_up_k: *const f32,
+        w_up_v: *const f32,
     ) -> hipError_t;
 
     fn gpu_flash_attn_decode_strided_multi_head(
@@ -93,6 +96,10 @@ unsafe extern "C" {
         num_kv_heads: c_int,
         head_dim: c_int,
         scale: f32,
+        kv_lora_dim: c_int,
+        adastate_anchors_enabled: c_int,
+        w_up_k: *const f32,
+        w_up_v: *const f32,
         stream: hipStream_t,
     ) -> hipError_t;
 
@@ -106,6 +113,52 @@ unsafe extern "C" {
         num_kv_heads: c_int,
         head_dim: c_int,
         scale: f32,
+        kv_lora_dim: c_int,
+        adastate_anchors_enabled: c_int,
+        w_up_k: *const f32,
+        w_up_v: *const f32,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
+    fn gpu_kv_write_compressed(
+        d_k_cache: *mut f32,
+        d_v_cache: *mut f32,
+        d_k: *const f32,
+        d_v: *const f32,
+        d_pos: *const c_int,
+        num_kv_heads: c_int,
+        head_dim: c_int,
+        theta_base: c_float,
+        neox: c_int,
+        kv_lora_dim: c_int,
+        kv_frame_codec_enabled: c_int,
+        w_down_k: *const f32,
+        w_down_v: *const f32,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
+    fn gpu_kv_write_batched_compressed(
+        d_k_cache: *mut f32,
+        d_v_cache: *mut f32,
+        d_k: *const f32,
+        d_v: *const f32,
+        start_pos: c_int,
+        num_kv_heads: c_int,
+        head_dim: c_int,
+        seq_len: c_int,
+        kv_lora_dim: c_int,
+        kv_frame_codec_enabled: c_int,
+        w_down_k: *const f32,
+        w_down_v: *const f32,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
+    fn gpu_reconstruct_kv_cache_prefix_sum(
+        d_k_cache: *mut f32,
+        d_v_cache: *mut f32,
+        start_pos: c_int,
+        seq_len: c_int,
+        kv_lora_dim: c_int,
         stream: hipStream_t,
     ) -> hipError_t;
 }
@@ -189,7 +242,7 @@ pub fn kv_write_on_stream(
 
 /// Fused KV cache write and RoPE application.
 pub fn kv_write_rope_on_stream(
-    kv: &mut GpuKvCache,
+    kv: &GpuKvCache,
     layer_idx: usize,
     d_k: *const f32,
     d_v: *const f32,
@@ -207,29 +260,69 @@ pub fn kv_write_rope_on_stream(
         });
     }
 
-    let result = unsafe {
-        gpu_kv_write_rope(
+    if let Some(dc) = kv.kv_lora_dim {
+        let temp_pos = pos as i32;
+        let mut d_pos = crate::gpu::GpuBuffer::alloc(4)?;
+        let bytes = unsafe {
+            std::slice::from_raw_parts(
+                &temp_pos as *const i32 as *const u8,
+                std::mem::size_of::<i32>(),
+            )
+        };
+        d_pos.copy_from_host(bytes)?;
+
+        let w_down_k = kv
+            .w_down_k
+            .as_ref()
+            .map(|w| w[layer_idx].as_ptr() as *const f32)
+            .unwrap_or(std::ptr::null());
+        let w_down_v = kv
+            .w_down_v
+            .as_ref()
+            .map(|w| w[layer_idx].as_ptr() as *const f32)
+            .unwrap_or(std::ptr::null());
+
+        kv_write_compressed(
             kv.k_ptr(layer_idx)? as *mut f32,
             kv.v_ptr(layer_idx)? as *mut f32,
             d_k,
             d_v,
-            pos as c_int,
-            num_kv_heads as c_int,
-            head_dim as c_int,
+            d_pos.as_ptr() as *const i32,
+            num_kv_heads,
+            head_dim,
             theta_base,
-            if neox { 1 } else { 0 },
+            neox,
+            dc,
+            kv.kv_frame_codec_enabled,
+            w_down_k,
+            w_down_v,
             stream,
         )
-    };
+    } else {
+        let result = unsafe {
+            gpu_kv_write_rope(
+                kv.k_ptr(layer_idx)? as *mut f32,
+                kv.v_ptr(layer_idx)? as *mut f32,
+                d_k,
+                d_v,
+                pos as c_int,
+                num_kv_heads as c_int,
+                head_dim as c_int,
+                theta_base,
+                if neox { 1 } else { 0 },
+                stream,
+            )
+        };
 
-    if result != hipError_t::hipSuccess {
-        return Err(GpuError::HipApiError {
-            code: result as i32,
-            description: format!("kv_write_rope kernel failed: {:?}", result),
-        });
+        if result != hipError_t::hipSuccess {
+            return Err(GpuError::HipApiError {
+                code: result as i32,
+                description: format!("kv_write_rope kernel failed: {:?}", result),
+            });
+        }
+
+        Ok(())
     }
-
-    Ok(())
 }
 
 /// Write K/V to cache using a device-resident position scalar.
@@ -281,8 +374,8 @@ pub fn kv_write_from_state_on_stream(
 
 /// Apply RoPE to K and write rotated K plus V into the KV cache.
 pub fn kv_write_rope_from_state_on_stream(
-    k_cache: *mut f32,
-    v_cache: *mut f32,
+    kv: &GpuKvCache,
+    layer_idx: usize,
     k: *const f32,
     v: *const f32,
     pos_ptr: *const i32,
@@ -311,29 +404,59 @@ pub fn kv_write_rope_from_state_on_stream(
         });
     }
 
-    let result = unsafe {
-        gpu_kv_write_rope_state(
-            k_cache,
-            v_cache,
+    if let Some(dc) = kv.kv_lora_dim {
+        let w_down_k = kv
+            .w_down_k
+            .as_ref()
+            .map(|w| w[layer_idx].as_ptr() as *const f32)
+            .unwrap_or(std::ptr::null());
+        let w_down_v = kv
+            .w_down_v
+            .as_ref()
+            .map(|w| w[layer_idx].as_ptr() as *const f32)
+            .unwrap_or(std::ptr::null());
+
+        kv_write_compressed(
+            kv.k_ptr(layer_idx)? as *mut f32,
+            kv.v_ptr(layer_idx)? as *mut f32,
             k,
             v,
             pos_ptr,
-            num_kv_heads as c_int,
-            head_dim as c_int,
+            num_kv_heads,
+            head_dim,
             theta_base,
-            neox as c_int,
+            neox,
+            dc,
+            kv.kv_frame_codec_enabled,
+            w_down_k,
+            w_down_v,
             stream,
         )
-    };
+    } else {
+        let result = unsafe {
+            gpu_kv_write_rope_state(
+                kv.k_ptr(layer_idx)? as *mut f32,
+                kv.v_ptr(layer_idx)? as *mut f32,
+                k,
+                v,
+                pos_ptr,
+                num_kv_heads as c_int,
+                head_dim as c_int,
+                theta_base,
+                neox as c_int,
+                stream,
+            )
+        };
 
-    if result != hipError_t::hipSuccess {
-        return Err(GpuError::HipApiError {
-            code: result as i32,
-            description: format!("kv_write_rope_state kernel failed: {:?}", result),
-        });
+        if result != hipError_t::hipSuccess {
+            return Err(GpuError::HipApiError {
+                code: result as i32,
+                description: format!("kv_write_rope_state kernel failed: {:?}", result),
+            });
+        }
+
+        Ok(())
     }
-
-    Ok(())
 }
 
 /// Write K/V to cache (batched).
@@ -388,6 +511,10 @@ pub fn flash_attn_decode_strided_multi_head(
     num_kv_heads: usize,
     head_dim: usize,
     scale: f32,
+    kv_lora_dim: usize,
+    adastate_anchors_enabled: bool,
+    w_up_k: *const f32,
+    w_up_v: *const f32,
 ) -> GpuResult<()> {
     flash_attn_decode_strided_multi_head_on_stream(
         d_out,
@@ -399,6 +526,10 @@ pub fn flash_attn_decode_strided_multi_head(
         num_kv_heads,
         head_dim,
         scale,
+        kv_lora_dim,
+        adastate_anchors_enabled,
+        w_up_k,
+        w_up_v,
         hipStream_t::null(),
     )
 }
@@ -414,6 +545,10 @@ pub fn flash_attn_decode_strided_multi_head_on_stream(
     num_kv_heads: usize,
     head_dim: usize,
     scale: f32,
+    kv_lora_dim: usize,
+    adastate_anchors_enabled: bool,
+    w_up_k: *const f32,
+    w_up_v: *const f32,
     stream: hipStream_t,
 ) -> GpuResult<()> {
     if seq_len == 0 {
@@ -434,6 +569,10 @@ pub fn flash_attn_decode_strided_multi_head_on_stream(
             num_kv_heads as c_int,
             head_dim as c_int,
             scale,
+            kv_lora_dim as c_int,
+            adastate_anchors_enabled as c_int,
+            w_up_k,
+            w_up_v,
             stream,
         )
     };
@@ -459,6 +598,10 @@ pub fn flash_attn_decode_strided_multi_head_from_state_on_stream(
     num_kv_heads: usize,
     head_dim: usize,
     scale: f32,
+    kv_lora_dim: usize,
+    adastate_anchors_enabled: bool,
+    w_up_k: *const f32,
+    w_up_v: *const f32,
     stream: hipStream_t,
 ) -> GpuResult<()> {
     if seq_len_ptr.is_null() {
@@ -479,6 +622,10 @@ pub fn flash_attn_decode_strided_multi_head_from_state_on_stream(
             num_kv_heads as c_int,
             head_dim as c_int,
             scale,
+            kv_lora_dim as c_int,
+            adastate_anchors_enabled as c_int,
+            w_up_k,
+            w_up_v,
             stream,
         )
     };
@@ -507,7 +654,19 @@ pub fn flash_attn_decode(
     scale: f32,
 ) -> GpuResult<()> {
     flash_attn_decode_strided_multi_head(
-        d_out, d_q, d_k_cache, d_v_cache, seq_len, 1, 1, head_dim, scale,
+        d_out,
+        d_q,
+        d_k_cache,
+        d_v_cache,
+        seq_len,
+        1,
+        1,
+        head_dim,
+        scale,
+        0,
+        false,
+        std::ptr::null(),
+        std::ptr::null(),
     )
 }
 
@@ -523,11 +682,9 @@ pub fn flash_attn_decode_strided(
     head_offset: usize,
     scale: f32,
 ) -> GpuResult<()> {
-    // Offset pointers by head_offset to simulate selecting a specific head
     let d_k_offset = unsafe { d_k_cache.add(head_offset) };
     let d_v_offset = unsafe { d_v_cache.add(head_offset) };
 
-    // Calculate num_kv_heads based on kv_size
     let num_kv_heads = kv_size / head_dim;
 
     flash_attn_decode_strided_multi_head(
@@ -536,10 +693,14 @@ pub fn flash_attn_decode_strided(
         d_k_offset,
         d_v_offset,
         seq_len,
-        1, // single output head
+        1,
         num_kv_heads,
         head_dim,
         scale,
+        0,
+        false,
+        std::ptr::null(),
+        std::ptr::null(),
     )
 }
 
@@ -558,6 +719,9 @@ pub fn flash_attn_prefill_strided(
     q_head_offset: usize,
     kv_head_offset: usize,
     scale: f32,
+    kv_lora_dim: usize,
+    w_up_k: *const f32,
+    w_up_v: *const f32,
 ) -> GpuResult<()> {
     if seq_len == 0 {
         return Err(GpuError::HipApiError {
@@ -581,6 +745,9 @@ pub fn flash_attn_prefill_strided(
             q_head_offset as c_int,
             kv_head_offset as c_int,
             scale,
+            kv_lora_dim as c_int,
+            w_up_k,
+            w_up_v,
         )
     };
 
@@ -588,6 +755,151 @@ pub fn flash_attn_prefill_strided(
         return Err(GpuError::HipApiError {
             code: result as i32,
             description: format!("flash_attn_prefill kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+/// Write compressed K/V to cache.
+pub fn kv_write_compressed(
+    k_cache: *mut f32,
+    v_cache: *mut f32,
+    k: *const f32,
+    v: *const f32,
+    pos_ptr: *const i32,
+    num_kv_heads: usize,
+    head_dim: usize,
+    theta_base: f32,
+    neox: bool,
+    kv_lora_dim: usize,
+    kv_frame_codec_enabled: bool,
+    w_down_k: *const f32,
+    w_down_v: *const f32,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    if k_cache.is_null() || v_cache.is_null() || k.is_null() || v.is_null() || pos_ptr.is_null() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "KV write compressed: pointer arguments cannot be null".to_string(),
+        });
+    }
+
+    let result = unsafe {
+        gpu_kv_write_compressed(
+            k_cache,
+            v_cache,
+            k,
+            v,
+            pos_ptr,
+            num_kv_heads as c_int,
+            head_dim as c_int,
+            theta_base,
+            neox as c_int,
+            kv_lora_dim as c_int,
+            kv_frame_codec_enabled as c_int,
+            w_down_k,
+            w_down_v,
+            stream,
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("kv_write_compressed kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+/// Batch write compressed K/V to cache.
+pub fn kv_write_batched_compressed(
+    k_cache: *mut f32,
+    v_cache: *mut f32,
+    k: *const f32,
+    v: *const f32,
+    start_pos: usize,
+    num_kv_heads: usize,
+    head_dim: usize,
+    seq_len: usize,
+    kv_lora_dim: usize,
+    kv_frame_codec_enabled: bool,
+    w_down_k: *const f32,
+    w_down_v: *const f32,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    if k_cache.is_null() || v_cache.is_null() || k.is_null() || v.is_null() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "KV write batched compressed: pointer arguments cannot be null"
+                .to_string(),
+        });
+    }
+
+    let result = unsafe {
+        gpu_kv_write_batched_compressed(
+            k_cache,
+            v_cache,
+            k,
+            v,
+            start_pos as c_int,
+            num_kv_heads as c_int,
+            head_dim as c_int,
+            seq_len as c_int,
+            kv_lora_dim as c_int,
+            kv_frame_codec_enabled as c_int,
+            w_down_k,
+            w_down_v,
+            stream,
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("kv_write_batched_compressed kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+/// Reconstruct temporal difference scan for batched KV cache.
+pub fn reconstruct_kv_cache_prefix_sum(
+    k_cache: *mut f32,
+    v_cache: *mut f32,
+    start_pos: usize,
+    seq_len: usize,
+    kv_lora_dim: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    if k_cache.is_null() || v_cache.is_null() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "KV reconstruct scan: pointer arguments cannot be null".to_string(),
+        });
+    }
+
+    let result = unsafe {
+        gpu_reconstruct_kv_cache_prefix_sum(
+            k_cache,
+            v_cache,
+            start_pos as c_int,
+            seq_len as c_int,
+            kv_lora_dim as c_int,
+            stream,
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!(
+                "reconstruct_kv_cache_prefix_sum kernel failed: {:?}",
+                result
+            ),
         });
     }
 

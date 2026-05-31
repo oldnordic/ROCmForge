@@ -1,5 +1,44 @@
 #include "common.hip"
 
+__device__ inline float block_reduce_sum(float val) {
+    const int tid = threadIdx.x;
+    const int lane = tid % 32;
+    const int warp_id = tid / 32;
+
+    // 1. Warp-level reduction using shfl_xor
+    #pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        val += __shfl_xor(val, offset);
+    }
+
+    // Shared memory for warp results (max 32 warps)
+    __shared__ float shared_sum[32];
+
+    // 2. Thread 0 of each warp writes its warp result to shared memory
+    if (lane == 0) {
+        shared_sum[warp_id] = val;
+    }
+    __syncthreads();
+
+    // 3. Warp 0 reduces warp results
+    float warp_val = 0.0f;
+    if (warp_id == 0) {
+        const int num_warps = (blockDim.x + 31) / 32;
+        if (lane < num_warps) {
+            warp_val = shared_sum[lane];
+        } else {
+            warp_val = 0.0f;
+        }
+
+        #pragma unroll
+        for (int offset = 16; offset > 0; offset >>= 1) {
+            warp_val += __shfl_xor(warp_val, offset);
+        }
+    }
+
+    return warp_val;
+}
+
 /// Element-wise add kernel: out = x + y
 __global__ void add_kernel(
     const float* __restrict__ x,
@@ -128,19 +167,10 @@ __global__ void dot_f16_f32_kernel(
         sum += __half2float(weights[i]) * input[i];
     }
 
-    extern __shared__ float sdata[];
-    sdata[tid] = sum;
-    __syncthreads();
-
-    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
-        if (tid < stride) {
-            sdata[tid] += sdata[tid + stride];
-        }
-        __syncthreads();
-    }
+    float final_sum = block_reduce_sum(sum);
 
     if (tid == 0) {
-        output[0] = sdata[0];
+        output[0] = final_sum;
     }
 }
 
@@ -200,6 +230,55 @@ __device__ inline void update_argmax(
     }
 }
 
+__device__ inline void block_reduce_argmax(float* val, int* idx) {
+    const int tid = threadIdx.x;
+    const int lane = tid % 32;
+    const int warp_id = tid / 32;
+
+    float best_val = *val;
+    int best_idx = *idx;
+
+    // 1. Warp-level reduction using shfl_xor
+    #pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        float other_val = __shfl_xor(best_val, offset);
+        int other_idx = __shfl_xor(best_idx, offset);
+        update_argmax(other_val, other_idx, &best_val, &best_idx);
+    }
+
+    // Shared memory for warp results (max 32 warps)
+    __shared__ float shared_values[32];
+    __shared__ int shared_indices[32];
+
+    // 2. Write to shared memory
+    if (lane == 0) {
+        shared_values[warp_id] = best_val;
+        shared_indices[warp_id] = best_idx;
+    }
+    __syncthreads();
+
+    // 3. Warp 0 reduces warp results
+    if (warp_id == 0) {
+        float warp_val = ARGMAX_NEG_INF;
+        int warp_idx = 0;
+        const int num_warps = (blockDim.x + 31) / 32;
+        if (lane < num_warps) {
+            warp_val = shared_values[lane];
+            warp_idx = shared_indices[lane];
+        }
+
+        #pragma unroll
+        for (int offset = 16; offset > 0; offset >>= 1) {
+            float other_val = __shfl_xor(warp_val, offset);
+            int other_idx = __shfl_xor(warp_idx, offset);
+            update_argmax(other_val, other_idx, &warp_val, &warp_idx);
+        }
+
+        *val = warp_val;
+        *idx = warp_idx;
+    }
+}
+
 __global__ void argmax_stage1_kernel(
     const float* __restrict__ input,
     float* __restrict__ partial_values,
@@ -220,27 +299,11 @@ __global__ void argmax_stage1_kernel(
         }
     }
 
-    __shared__ float shared_values[BLOCK_SIZE];
-    __shared__ int shared_indices[BLOCK_SIZE];
-    shared_values[tid] = best_value;
-    shared_indices[tid] = best_index;
-    __syncthreads();
-
-    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
-        if (tid < stride) {
-            update_argmax(
-                shared_values[tid + stride],
-                shared_indices[tid + stride],
-                &shared_values[tid],
-                &shared_indices[tid]
-            );
-        }
-        __syncthreads();
-    }
+    block_reduce_argmax(&best_value, &best_index);
 
     if (tid == 0) {
-        partial_values[blockIdx.x] = shared_values[0];
-        partial_indices[blockIdx.x] = shared_indices[0];
+        partial_values[blockIdx.x] = best_value;
+        partial_indices[blockIdx.x] = best_index;
     }
 }
 
@@ -259,26 +322,10 @@ __global__ void argmax_finalize_kernel(
         update_argmax(partial_values[idx], partial_indices[idx], &best_value, &best_index);
     }
 
-    __shared__ float shared_values[BLOCK_SIZE];
-    __shared__ int shared_indices[BLOCK_SIZE];
-    shared_values[tid] = best_value;
-    shared_indices[tid] = best_index;
-    __syncthreads();
-
-    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
-        if (tid < stride) {
-            update_argmax(
-                shared_values[tid + stride],
-                shared_indices[tid + stride],
-                &shared_values[tid],
-                &shared_indices[tid]
-            );
-        }
-        __syncthreads();
-    }
+    block_reduce_argmax(&best_value, &best_index);
 
     if (tid == 0) {
-        output_index[0] = shared_indices[0];
+        output_index[0] = best_index;
     }
 }
 
@@ -413,20 +460,10 @@ __global__ void gemv_f32_k_kernel(
         sum += V_k[i * in_dim + j] * x[j];
     }
 
-    // Shared memory reduction
-    extern __shared__ float sdata[];
-    sdata[tid] = sum;
-    __syncthreads();
-
-    for (unsigned int s = block_size / 2; s > 0; s >>= 1) {
-        if (tid < s) {
-            sdata[tid] += sdata[tid + s];
-        }
-        __syncthreads();
-    }
+    float final_sum = block_reduce_sum(sum);
 
     if (tid == 0) {
-        t[i] = sdata[0];
+        t[i] = final_sum;
     }
 }
 
@@ -445,6 +482,27 @@ __global__ void gemv_f32_add_k_kernel(
         }
         y[i] += sum;
     }
+}
+
+__global__ void test_dot4_hardware_kernel(int a, int b, int acc, int* out) {
+#if defined(__gfx1030__)
+    *out = __builtin_amdgcn_sdot4(a, b, acc, false);
+#else
+    *out = acc; // fallback
+#endif
+}
+
+__global__ void test_dot4_manual_kernel(int a, int b, int acc, int* out) {
+    int sum = acc;
+    #pragma unroll
+    for (int i = 0; i < 4; ++i) {
+        int va = (a >> (i * 8)) & 0xFF;
+        int vb = (b >> (i * 8)) & 0xFF;
+        int a_val = (va & 0x80) ? (va | 0xFFFFFF00) : va;
+        int b_val = (vb & 0x80) ? (vb | 0xFFFFFF00) : vb;
+        sum += a_val * b_val;
+    }
+    *out = sum;
 }
 
 // C wrapper functions for dynamic linking
@@ -906,6 +964,26 @@ hipError_t gpu_gemv_f32_add_k(
         d_U, d_t, d_y, out_dim, k
     );
     return hipGetLastError();
+}
+
+hipError_t gpu_test_dot4_hardware(int a, int b, int acc, int* out, hipStream_t stream) {
+    int* d_out;
+    CHECK_HIP(hipMalloc(&d_out, sizeof(int)));
+    hipLaunchKernelGGL(test_dot4_hardware_kernel, dim3(1), dim3(1), 0, stream, a, b, acc, d_out);
+    CHECK_HIP(hipMemcpyAsync(out, d_out, sizeof(int), hipMemcpyDeviceToHost, stream));
+    CHECK_HIP(hipStreamSynchronize(stream));
+    CHECK_HIP(hipFree(d_out));
+    return hipSuccess;
+}
+
+hipError_t gpu_test_dot4_manual(int a, int b, int acc, int* out, hipStream_t stream) {
+    int* d_out;
+    CHECK_HIP(hipMalloc(&d_out, sizeof(int)));
+    hipLaunchKernelGGL(test_dot4_manual_kernel, dim3(1), dim3(1), 0, stream, a, b, acc, d_out);
+    CHECK_HIP(hipMemcpyAsync(out, d_out, sizeof(int), hipMemcpyDeviceToHost, stream));
+    CHECK_HIP(hipStreamSynchronize(stream));
+    CHECK_HIP(hipFree(d_out));
+    return hipSuccess;
 }
 
 } // extern "C"

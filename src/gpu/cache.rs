@@ -9,7 +9,10 @@ use super::device::GpuDevice;
 use super::error::{GpuError, GpuResult};
 use super::ffi::hipStream_t;
 use super::graph::{CapturedDecodeGraph, DecodeGraphKey};
-use super::kernels::{kv_write, kv_write_batched, kv_write_on_stream, zero_fill};
+use super::kernels::{
+    kv_write, kv_write_batched, kv_write_batched_compressed, kv_write_compressed,
+    kv_write_on_stream, reconstruct_kv_cache_prefix_sum, zero_fill,
+};
 use super::vram_budget::query_vram_budget;
 use super::weights::{GpuBuffer, GpuPinnedBuffer};
 use crate::config::ModelConfig;
@@ -37,6 +40,17 @@ pub struct GpuKvCache {
     pub num_layers: usize,
     /// Cached pointer-mix used by decode-graph key construction.
     decode_binding_tag: u64,
+
+    // Research & advanced compression synergy extensions
+    pub kv_lora_dim: Option<usize>,
+    pub adastate_anchors_enabled: bool,
+    pub kv_frame_codec_enabled: bool,
+    pub w_down_k: Option<Vec<GpuBuffer>>,
+    pub w_down_v: Option<Vec<GpuBuffer>>,
+    pub w_up_k: Option<Vec<GpuBuffer>>,
+    pub w_up_v: Option<Vec<GpuBuffer>>,
+    pub num_kv_heads: usize,
+    pub head_dim: usize,
 }
 
 impl GpuKvCache {
@@ -59,6 +73,26 @@ impl GpuKvCache {
                 total += buf.size();
             }
         }
+        if let Some(ref bufs) = self.w_down_k {
+            for buf in bufs {
+                total += buf.size();
+            }
+        }
+        if let Some(ref bufs) = self.w_down_v {
+            for buf in bufs {
+                total += buf.size();
+            }
+        }
+        if let Some(ref bufs) = self.w_up_k {
+            for buf in bufs {
+                total += buf.size();
+            }
+        }
+        if let Some(ref bufs) = self.w_up_v {
+            for buf in bufs {
+                total += buf.size();
+            }
+        }
         total
     }
 
@@ -67,8 +101,13 @@ impl GpuKvCache {
     /// Use this for pre-flight VRAM checks before calling `new`.
     pub fn estimate_bytes(config: &ModelConfig, max_seq_len: usize) -> usize {
         let kv_size = config.num_kv_heads * config.head_dim;
-        let layer_bytes = max_seq_len * kv_size * std::mem::size_of::<f32>();
-        2 * config.num_layers * layer_bytes
+        let effective_size = config.kv_lora_dim.unwrap_or(kv_size);
+        let layer_bytes = max_seq_len * effective_size * std::mem::size_of::<f32>();
+        let mut total = 2 * config.num_layers * layer_bytes;
+        if let Some(dc) = config.kv_lora_dim {
+            total += 4 * config.num_layers * (dc * kv_size * std::mem::size_of::<f32>());
+        }
+        total
     }
 
     /// Allocate a new KV cache in GPU VRAM.
@@ -81,8 +120,13 @@ impl GpuKvCache {
     /// Ok(GpuKvCache) if all allocations succeed, Err if any fail (all freed via RAII)
     pub fn new(config: &ModelConfig, max_seq_len: usize) -> GpuResult<Self> {
         let kv_size = config.num_kv_heads * config.head_dim;
-        let layer_bytes = max_seq_len * kv_size * std::mem::size_of::<f32>();
-        let total_cache_bytes = 2 * config.num_layers * layer_bytes;
+        let effective_kv_size = config.kv_lora_dim.unwrap_or(kv_size);
+        let layer_bytes = max_seq_len * effective_kv_size * std::mem::size_of::<f32>();
+        let mut total_cache_bytes = 2 * config.num_layers * layer_bytes;
+        if let Some(dc) = config.kv_lora_dim {
+            total_cache_bytes +=
+                4 * config.num_layers * (dc * kv_size * std::mem::size_of::<f32>());
+        }
 
         let budget = query_vram_budget(super::vram_budget::active_or_default_device_id())?;
         if total_cache_bytes > budget.safe_allocation_size {
@@ -160,6 +204,85 @@ impl GpuKvCache {
             ssm_conv_state = Some(conv_states);
         }
 
+        // Allocate projection matrices for VideoMLA / AdaState if kv_lora_dim is present
+        let mut w_down_k = None;
+        let mut w_down_v = None;
+        let mut w_up_k = None;
+        let mut w_up_v = None;
+
+        if let Some(dc) = config.kv_lora_dim {
+            let mut down_k = Vec::with_capacity(config.num_layers);
+            let mut down_v = Vec::with_capacity(config.num_layers);
+            let mut up_k = Vec::with_capacity(config.num_layers);
+            let mut up_v = Vec::with_capacity(config.num_layers);
+
+            let proj_bytes = dc * kv_size * std::mem::size_of::<f32>();
+
+            let mut host_down = vec![0.0f32; dc * kv_size];
+            for j in 0..dc {
+                if j < kv_size {
+                    host_down[j * kv_size + j] = 1.0f32;
+                }
+            }
+
+            let mut host_up = vec![0.0f32; kv_size * dc];
+            for j in 0..dc {
+                if j < kv_size {
+                    host_up[j * dc + j] = 1.0f32;
+                }
+            }
+
+            for layer in 0..config.num_layers {
+                let mut d_k =
+                    GpuBuffer::alloc(proj_bytes).map_err(|e| GpuError::CacheAllocationFailed {
+                        reason: format!("W_down_k layer {} allocation failed: {}", layer, e),
+                    })?;
+                let bytes_down = unsafe {
+                    std::slice::from_raw_parts(
+                        host_down.as_ptr() as *const u8,
+                        host_down.len() * std::mem::size_of::<f32>(),
+                    )
+                };
+                d_k.copy_from_host(bytes_down)?;
+                down_k.push(d_k);
+
+                let mut d_v =
+                    GpuBuffer::alloc(proj_bytes).map_err(|e| GpuError::CacheAllocationFailed {
+                        reason: format!("W_down_v layer {} allocation failed: {}", layer, e),
+                    })?;
+                d_v.copy_from_host(bytes_down)?;
+                down_v.push(d_v);
+
+                let mut u_k =
+                    GpuBuffer::alloc(proj_bytes).map_err(|e| GpuError::CacheAllocationFailed {
+                        reason: format!("W_up_k layer {} allocation failed: {}", layer, e),
+                    })?;
+                let bytes_up = unsafe {
+                    std::slice::from_raw_parts(
+                        host_up.as_ptr() as *const u8,
+                        host_up.len() * std::mem::size_of::<f32>(),
+                    )
+                };
+                u_k.copy_from_host(bytes_up)?;
+                up_k.push(u_k);
+
+                let mut u_v =
+                    GpuBuffer::alloc(proj_bytes).map_err(|e| GpuError::CacheAllocationFailed {
+                        reason: format!("W_up_v layer {} allocation failed: {}", layer, e),
+                    })?;
+                u_v.copy_from_host(bytes_up)?;
+                up_v.push(u_v);
+            }
+
+            w_down_k = Some(down_k);
+            w_down_v = Some(down_v);
+            w_up_k = Some(up_k);
+            w_up_v = Some(up_v);
+        }
+
+        let adastate_anchors_enabled = config.adastate_anchors_enabled.unwrap_or(false);
+        let kv_frame_codec_enabled = config.kv_frame_codec_enabled.unwrap_or(false);
+
         Ok(Self {
             k,
             v,
@@ -169,6 +292,15 @@ impl GpuKvCache {
             kv_size,
             num_layers: config.num_layers,
             decode_binding_tag,
+            kv_lora_dim: config.kv_lora_dim,
+            adastate_anchors_enabled,
+            kv_frame_codec_enabled,
+            w_down_k,
+            w_down_v,
+            w_up_k,
+            w_up_v,
+            num_kv_heads: config.num_kv_heads,
+            head_dim: config.head_dim,
         })
     }
 
@@ -236,6 +368,7 @@ impl GpuKvCache {
     ///
     /// # Returns
     /// Ok(()) on successful kernel launch
+    /// Write K/V vectors to cache.
     pub fn write(
         &self,
         layer: usize,
@@ -243,18 +376,7 @@ impl GpuKvCache {
         k_gpu: *const f32,
         v_gpu: *const f32,
     ) -> GpuResult<()> {
-        let k_cache = self.k_ptr(layer)?;
-        let v_cache = self.v_ptr(layer)?;
-
-        kv_write(
-            k_cache,
-            v_cache,
-            k_gpu,
-            v_gpu,
-            pos,
-            self.kv_size,
-            self.max_seq_len,
-        )
+        self.write_on_stream(layer, pos, k_gpu, v_gpu, hipStream_t::null())
     }
 
     /// Write K/V vectors to cache on an explicit HIP stream.
@@ -269,16 +391,56 @@ impl GpuKvCache {
         let k_cache = self.k_ptr(layer)?;
         let v_cache = self.v_ptr(layer)?;
 
-        kv_write_on_stream(
-            k_cache,
-            v_cache,
-            k_gpu,
-            v_gpu,
-            pos,
-            self.kv_size,
-            self.max_seq_len,
-            stream,
-        )
+        if let Some(dc) = self.kv_lora_dim {
+            let temp_pos = pos as i32;
+            let mut d_pos = GpuBuffer::alloc(4)?;
+            let bytes = unsafe {
+                std::slice::from_raw_parts(
+                    &temp_pos as *const i32 as *const u8,
+                    std::mem::size_of::<i32>(),
+                )
+            };
+            d_pos.copy_from_host(bytes)?;
+
+            let w_down_k = self
+                .w_down_k
+                .as_ref()
+                .map(|w| w[layer].as_ptr() as *const f32)
+                .unwrap_or(std::ptr::null());
+            let w_down_v = self
+                .w_down_v
+                .as_ref()
+                .map(|w| w[layer].as_ptr() as *const f32)
+                .unwrap_or(std::ptr::null());
+
+            kv_write_compressed(
+                k_cache,
+                v_cache,
+                k_gpu,
+                v_gpu,
+                d_pos.as_ptr() as *const i32,
+                self.num_kv_heads,
+                self.head_dim,
+                10000.0, // Default theta base
+                false,   // Default neox
+                dc,
+                self.kv_frame_codec_enabled,
+                w_down_k,
+                w_down_v,
+                stream,
+            )
+        } else {
+            kv_write_on_stream(
+                k_cache,
+                v_cache,
+                k_gpu,
+                v_gpu,
+                pos,
+                self.kv_size,
+                self.max_seq_len,
+                stream,
+            )
+        }
     }
 
     /// Batch write K/V for prefill (multiple positions).
@@ -299,23 +461,65 @@ impl GpuKvCache {
         let k_cache = self.k_ptr(layer)?;
         let v_cache = self.v_ptr(layer)?;
 
-        kv_write_batched(
-            k_cache,
-            v_cache,
-            k_gpu,
-            v_gpu,
-            start_pos,
-            self.kv_size,
-            self.max_seq_len,
-            seq_len,
-        )
+        if let Some(dc) = self.kv_lora_dim {
+            let w_down_k = self
+                .w_down_k
+                .as_ref()
+                .map(|w| w[layer].as_ptr() as *const f32)
+                .unwrap_or(std::ptr::null());
+            let w_down_v = self
+                .w_down_v
+                .as_ref()
+                .map(|w| w[layer].as_ptr() as *const f32)
+                .unwrap_or(std::ptr::null());
+
+            kv_write_batched_compressed(
+                k_cache,
+                v_cache,
+                k_gpu,
+                v_gpu,
+                start_pos,
+                self.num_kv_heads,
+                self.head_dim,
+                seq_len,
+                dc,
+                self.kv_frame_codec_enabled,
+                w_down_k,
+                w_down_v,
+                hipStream_t::null(),
+            )?;
+
+            if self.kv_frame_codec_enabled {
+                reconstruct_kv_cache_prefix_sum(
+                    k_cache,
+                    v_cache,
+                    start_pos,
+                    seq_len,
+                    dc,
+                    hipStream_t::null(),
+                )?;
+            }
+            Ok(())
+        } else {
+            kv_write_batched(
+                k_cache,
+                v_cache,
+                k_gpu,
+                v_gpu,
+                start_pos,
+                self.kv_size,
+                self.max_seq_len,
+                seq_len,
+            )
+        }
     }
 
     /// Clear all cached values (zero out via kernel).
     ///
     /// Requires device reference for kernel synchronization.
     pub fn clear(&mut self, device: &GpuDevice) -> GpuResult<()> {
-        let elements_per_layer = self.max_seq_len * self.kv_size;
+        let effective_size = self.kv_lora_dim.unwrap_or(self.kv_size);
+        let elements_per_layer = self.max_seq_len * effective_size;
 
         // Zero out K cache for each layer
         for layer in 0..self.num_layers {
@@ -578,6 +782,9 @@ mod tests {
             tensor_registry: crate::config::TensorNameRegistry::from_scheme(
                 &crate::config::TensorNamingScheme::Gguf,
             ),
+            kv_lora_dim: None,
+            kv_frame_codec_enabled: None,
+            adastate_anchors_enabled: None,
         }
     }
 
@@ -806,6 +1013,8 @@ pub struct GpuExpertScratch {
     pub csr_row_ptr: GpuBuffer,
     /// Intermediate k-vector for V·x computation
     pub temp_v: GpuBuffer,
+    /// Pre-allocated scratch buffer for FWHT rotated input activation: [cols] F32
+    pub rotated_input: GpuBuffer,
     pub k: u32,
     pub rows: usize,
     pub cols: usize,
@@ -817,12 +1026,13 @@ impl GpuExpertScratch {
         let ku = k as usize;
         let nnz = max_nnz.max(1); // avoid zero-size allocation
         Ok(Self {
-            u:           GpuBuffer::alloc(rows * ku * 4)?,
-            v:           GpuBuffer::alloc(ku * cols * 4)?,
-            csr_values:  GpuBuffer::alloc(nnz * 4)?,
+            u: GpuBuffer::alloc(rows * ku * 4)?,
+            v: GpuBuffer::alloc(ku * cols * 4)?,
+            csr_values: GpuBuffer::alloc(nnz * 4)?,
             csr_col_idx: GpuBuffer::alloc(nnz * 4)?,
             csr_row_ptr: GpuBuffer::alloc((rows + 1) * 4)?,
-            temp_v:      GpuBuffer::alloc(ku * 4)?,
+            temp_v: GpuBuffer::alloc(ku * 4)?,
+            rotated_input: GpuBuffer::alloc(cols * 4)?,
             k,
             rows,
             cols,
@@ -1019,9 +1229,21 @@ impl GpuForwardScratch {
         super::ffi::hip_memset(swiglu.as_ptr(), 0, swiglu.size())?;
         super::ffi::hip_memset(svd_scratch.as_ptr(), 0, svd_scratch.size())?;
         super::ffi::hip_memset(logits.as_ptr(), 0, logits.size())?;
-        super::ffi::hip_memset(argmax_partial_values.as_ptr(), 0, argmax_partial_values.size())?;
-        super::ffi::hip_memset(argmax_partial_indices.as_ptr(), 0, argmax_partial_indices.size())?;
-        super::ffi::hip_memset(argmax_result_device.as_ptr(), 0, argmax_result_device.size())?;
+        super::ffi::hip_memset(
+            argmax_partial_values.as_ptr(),
+            0,
+            argmax_partial_values.size(),
+        )?;
+        super::ffi::hip_memset(
+            argmax_partial_indices.as_ptr(),
+            0,
+            argmax_partial_indices.size(),
+        )?;
+        super::ffi::hip_memset(
+            argmax_result_device.as_ptr(),
+            0,
+            argmax_result_device.size(),
+        )?;
         super::ffi::hip_memset(decode_state.as_ptr(), 0, decode_state.size())?;
         // Pinned buffers and argmax_result_index are host-side; zeroed on use
 
@@ -1489,6 +1711,9 @@ mod scratch_tests {
             tensor_registry: crate::config::TensorNameRegistry::from_scheme(
                 &crate::config::TensorNamingScheme::Gguf,
             ),
+            kv_lora_dim: None,
+            kv_frame_codec_enabled: None,
+            adastate_anchors_enabled: None,
         }
     }
 

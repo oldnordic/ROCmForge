@@ -88,6 +88,30 @@ impl SpeculativeEngine {
     ) -> GpuResult<Self> {
         let device_id = device.device_id();
 
+        // 0. Pre-flight VRAM headroom check before loading weights
+        let vram_session = crate::gpu::vram_budget::VramSession::new(device_id)?;
+        let target_size = std::fs::metadata(target_path)
+            .map(|m| m.len() as usize)
+            .unwrap_or(0);
+        let draft_size = std::fs::metadata(draft_path)
+            .map(|m| m.len() as usize)
+            .unwrap_or(0);
+        let estimated_weights = target_size + draft_size;
+
+        if estimated_weights > (vram_session.inference_budget as f64 * 0.85) as usize {
+            return Err(GpuError::OutOfMemory {
+                requested: estimated_weights,
+                available: vram_session.inference_budget,
+                hint: format!(
+                    "Co-loading target model ({:.1} MB) and draft model ({:.1} MB) exceeds 85% of usable VRAM session budget ({:.1} MB free, {:.1} MB total). Aborting for safety.",
+                    target_size as f64 / (1024.0 * 1024.0),
+                    draft_size as f64 / (1024.0 * 1024.0),
+                    vram_session.inference_budget as f64 / (1024.0 * 1024.0),
+                    vram_session.total as f64 / (1024.0 * 1024.0)
+                ),
+            });
+        }
+
         // 1. Load target model config and weights
         let (target_config, target_cpu_weights, target_model) = if target_path.ends_with(".rfm") {
             let file =

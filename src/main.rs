@@ -496,6 +496,67 @@ fn run_cpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 
 // ── GPU Inference ────────────────────────────────────────────────────────────────
 
+/// Estimate bytes that will actually reside on the GPU for this model.
+///
+/// Uses file size for non-MoE models. For MoE models the expert tensors
+/// (`_exps`) are streamed from CPU RAM one expert at a time and never fully
+/// resident in VRAM, so we sum only the attention weights, layer norms, MoE
+/// router, and shared-expert tensors that stay on the GPU throughout inference.
+#[cfg(feature = "gpu")]
+fn estimate_gpu_resident_model_bytes(
+    model_path: &str,
+    file: &rocmforge::loader::ModelFile,
+    config: &rocmforge::config::ModelConfig,
+) -> usize {
+    use rocmforge::config::TensorNamingScheme;
+    // Non-MoE: every weight lives on the GPU; fall back to file size.
+    if !matches!(config.tensor_registry.scheme, TensorNamingScheme::GgufMoE) {
+        return std::fs::metadata(model_path)
+            .map(|m| m.len() as usize)
+            .unwrap_or(0);
+    }
+
+    let tensor_bytes = |name: &str| -> usize { file.tensor_byte_size(name) };
+
+    let mut total = 0usize;
+
+    // Fixed weights always on the GPU.
+    for name in &["token_emb.weight", "output_norm.weight", "output.weight"] {
+        total += tensor_bytes(name);
+    }
+
+    for layer in 0..config.num_layers {
+        // Attention + layer norms (always GPU-resident).
+        for suffix in &[
+            "attn_q.weight",
+            "attn_k.weight",
+            "attn_v.weight",
+            "attn_output.weight",
+            "attn_qkv.weight", // fused QKV variant
+            "attn_norm.weight",
+            "ffn_norm.weight",
+            "post_attention_norm.weight",
+        ] {
+            total += tensor_bytes(&format!("blk.{}.{}", layer, suffix));
+        }
+        // MoE router (tiny, GPU-resident).
+        total += tensor_bytes(&format!("blk.{}.ffn_gate_inp.weight", layer));
+        // Shared expert (small, GPU-resident — not part of the expert pool).
+        for suffix in &[
+            "ffn_gate_shexp.weight",
+            "ffn_up_shexp.weight",
+            "ffn_down_shexp.weight",
+            "ffn_gate_inp_shexp.weight",
+        ] {
+            total += tensor_bytes(&format!("blk.{}.{}", layer, suffix));
+        }
+        // NOTE: ffn_gate_exps / ffn_up_exps / ffn_down_exps are CPU-resident
+        // (CpuCompressedExperts) and must NOT be counted here.
+    }
+
+    total
+}
+
 #[cfg(feature = "gpu")]
 fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     eprint!("Detecting GPU capabilities... ");
@@ -515,9 +576,8 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let config = file.config()?;
 
     // Estimate VRAM before allocating anything.
-    let model_file_bytes = std::fs::metadata(&args.model)
-        .map(|m| m.len() as usize)
-        .unwrap_or(0);
+    // For MoE models, experts are CPU-resident; only sum GPU-resident tensors.
+    let model_file_bytes = estimate_gpu_resident_model_bytes(&args.model, &file, &config);
     let max_seq_estimate = config.max_seq_len.min(args.max_tokens + 2048);
     let kv_estimate = gpu::GpuKvCache::estimate_bytes(&config, max_seq_estimate);
     let scratch_estimate = gpu::GpuForwardScratch::estimate_bytes(&config);
@@ -595,10 +655,29 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             layer.ffn_down_compressed.as_ref(),
         ];
         if all_compressed.iter().all(|x| x.is_some()) {
-            let k = layer.ffn_gate_compressed.as_ref().map(|c| c.k).unwrap_or(32);
-            let max_rows = all_compressed.iter().filter_map(|x| *x).map(|c| c.rows).max().unwrap_or(1);
-            let max_cols = all_compressed.iter().filter_map(|x| *x).map(|c| c.cols).max().unwrap_or(1);
-            let max_nnz  = all_compressed.iter().filter_map(|x| *x).map(|c| c.max_nnz()).max().unwrap_or(1);
+            let k = layer
+                .ffn_gate_compressed
+                .as_ref()
+                .map(|c| c.k)
+                .unwrap_or(32);
+            let max_rows = all_compressed
+                .iter()
+                .filter_map(|x| *x)
+                .map(|c| c.rows)
+                .max()
+                .unwrap_or(1);
+            let max_cols = all_compressed
+                .iter()
+                .filter_map(|x| *x)
+                .map(|c| c.cols)
+                .max()
+                .unwrap_or(1);
+            let max_nnz = all_compressed
+                .iter()
+                .filter_map(|x| *x)
+                .map(|c| c.max_nnz())
+                .max()
+                .unwrap_or(1);
             gpu_scratch
                 .init_expert_scratch(k as u32, max_rows, max_cols, max_nnz)
                 .map_err(|e| format!("expert scratch init: {}", e))?;
@@ -631,7 +710,10 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 
     // Check path-specific VRAM requirements (e.g., batched prefill scratch).
     if let Err(e) = gpu::check_path_vram(&path, &config, prompt_tokens.len(), &vram_session) {
-        eprintln!("[Router] Path VRAM check failed ({}), falling back to DecodeStyle", e);
+        eprintln!(
+            "[Router] Path VRAM check failed ({}), falling back to DecodeStyle",
+            e
+        );
     }
 
     let prompt_next_token = match path {
@@ -1006,20 +1088,53 @@ fn run_gpu_speculative_inference(
     let gpu_caps = gpu::detect().ok_or("GPU requested but no AMD GPU detected")?;
     eprintln!("done");
     eprintln!("  GPU: {}", gpu_caps.device_name);
-    eprintln!(
-        "  VRAM: {:.1} GB / {:.1} GB",
-        gpu_caps.free_vram_gb(),
-        gpu_caps.total_vram_gb()
-    );
+
+    // ── VRAM pre-flight for speculative co-execution ─────────────────────────────
+    // Query current VRAM state before touching anything. This captures what the
+    // desktop and other processes are already using so we can compute the real
+    // inference budget and refuse to start if both models won't fit.
+    let vram_session = gpu::VramSession::new(gpu_caps.device_id)
+        .map_err(|e| format!("VRAM query failed: {}", e))?;
+
+    let file = rocmforge::loader::ModelFile::open(&args.model)?;
+    let target_config = file.config()?;
+
+    let draft_file = rocmforge::loader::ModelFile::open(draft_path)?;
+    let draft_config = draft_file.config()?;
+
+    // Estimate VRAM of both models using their file sizes as conservative upper bounds
+    let target_file_bytes = std::fs::metadata(&args.model)
+        .map(|m| m.len() as usize)
+        .unwrap_or(0);
+    let draft_file_bytes = std::fs::metadata(draft_path)
+        .map(|m| m.len() as usize)
+        .unwrap_or(0);
+
+    let max_seq_estimate = target_config.max_seq_len.min(args.max_tokens + 2048);
+    let target_kv_estimate = gpu::GpuKvCache::estimate_bytes(&target_config, max_seq_estimate);
+    let draft_kv_estimate = gpu::GpuKvCache::estimate_bytes(&draft_config, max_seq_estimate);
+
+    let target_scratch_estimate = gpu::GpuForwardScratch::estimate_bytes(&target_config)
+        + gpu::GpuPrefillScratch::estimate_total_bytes(&target_config, max_seq_estimate);
+    let draft_scratch_estimate = gpu::GpuForwardScratch::estimate_bytes(&draft_config)
+        + gpu::GpuPrefillScratch::estimate_total_bytes(&draft_config, max_seq_estimate);
+
+    let total_weights = target_file_bytes + draft_file_bytes;
+    let total_kv = target_kv_estimate + draft_kv_estimate;
+    let total_scratch = target_scratch_estimate + draft_scratch_estimate;
+
+    vram_session.print_startup_report(total_weights, total_kv, total_scratch);
+    vram_session
+        .check_fits(total_weights, total_kv, total_scratch)
+        .map_err(|e| format!("Insufficient VRAM for speculative decoding: {}", e))?;
+    // ── end VRAM pre-flight ───────────────────────────────────────────────────────
 
     eprint!("Initializing GPU device... ");
     let device =
         gpu::GpuDevice::init(gpu_caps.device_id).map_err(|e| format!("gpu init: {}", e))?;
     eprintln!("done");
 
-    let file = rocmforge::loader::ModelFile::open(&args.model)?;
     eprintln!("[Args] model path ({}): {}", file.format_name(), args.model);
-    let target_config = file.config()?;
     let tok = file.tokenizer();
     let template = file.chat_template(&target_config, args.no_template);
 

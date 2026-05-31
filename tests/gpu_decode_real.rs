@@ -834,7 +834,8 @@ fn test_gpu_prefill_real_model_matches_cpu_greedy_token() {
         gpu::GpuPrefillScratch::new(&config, prompt_tokens.len()).expect("GPU prefill scratch");
     let mut host_scratch = CpuForwardScratch::new(&config);
 
-    gpu::gpu_batched_prefill_forward_q4_0(
+    println!("DEBUG: Starting batched prefill call...");
+    let prefill_res = gpu::gpu_batched_prefill_forward_q4_0(
         &device,
         &gpu_weights,
         &cpu_weights,
@@ -845,218 +846,24 @@ fn test_gpu_prefill_real_model_matches_cpu_greedy_token() {
         0,
         &config,
         gpu::GpuLogitsMode::DownloadToHost,
-    )
-    .expect("GPU batched prefill should succeed");
+    );
+    println!("DEBUG: Batched prefill result: {:?}", prefill_res);
+    prefill_res.expect("GPU batched prefill should succeed");
 
     let gpu_next = cpu_sample_greedy(&host_scratch.logits);
+    println!("DEBUG: gpu_next = {}, cpu_next = {}", gpu_next, cpu_next);
     if gpu_next != cpu_next {
+        println!("DEBUG: Entering mismatch diagnostic block");
         let logits_max_abs_error = max_abs_error(&cpu_logits, &host_scratch.logits);
-        let gpu_prefill_hidden =
-            download_gpu_f32(&prefill.hidden, prompt_tokens.len() * config.hidden_size);
-        let gpu_prefill_last_hidden =
-            &gpu_prefill_hidden[(prompt_tokens.len() - 1) * config.hidden_size..];
-
-        let mut kv_decode = GpuKvCache::new(&config, prompt_tokens.len()).expect("GPU decode KV");
-        let mut scratch_decode = GpuForwardScratch::new(&config).expect("GPU decode scratch");
-        let mut host_decode = CpuForwardScratch::new(&config);
-        for (pos, &token_id) in prompt_tokens.iter().enumerate() {
-            gpu::gpu_embed_token_hybrid(
-                &device,
-                token_id,
-                &gpu_weights,
-                &cpu_weights,
-                &mut scratch_decode,
-                &mut host_decode,
-                &config,
-            )
-            .expect("GPU decode embed should succeed");
-            gpu::gpu_full_forward_hybrid(
-                &device,
-                &gpu_weights,
-                &cpu_weights,
-                &mut kv_decode,
-                &mut scratch_decode,
-                &mut host_decode,
-                pos,
-                &config,
-                gpu::GpuLogitsMode::Skip,
-            )
-            .expect("GPU decode prompt step should succeed");
-        }
-        let gpu_decode_last_hidden = download_gpu_f32(&scratch_decode.hidden, config.hidden_size);
-        let decode_vs_prefill_hidden_err =
-            max_abs_error(&gpu_decode_last_hidden, gpu_prefill_last_hidden);
-
-        let mut decode_embeddings = vec![0.0f32; prompt_tokens.len() * config.hidden_size];
-        for (row, &token_id) in prompt_tokens.iter().enumerate() {
-            gpu::gpu_embed_token_hybrid(
-                &device,
-                token_id,
-                &gpu_weights,
-                &cpu_weights,
-                &mut scratch_decode,
-                &mut host_decode,
-                &config,
-            )
-            .expect("GPU decode embedding should succeed");
-            let row_hidden = download_gpu_f32(&scratch_decode.hidden, config.hidden_size);
-            decode_embeddings[row * config.hidden_size..(row + 1) * config.hidden_size]
-                .copy_from_slice(&row_hidden);
-        }
-
-        let token_ids_i32: Vec<i32> = prompt_tokens.iter().map(|&id| id as i32).collect();
-        let mut d_token_ids =
-            GpuBuffer::alloc(token_ids_i32.len() * std::mem::size_of::<i32>()).expect("alloc ids");
-        d_token_ids
-            .copy_from_host(unsafe {
-                std::slice::from_raw_parts(
-                    token_ids_i32.as_ptr() as *const u8,
-                    token_ids_i32.len() * std::mem::size_of::<i32>(),
-                )
-            })
-            .expect("upload ids");
-        let d_embed_batch =
-            GpuBuffer::alloc(prompt_tokens.len() * config.hidden_size * std::mem::size_of::<f32>())
-                .expect("alloc embed batch");
-        gpu::embed_q8_0_batch(
-            gpu_weights.token_emb.as_ptr(),
-            d_token_ids.as_ptr() as *const i32,
-            d_embed_batch.as_ptr() as *mut f32,
-            config.hidden_size,
-            config.vocab_size,
-            prompt_tokens.len(),
-        )
-        .expect("real-model batch embedding should succeed");
-        let gpu_batch_embeddings =
-            download_gpu_f32(&d_embed_batch, prompt_tokens.len() * config.hidden_size);
-        let embed_batch_vs_decode_err = max_abs_error(&gpu_batch_embeddings, &decode_embeddings);
-        let kv_prefill_l0 =
-            GpuKvCache::new(&config, prompt_tokens.len()).expect("GPU prefill L0 KV");
-        let mut prefill_l0 = gpu::GpuPrefillScratch::new(&config, prompt_tokens.len())
-            .expect("GPU prefill L0 scratch");
-        prefill_l0
-            .hidden
-            .copy_from_host(unsafe {
-                std::slice::from_raw_parts(
-                    gpu_batch_embeddings.as_ptr() as *const u8,
-                    gpu_batch_embeddings.len() * std::mem::size_of::<f32>(),
-                )
-            })
-            .expect("Upload prompt embeddings");
-        gpu::gpu_prefill_layer_forward_q4_0(
-            &device,
-            gpu_weights.layer(0),
-            &mut prefill_l0,
-            &kv_prefill_l0,
-            0,
-            0,
-            &config,
-        )
-        .expect("GPU batched layer0 should succeed");
-        let gpu_prefill_l0_hidden =
-            download_gpu_f32(&prefill_l0.hidden, prompt_tokens.len() * config.hidden_size);
-
-        let mut kv_decode_l0 =
-            GpuKvCache::new(&config, prompt_tokens.len()).expect("GPU decode L0 KV");
-        let mut scratch_decode_l0 = GpuForwardScratch::new(&config).expect("GPU decode L0 scratch");
-        let mut host_decode_l0 = CpuForwardScratch::new(&config);
-        let mut gpu_decode_l0_hidden = vec![0.0f32; prompt_tokens.len() * config.hidden_size];
-        let q_size = config.num_heads * config.head_dim;
-        let kv_size = config.num_kv_heads * config.head_dim;
-        let ff_size = config.intermediate_size;
-        let mut gpu_decode_l0_normed = vec![0.0f32; prompt_tokens.len() * config.hidden_size];
-        let mut gpu_decode_l0_q = vec![0.0f32; prompt_tokens.len() * q_size];
-        let mut gpu_decode_l0_k = vec![0.0f32; prompt_tokens.len() * kv_size];
-        let mut gpu_decode_l0_v = vec![0.0f32; prompt_tokens.len() * kv_size];
-        let mut gpu_decode_l0_attn_out = vec![0.0f32; prompt_tokens.len() * q_size];
-        let mut gpu_decode_l0_layer_out = vec![0.0f32; prompt_tokens.len() * config.hidden_size];
-        let mut gpu_decode_l0_gate = vec![0.0f32; prompt_tokens.len() * ff_size];
-        let mut gpu_decode_l0_swiglu = vec![0.0f32; prompt_tokens.len() * ff_size];
-        for (pos, &token_id) in prompt_tokens.iter().enumerate() {
-            gpu::gpu_embed_token_hybrid(
-                &device,
-                token_id,
-                &gpu_weights,
-                &cpu_weights,
-                &mut scratch_decode_l0,
-                &mut host_decode_l0,
-                &config,
-            )
-            .expect("GPU decode L0 embed should succeed");
-            gpu::gpu_layer_forward_hybrid(
-                &device,
-                gpu_weights.layer(0),
-                &mut kv_decode_l0,
-                &mut scratch_decode_l0,
-                0,
-                pos,
-                &config,
-            )
-            .expect("GPU decode L0 step should succeed");
-            let row_hidden = download_gpu_f32(&scratch_decode_l0.hidden, config.hidden_size);
-            gpu_decode_l0_hidden[pos * config.hidden_size..(pos + 1) * config.hidden_size]
-                .copy_from_slice(&row_hidden);
-            let row_normed = download_gpu_f32(&scratch_decode_l0.normed, config.hidden_size);
-            gpu_decode_l0_normed[pos * config.hidden_size..(pos + 1) * config.hidden_size]
-                .copy_from_slice(&row_normed);
-            let row_q = download_gpu_f32(&scratch_decode_l0.q, q_size);
-            gpu_decode_l0_q[pos * q_size..(pos + 1) * q_size].copy_from_slice(&row_q);
-            let row_k = download_gpu_f32(&scratch_decode_l0.k, kv_size);
-            gpu_decode_l0_k[pos * kv_size..(pos + 1) * kv_size].copy_from_slice(&row_k);
-            let row_v = download_gpu_f32(&scratch_decode_l0.v, kv_size);
-            gpu_decode_l0_v[pos * kv_size..(pos + 1) * kv_size].copy_from_slice(&row_v);
-            let row_attn_out = download_gpu_f32(&scratch_decode_l0.attn_out, q_size);
-            gpu_decode_l0_attn_out[pos * q_size..(pos + 1) * q_size].copy_from_slice(&row_attn_out);
-            let row_layer_out = download_gpu_f32(&scratch_decode_l0.layer_out, config.hidden_size);
-            gpu_decode_l0_layer_out[pos * config.hidden_size..(pos + 1) * config.hidden_size]
-                .copy_from_slice(&row_layer_out);
-            let row_gate = download_gpu_f32(&scratch_decode_l0.gate, ff_size);
-            gpu_decode_l0_gate[pos * ff_size..(pos + 1) * ff_size].copy_from_slice(&row_gate);
-            let row_swiglu = download_gpu_f32(&scratch_decode_l0.swiglu, ff_size);
-            gpu_decode_l0_swiglu[pos * ff_size..(pos + 1) * ff_size].copy_from_slice(&row_swiglu);
-        }
-        let layer0_prefill_vs_decode_err =
-            max_abs_error(&gpu_decode_l0_hidden, &gpu_prefill_l0_hidden);
-        let gpu_prefill_l0_normed =
-            download_gpu_f32(&prefill_l0.normed, prompt_tokens.len() * config.hidden_size);
-        let gpu_prefill_l0_q = download_gpu_f32(&prefill_l0.q, prompt_tokens.len() * q_size);
-        let gpu_prefill_l0_k = download_gpu_f32(&prefill_l0.k, prompt_tokens.len() * kv_size);
-        let gpu_prefill_l0_v = download_gpu_f32(&prefill_l0.v, prompt_tokens.len() * kv_size);
-        let gpu_prefill_l0_attn_out =
-            download_gpu_f32(&prefill_l0.attn_out, prompt_tokens.len() * q_size);
-        let gpu_prefill_l0_layer_out = download_gpu_f32(
-            &prefill_l0.layer_out,
-            prompt_tokens.len() * config.hidden_size,
+        println!("DEBUG: logits_max_abs_error = {}", logits_max_abs_error);
+        println!("DEBUG: CPU logits (first 10): {:?}", &cpu_logits[..10]);
+        println!(
+            "DEBUG: GPU logits (first 10): {:?}",
+            &host_scratch.logits[..10]
         );
-        let gpu_prefill_l0_gate = download_gpu_f32(&prefill_l0.gate, prompt_tokens.len() * ff_size);
-        let gpu_prefill_l0_swiglu =
-            download_gpu_f32(&prefill_l0.swiglu, prompt_tokens.len() * ff_size);
-        let layer0_normed_err = max_abs_error(&gpu_decode_l0_normed, &gpu_prefill_l0_normed);
-        let layer0_q_err = max_abs_error(&gpu_decode_l0_q, &gpu_prefill_l0_q);
-        let layer0_k_err = max_abs_error(&gpu_decode_l0_k, &gpu_prefill_l0_k);
-        let layer0_v_err = max_abs_error(&gpu_decode_l0_v, &gpu_prefill_l0_v);
-        let layer0_attn_out_err = max_abs_error(&gpu_decode_l0_attn_out, &gpu_prefill_l0_attn_out);
-        let layer0_layer_out_err =
-            max_abs_error(&gpu_decode_l0_layer_out, &gpu_prefill_l0_layer_out);
-        let layer0_gate_err = max_abs_error(&gpu_decode_l0_gate, &gpu_prefill_l0_gate);
-        let layer0_swiglu_err = max_abs_error(&gpu_decode_l0_swiglu, &gpu_prefill_l0_swiglu);
-
-        eprintln!(
-            "GPU batched prefill mismatch: cpu_next={} gpu_next={} logits_max_abs_error={:.6} decode_vs_prefill_hidden={:.6} embed_batch_vs_decode={:.6} layer0_hidden={:.6} normed={:.6} q={:.6} k={:.6} v={:.6} attn_out={:.6} layer_out={:.6} gate={:.6} swiglu={:.6}",
-            cpu_next,
-            gpu_next,
-            logits_max_abs_error,
-            decode_vs_prefill_hidden_err,
-            embed_batch_vs_decode_err,
-            layer0_prefill_vs_decode_err,
-            layer0_normed_err,
-            layer0_q_err,
-            layer0_k_err,
-            layer0_v_err,
-            layer0_attn_out_err,
-            layer0_layer_out_err,
-            layer0_gate_err,
-            layer0_swiglu_err
+        panic!(
+            "Prefill logits mismatch: max_abs_error = {}",
+            logits_max_abs_error
         );
     }
 

@@ -431,3 +431,322 @@ fn test_gpu_svd_quant_correctness() {
 
     println!("SVD-Quant outlier acceleration correctness verified successfully on GPU!");
 }
+
+#[test]
+#[serial]
+fn test_rocsolver_gpu_svd_correctness() {
+    let caps = detect().expect("GPU should be detected");
+    let _device = GpuDevice::init(caps.device_id).expect("Failed to init GPU");
+
+    // Standard case: rows >= cols, mathematically rank-2
+    let rows = 64;
+    let cols = 32;
+    let k = 8;
+
+    let left1: Vec<f32> = (0..rows).map(|r| (r as f32 * 0.1).sin()).collect();
+    let right1: Vec<f32> = (0..cols).map(|c| (c as f32 * 0.25).cos()).collect();
+    let left2: Vec<f32> = (0..rows).map(|r| (r as f32 * 0.15).cos()).collect();
+    let right2: Vec<f32> = (0..cols).map(|c| (c as f32 * 0.3).sin()).collect();
+
+    let mut matrix = vec![0.0f32; rows * cols];
+    for r in 0..rows {
+        for c in 0..cols {
+            matrix[r * cols + c] = left1[r] * right1[c] + left2[r] * right2[c];
+        }
+    }
+
+    let (u_gpu, vt_gpu) = rocmforge::gpu::rocsolver::gpu_svd_single(&matrix, rows, cols, k)
+        .expect("GPU SVD single should succeed");
+
+    assert_eq!(u_gpu.len(), rows * k);
+    assert_eq!(vt_gpu.len(), k * cols);
+
+    // Reconstruct and verify error is near-zero for rank-2 matrix
+    let recon = matmul(&u_gpu, &vt_gpu, rows, k, cols);
+
+    // Download and print singular values and first few reconstructed elements
+    println!("GPU U shape: [{}x{}], Vt shape: [{}x{}]", rows, k, k, cols);
+    println!("Matrix first 3x3:");
+    for r in 0..3 {
+        println!(
+            "  Row {}: {:.4} {:.4} {:.4}",
+            r,
+            matrix[r * cols],
+            matrix[r * cols + 1],
+            matrix[r * cols + 2]
+        );
+    }
+    println!("Recon first 3x3:");
+    for r in 0..3 {
+        println!(
+            "  Row {}: {:.4} {:.4} {:.4}",
+            r,
+            recon[r * cols],
+            recon[r * cols + 1],
+            recon[r * cols + 2]
+        );
+    }
+
+    let mut diff_sum = 0.0f32;
+    for i in 0..matrix.len() {
+        diff_sum += (matrix[i] - recon[i]).abs();
+    }
+    let avg_diff = diff_sum / (matrix.len() as f32);
+    println!(
+        "Standard case [64x32] average SVD reconstruction difference: {:.6}",
+        avg_diff
+    );
+    assert!(
+        avg_diff < 1e-4,
+        "Reconstruction error too large: {}",
+        avg_diff
+    );
+
+    // Transposed case: rows < cols (m < n), mathematically rank-2
+    let rows_t = 32;
+    let cols_t = 64;
+
+    let left1_t: Vec<f32> = (0..rows_t).map(|r| (r as f32 * 0.2).cos()).collect();
+    let right1_t: Vec<f32> = (0..cols_t).map(|c| (c as f32 * 0.15).sin()).collect();
+    let left2_t: Vec<f32> = (0..rows_t).map(|r| (r as f32 * 0.1).sin()).collect();
+    let right2_t: Vec<f32> = (0..cols_t).map(|c| (c as f32 * 0.2).cos()).collect();
+
+    let mut matrix_t = vec![0.0f32; rows_t * cols_t];
+    for r in 0..rows_t {
+        for c in 0..cols_t {
+            matrix_t[r * cols_t + c] = left1_t[r] * right1_t[c] + left2_t[r] * right2_t[c];
+        }
+    }
+
+    let (u_gpu_t, vt_gpu_t) =
+        rocmforge::gpu::rocsolver::gpu_svd_single(&matrix_t, rows_t, cols_t, k)
+            .expect("GPU SVD single transposed should succeed");
+
+    assert_eq!(u_gpu_t.len(), rows_t * k);
+    assert_eq!(vt_gpu_t.len(), k * cols_t);
+
+    let recon_t = matmul(&u_gpu_t, &vt_gpu_t, rows_t, k, cols_t);
+    let mut diff_sum_t = 0.0f32;
+    for i in 0..matrix_t.len() {
+        diff_sum_t += (matrix_t[i] - recon_t[i]).abs();
+    }
+    let avg_diff_t = diff_sum_t / (matrix_t.len() as f32);
+    println!(
+        "Transposed case [32x64] average SVD reconstruction difference: {:.6}",
+        avg_diff_t
+    );
+    assert!(
+        avg_diff_t < 1e-4,
+        "Reconstruction error too large: {}",
+        avg_diff_t
+    );
+
+    // Batched case: 3 experts, each mathematically rank-2
+    let batch_count = 3;
+    let mut batch_matrices = vec![0.0f32; batch_count * rows * cols];
+    for b in 0..batch_count {
+        let left1: Vec<f32> = (0..rows)
+            .map(|r| (r as f32 * 0.08 * (b + 1) as f32).sin())
+            .collect();
+        let right1: Vec<f32> = (0..cols)
+            .map(|c| (c as f32 * 0.2 * (b + 1) as f32).cos())
+            .collect();
+        let left2: Vec<f32> = (0..rows)
+            .map(|r| (r as f32 * 0.12 * (b + 1) as f32).cos())
+            .collect();
+        let right2: Vec<f32> = (0..cols)
+            .map(|c| (c as f32 * 0.25 * (b + 1) as f32).sin())
+            .collect();
+
+        for r in 0..rows {
+            for c in 0..cols {
+                batch_matrices[b * rows * cols + r * cols + c] =
+                    left1[r] * right1[c] + left2[r] * right2[c];
+            }
+        }
+    }
+
+    let (u_batch, vt_batch) =
+        rocmforge::gpu::rocsolver::gpu_svd_batch(&batch_matrices, rows, cols, k, batch_count)
+            .expect("GPU SVD batch should succeed");
+
+    assert_eq!(u_batch.len(), batch_count * rows * k);
+    assert_eq!(vt_batch.len(), batch_count * k * cols);
+
+    for b in 0..batch_count {
+        let orig_slice = &batch_matrices[b * rows * cols..(b + 1) * rows * cols];
+        let u_slice = &u_batch[b * rows * k..(b + 1) * rows * k];
+        let vt_slice = &vt_batch[b * k * cols..(b + 1) * k * cols];
+        let recon_slice = matmul(u_slice, vt_slice, rows, k, cols);
+
+        let mut diff_b = 0.0f32;
+        for i in 0..orig_slice.len() {
+            diff_b += (orig_slice[i] - recon_slice[i]).abs();
+        }
+        let avg_diff_b = diff_b / (orig_slice.len() as f32);
+        println!(
+            "Batch expert {} average SVD reconstruction difference: {:.6}",
+            b, avg_diff_b
+        );
+        assert!(
+            avg_diff_b < 1e-4,
+            "Reconstruction error for expert {} too large: {}",
+            b,
+            avg_diff_b
+        );
+    }
+}
+
+fn fwht_inplace(a: &mut [f32]) {
+    let n = a.len();
+    assert!(n.is_power_of_two(), "FWHT length must be a power of 2");
+    let mut h = 1;
+    while h < n {
+        for i in (0..n).step_by(h * 2) {
+            for j in 0..h {
+                let x = a[i + j];
+                let y = a[i + j + h];
+                a[i + j] = x + y;
+                a[i + j + h] = x - y;
+            }
+        }
+        h *= 2;
+    }
+}
+
+fn fwht_inplace_normalized(a: &mut [f32]) {
+    fwht_inplace(a);
+    let scale = 1.0 / (a.len() as f32).sqrt();
+    for x in a.iter_mut() {
+        *x *= scale;
+    }
+}
+
+#[test]
+#[serial]
+fn test_fwht_and_svd_mathematical_equivalence() {
+    let cols = 256;
+    let rows = 64;
+    let k = 8;
+
+    // Generate random input vector and random matrix
+    let mut x_in = vec![0.0f32; cols];
+    for i in 0..cols {
+        x_in[i] = ((i as f32 * 0.15).cos() + (i as f32 * 0.08).sin()) * 0.5;
+    }
+
+    let left1: Vec<f32> = (0..rows).map(|r| (r as f32 * 0.1).sin()).collect();
+    let right1: Vec<f32> = (0..cols).map(|c| (c as f32 * 0.25).cos()).collect();
+    let left2: Vec<f32> = (0..rows).map(|r| (r as f32 * 0.08).cos()).collect();
+    let right2: Vec<f32> = (0..cols).map(|c| (c as f32 * 0.12).sin()).collect();
+
+    let mut matrix = vec![0.0f32; rows * cols];
+    for r in 0..rows {
+        for c in 0..cols {
+            matrix[r * cols + c] = left1[r] * right1[c] + left2[r] * right2[c];
+        }
+    }
+
+    // Step 1: Compute standard dense GEMV output: y = W * x
+    let mut y_standard = vec![0.0f32; rows];
+    for r in 0..rows {
+        let mut sum = 0.0f32;
+        for c in 0..cols {
+            sum += matrix[r * cols + c] * x_in[c];
+        }
+        y_standard[r] = sum;
+    }
+
+    // Step 2: Apply Fast Walsh-Hadamard Transform to input vector x and matrix W rows
+    let mut x_rotated = x_in.clone();
+    fwht_inplace_normalized(&mut x_rotated);
+
+    let mut matrix_rotated = matrix.clone();
+    let scale = 1.0 / (cols as f32).sqrt();
+    for r in 0..rows {
+        let row_slice = &mut matrix_rotated[r * cols..(r + 1) * cols];
+        fwht_inplace(row_slice);
+        for val in row_slice.iter_mut() {
+            *val *= scale;
+        }
+    }
+
+    // Step 3: Compute rotated dense GEMV output: y_rotated = W_rotated * x_rotated
+    let mut y_rotated_dense = vec![0.0f32; rows];
+    for r in 0..rows {
+        let mut sum = 0.0f32;
+        for c in 0..cols {
+            sum += matrix_rotated[r * cols + c] * x_rotated[c];
+        }
+        y_rotated_dense[r] = sum;
+    }
+
+    // Step 4: Verify dense rotation is lossless: y_rotated_dense == y_standard
+    for r in 0..rows {
+        let diff = (y_standard[r] - y_rotated_dense[r]).abs();
+        assert!(
+            diff < 1e-4,
+            "Rotated dense GEMV diverged at row {}: standard={}, rotated={}, diff={}",
+            r,
+            y_standard[r],
+            y_rotated_dense[r],
+            diff
+        );
+    }
+    println!("✓ Orthonormal Fast Walsh-Hadamard Transform is mathematically lossless for GEMV");
+
+    // Step 5: Decompose rotated matrix on GPU SVD
+    let (u_gpu, vt_gpu) = rocmforge::gpu::rocsolver::gpu_svd_single(&matrix_rotated, rows, cols, k)
+        .expect("GPU SVD single rotated should succeed");
+
+    // Reconstruct low-rank approximation on rotated space
+    let matrix_recon = matmul(&u_gpu, &vt_gpu, rows, k, cols);
+
+    // Verify low-rank approximation error is extremely low (since matrix is rank-2)
+    let mut recon_diff = 0.0f32;
+    for i in 0..matrix_rotated.len() {
+        recon_diff += (matrix_rotated[i] - matrix_recon[i]).abs();
+    }
+    let avg_recon_diff = recon_diff / (matrix_rotated.len() as f32);
+    println!(
+        "Rotated SVD low-rank reconstruction difference: {:.6}",
+        avg_recon_diff
+    );
+    assert!(
+        avg_recon_diff < 1e-4,
+        "Low-rank reconstruction error too large"
+    );
+
+    // Step 6: Compute reconstructed SVD GEMV output in rotated space: y_svd = U * (Vt * x_rotated)
+    let mut vt_x = vec![0.0f32; k];
+    for j in 0..k {
+        let mut sum = 0.0f32;
+        for c in 0..cols {
+            sum += vt_gpu[j * cols + c] * x_rotated[c];
+        }
+        vt_x[j] = sum;
+    }
+
+    let mut y_svd = vec![0.0f32; rows];
+    for r in 0..rows {
+        let mut sum = 0.0f32;
+        for j in 0..k {
+            sum += u_gpu[r * k + j] * vt_x[j];
+        }
+        y_svd[r] = sum;
+    }
+
+    // Step 7: Compare with standard GEMV output
+    for r in 0..rows {
+        let diff = (y_standard[r] - y_svd[r]).abs();
+        assert!(
+            diff < 1e-4,
+            "Rotated SVD GEMV diverged at row {}: standard={}, svd={}, diff={}",
+            r,
+            y_standard[r],
+            y_svd[r],
+            diff
+        );
+    }
+    println!("✓ FWHT + SVD low-rank approximation is mathematically verified to match original GEMV output perfectly");
+}

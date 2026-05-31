@@ -24,6 +24,9 @@ fn make_test_config() -> ModelConfig {
         tensor_registry: rocmforge::config::TensorNameRegistry::from_scheme(
             &rocmforge::config::TensorNamingScheme::Gguf,
         ),
+        kv_lora_dim: None,
+        kv_frame_codec_enabled: None,
+        adastate_anchors_enabled: None,
     }
 }
 

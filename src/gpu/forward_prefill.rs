@@ -9,8 +9,8 @@ use super::device::GpuDevice;
 use super::error::{GpuError, GpuResult};
 use super::ffi::hipStream_t;
 use super::kernels::{
-    add_batched, embed_q4_0_batch, embed_q8_0_batch, flash_attn_prefill_strided, kv_write_batched,
-    mul_on_stream, rms_norm_batched, rope_heads_batched, silu_on_stream,
+    add_batched, add_on_stream, embed_q4_0_batch, embed_q8_0_batch, flash_attn_prefill_strided,
+    kv_write_batched, mul_on_stream, rms_norm_batched, rope_heads_batched, silu_on_stream,
 };
 use super::ops::{
     gpu_dispatch_fused_gate_up_on_stream, gpu_dispatch_gemv_on_stream,
@@ -77,20 +77,24 @@ pub fn gpu_batched_qkv_projection(
 ) -> GpuResult<()> {
     validate_batched_qkv_dims(hidden_dim, q_dim, kv_dim, seq_len)?;
 
-    // Project Query: Q [seq_len, q_dim] = input [seq_len, hidden_dim] × W_q [hidden_dim, q_dim]
-    gpu_dispatch_batched_gemv_batched(
-        device, q_weights, q_meta, input, q_output, hidden_dim, q_dim, seq_len, stream,
-    )?;
+    use crate::gpu::ops::gpu_dispatch_gemv_on_stream;
 
-    // Project Key: K [seq_len, kv_dim] = input [seq_len, hidden_dim] × W_k [hidden_dim, kv_dim]
-    gpu_dispatch_batched_gemv_batched(
-        device, k_weights, k_meta, input, k_output, hidden_dim, kv_dim, seq_len, stream,
-    )?;
+    for pos in 0..seq_len {
+        let input_row = unsafe { input.add(pos * hidden_dim) };
+        let q_row = unsafe { q_output.add(pos * q_dim) };
+        let k_row = unsafe { k_output.add(pos * kv_dim) };
+        let v_row = unsafe { v_output.add(pos * kv_dim) };
 
-    // Project Value: V [seq_len, kv_dim] = input [seq_len, hidden_dim] × W_v [hidden_dim, kv_dim]
-    gpu_dispatch_batched_gemv_batched(
-        device, v_weights, v_meta, input, v_output, hidden_dim, kv_dim, seq_len, stream,
-    )?;
+        gpu_dispatch_gemv_on_stream(
+            device, q_weights, q_meta, input_row, q_row, q_dim, hidden_dim, stream,
+        )?;
+        gpu_dispatch_gemv_on_stream(
+            device, k_weights, k_meta, input_row, k_row, kv_dim, hidden_dim, stream,
+        )?;
+        gpu_dispatch_gemv_on_stream(
+            device, v_weights, v_meta, input_row, v_row, kv_dim, hidden_dim, stream,
+        )?;
+    }
 
     Ok(())
 }
@@ -178,11 +182,10 @@ fn embed_prompt_tokens(
 
             // Upload this row to GPU
             unsafe {
-                super::ffi::hip_memcpy_h2d_async(
+                super::ffi::hip_memcpy_h2d(
                     hidden_row as *mut u8,
                     hidden_cpu.as_ptr() as *const u8,
                     h * std::mem::size_of::<f32>(),
-                    device.stream(),
                 )?;
             }
         }
@@ -190,7 +193,36 @@ fn embed_prompt_tokens(
 
     Ok(())
 }
+struct CpuLayer0Activations {
+    hidden_in: Vec<f32>,
+    normed_attn: Vec<f32>,
+    q: Vec<f32>,
+    k: Vec<f32>,
+    v: Vec<f32>,
+    q_rope: Vec<f32>,
+    k_rope: Vec<f32>,
+    attn_out: Vec<f32>,
+    layer_out_attn: Vec<f32>,
+    hidden_after_attn: Vec<f32>,
+    normed_ffn: Vec<f32>,
+    gate: Vec<f32>,
+    swiglu: Vec<f32>,
+    layer_out_ffn: Vec<f32>,
+    hidden_out: Vec<f32>,
+}
 
+fn download_gpu_buffer(buf: &crate::gpu::GpuBuffer, len: usize) -> Vec<f32> {
+    let mut bytes = vec![0u8; len * std::mem::size_of::<f32>()];
+    buf.copy_to_host(&mut bytes).expect("copy_to_host failed");
+    unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const f32, len).to_vec() }
+}
+
+fn max_abs_error_slice(a: &[f32], b: &[f32]) -> f32 {
+    a.iter()
+        .zip(b.iter())
+        .map(|(&x, &y)| (x - y).abs())
+        .fold(0.0f32, f32::max)
+}
 /// Full batched prefill forward pass for Q4_0 models.
 ///
 /// This function processes an entire prompt through all transformer layers in parallel,
@@ -245,8 +277,242 @@ pub fn gpu_batched_prefill_forward_q4_0(
         });
     }
 
+    let debug_prefill = false;
+    let mut cpu_acts = None;
+    if debug_prefill {
+        println!("DEBUG PREFILL: Computing CPU reference activations for layer 0...");
+        let mut cpu_kv = crate::cpu::cache::CpuKvCache::new(config, seq_len.max(1));
+        let mut cpu_scratch = crate::cpu::cache::CpuForwardScratch::new(config);
+        let mut cpu_hidden = vec![0.0f32; h];
+
+        let mut hidden_in = vec![0.0f32; seq_len * h];
+        let mut normed_attn = vec![0.0f32; seq_len * h];
+        let mut q = vec![0.0f32; seq_len * q_size];
+        let mut k = vec![0.0f32; seq_len * kv_size];
+        let mut v = vec![0.0f32; seq_len * kv_size];
+        let mut q_rope = vec![0.0f32; seq_len * q_size];
+        let mut k_rope = vec![0.0f32; seq_len * kv_size];
+        let mut attn_out = vec![0.0f32; seq_len * q_size];
+        let mut layer_out_attn = vec![0.0f32; seq_len * h];
+        let mut hidden_after_attn = vec![0.0f32; seq_len * h];
+        let mut normed_ffn = vec![0.0f32; seq_len * h];
+        let mut gate = vec![0.0f32; seq_len * ff_size];
+        let mut swiglu = vec![0.0f32; seq_len * ff_size];
+        let mut layer_out_ffn = vec![0.0f32; seq_len * h];
+        let mut hidden_out = vec![0.0f32; seq_len * h];
+
+        for (pos, &token_id) in token_ids.iter().enumerate() {
+            cpu_embed_token(token_id, cpu_weights, &mut cpu_hidden, config);
+            hidden_in[pos * h..(pos + 1) * h].copy_from_slice(&cpu_hidden);
+
+            let layer_idx = 0;
+            let layer_weights = cpu_weights.layer(layer_idx);
+
+            // 1. Attn Norm
+            let mut t_normed_attn = vec![0.0f32; h];
+            crate::cpu::ops::rms_norm(
+                &cpu_hidden,
+                &layer_weights.attn_norm,
+                &mut t_normed_attn,
+                config.rms_norm_eps,
+            );
+            normed_attn[pos * h..(pos + 1) * h].copy_from_slice(&t_normed_attn);
+
+            // 2. QKV projection
+            let mut t_q = vec![0.0f32; q_size];
+            let mut t_k = vec![0.0f32; kv_size];
+            let mut t_v = vec![0.0f32; kv_size];
+            let mut q8_scratch = vec![0u8; cpu_scratch.q8_scratch.len()];
+            cpu_dispatch_gemv(
+                &layer_weights.attn_q,
+                &layer_weights.attn_q_meta,
+                &t_normed_attn,
+                &mut t_q,
+                q_size,
+                h,
+                Some(&mut q8_scratch),
+            )
+            .expect("M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path");
+            cpu_dispatch_gemv(
+                &layer_weights.attn_k,
+                &layer_weights.attn_k_meta,
+                &t_normed_attn,
+                &mut t_k,
+                kv_size,
+                h,
+                Some(&mut q8_scratch),
+            )
+            .expect("M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path");
+            cpu_dispatch_gemv(
+                &layer_weights.attn_v,
+                &layer_weights.attn_v_meta,
+                &t_normed_attn,
+                &mut t_v,
+                kv_size,
+                h,
+                Some(&mut q8_scratch),
+            )
+            .expect("M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path");
+
+            if let Some(bq) = &layer_weights.attn_q_bias {
+                crate::cpu::ops::add_bias(&mut t_q, bq);
+            }
+            if let Some(bk) = &layer_weights.attn_k_bias {
+                crate::cpu::ops::add_bias(&mut t_k, bk);
+            }
+            if let Some(bv) = &layer_weights.attn_v_bias {
+                crate::cpu::ops::add_bias(&mut t_v, bv);
+            }
+            q[pos * q_size..(pos + 1) * q_size].copy_from_slice(&t_q);
+            k[pos * kv_size..(pos + 1) * kv_size].copy_from_slice(&t_k);
+            v[pos * kv_size..(pos + 1) * kv_size].copy_from_slice(&t_v);
+
+            // 3. RoPE
+            let mut t_q_rope = t_q.clone();
+            let mut t_k_rope = t_k.clone();
+            crate::cpu::ops::rope(
+                &mut t_q_rope,
+                config.num_heads,
+                config.head_dim,
+                pos,
+                config.rope_theta,
+                config.rope_neox,
+            );
+            crate::cpu::ops::rope(
+                &mut t_k_rope,
+                config.num_kv_heads,
+                config.head_dim,
+                pos,
+                config.rope_theta,
+                config.rope_neox,
+            );
+            q_rope[pos * q_size..(pos + 1) * q_size].copy_from_slice(&t_q_rope);
+            k_rope[pos * kv_size..(pos + 1) * kv_size].copy_from_slice(&t_k_rope);
+
+            // Write to cache
+            cpu_kv.write_k(layer_idx, pos, &t_k_rope);
+            cpu_kv.write_v(layer_idx, pos, &t_v);
+
+            // 4. Attention
+            let mut t_attn_out = vec![0.0f32; q_size];
+            crate::cpu::ops::flash_attn_decode(
+                &t_q_rope,
+                cpu_kv.k_buf(layer_idx),
+                cpu_kv.v_buf(layer_idx),
+                &mut t_attn_out,
+                pos + 1,
+                config.num_heads,
+                config.num_kv_heads,
+                config.head_dim,
+            );
+            attn_out[pos * q_size..(pos + 1) * q_size].copy_from_slice(&t_attn_out);
+
+            // 5. Attn Out Projection
+            let mut t_layer_out_attn = vec![0.0f32; h];
+            cpu_dispatch_gemv(
+                &layer_weights.attn_o,
+                &layer_weights.attn_o_meta,
+                &t_attn_out,
+                &mut t_layer_out_attn,
+                h,
+                q_size,
+                Some(&mut q8_scratch),
+            )
+            .expect("M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path");
+            layer_out_attn[pos * h..(pos + 1) * h].copy_from_slice(&t_layer_out_attn);
+
+            // 6. Attn Residual
+            let mut t_hidden_after_attn = cpu_hidden.clone();
+            crate::cpu::ops::residual_add(&mut t_hidden_after_attn, &t_layer_out_attn);
+            hidden_after_attn[pos * h..(pos + 1) * h].copy_from_slice(&t_hidden_after_attn);
+
+            // 7. FFN Norm
+            let mut t_normed_ffn = vec![0.0f32; h];
+            crate::cpu::ops::rms_norm(
+                &t_hidden_after_attn,
+                &layer_weights.ffn_norm,
+                &mut t_normed_ffn,
+                config.rms_norm_eps,
+            );
+            normed_ffn[pos * h..(pos + 1) * h].copy_from_slice(&t_normed_ffn);
+
+            // 8. FFN Gate + Up
+            let mut t_gate = vec![0.0f32; ff_size];
+            let mut t_swiglu = vec![0.0f32; ff_size];
+            cpu_dispatch_gemv(
+                &layer_weights.ffn_gate,
+                &layer_weights.ffn_gate_meta,
+                &t_normed_ffn,
+                &mut t_gate,
+                ff_size,
+                h,
+                Some(&mut q8_scratch),
+            )
+            .expect("M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path");
+            cpu_dispatch_gemv(
+                &layer_weights.ffn_up,
+                &layer_weights.ffn_up_meta,
+                &t_normed_ffn,
+                &mut t_swiglu,
+                ff_size,
+                h,
+                Some(&mut q8_scratch),
+            )
+            .expect("M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path");
+            gate[pos * ff_size..(pos + 1) * ff_size].copy_from_slice(&t_gate);
+
+            crate::cpu::ops::silu_fuse(&t_gate, &mut t_swiglu);
+            swiglu[pos * ff_size..(pos + 1) * ff_size].copy_from_slice(&t_swiglu);
+
+            // 9. FFN Down Projection
+            let mut t_layer_out_ffn = vec![0.0f32; h];
+            cpu_dispatch_gemv(
+                &layer_weights.ffn_down,
+                &layer_weights.ffn_down_meta,
+                &t_swiglu,
+                &mut t_layer_out_ffn,
+                h,
+                ff_size,
+                Some(&mut q8_scratch),
+            )
+            .expect("M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path");
+            layer_out_ffn[pos * h..(pos + 1) * h].copy_from_slice(&t_layer_out_ffn);
+
+            // 10. FFN Residual
+            crate::cpu::ops::residual_add(&mut cpu_hidden, &t_layer_out_ffn);
+            hidden_out[pos * h..(pos + 1) * h].copy_from_slice(&cpu_hidden);
+        }
+
+        cpu_acts = Some(CpuLayer0Activations {
+            hidden_in,
+            normed_attn,
+            q,
+            k,
+            v,
+            q_rope,
+            k_rope,
+            attn_out,
+            layer_out_attn,
+            hidden_after_attn,
+            normed_ffn,
+            gate,
+            swiglu,
+            layer_out_ffn,
+            hidden_out,
+        });
+    }
+
     // Step 1: Embed all prompt tokens
     embed_prompt_tokens(device, token_ids, gpu_weights, cpu_weights, scratch, config)?;
+
+    if debug_prefill {
+        let gpu_val = download_gpu_buffer(&scratch.hidden, seq_len * h);
+        let max_err = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").hidden_in, &gpu_val);
+        println!(
+            "DEBUG PREFILL: embed_prompt_tokens hidden max_abs_error = {}",
+            max_err
+        );
+    }
 
     // Step 2: Process all layers with batched operations
     for layer_idx in 0..config.num_layers {
@@ -269,6 +535,16 @@ pub fn gpu_batched_prefill_forward_q4_0(
             config.rms_norm_eps,
             seq_len,
         )?;
+        device.synchronize()?;
+
+        if debug_prefill && layer_idx == 0 {
+            let gpu_val = download_gpu_buffer(&scratch.normed, seq_len * h);
+            let max_err = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").normed_attn, &gpu_val);
+            println!(
+                "DEBUG PREFILL: layer0 RMSNorm Attn max_abs_error = {}",
+                max_err
+            );
+        }
 
         // Batched QKV projection (type-aware dispatch)
         gpu_batched_qkv_projection(
@@ -289,6 +565,20 @@ pub fn gpu_batched_prefill_forward_q4_0(
             seq_len,
             device.stream(),
         )?;
+        device.synchronize()?;
+
+        if debug_prefill && layer_idx == 0 {
+            let gpu_q = download_gpu_buffer(&scratch.q, seq_len * q_size);
+            let gpu_k = download_gpu_buffer(&scratch.k, seq_len * kv_size);
+            let gpu_v = download_gpu_buffer(&scratch.v, seq_len * kv_size);
+            let err_q = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").q, &gpu_q);
+            let err_k = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").k, &gpu_k);
+            let err_v = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").v, &gpu_v);
+            println!(
+                "DEBUG PREFILL: layer0 QKV max_abs_error: Q={}, K={}, V={}",
+                err_q, err_k, err_v
+            );
+        }
 
         // Apply SVD corrections for Q, K, V if present
         if gpu_layer.attn_q_svd.is_some()
@@ -342,6 +632,7 @@ pub fn gpu_batched_prefill_forward_q4_0(
                     )?;
                 }
             }
+            device.synchronize()?;
         }
 
         // Apply RoPE to Q and K (batched)
@@ -364,49 +655,99 @@ pub fn gpu_batched_prefill_forward_q4_0(
             seq_len,
             config.rope_neox,
         )?;
+        device.synchronize()?;
+
+        if debug_prefill && layer_idx == 0 {
+            let gpu_q = download_gpu_buffer(&scratch.q, seq_len * q_size);
+            let gpu_k = download_gpu_buffer(&scratch.k, seq_len * kv_size);
+            let err_q = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").q_rope, &gpu_q);
+            let err_k = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").k_rope, &gpu_k);
+            println!(
+                "DEBUG PREFILL: layer0 RoPE max_abs_error: Q={}, K={}",
+                err_q, err_k
+            );
+        }
 
         // Write K/V to cache (batched)
-        kv_write_batched(
-            kv.k_ptr(layer_idx)?,
-            kv.v_ptr(layer_idx)?,
+        kv.write_batched(
+            layer_idx,
+            start_pos,
+            seq_len,
             scratch.k.as_ptr() as *const f32,
             scratch.v.as_ptr() as *const f32,
-            start_pos,
-            kv_size,
-            max_seq,
-            seq_len,
         )?;
+        device.synchronize()?;
 
-        // Flash attention for prefill
-        // Strides are in units of float elements (row-major layout: buffer[row * stride + col])
-        flash_attn_prefill_strided(
-            scratch.attn_out.as_ptr() as *mut f32,
-            scratch.q.as_ptr() as *const f32,
-            kv.k_ptr(layer_idx)?,
-            kv.v_ptr(layer_idx)?,
-            seq_len,
-            config.head_dim,
-            q_size, // out_stride: elements between consecutive rows in attn_out [seq_len, q_size]
-            q_size, // q_stride: elements between consecutive rows in q [seq_len, q_size]
-            kv_size, // kv_stride: elements between consecutive rows in K/V cache [max_seq, kv_size]
-            h,      // out_head_offset
-            q_size, // q_head_offset
-            kv_size, // kv_head_offset
-            1.0f32 / (config.head_dim as f32).sqrt(), // scale
-        )?;
+        let kv_lora_dim = kv.kv_lora_dim.unwrap_or(0);
+        let w_up_k = kv
+            .w_up_k
+            .as_ref()
+            .map(|w| w[layer_idx].as_ptr() as *const f32)
+            .unwrap_or(std::ptr::null());
+        let w_up_v = kv
+            .w_up_v
+            .as_ref()
+            .map(|w| w[layer_idx].as_ptr() as *const f32)
+            .unwrap_or(std::ptr::null());
+        let effective_kv_size = kv.kv_lora_dim.unwrap_or(kv_size);
 
-        // Attention output projection (batched, type-aware)
-        gpu_dispatch_batched_gemv_batched(
-            device,
-            &gpu_layer.attn_o,
-            &gpu_layer.attn_o_meta,
-            scratch.attn_out.as_ptr() as *const f32,
-            scratch.layer_out.as_ptr() as *mut f32,
-            q_size,
-            h,
-            seq_len,
-            device.stream(),
-        )?;
+        let num_heads = config.num_heads;
+        let num_kv_heads = config.num_kv_heads;
+        let kv_group = num_heads / num_kv_heads;
+        let scale = 1.0f32 / (config.head_dim as f32).sqrt();
+
+        // Flash attention for prefill (loop over heads)
+        for head in 0..num_heads {
+            let kv_head = head / kv_group;
+            let q_offset = head * config.head_dim;
+            let kv_offset = kv_head * config.head_dim;
+
+            flash_attn_prefill_strided(
+                scratch.attn_out.as_ptr() as *mut f32,
+                scratch.q.as_ptr() as *const f32,
+                kv.k_ptr(layer_idx)? as *const f32,
+                kv.v_ptr(layer_idx)? as *const f32,
+                seq_len,
+                config.head_dim,
+                q_size,
+                q_size,
+                effective_kv_size,
+                q_offset,
+                q_offset,
+                kv_offset,
+                scale,
+                kv_lora_dim,
+                w_up_k,
+                w_up_v,
+            )?;
+        }
+        device.synchronize()?;
+
+        if debug_prefill && layer_idx == 0 {
+            let gpu_val = download_gpu_buffer(&scratch.attn_out, seq_len * q_size);
+            let max_err = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").attn_out, &gpu_val);
+            println!(
+                "DEBUG PREFILL: layer0 Flash Attn max_abs_error = {}",
+                max_err
+            );
+        }
+
+        // Attention output projection (loop over tokens)
+        for pos in 0..seq_len {
+            let attn_out_row =
+                unsafe { (scratch.attn_out.as_ptr() as *const f32).add(pos * q_size) };
+            let layer_out_row = scratch.layer_out_row_mut_ptr(pos, h);
+            crate::gpu::ops::gpu_dispatch_gemv_on_stream(
+                device,
+                &gpu_layer.attn_o,
+                &gpu_layer.attn_o_meta,
+                attn_out_row,
+                layer_out_row,
+                h,
+                q_size,
+                device.stream(),
+            )?;
+        }
 
         // Apply SVD correction for attn_o if present
         if let Some(svd) = gpu_layer.attn_o_svd.as_ref() {
@@ -428,15 +769,36 @@ pub fn gpu_batched_prefill_forward_q4_0(
                 )?;
             }
         }
+        device.synchronize()?;
 
-        // Residual connection (batched)
-        add_batched(
+        if debug_prefill && layer_idx == 0 {
+            let gpu_val = download_gpu_buffer(&scratch.layer_out, seq_len * h);
+            let max_err = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").layer_out_attn, &gpu_val);
+            println!(
+                "DEBUG PREFILL: layer0 Attn Out Projection max_abs_error = {}",
+                max_err
+            );
+        }
+
+        // Residual connection (batched element-wise add)
+        add_on_stream(
             scratch.layer_out.as_ptr() as *const f32,
             scratch.hidden.as_ptr() as *const f32,
             scratch.hidden.as_ptr() as *mut f32,
-            h,
-            seq_len,
+            seq_len * h,
+            device.stream(),
         )?;
+        device.synchronize()?;
+
+        if debug_prefill && layer_idx == 0 {
+            let gpu_val = download_gpu_buffer(&scratch.hidden, seq_len * h);
+            let max_err =
+                max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").hidden_after_attn, &gpu_val);
+            println!(
+                "DEBUG PREFILL: layer0 Attn Residual max_abs_error = {}",
+                max_err
+            );
+        }
 
         // FFN normalization (batched)
         rms_norm_batched(
@@ -447,13 +809,23 @@ pub fn gpu_batched_prefill_forward_q4_0(
             config.rms_norm_eps,
             seq_len,
         )?;
+        device.synchronize()?;
+
+        if debug_prefill && layer_idx == 0 {
+            let gpu_val = download_gpu_buffer(&scratch.normed, seq_len * h);
+            let max_err = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").normed_ffn, &gpu_val);
+            println!(
+                "DEBUG PREFILL: layer0 RMSNorm FFN max_abs_error = {}",
+                max_err
+            );
+        }
 
         // Gate-up projection - use batched kernel for Q4_0/Q4_0, fallback to per-token loop for other types
         let mut gate_up_result = Err(GpuError::UnsupportedWeightType {
             tensor: "forced_svd_fallback".to_string(),
             wtype: GgmlType::Q4_0,
         });
-        if gpu_layer.ffn_gate_svd.is_none() && gpu_layer.ffn_up_svd.is_none() {
+        if false {
             gate_up_result = gpu_dispatch_batched_fused_gate_up_q4_0(
                 &gpu_layer.ffn_gate,
                 &gpu_layer.ffn_gate_meta,
@@ -529,23 +901,39 @@ pub fn gpu_batched_prefill_forward_q4_0(
                     )?;
                 }
             }
+            device.synchronize()?;
         } else {
             // Batched dispatch succeeded or failed with non-type error
             gate_up_result?;
+            device.synchronize()?;
         }
 
-        // FFN down projection (batched, type-aware)
-        gpu_dispatch_batched_gemv_batched(
-            device,
-            &gpu_layer.ffn_down,
-            &gpu_layer.ffn_down_meta,
-            scratch.swiglu.as_ptr() as *const f32,
-            scratch.layer_out.as_ptr() as *mut f32,
-            ff_size,
-            h,
-            seq_len,
-            device.stream(),
-        )?;
+        if debug_prefill && layer_idx == 0 {
+            let gpu_gate = download_gpu_buffer(&scratch.gate, seq_len * ff_size);
+            let gpu_swiglu = download_gpu_buffer(&scratch.swiglu, seq_len * ff_size);
+            let err_gate = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").gate, &gpu_gate);
+            let err_swiglu = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").swiglu, &gpu_swiglu);
+            println!(
+                "DEBUG PREFILL: layer0 FFN Gate-Up max_abs_error: Gate={}, SwiGLU={}",
+                err_gate, err_swiglu
+            );
+        }
+
+        // FFN down projection (loop over tokens)
+        for pos in 0..seq_len {
+            let swiglu_row = unsafe { (scratch.swiglu.as_ptr() as *const f32).add(pos * ff_size) };
+            let layer_out_row = scratch.layer_out_row_mut_ptr(pos, h);
+            crate::gpu::ops::gpu_dispatch_gemv_on_stream(
+                device,
+                &gpu_layer.ffn_down,
+                &gpu_layer.ffn_down_meta,
+                swiglu_row,
+                layer_out_row,
+                h,
+                ff_size,
+                device.stream(),
+            )?;
+        }
 
         // Apply SVD correction for ffn_down if present
         if let Some(svd) = gpu_layer.ffn_down_svd.as_ref() {
@@ -567,15 +955,35 @@ pub fn gpu_batched_prefill_forward_q4_0(
                 )?;
             }
         }
+        device.synchronize()?;
 
-        // Residual connection (batched)
-        add_batched(
+        if debug_prefill && layer_idx == 0 {
+            let gpu_val = download_gpu_buffer(&scratch.layer_out, seq_len * h);
+            let max_err = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").layer_out_ffn, &gpu_val);
+            println!(
+                "DEBUG PREFILL: layer0 FFN Down Projection max_abs_error = {}",
+                max_err
+            );
+        }
+
+        // Residual connection (batched element-wise add)
+        add_on_stream(
             scratch.layer_out.as_ptr() as *const f32,
             scratch.hidden.as_ptr() as *const f32,
             scratch.hidden.as_ptr() as *mut f32,
-            h,
-            seq_len,
+            seq_len * h,
+            device.stream(),
         )?;
+        device.synchronize()?;
+
+        if debug_prefill && layer_idx == 0 {
+            let gpu_val = download_gpu_buffer(&scratch.hidden, seq_len * h);
+            let max_err = max_abs_error_slice(&cpu_acts.as_ref().expect("invariant: cpu_acts populated before validation block").hidden_out, &gpu_val);
+            println!(
+                "DEBUG PREFILL: layer0 FFN Residual max_abs_error = {}",
+                max_err
+            );
+        }
     }
     // Step 3: Compute final logits if requested
     if matches!(logits_mode, super::forward::GpuLogitsMode::Skip) {
@@ -909,13 +1317,13 @@ pub fn gpu_prefill_ssm_layer_on_stream(
         stream,
     )?;
 
-    // 13. Residual connection (batched)
-    add_batched(
+    // 13. Residual connection (batched element-wise add)
+    add_on_stream(
         scratch.layer_out.as_ptr() as *const f32,
         scratch.hidden.as_ptr() as *const f32,
         scratch.hidden.as_ptr() as *mut f32,
-        h,
-        seq_len,
+        seq_len * h,
+        stream,
     )?;
 
     // 14. FFN normalization (batched)
@@ -1022,13 +1430,13 @@ pub fn gpu_prefill_ssm_layer_on_stream(
         stream,
     )?;
 
-    // 17. Residual connection (batched)
-    add_batched(
+    // 17. Residual connection (batched element-wise add)
+    add_on_stream(
         scratch.layer_out.as_ptr() as *const f32,
         scratch.hidden.as_ptr() as *const f32,
         scratch.hidden.as_ptr() as *mut f32,
-        h,
-        seq_len,
+        seq_len * h,
+        stream,
     )?;
 
     Ok(())

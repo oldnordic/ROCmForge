@@ -3290,6 +3290,9 @@ fn test_flash_attn_prefill_strided_kernel_correctness() {
             q_offset,
             kv_offset,
             scale,
+            0,
+            std::ptr::null(),
+            std::ptr::null(),
         )
         .expect("GPU flash_attn_prefill_strided kernel should succeed");
     }

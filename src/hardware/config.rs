@@ -110,6 +110,9 @@ mod tests {
             attention_layout: crate::config::AttentionLayout::SplitQkv,
             architecture: "qwen2".to_string(),
             tensor_registry: TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf),
+            kv_lora_dim: None,
+            kv_frame_codec_enabled: None,
+            adastate_anchors_enabled: None,
         }
     }
 

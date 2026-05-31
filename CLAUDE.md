@@ -37,7 +37,7 @@ cargo clippy --all-targets --all-features
 - NO stubs/placeholders — AGENTS.md ZERO TOLERANCE policy applies
 - Measure before optimizing — use rocprofv3, Criterion
 - Test on real hardware — all GPU code runs on actual AMD GPUs
-- Use `--test-threads=1` for GPU tests (serialize to avoid GPU lock contention)
+- `.cargo/config.toml` enforces `jobs=4` and `RUST_TEST_THREADS=1` — do NOT override with `-j` or `--test-threads`, these limits exist to prevent OOM and GPU lock contention
 - Profile: `./.rocprofv3/profile_decode.sh runtime` or manual rocprofv3 invocation
 
 ## GPU Safety Protocol
@@ -54,6 +54,14 @@ Before ANY new GPU code:
 Forbidden without safety harness:
 - Direct `./target/release/rocmforge --gpu ...` runs
 - New GPU benchmarks on untested codepaths
+- `cargo build --features gpu` while Ollama or any other GPU process is active
+
+**`cargo build --features gpu` uses the GPU.** `hipcc` compiles HIP kernels by calling the GPU driver for code generation. Running a GPU build while Ollama has a model loaded caused a driver hang and full desktop freeze (2026-05-31). Before any GPU build:
+```bash
+rocm-smi --showuse   # confirm GPU activity is 0%
+systemctl --user status ollama  # confirm Ollama is idle or stopped
+```
+If Ollama is running, either stop it (`systemctl --user stop ollama`) or use `cargo check --features gpu` (no hipcc invocation) for iteration.
 
 ## Key Files
 

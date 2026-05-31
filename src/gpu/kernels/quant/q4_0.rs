@@ -766,22 +766,42 @@ mod tests {
 
 // ── Test Helpers for DP4A Portability ─────────────────────────────────────────────
 
+#[cfg(feature = "gpu")]
+extern "C" {
+    fn gpu_test_dot4_hardware(
+        a: i32,
+        b: i32,
+        acc: i32,
+        out: *mut i32,
+        stream: *mut std::ffi::c_void,
+    ) -> i32;
+    fn gpu_test_dot4_manual(
+        a: i32,
+        b: i32,
+        acc: i32,
+        out: *mut i32,
+        stream: *mut std::ffi::c_void,
+    ) -> i32;
+}
+
 /// Test helper: Call hardware DP4A path (only available on RDNA2)
 #[cfg(feature = "gpu")]
 #[allow(dead_code)]
 pub unsafe fn test_dot4_hardware(a_packed: i32, b_packed: i32, acc: i32) -> i32 {
-    // This will call the DP4A kernel in a test harness
-    // Implementation: Launch a minimal kernel that returns the result
-    todo!("Add test kernel wrapper")
+    let mut out = 0i32;
+    let res = gpu_test_dot4_hardware(a_packed, b_packed, acc, &mut out, std::ptr::null_mut());
+    assert_eq!(res, 0, "gpu_test_dot4_hardware failed");
+    out
 }
 
 /// Test helper: Call manual dot4 path (works on all architectures)
 #[cfg(feature = "gpu")]
 #[allow(dead_code)]
 pub unsafe fn test_dot4_manual(a_packed: i32, b_packed: i32, acc: i32) -> i32 {
-    // This will call the dot4_manual() function directly
-    // Implementation: Launch a minimal kernel that returns the result
-    todo!("Add test kernel wrapper")
+    let mut out = 0i32;
+    let res = gpu_test_dot4_manual(a_packed, b_packed, acc, &mut out, std::ptr::null_mut());
+    assert_eq!(res, 0, "gpu_test_dot4_manual failed");
+    out
 }
 
 // ── Benchmark Helpers for DP4A Performance ────────────────────────────────────────
@@ -790,16 +810,12 @@ pub unsafe fn test_dot4_manual(a_packed: i32, b_packed: i32, acc: i32) -> i32 {
 #[cfg(feature = "gpu")]
 #[allow(dead_code)]
 pub unsafe fn bench_dot4_hardware(a_packed: i32, b_packed: i32, acc: i32) -> i32 {
-    // This will call the DP4A kernel in a benchmark harness
-    // Implementation: Launch a minimal kernel that returns the result
-    todo!("Add benchmark kernel wrapper")
+    test_dot4_hardware(a_packed, b_packed, acc)
 }
 
 /// Benchmark helper: Manual dot4 path
 #[cfg(feature = "gpu")]
 #[allow(dead_code)]
 pub unsafe fn bench_dot4_manual(a_packed: i32, b_packed: i32, acc: i32) -> i32 {
-    // This will call the dot4_manual() function directly
-    // Implementation: Launch a minimal kernel that returns the result
-    todo!("Add benchmark kernel wrapper")
+    test_dot4_manual(a_packed, b_packed, acc)
 }

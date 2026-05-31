@@ -222,6 +222,11 @@ pub fn hip_memcpy_d2h(dst: *mut u8, src: *const u8, size: usize) -> GpuResult<()
     }
 }
 
+/// Synchronize all GPU operations on the current device (blocks until complete).
+pub fn hip_device_synchronize() -> GpuResult<()> {
+    unsafe { hip_check(hipDeviceSynchronize()) }
+}
+
 /// Copy data from device (GPU) to host (CPU) on an explicit HIP stream.
 pub fn hip_memcpy_d2h_async(
     dst: *mut u8,
@@ -692,6 +697,7 @@ extern "C" {
     ) -> hipError_t;
     fn hipGetErrorString(error: hipError_t) -> *const c_char;
     fn hipMemGetInfo(free: *mut usize, total: *mut usize) -> hipError_t;
+    fn hipDeviceSynchronize() -> hipError_t;
     fn hipGetDriverVersion(driverVersion: *mut c_int) -> hipError_t;
     fn hipStreamCreate(stream: *mut *mut c_void) -> hipError_t;
     fn hipStreamDestroy(stream: hipStream_t) -> hipError_t;

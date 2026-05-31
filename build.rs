@@ -355,6 +355,8 @@ fn main() {
 
         println!("cargo:rustc-link-lib=hiprtc");
         println!("cargo:rustc-link-lib=amdhip64");
+        println!("cargo:rustc-link-lib=rocblas");
+        println!("cargo:rustc-link-lib=rocsolver");
         println!("cargo:rerun-if-env-changed=HIP_PATH");
         println!("cargo:rerun-if-env-changed=ROCM_PATH");
         println!("cargo:rerun-if-changed=hip_kernels");

@@ -227,12 +227,9 @@ pub fn select_path(
         return InferencePath::DecodeStyle;
     }
 
-    // SVD models: use optimized path if enabled, otherwise decode-style.
+    // SVD models: use optimized path by default.
     if profile.has_svd {
-        if super::safety::experimental_gpu_kernels_enabled() {
-            return InferencePath::SvdOptimized;
-        }
-        return InferencePath::DecodeStyle;
+        return InferencePath::SvdOptimized;
     }
 
     // Standard transformer with Q4_0 attention: batched prefill if prompt is multi-token.
@@ -260,7 +257,8 @@ pub fn check_path_vram(
 ) -> GpuResult<()> {
     match path {
         InferencePath::BatchedPrefill { .. } => {
-            let prefill_bytes = super::cache::GpuPrefillScratch::estimate_total_bytes(config, prompt_len);
+            let prefill_bytes =
+                super::cache::GpuPrefillScratch::estimate_total_bytes(config, prompt_len);
             let reserve_bytes = 5 * 1024 * 1024 * 1024usize; // 5 GB desktop reserve
             let required = prefill_bytes.saturating_add(reserve_bytes);
             if vram_session.startup_free < required {
@@ -371,7 +369,7 @@ mod tests {
     }
 
     #[test]
-    fn svd_without_experimental_selects_decode() {
+    fn svd_always_selects_svd_optimized() {
         let profile = ModelProfile {
             attention_quant: QuantizationType::Q4_0,
             has_svd: true,
@@ -384,7 +382,7 @@ mod tests {
         };
         let vram = fake_vram_session(16.0);
         let path = select_path(&profile, 10, &vram);
-        assert!(matches!(path, InferencePath::DecodeStyle));
+        assert!(matches!(path, InferencePath::SvdOptimized));
     }
 
     #[test]

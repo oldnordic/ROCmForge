@@ -28,7 +28,6 @@ extern "C" __global__ void mpo_apply_f32_kernel(
     float* __restrict__ y
 ) {
     const int out_idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (out_idx >= out_dim) return;
 
     // site i: chi_left = site_dims[4*i], d_i = site_dims[4*i+1],
     //         chi_right = site_dims[4*i+2], padding = site_dims[4*i+3]
@@ -49,20 +48,24 @@ extern "C" __global__ void mpo_apply_f32_kernel(
         const float* site0 = sites;                     // [1, d0, chi1]
         const float* site1 = sites + d0 * chi1;         // [chi1, d1, 1]
 
+        // Cooperative block-wide contraction:
         // temp[chi1] = sum_{d1} site1[chi1, d1, 1] * x[d1]
-        float temp[64];
-        for (int c = 0; c < chi1; ++c) {
+        __shared__ float s_temp[64];
+        if (threadIdx.x < chi1) {
             float sum = 0.0f;
             for (int j = 0; j < d1; ++j) {
-                sum += site1[c * d1 + j] * x[j];
+                sum += site1[threadIdx.x * d1 + j] * x[j];
             }
-            temp[c] = sum;
+            s_temp[threadIdx.x] = sum;
         }
+        __syncthreads();
+
+        if (out_idx >= out_dim) return;
 
         // y[d0] = sum_{chi1} site0[1, d0, chi1] * temp[chi1]
         float sum = 0.0f;
         for (int c = 0; c < chi1; ++c) {
-            sum += site0[out_idx * chi1 + c] * temp[c];
+            sum += site0[out_idx * chi1 + c] * s_temp[c];
         }
         y[out_idx] = sum;
     }
@@ -87,32 +90,38 @@ extern "C" __global__ void mpo_apply_f32_kernel(
         const float* site1 = sites + d0 * chi1;
         const float* site2 = site1 + chi1 * d1 * chi2;
 
+        // Cooperative block-wide contraction:
         // t2[chi2] = sum_{d2} site2[chi2, d2, 1] * x[d2]
-        float t2[64];
-        for (int c2 = 0; c2 < chi2; ++c2) {
+        __shared__ float s_t2[64];
+        __shared__ float s_t1[64];
+
+        if (threadIdx.x < chi2) {
             float sum = 0.0f;
             for (int j = 0; j < d2; ++j) {
-                sum += site2[c2 * d2 + j] * x[j];
+                sum += site2[threadIdx.x * d2 + j] * x[j];
             }
-            t2[c2] = sum;
+            s_t2[threadIdx.x] = sum;
         }
+        __syncthreads();
 
         // t1[chi1] = sum_{d1, chi2} site1[chi1, d1, chi2] * t2[chi2]
-        float t1[64];
-        for (int c1 = 0; c1 < chi1; ++c1) {
+        if (threadIdx.x < chi1) {
             float sum = 0.0f;
             for (int j = 0; j < d1; ++j) {
                 for (int c2 = 0; c2 < chi2; ++c2) {
-                    sum += site1[c1 * d1 * chi2 + j * chi2 + c2] * t2[c2];
+                    sum += site1[threadIdx.x * d1 * chi2 + j * chi2 + c2] * s_t2[c2];
                 }
             }
-            t1[c1] = sum;
+            s_t1[threadIdx.x] = sum;
         }
+        __syncthreads();
+
+        if (out_idx >= out_dim) return;
 
         // y[d0] = sum_{chi1} site0[1, d0, chi1] * t1[chi1]
         float sum = 0.0f;
         for (int c1 = 0; c1 < chi1; ++c1) {
-            sum += site0[out_idx * chi1 + c1] * t1[c1];
+            sum += site0[out_idx * chi1 + c1] * s_t1[c1];
         }
         y[out_idx] = sum;
     }
@@ -124,7 +133,7 @@ extern "C" __global__ void mpo_apply_f32_kernel(
             if (chi > max_chi) max_chi = chi;
         }
         if (max_chi > 64) {
-            y[out_idx] = 0.0f;
+            if (out_idx < out_dim) y[out_idx] = 0.0f;
             return;
         }
 
@@ -137,37 +146,50 @@ extern "C" __global__ void mpo_apply_f32_kernel(
             offsets[s] = offsets[s - 1] + chi_l * d * chi_r;
         }
 
-        float bond[64];
-        for (int i = 0; i < in_dim; ++i) bond[i] = x[i];
+        // Cooperative block-wide contraction generic loop
+        __shared__ float s_bond[64];
 
-        for (int s = n_sites - 1; s >= 0; --s) {
-            int chi_l = (s == 0) ? 1 : site_dims[4 * s];
+        // Load initial x into s_bond
+        if (threadIdx.x < in_dim && threadIdx.x < 64) {
+            s_bond[threadIdx.x] = x[threadIdx.x];
+        }
+        __syncthreads();
+
+        for (int s = n_sites - 1; s >= 1; --s) {
+            int chi_l = site_dims[4 * s];
             int d     = site_dims[4 * s + 1];
-            int chi_r = (s == n_sites - 1) ? 1 : site_dims[4 * s + 2];
-
+            int chi_r = site_dims[4 * s + 2];
             const float* site = sites + offsets[s];
 
-            if (s == 0) {
-                float sum = 0.0f;
-                for (int c = 0; c < chi_r; ++c) {
-                    sum += site[out_idx * chi_r + c] * bond[c];
-                }
-                y[out_idx] = sum;
-                return;
-            }
-
-            float new_bond[64];
-            for (int c_l = 0; c_l < chi_l; ++c_l) {
+            __shared__ float s_new_bond[64];
+            if (threadIdx.x < chi_l) {
                 float sum = 0.0f;
                 for (int j = 0; j < d; ++j) {
                     for (int c_r = 0; c_r < chi_r; ++c_r) {
-                        sum += site[c_l * d * chi_r + j * chi_r + c_r] * bond[c_r];
+                        sum += site[threadIdx.x * d * chi_r + j * chi_r + c_r] * s_bond[c_r];
                     }
                 }
-                new_bond[c_l] = sum;
+                s_new_bond[threadIdx.x] = sum;
             }
-            for (int i = 0; i < chi_l; ++i) bond[i] = new_bond[i];
+            __syncthreads();
+
+            // Copy s_new_bond to s_bond for next iteration
+            if (threadIdx.x < chi_l) {
+                s_bond[threadIdx.x] = s_new_bond[threadIdx.x];
+            }
+            __syncthreads();
         }
+
+        if (out_idx >= out_dim) return;
+
+        // Final site 0 contraction: y = site0 * bond
+        int chi_r = site_dims[2];
+        const float* site0 = sites; // offset is 0
+        float sum = 0.0f;
+        for (int c = 0; c < chi_r; ++c) {
+            sum += site0[out_idx * chi_r + c] * s_bond[c];
+        }
+        y[out_idx] = sum;
     }
 }
 

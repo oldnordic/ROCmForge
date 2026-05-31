@@ -36,6 +36,11 @@ pub struct ModelConfig {
 
     /// Tensor name registry for this model
     pub tensor_registry: TensorNameRegistry,
+
+    // Research & advanced compression synergy parameters
+    pub kv_lora_dim: Option<usize>,
+    pub kv_frame_codec_enabled: Option<bool>,
+    pub adastate_anchors_enabled: Option<bool>,
 }
 
 impl ModelConfig {
@@ -87,6 +92,9 @@ impl ModelConfig {
             attention_layout: traits.attention_layout,
             architecture: meta.architecture.clone(),
             tensor_registry: TensorNameRegistry::from_scheme(&traits.tensor_naming),
+            kv_lora_dim: None,
+            kv_frame_codec_enabled: None,
+            adastate_anchors_enabled: None,
         };
 
         config.validate()?;
@@ -113,6 +121,9 @@ impl ModelConfig {
             attention_layout: traits.attention_layout,
             architecture: meta.architecture.clone(),
             tensor_registry: TensorNameRegistry::from_scheme(&traits.tensor_naming),
+            kv_lora_dim: meta.kv_lora_dim,
+            kv_frame_codec_enabled: meta.kv_frame_codec_enabled,
+            adastate_anchors_enabled: meta.adastate_anchors_enabled,
         };
 
         config.validate()?;
@@ -233,6 +244,9 @@ mod tests {
             attention_layout: AttentionLayout::SplitQkv,
             architecture: "qwen2".to_string(),
             tensor_registry: TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf),
+            kv_lora_dim: None,
+            kv_frame_codec_enabled: None,
+            adastate_anchors_enabled: None,
         };
         assert!(cfg.validate().is_err());
     }
@@ -256,6 +270,9 @@ mod tests {
             attention_layout: AttentionLayout::SplitQkv,
             architecture: "qwen2".to_string(),
             tensor_registry: TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf),
+            kv_lora_dim: None,
+            kv_frame_codec_enabled: None,
+            adastate_anchors_enabled: None,
         };
         assert!(cfg.validate().is_err());
     }

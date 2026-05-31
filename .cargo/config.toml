@@ -1,0 +1,11 @@
+[build]
+# Limit parallel jobs to avoid OOM from concurrent hipcc processes.
+# Each hipcc invocation (especially attention.hip) uses 2-4 GB of working
+# memory. With 9 kernels, full parallelism exhausted 32 GB RAM and froze
+# the desktop (2026-05-31). 4 jobs is a safe ceiling on this machine.
+jobs = 4
+
+[env]
+# GPU tests must run sequentially — parallel execution causes GPU lock
+# contention and can trigger amdgpu driver hangs on display-attached GPUs.
+RUST_TEST_THREADS = "1"

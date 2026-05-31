@@ -175,7 +175,8 @@ pub(super) fn rfm_type_to_ggml(t: &RfmType) -> GgmlType {
         RfmType::SparseCsr { value_type, .. }
         | RfmType::Mpo { value_type, .. }
         | RfmType::SvdSparseCsr { value_type, .. }
-        | RfmType::MoeExpertSvdSparse { value_type, .. } => {
+        | RfmType::MoeExpertSvdSparse { value_type, .. }
+        | RfmType::MoeExpertSvdFwhtSparse { value_type, .. } => {
             GgmlType::from_u32(*value_type).unwrap_or(GgmlType::F32)
         }
     }
@@ -288,7 +289,7 @@ pub(super) fn estimate_rfm_layer_vram(file: &RfmFile, layer: usize) -> GpuResult
                         total += (in_dim + out_dim) * (*k as usize) * 4;
                     }
                 }
-                RfmType::MoeExpertSvdSparse { .. } => {
+                RfmType::MoeExpertSvdSparse { .. } | RfmType::MoeExpertSvdFwhtSparse { .. } => {
                     // Experts are CPU-resident; they contribute 0 bytes to GPU VRAM.
                 }
             }
@@ -319,6 +320,9 @@ mod matrix_meta_tests {
             attention_layout: AttentionLayout::SplitQkv,
             architecture: "test".to_string(),
             tensor_registry: TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf),
+            kv_lora_dim: None,
+            kv_frame_codec_enabled: None,
+            adastate_anchors_enabled: None,
         }
     }
 

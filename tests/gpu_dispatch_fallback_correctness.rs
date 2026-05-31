@@ -129,8 +129,8 @@ fn test_fallback_mpo() {
     let d1 = 2u32;
     let d2 = 2u32;
     let chi = 2u32;
-    let out_dim = (d1 * d2) as usize;
-    let in_dim = out_dim;
+    let out_dim = d1 as usize;
+    let in_dim = d2 as usize;
 
     // Site dims: [1, d1, chi, 1, chi, d2, 1, 1] for n_sites=2
     let site_dims: Vec<u32> = vec![1, d1, chi, 1, chi, d2, 1, 1];
@@ -148,7 +148,6 @@ fn test_fallback_mpo() {
 
     let site_data_buf = expect(upload_f32(&site_data));
     let input = expect(upload_f32(&input_data));
-    let gpu_y = expect(upload_f32(&vec![0.0f32; d1 as usize]));
 
     let site_dims_buf = expect(upload_u32(&site_dims));
 
@@ -157,6 +156,8 @@ fn test_fallback_mpo() {
         site_dims: site_dims_buf,
         n_sites: 2,
     };
+
+    let gpu_y = expect(upload_f32(&vec![0.0f32; out_dim]));
 
     // Dummy dense weights/meta (should be ignored)
     let dummy_weights = GpuBuffer::empty();
@@ -177,18 +178,18 @@ fn test_fallback_mpo() {
         Some(&mpo_weights),
         input.as_ptr() as *const f32,
         gpu_y.as_ptr() as *mut f32,
-        d1 as usize, // out_dim = d1
-        d2 as usize, // in_dim = d2
+        out_dim,
+        in_dim,
         std::ptr::null_mut(),
         device.stream(),
     ));
 
     expect(device.synchronize());
 
-    let out_y = expect(download_f32(&gpu_y, d1 as usize));
+    let out_y = expect(download_f32(&gpu_y, out_dim));
 
-    // With identity-like MPO, output should equal input (first d1 elements)
-    for i in 0..(d1 as usize) {
+    // With identity-like MPO, output should equal input (first out_dim elements)
+    for i in 0..out_dim {
         assert!(
             (out_y[i] - input_data[i]).abs() < 1e-3,
             "mpo fallback mismatch at {}: expected {} got {}",
