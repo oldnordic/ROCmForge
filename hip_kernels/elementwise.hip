@@ -966,24 +966,14 @@ hipError_t gpu_gemv_f32_add_k(
     return hipGetLastError();
 }
 
-hipError_t gpu_test_dot4_hardware(int a, int b, int acc, int* out, hipStream_t stream) {
-    int* d_out;
-    CHECK_HIP(hipMalloc(&d_out, sizeof(int)));
+hipError_t gpu_test_dot4_hardware(int a, int b, int acc, int* d_out, hipStream_t stream) {
     hipLaunchKernelGGL(test_dot4_hardware_kernel, dim3(1), dim3(1), 0, stream, a, b, acc, d_out);
-    CHECK_HIP(hipMemcpyAsync(out, d_out, sizeof(int), hipMemcpyDeviceToHost, stream));
-    CHECK_HIP(hipStreamSynchronize(stream));
-    CHECK_HIP(hipFree(d_out));
-    return hipSuccess;
+    return hipGetLastError();
 }
 
-hipError_t gpu_test_dot4_manual(int a, int b, int acc, int* out, hipStream_t stream) {
-    int* d_out;
-    CHECK_HIP(hipMalloc(&d_out, sizeof(int)));
+hipError_t gpu_test_dot4_manual(int a, int b, int acc, int* d_out, hipStream_t stream) {
     hipLaunchKernelGGL(test_dot4_manual_kernel, dim3(1), dim3(1), 0, stream, a, b, acc, d_out);
-    CHECK_HIP(hipMemcpyAsync(out, d_out, sizeof(int), hipMemcpyDeviceToHost, stream));
-    CHECK_HIP(hipStreamSynchronize(stream));
-    CHECK_HIP(hipFree(d_out));
-    return hipSuccess;
+    return hipGetLastError();
 }
 
 } // extern "C"

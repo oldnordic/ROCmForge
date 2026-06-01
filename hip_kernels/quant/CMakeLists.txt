@@ -307,11 +307,7 @@ add_library(q4_k_gemm STATIC q4_k_gemm.hip)
 target_link_libraries(q4_k_gemm quant_common)
 set_target_properties(q4_k_gemm PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
-# Q4_K GEMV kernel (vulkan-style, stream-compatible)
-add_library(q4_k_gemv_vulkan_style STATIC q4_k_gemv_vulkan_style.hip)
-target_link_libraries(q4_k_gemv_vulkan_style quant_common)
-set_target_properties(q4_k_gemv_vulkan_style PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
-
+# Q5_K GEMM kernel
 add_library(q5_k_gemm STATIC q5_k_gemm.hip)
 target_link_libraries(q5_k_gemm quant_common)
 set_target_properties(q5_k_gemm PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")

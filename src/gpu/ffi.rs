@@ -190,6 +190,19 @@ pub fn hip_memcpy_h2d(dst: *mut u8, src: *const u8, size: usize) -> GpuResult<()
     }
 }
 
+/// Copy data from device (GPU) to device (GPU).
+pub fn hip_memcpy_d2d(dst: *mut u8, src: *const u8, size: usize) -> GpuResult<()> {
+    unsafe {
+        let code = hipMemcpy(
+            dst as *mut c_void,
+            src as *const c_void,
+            size,
+            hipMemcpyKind::hipMemcpyDeviceToDevice,
+        );
+        hip_check(code)
+    }
+}
+
 /// Copy data from host (CPU) to device (GPU) on an explicit HIP stream.
 pub fn hip_memcpy_h2d_async(
     dst: *mut u8,

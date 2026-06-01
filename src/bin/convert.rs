@@ -27,6 +27,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut mpo_chi_max: Option<u32> = None;
     let mut max_layers: Option<u32> = None;
     let mut use_fwht = false;
+    let mut mq4 = false;
+    let mut mq6 = false;
     let mut force_gpu = false;
     let mut force_cpu = false;
     let mut kv_lora_dim: Option<usize> = None;
@@ -88,6 +90,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         } else if args[idx] == "--use-fwht" {
             use_fwht = true;
+            idx += 1;
+        } else if args[idx] == "--mq4" {
+            mq4 = true;
+            idx += 1;
+        } else if args[idx] == "--mq6" {
+            mq6 = true;
             idx += 1;
         } else if args[idx] == "--gpu" {
             force_gpu = true;
@@ -198,6 +206,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     std::process::exit(1);
                 }
             };
+            rocmforge::gpu::binary_vram_safety_preflight(caps.device_id);
             match rocmforge::gpu::GpuDevice::init(caps.device_id) {
                 Ok(_) => {
                     println!(
@@ -417,7 +426,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     nnz_ratio * 100.0
                 );
             } else {
-                let wtype = rfm_type_for_tensor(&tensor);
+                let wtype = rfm_type_for_tensor(&tensor, mq4, mq6);
                 let payload_size = pack_tensor(&tensor, &mut out_file, wtype)?;
                 entries.push(RfmTensorEntry {
                     name: tensor_name.clone(),
@@ -452,7 +461,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tensor_name, chi_max
             );
         } else {
-            let wtype = rfm_type_for_tensor(&tensor);
+            let wtype = rfm_type_for_tensor(&tensor, mq4, mq6);
             let payload_size = pack_tensor(&tensor, &mut out_file, wtype)?;
             entries.push(RfmTensorEntry {
                 name: tensor_name.clone(),
@@ -497,6 +506,91 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn rotate_tensor_inplace(data: &mut [f32], rows: usize, cols: usize) {
+    let scale = 1.0 / (cols as f32).sqrt();
+    for r in 0..rows {
+        let row_slice = &mut data[r * cols..(r + 1) * cols];
+        fwht_inplace(row_slice);
+        for val in row_slice.iter_mut() {
+            *val *= scale;
+        }
+    }
+}
+
+fn quantize_q6_k_block(block: &[f32]) -> [u8; 210] {
+    let mut max_abs = 0.0f32;
+    for &x in block {
+        if x.abs() > max_abs {
+            max_abs = x.abs();
+        }
+    }
+    let d = max_abs / 32.0;
+    let d_f16 = half::f16::from_f32(d);
+    let d_f32 = d_f16.to_f32();
+    let inv_d = if d_f32 > 1e-10 { 1.0 / d_f32 } else { 0.0 };
+
+    let mut q = [0i8; 256];
+    for i in 0..256 {
+        let val = block[i] * inv_d;
+        q[i] = val.round().clamp(-32.0, 31.0) as i8;
+    }
+
+    let mut out = [0u8; 210];
+
+    // Write d (208..210)
+    let d_bytes = d_f16.to_bits().to_le_bytes();
+    out[208] = d_bytes[0];
+    out[209] = d_bytes[1];
+
+    // Write scales (192..208) as 1
+    for i in 192..208 {
+        out[i] = 1;
+    }
+
+    // Pack first 128 elements
+    for l in 0..32 {
+        let qi1 = (q[l] as i32 + 32).clamp(0, 63) as u8;
+        let qi2 = (q[l + 32] as i32 + 32).clamp(0, 63) as u8;
+        let qi3 = (q[l + 64] as i32 + 32).clamp(0, 63) as u8;
+        let qi4 = (q[l + 96] as i32 + 32).clamp(0, 63) as u8;
+
+        out[l] = (qi1 & 0x0F) | ((qi3 & 0x0F) << 4);
+        out[l + 32] = (qi2 & 0x0F) | ((qi4 & 0x0F) << 4);
+        out[128 + l] = ((qi1 >> 4) & 3)
+            | (((qi2 >> 4) & 3) << 2)
+            | (((qi3 >> 4) & 3) << 4)
+            | (((qi4 >> 4) & 3) << 6);
+    }
+
+    // Pack second 128 elements
+    for l in 0..32 {
+        let qi1 = (q[128 + l] as i32 + 32).clamp(0, 63) as u8;
+        let qi2 = (q[128 + l + 32] as i32 + 32).clamp(0, 63) as u8;
+        let qi3 = (q[128 + l + 64] as i32 + 32).clamp(0, 63) as u8;
+        let qi4 = (q[128 + l + 96] as i32 + 32).clamp(0, 63) as u8;
+
+        out[64 + l] = (qi1 & 0x0F) | ((qi3 & 0x0F) << 4);
+        out[64 + l + 32] = (qi2 & 0x0F) | ((qi4 & 0x0F) << 4);
+        out[128 + 32 + l] = ((qi1 >> 4) & 3)
+            | (((qi2 >> 4) & 3) << 2)
+            | (((qi3 >> 4) & 3) << 4)
+            | (((qi4 >> 4) & 3) << 6);
+    }
+
+    out
+}
+
+fn quantize_matrix_q6_k(data: &[f32]) -> Vec<u8> {
+    let num_blocks = data.len() / 256;
+    let mut out = Vec::with_capacity(num_blocks * 210);
+    for i in 0..num_blocks {
+        let block = &data[i * 256..(i + 1) * 256];
+        let q_block = quantize_q6_k_block(block);
+        out.extend_from_slice(&q_block);
+    }
+    out
+}
+
 /// Rearranges and packs a standard GGUF tensor into .rfm layout.
 fn pack_tensor(
     tensor: &TensorView,
@@ -511,6 +605,62 @@ fn pack_tensor(
         RfmType::GgufPassthrough(_) => {
             writer.write_all(tensor.data)?;
             Ok(tensor.data.len() as u64)
+        }
+        RfmType::Mq4 => {
+            let count = tensor.element_count();
+            let mut f32_data = match tensor.ggml_type {
+                GgmlType::F32 => bytes_to_f32(tensor.data),
+                GgmlType::Q4_0 => dequantize_q4_0_to_f32(tensor.data, count),
+                GgmlType::Q6_K => dequantize_q6_k_to_f32(tensor.data, count),
+                other => return Err(format!("Unsupported source type for MQ4: {:?}", other).into()),
+            };
+
+            let cols = tensor.dims[0] as usize;
+            let rows = if tensor.dims.len() > 1 {
+                tensor.dims[1] as usize
+            } else {
+                1
+            };
+            if cols.is_power_of_two() {
+                rotate_tensor_inplace(&mut f32_data, rows, cols);
+            } else {
+                println!(
+                    "⚠️ Warning: tensor cols {} is not a power of two, skipping pre-rotation",
+                    cols
+                );
+            }
+
+            let q_data = quantize_matrix_q4_0(&f32_data);
+            writer.write_all(&q_data)?;
+            Ok(q_data.len() as u64)
+        }
+        RfmType::Mq6 => {
+            let count = tensor.element_count();
+            let mut f32_data = match tensor.ggml_type {
+                GgmlType::F32 => bytes_to_f32(tensor.data),
+                GgmlType::Q4_0 => dequantize_q4_0_to_f32(tensor.data, count),
+                GgmlType::Q6_K => dequantize_q6_k_to_f32(tensor.data, count),
+                other => return Err(format!("Unsupported source type for MQ6: {:?}", other).into()),
+            };
+
+            let cols = tensor.dims[0] as usize;
+            let rows = if tensor.dims.len() > 1 {
+                tensor.dims[1] as usize
+            } else {
+                1
+            };
+            if cols.is_power_of_two() {
+                rotate_tensor_inplace(&mut f32_data, rows, cols);
+            } else {
+                println!(
+                    "⚠️ Warning: tensor cols {} is not a power of two, skipping pre-rotation",
+                    cols
+                );
+            }
+
+            let q_data = quantize_matrix_q6_k(&f32_data);
+            writer.write_all(&q_data)?;
+            Ok(q_data.len() as u64)
         }
         RfmType::Q4Split => {
             if tensor.ggml_type != GgmlType::Q4_0 {
@@ -558,11 +708,18 @@ fn pack_tensor(
     }
 }
 
-fn rfm_type_for_tensor(tensor: &TensorView) -> RfmType {
-    match tensor.ggml_type {
-        GgmlType::F32 => RfmType::F32,
-        GgmlType::Q4_0 => RfmType::Q4Split,
-        other => RfmType::GgufPassthrough(other as u32),
+fn rfm_type_for_tensor(tensor: &TensorView, mq4: bool, mq6: bool) -> RfmType {
+    let is_weight = tensor.dims.len() > 1 && tensor.name.contains(".weight");
+    if mq4 && is_weight {
+        RfmType::Mq4
+    } else if mq6 && is_weight {
+        RfmType::Mq6
+    } else {
+        match tensor.ggml_type {
+            GgmlType::F32 => RfmType::F32,
+            GgmlType::Q4_0 => RfmType::Q4Split,
+            other => RfmType::GgufPassthrough(other as u32),
+        }
     }
 }
 
@@ -1560,7 +1717,7 @@ fn convert_moe_expert_svd_sparse(
         );
         align_offset(writer, current_offset)?;
         let base_offset = *current_offset;
-        let wtype = rfm_type_for_tensor(tensor);
+        let wtype = rfm_type_for_tensor(tensor, false, false);
         let payload_size = pack_tensor(tensor, writer, wtype.clone())?;
         *current_offset += payload_size;
         entries.push(RfmTensorEntry {

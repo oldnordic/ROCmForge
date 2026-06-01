@@ -5,6 +5,7 @@ use crate::gpu::kernels::quant::{
     verify_q4_0_accuracy,
 };
 use crate::gpu::quant::QK4_0;
+use crate::gpu::weights::GpuBuffer;
 
 use super::GpuQuant;
 
@@ -131,21 +132,23 @@ impl GpuQuant {
 
         let _num_blocks = n.div_ceil(QK4_0);
 
-        let errors_gpu = unsafe { ffi::hip_malloc(4 * std::mem::size_of::<f32>())? };
-        let metrics_gpu = unsafe { ffi::hip_malloc(3 * std::mem::size_of::<f32>())? };
+        let errors_buf = GpuBuffer::alloc(4 * std::mem::size_of::<f32>())?;
+        let metrics_buf = GpuBuffer::alloc(3 * std::mem::size_of::<f32>())?;
+        let errors_gpu = errors_buf.as_ptr() as *mut f32;
+        let metrics_gpu = metrics_buf.as_ptr() as *mut f32;
 
         let zeros = [0.0f32; 4];
         unsafe {
             ffi::hip_memcpy_h2d(
-                errors_gpu,
+                errors_buf.as_ptr(),
                 zeros.as_ptr() as *const u8,
                 4 * std::mem::size_of::<f32>(),
             )?;
         }
 
-        verify_q4_0_accuracy(original, quantized, errors_gpu as *mut f32, n)?;
+        verify_q4_0_accuracy(original, quantized, errors_gpu, n)?;
 
-        finalize_q4_0_metrics(errors_gpu as *const f32, metrics_gpu as *mut f32, n)?;
+        finalize_q4_0_metrics(errors_gpu as *const f32, metrics_gpu, n)?;
 
         self.device.synchronize()?;
 
@@ -153,14 +156,9 @@ impl GpuQuant {
         unsafe {
             ffi::hip_memcpy_d2h(
                 metrics.as_mut_ptr() as *mut u8,
-                metrics_gpu as *const u8,
+                metrics_buf.as_ptr() as *const u8,
                 3 * std::mem::size_of::<f32>(),
             )?;
-        }
-
-        unsafe {
-            ffi::hip_free(errors_gpu);
-            ffi::hip_free(metrics_gpu);
         }
 
         Ok((metrics[0], metrics[1], metrics[2]))

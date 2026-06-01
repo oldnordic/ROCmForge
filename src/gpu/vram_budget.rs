@@ -251,3 +251,38 @@ pub fn format_vram_usage() -> String {
     let bytes = current_allocated_bytes();
     format!("{:.2} GB", bytes as f64 / GB)
 }
+
+/// Pre-flight VRAM budget check for binaries.
+///
+/// Ensures the VRAM manager is initialized, queries the budget, and verifies
+/// that there is sufficient free VRAM (greater than the desktop reservation).
+/// If not, prints a clear diagnostic and exits with error code 1.
+pub fn binary_vram_safety_preflight(device_id: i32) {
+    match query_vram_budget(device_id) {
+        Ok(budget) => {
+            let reserved_gb = desktop_vram_reservation() as f64 / GB;
+            let free_gb = budget.free_vram as f64 / GB;
+            let safe_gb = budget.safe_allocation_size as f64 / GB;
+
+            eprintln!(
+                "⚡ [VRAM Manager] Free VRAM: {:.2} GB | Desktop Reserved: {:.2} GB | Safe Allocation Limit: {:.2} GB",
+                free_gb, reserved_gb, safe_gb
+            );
+
+            if budget.free_vram <= desktop_vram_reservation() {
+                eprintln!(
+                    "❌ ERROR: Free VRAM ({:.2} GB) is less than or equal to the desktop VRAM reservation ({:.2} GB). Refusing unsafe GPU execution.",
+                    free_gb, reserved_gb
+                );
+                std::process::exit(1);
+            }
+        }
+        Err(e) => {
+            eprintln!(
+                "❌ ERROR querying VRAM budget: {}. Refusing unsafe GPU execution.",
+                e
+            );
+            std::process::exit(1);
+        }
+    }
+}

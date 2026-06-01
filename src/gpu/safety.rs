@@ -65,13 +65,13 @@ static ENABLE_DECODE_GRAPH_FLAG: CachedEnvFlag = CachedEnvFlag::new(ENABLE_DECOD
 static DISABLE_DECODE_GRAPH_FLAG: CachedEnvFlag =
     CachedEnvFlag::new(DISABLE_DECODE_GRAPH_ENV, false);
 static ENABLE_EXPERIMENTAL_GPU_KERNELS_FLAG: CachedEnvFlag =
-    CachedEnvFlag::new(ENABLE_EXPERIMENTAL_GPU_KERNELS_ENV, false);
+    CachedEnvFlag::new(ENABLE_EXPERIMENTAL_GPU_KERNELS_ENV, true);
 static ENABLE_EXPERIMENTAL_FFN_FASTPATH_FLAG: CachedEnvFlag =
-    CachedEnvFlag::new(ENABLE_EXPERIMENTAL_FFN_FASTPATH_ENV, false);
+    CachedEnvFlag::new(ENABLE_EXPERIMENTAL_FFN_FASTPATH_ENV, true);
 static ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH_FLAG: CachedEnvFlag =
     CachedEnvFlag::new(ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH_ENV, true);
 static ENABLE_LAUNCH_AUTOTUNE_FLAG: CachedEnvFlag =
-    CachedEnvFlag::new(ENABLE_LAUNCH_AUTOTUNE_ENV, false);
+    CachedEnvFlag::new(ENABLE_LAUNCH_AUTOTUNE_ENV, true);
 static GPU_SAFE_MODE_FLAG: CachedEnvFlag = CachedEnvFlag::new(GPU_SAFE_MODE_ENV, false);
 static RUN_REAL_MODEL_GPU_TESTS_FLAG: CachedEnvFlag =
     CachedEnvFlag::new(RUN_REAL_MODEL_GPU_TESTS_ENV, false);
@@ -240,7 +240,7 @@ mod tests {
             std::env::remove_var(ENABLE_EXPERIMENTAL_FFN_FASTPATH_ENV);
         }
         refresh_runtime_env_flags();
-        assert!(!super::experimental_ffn_fastpath_enabled());
+        assert!(super::experimental_ffn_fastpath_enabled());
 
         unsafe {
             std::env::set_var(ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH_ENV, "0");

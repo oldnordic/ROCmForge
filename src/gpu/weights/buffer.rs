@@ -274,13 +274,13 @@ mod buffer_tests {
 
     #[test]
     fn alloc_zero_size_returns_empty() {
-        let buf = GpuBuffer::alloc(0).unwrap();
+        let buf = GpuBuffer::alloc(0).expect("alloc zero");
         assert!(buf.is_empty());
     }
 
     #[test]
     fn copy_from_host_rejects_size_mismatch() {
-        let mut buf = GpuBuffer::alloc(100).unwrap();
+        let mut buf = GpuBuffer::alloc(100).expect("alloc 100");
         let data = vec![1u8; 50]; // Wrong size
         let result = buf.copy_from_host(&data);
         assert!(result.is_err());

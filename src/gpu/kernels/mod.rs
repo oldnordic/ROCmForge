@@ -69,9 +69,7 @@ pub use quant::{
     gemv_q4_1_f32_wave32_residual_on_stream_unchecked,
     /* DISABLED: gemv_q4_k_f32 and gemv_q4_k_f32_on_stream not available */
     /* gemv_q4_k_f32, gemv_q4_k_f32_on_stream, */
-    gemv_q4_k_f32_vulkan_style,
-    /* DISABLED: gemv_q5_k_f32 and gemv_q5_k_f32_on_stream not available */
-    /* gemv_q5_k_f32, gemv_q5_k_f32_on_stream, */
+    gemv_q4_k_f32, gemv_q4_k_f32_on_stream, gemv_q5_k_f32, gemv_q5_k_f32_on_stream,
     gemv_q6_k_f32, gemv_q6_k_f32_on_stream, gemv_qkv_q4_0_f32, gemv_qkv_q4_0_f32_on_stream,
     gemv_qkv_q4_0_f32_on_stream_variant, quantize_q4_0, quantize_q4_1, quantize_q4_k,
     quantize_q5_k, quantize_q6_k, quantize_q8_0, verify_q4_0_accuracy, verify_q4_1_accuracy,

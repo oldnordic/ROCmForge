@@ -1457,6 +1457,16 @@ fn main() {
 
     #[cfg(feature = "gpu")]
     if args.gpu {
+        // Enforce VRAM safety pre-flight as the absolute first thing
+        let caps = match gpu::detect() {
+            Some(c) => c,
+            None => {
+                eprintln!("Error: GPU requested but no AMD GPU detected.");
+                std::process::exit(1);
+            }
+        };
+        gpu::binary_vram_safety_preflight(caps.device_id);
+
         if let Some(ref draft_path) = args.draft_model {
             if let Err(e) = run_gpu_speculative_inference(&args, draft_path) {
                 eprintln!("Error: {}", e);

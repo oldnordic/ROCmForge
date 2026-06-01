@@ -235,8 +235,13 @@ mod turboquant_tests {
         }
 
         // Host reference simulation
-        let centroids = config.turboquant_centroids.as_ref().expect("invariant: turboquant_centroids set after TurboQuant conversion");
-        let qjl_scale = config.qjl_scale.expect("invariant: qjl_scale set after TurboQuant conversion");
+        let centroids = config
+            .turboquant_centroids
+            .as_ref()
+            .expect("invariant: turboquant_centroids set after TurboQuant conversion");
+        let qjl_scale = config
+            .qjl_scale
+            .expect("invariant: qjl_scale set after TurboQuant conversion");
         let (_expected_score, expected_v) =
             host_turboquant_simulate(&test_q, &test_k, &test_v, centroids, qjl_scale);
 

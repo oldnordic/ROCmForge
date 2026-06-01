@@ -4,8 +4,9 @@ use super::super::ffi::{hipStreamCaptureStatus, hipStream_t, hip_stream_is_captu
 use super::super::kernels::{
     gemv_q4_0_f32_on_stream_unchecked, gemv_q4_0_f32_wave32_on_stream_unchecked,
     gemv_q4_1_f32_on_stream_unchecked, gemv_q4_1_f32_wave32_on_stream_unchecked,
-    gemv_q4_k_f32_vulkan_style, gemv_q6_k_f32_on_stream, gemv_q8_0_f32_lm_head_on_stream,
-    gemv_q8_0_f32_lm_head_on_stream_variant, gemv_q8_0_f32_on_stream,
+    gemv_q4_k_f32_on_stream, gemv_q5_k_f32_on_stream, gemv_q6_k_f32_on_stream,
+    gemv_q8_0_f32_lm_head_on_stream, gemv_q8_0_f32_lm_head_on_stream_variant,
+    gemv_q8_0_f32_on_stream,
 };
 use super::super::launch_autotune::{
     lookup_lm_head_q8_variant, select_lm_head_q8_variant, VariantId,
@@ -153,24 +154,24 @@ pub(super) fn dispatch_gemv_impl(
                 }
             }
             GgmlType::Q4_K => {
-                // n_waves=8: 256 threads/block, 32 output cols per block.
-                // Requires in_dim % 256 == 0 (Q4_K block size).
-                gemv_q4_k_f32_vulkan_style(
-                    device,
+                gemv_q4_k_f32_on_stream(
                     weights.as_ptr() as *const u8,
                     input,
                     output,
                     in_dim,
                     out_dim,
-                    8,
                     stream,
                 )?;
             }
             GgmlType::Q5_K => {
-                return Err(GpuError::UnsupportedOperation {
-                    operation: format!("gpu_dispatch_gemv_on_stream for {:?}", meta.wtype),
-                    reason: "Q5_K kernel not implemented".to_string(),
-                });
+                gemv_q5_k_f32_on_stream(
+                    weights.as_ptr() as *const u8,
+                    input,
+                    output,
+                    in_dim,
+                    out_dim,
+                    stream,
+                )?;
             }
             GgmlType::Q6_K => {
                 gemv_q6_k_f32_on_stream(
@@ -361,25 +362,13 @@ pub fn gpu_dispatch_gemv_ptr_on_stream(
                 gemv_q8_0_f32_on_stream(weights_ptr, input, output, in_dim, out_dim, stream)?;
             }
             GgmlType::Q4_K => {
-                gemv_q4_k_f32_vulkan_style(
-                    device,
-                    weights_ptr,
-                    input,
-                    output,
-                    in_dim,
-                    out_dim,
-                    8,
-                    stream,
-                )?;
+                gemv_q4_k_f32_on_stream(weights_ptr, input, output, in_dim, out_dim, stream)?;
             }
             GgmlType::Q6_K => {
                 gemv_q6_k_f32_on_stream(weights_ptr, input, output, in_dim, out_dim, stream)?;
             }
             GgmlType::Q5_K => {
-                return Err(GpuError::UnsupportedOperation {
-                    operation: "gpu_dispatch_gemv_ptr_on_stream for Q5_K".to_string(),
-                    reason: "Q5_K kernel not implemented".to_string(),
-                });
+                gemv_q5_k_f32_on_stream(weights_ptr, input, output, in_dim, out_dim, stream)?;
             }
             _ => unreachable!("unsupported types return before dispatch"),
         }

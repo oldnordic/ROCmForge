@@ -4,6 +4,7 @@ use crate::gpu::kernels::quant::{
     dequantize_q4_k, dequantize_q4_k_batched, finalize_q4_k_metrics, verify_q4_k_accuracy,
 };
 use crate::gpu::quant::QK_K;
+use crate::gpu::weights::GpuBuffer;
 
 use super::GpuQuant;
 
@@ -130,21 +131,23 @@ impl GpuQuant {
 
         let _num_blocks = n.div_ceil(QK_K);
 
-        let errors_gpu = unsafe { ffi::hip_malloc(4 * std::mem::size_of::<f32>())? };
-        let metrics_gpu = unsafe { ffi::hip_malloc(3 * std::mem::size_of::<f32>())? };
+        let errors_buf = GpuBuffer::alloc(4 * std::mem::size_of::<f32>())?;
+        let metrics_buf = GpuBuffer::alloc(3 * std::mem::size_of::<f32>())?;
+        let errors_gpu = errors_buf.as_ptr() as *mut f32;
+        let metrics_gpu = metrics_buf.as_ptr() as *mut f32;
 
         let zeros = [0.0f32; 4];
         unsafe {
             ffi::hip_memcpy_h2d(
-                errors_gpu,
+                errors_buf.as_ptr(),
                 zeros.as_ptr() as *const u8,
                 4 * std::mem::size_of::<f32>(),
             )?;
         }
 
-        verify_q4_k_accuracy(original, quantized, errors_gpu as *mut f32, n)?;
+        verify_q4_k_accuracy(original, quantized, errors_gpu, n)?;
 
-        finalize_q4_k_metrics(errors_gpu as *const f32, metrics_gpu as *mut f32, n)?;
+        finalize_q4_k_metrics(errors_gpu as *const f32, metrics_gpu, n)?;
 
         self.device.synchronize()?;
 
@@ -152,14 +155,9 @@ impl GpuQuant {
         unsafe {
             ffi::hip_memcpy_d2h(
                 metrics.as_mut_ptr() as *mut u8,
-                metrics_gpu as *const u8,
+                metrics_buf.as_ptr() as *const u8,
                 3 * std::mem::size_of::<f32>(),
             )?;
-        }
-
-        unsafe {
-            ffi::hip_free(errors_gpu);
-            ffi::hip_free(metrics_gpu);
         }
 
         Ok((metrics[0], metrics[1], metrics[2]))
@@ -167,17 +165,12 @@ impl GpuQuant {
 
     pub fn gemv_q4_k_f32(
         &self,
-        _weights_q4_k: *const u8,
-        _input: *const f32,
-        _output: *mut f32,
-        _n_rows: usize,
-        _ncols_dst: usize,
+        weights_q4_k: *const u8,
+        input: *const f32,
+        output: *mut f32,
+        n_rows: usize,
+        ncols_dst: usize,
     ) -> GpuResult<()> {
-        Err(GpuError::UnsupportedOperation {
-            operation: "gemv_q4_k_f32".to_string(),
-            reason: "Q4_K kernel not implemented".to_string(),
-        })
-        /*
         // Validate dimensions
         if n_rows == 0 || ncols_dst == 0 {
             return Err(GpuError::HipApiError {
@@ -196,17 +189,6 @@ impl GpuQuant {
                 description: format!(
                     "gemv_q4_k_f32: n_rows must be multiple of {}, got {}",
                     QK_K, n_rows
-                ),
-            });
-        }
-
-        // ncols_dst must not exceed kernel limit
-        if ncols_dst > 1024 {
-            return Err(GpuError::HipApiError {
-                code: -1,
-                description: format!(
-                    "gemv_q4_k_f32: ncols_dst must be <= 1024, got {}",
-                    ncols_dst
                 ),
             });
         }
@@ -240,6 +222,5 @@ impl GpuQuant {
         self.device.synchronize()?;
 
         Ok(())
-        */
     }
 }

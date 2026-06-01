@@ -90,6 +90,10 @@ pub enum RfmType {
         index_bits: u8,
         value_type: u32,
     },
+    /// MagnumQuant FWHT-rotated 4-bit quantization with group size 256.
+    Mq4,
+    /// MagnumQuant FWHT-rotated 6-bit quantization with group size 256.
+    Mq6,
 }
 
 /// An entry in the .rfm tensor table.

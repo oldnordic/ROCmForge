@@ -169,8 +169,10 @@ pub(super) fn try_build_q4_0_gate_up_interleaved_tile4(
 pub(super) fn rfm_type_to_ggml(t: &RfmType) -> GgmlType {
     match t {
         RfmType::F32 => GgmlType::F32,
-        RfmType::Q4Split | RfmType::Q4FusedGateUp => GgmlType::Q4_0,
-        RfmType::Q4SvdQuant { .. } => GgmlType::Q4_0,
+        RfmType::Q4Split | RfmType::Q4FusedGateUp | RfmType::Q4SvdQuant { .. } | RfmType::Mq4 => {
+            GgmlType::Q4_0
+        }
+        RfmType::Mq6 => GgmlType::Q6_K,
         RfmType::GgufPassthrough(v) => GgmlType::from_u32(*v).unwrap_or(GgmlType::Q4_0),
         RfmType::SparseCsr { value_type, .. }
         | RfmType::Mpo { value_type, .. }
@@ -278,7 +280,7 @@ pub(super) fn estimate_rfm_layer_vram(file: &RfmFile, layer: usize) -> GpuResult
                         total += (in_dim + out_dim) * (*k as usize) * 4;
                     }
                 }
-                RfmType::GgufPassthrough(_) => total += t.data.len(),
+                RfmType::GgufPassthrough(_) | RfmType::Mq4 | RfmType::Mq6 => total += t.data.len(),
                 RfmType::SparseCsr { .. } | RfmType::Mpo { .. } => total += t.data.len(),
                 RfmType::SvdSparseCsr { k, .. } => {
                     // Sparse residual + SVD U + SVD V

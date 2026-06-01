@@ -529,7 +529,10 @@ fn copy_rfm_tensor(file: &RfmFile, name: &str) -> Result<Vec<u8>, WeightError> {
 fn rfm_type_to_ggml(t: &RfmType) -> GgmlType {
     match t {
         RfmType::F32 => GgmlType::F32,
-        RfmType::Q4Split | RfmType::Q4FusedGateUp | RfmType::Q4SvdQuant { .. } => GgmlType::Q4_0,
+        RfmType::Q4Split | RfmType::Q4FusedGateUp | RfmType::Q4SvdQuant { .. } | RfmType::Mq4 => {
+            GgmlType::Q4_0
+        }
+        RfmType::Mq6 => GgmlType::Q6_K,
         RfmType::GgufPassthrough(v) => GgmlType::from_u32(*v).unwrap_or(GgmlType::Q4_0),
         RfmType::SparseCsr { value_type, .. }
         | RfmType::Mpo { value_type, .. }
@@ -741,7 +744,7 @@ impl CpuLayerWeights {
                     .ok_or_else(|| WeightError::TensorNotFound(name.to_string()))?;
 
                 let data = match t.wtype {
-                    RfmType::F32 => t.data.to_vec(),
+                    RfmType::F32 | RfmType::Mq4 | RfmType::Mq6 => t.data.to_vec(),
                     RfmType::Q4Split | RfmType::Q4SvdQuant { .. } => {
                         unpack_q4_split(t.data, t.element_count())
                     }
@@ -982,7 +985,9 @@ impl CpuLayerWeights {
                 RfmType::Q4Split | RfmType::Q4SvdQuant { .. } => {
                     unpack_q4_split(gate_view.data, gate_view.element_count())
                 }
-                RfmType::F32 | RfmType::GgufPassthrough(_) => gate_view.data.to_vec(),
+                RfmType::F32 | RfmType::GgufPassthrough(_) | RfmType::Mq4 | RfmType::Mq6 => {
+                    gate_view.data.to_vec()
+                }
                 RfmType::SvdSparseCsr {
                     rows, cols, nnz, ..
                 } => {
@@ -1007,7 +1012,9 @@ impl CpuLayerWeights {
                 RfmType::Q4Split | RfmType::Q4SvdQuant { .. } => {
                     unpack_q4_split(up_view.data, up_view.element_count())
                 }
-                RfmType::F32 | RfmType::GgufPassthrough(_) => up_view.data.to_vec(),
+                RfmType::F32 | RfmType::GgufPassthrough(_) | RfmType::Mq4 | RfmType::Mq6 => {
+                    up_view.data.to_vec()
+                }
                 RfmType::SvdSparseCsr {
                     rows, cols, nnz, ..
                 } => sparse_csr_to_dense_f32_bytes(
@@ -1159,7 +1166,9 @@ impl CpuModelWeights {
             RfmType::Q4Split | RfmType::Q4SvdQuant { .. } => {
                 unpack_q4_split(token_emb_view.data, token_emb_view.element_count())
             }
-            RfmType::GgufPassthrough(_) => token_emb_view.data.to_vec(),
+            RfmType::GgufPassthrough(_) | RfmType::Mq4 | RfmType::Mq6 => {
+                token_emb_view.data.to_vec()
+            }
             RfmType::F32 => token_emb_view.data.to_vec(),
             _ => return Err(WeightError::Load(LoadError::UnknownTensorType(999))),
         };
@@ -1191,7 +1200,7 @@ impl CpuModelWeights {
                 RfmType::Q4Split | RfmType::Q4SvdQuant { .. } => {
                     unpack_q4_split(lm_view.data, lm_view.element_count())
                 }
-                RfmType::GgufPassthrough(_) => lm_view.data.to_vec(),
+                RfmType::GgufPassthrough(_) | RfmType::Mq4 | RfmType::Mq6 => lm_view.data.to_vec(),
                 RfmType::F32 => lm_view.data.to_vec(),
                 _ => return Err(WeightError::Load(LoadError::UnknownTensorType(999))),
             };

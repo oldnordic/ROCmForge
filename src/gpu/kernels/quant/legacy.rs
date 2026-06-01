@@ -47,8 +47,8 @@ pub use super::super::q8_gemv::{
 ///
 /// # Returns
 /// Ok(()) on success, Err if kernel launch fails
-// DISABLED: gemv_q4_k_f32_on_stream not available
-/*
+// ── Q4_K GEMV ─────────────────────────────────────────────────────────────────────
+
 pub fn gemv_q4_k_f32(
     weights_q4_k: *const u8,
     input: *const f32,
@@ -65,11 +65,7 @@ pub fn gemv_q4_k_f32(
         hipStream_t::null(),
     )
 }
-*/
 
-// DISABLED: gemv_q4_k_f32_launch kernel not available
-// TODO: Re-enable when Q4_K kernel is implemented
-/*
 pub fn gemv_q4_k_f32_on_stream(
     weights_q4_k: *const u8,
     input: *const f32,
@@ -122,69 +118,9 @@ pub fn gemv_q4_k_f32_on_stream(
 
     Ok(())
 }
-*/
-
-/// Vulkan-style Q4_K GEMV with explicit wave control
-pub fn gemv_q4_k_f32_vulkan_style(
-    device: &GpuDevice,
-    weights_q4_k: *const u8,
-    input: *const f32,
-    output: *mut f32,
-    n_rows: usize,
-    ncols_dst: usize,
-    n_waves: usize,
-    stream: hipStream_t,
-) -> GpuResult<()> {
-    if n_rows == 0 || ncols_dst == 0 || n_waves == 0 {
-        return Err(GpuError::HipApiError {
-            code: -1,
-            description: "gemv_q4_k_f32_vulkan_style: dimensions cannot be zero".to_string(),
-        });
-    }
-
-    if !n_rows.is_multiple_of(256) {
-        return Err(GpuError::HipApiError {
-            code: -1,
-            description: format!(
-                "gemv_q4_k_f32_vulkan_style: n_rows must be multiple of 256, got {}",
-                n_rows
-            ),
-        });
-    }
-
-    if weights_q4_k.is_null() || input.is_null() || output.is_null() {
-        return Err(GpuError::HipApiError {
-            code: -1,
-            description: "gemv_q4_k_f32_vulkan_style: pointers must be non-null".to_string(),
-        });
-    }
-
-    let result = unsafe {
-        gemv_q4_k_f32_vulkan_style_launch(
-            weights_q4_k,
-            input,
-            output,
-            n_rows as c_int,
-            ncols_dst as c_int,
-            n_waves as c_int,
-            stream,
-        )
-    };
-
-    if result != hipError_t::hipSuccess {
-        return Err(GpuError::HipApiError {
-            code: result as i32,
-            description: format!("gemv_q4_k_f32_vulkan_style kernel failed: {:?}", result),
-        });
-    }
-
-    Ok(())
-}
 
 // ── Q5_K GEMV ─────────────────────────────────────────────────────────────────────
 
-// DISABLED: gemv_q5_k_f32_on_stream not available
-/*
 pub fn gemv_q5_k_f32(
     weights_q5_k: *const u8,
     input: *const f32,
@@ -201,11 +137,7 @@ pub fn gemv_q5_k_f32(
         hipStream_t::null(),
     )
 }
-*/
 
-// DISABLED: gemv_q5_k_f32_launch kernel not available
-// TODO: Re-enable when Q5_K kernel is implemented
-/*
 pub fn gemv_q5_k_f32_on_stream(
     weights_q5_k: *const u8,
     input: *const f32,
@@ -258,7 +190,6 @@ pub fn gemv_q5_k_f32_on_stream(
 
     Ok(())
 }
-*/
 
 // ── Q6_K GEMV ─────────────────────────────────────────────────────────────────────
 
@@ -1206,16 +1137,6 @@ unsafe extern "C" {
         output: *mut f32,
         n_rows: c_int,
         ncols_dst: c_int,
-        stream: hipStream_t,
-    ) -> hipError_t;
-
-    fn gemv_q4_k_f32_vulkan_style_launch(
-        weights_q4_k: *const u8,
-        input: *const f32,
-        output: *mut f32,
-        n_rows: c_int,
-        ncols_dst: c_int,
-        n_waves: c_int,
         stream: hipStream_t,
     ) -> hipError_t;
 

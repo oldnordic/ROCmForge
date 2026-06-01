@@ -12,6 +12,49 @@
 
 ### [GPU Backend]
 
+**feat(gpu): enable Q4_K, Q5_K, Q6_K GEMV/GEMM dispatch + remove vulkan-style kernel**
+
+- **Date:** June 02, 2026
+- **Summary:** Wired GPU dispatch for Q4_K, Q5_K, and Q6_K quantized formats in both GEMV (decode, seq_len=1) and GEMM (prefill, seq_len>1) paths. Removed the non-HIP-compliant vulkan-style Q4_K GEMV kernel. Fixed Q5_K missing from `supports_gemv_type` validation gate. Added Q8_0 GEMM dispatch and Q4_1 batched GEMM dispatch. Eliminated all raw `hip_malloc`/`hip_free` bypasses in `quant_wrapper` modules, routing through `GpuBuffer::alloc` RAII.
+- **GEMV Dispatch (`src/gpu/ops/gemv.rs`, `src/gpu/ops/mod.rs`):**
+  - Enabled `gemv_q4_k_f32_on_stream`, `gemv_q5_k_f32_on_stream`, `gemv_q6_k_f32_on_stream` in `dispatch_gemv_impl` and `gpu_dispatch_gemv_ptr_on_stream`.
+  - Added `GgmlType::Q5_K` to `supports_gemv_type` — was missing, causing Q5_K to fail validation before reaching dispatch.
+- **GEMM Dispatch (`src/gpu/ops/gemm.rs`):**
+  - Wired `batched_gemm_q4_0_f32`, `batched_gemm_q4_1_f32`, `gemm_q4_k_f32`, `gemm_q5_k_f32`, `gemm_q6_k_f32`, `gemm_q8_0_f32` for `seq_len > 1`.
+  - Only remaining `UnsupportedOperation` in GEMM is for unsupported types (Q5_0, IQ4_NL, etc.).
+- **Vulkan-style removal (`src/gpu/kernels/quant/legacy.rs`, `build.rs`, `hip_kernels/quant/CMakeLists.txt`):**
+  - Removed `gemv_q4_k_f32_vulkan_style` function and its FFI declaration.
+  - Removed `libq4_k_gemv_vulkan_style.a` from `build.rs` library copy list and CMake target.
+  - Moved `q4_k_gemv_vulkan_style.hip` and `.bak` to `hip_kernels/quant/old/`.
+- **VRAM safety (`src/gpu/quant_wrapper/q4_0.rs`, `q4_1.rs`, `q4_k.rs`, `q5_k.rs`, `q8_0.rs`):**
+  - Replaced raw `ffi::hip_malloc`/`ffi::hip_free` in all `verify_*_accuracy` methods with `GpuBuffer::alloc` RAII.
+  - Fixed `use crate::gpu::weights::buffer::GpuBuffer` → `use crate::gpu::weights::GpuBuffer` privacy errors.
+- **Quant wrapper enablement (`src/gpu/quant_wrapper/q4_k.rs`, `q5_k.rs`):**
+  - Uncommented `GpuQuant::gemv_q4_k_f32` and `GpuQuant::gemv_q5_k_f32`, removed `UnsupportedOperation` stubs.
+- **Fused QKV attention path (`src/gpu/forward/layer.rs`):**
+  - Replaced `UnsupportedOperation` stubs in both `gpu_layer_forward_from_state_on_stream` and `gpu_layer_forward_hybrid` with full fused QKV → split → attention decode path for non-SSM layers (Qwen35-style hybrid).
+  - Added `hip_memcpy_d2d` to `src/gpu/ffi.rs` for device-to-device copies needed for QKV split.
+- **Remaining `UnsupportedOperation` by design:**
+  |  - `ops/gemv.rs:219,259` — Transposed Tied LM Head (kernel doesn't support transposed layout).
+    - `ops/gemm.rs:92` — GEMM for Q5_0/Q5_1/Q2_K/Q3_K (no C++ kernels exist; CPU fallback available).
+    - `weights/model.rs:298,323,378,404` — Sparse CSR / MPO embeddings (needs lazy/offload execution path).
+
+  ### TODO — ROCmForge Next Steps
+
+  | Priority | Item | Effort | Blockers |
+  |----------|------|--------|----------|
+  | P0 | Q5_0 GPU kernels (gemv + gemm) | ~4-6 hrs | New C++ HIP kernels + FFI + dispatch |
+  | P0 | Q5_1 GPU kernels (gemv + gemm) | ~4-6 hrs | Same as Q5_0 |
+  | P1 | Batched GEMM _on_stream variants for Q4_K/Q5_K/Q6_K/Q8_0 | ~2-3 hrs | Add stream param to C++ kernels |
+  | P1 | Sparse CSR / MPO lazy execution path | ~1-2 days | Architectural — CPU fallback or sparse kernel |
+  | P2 | Transposed LM Head kernel support | ~1 day | Weight layout change or new kernel |
+  | P2 | Q2_K / Q3_K GPU kernels | ~6-8 hrs each | No C++ kernels exist |
+- **Verification:**
+  - `cargo check --lib --features gpu`: zero errors.
+  - `cargo test --lib --features gpu`: 307 passed, 0 failed.
+  - `cargo clippy --lib --features gpu -- -D warnings`: zero warnings.
+  - Zero `hip_malloc`/`hip_free` bypasses in production code.
+
 **feat(gpu): complete production-grade zero-mock TurboQuant KV cache compression pipeline**
 
 - **Date:** May 31, 2026

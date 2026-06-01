@@ -223,7 +223,6 @@ mod gpu_build {
                             ("libq4_1_ffn_experimental.a", "q4_1_ffn_experimental"),
                             ("libq4_0_vulkan_style.a", "q4_0_vulkan_style"),
                             ("libq4_0_gemv_vulkan_style.a", "q4_0_gemv_vulkan_style"),
-                            ("libq4_k_gemv_vulkan_style.a", "q4_k_gemv_vulkan_style"),
                             // GEMM libraries
                             ("libq4_0_gemm.a", "q4_0_gemm"),
                             ("libbatched_q4_0_gemm.a", "batched_q4_0_gemm"),

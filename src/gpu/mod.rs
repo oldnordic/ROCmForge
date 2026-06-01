@@ -91,11 +91,12 @@ pub use kernels::{
     gemm_q4_1_f32,
     gemm_q4_k_f32,
     gemm_q5_k_f32,
+    gemm_q6_k_f32,
     gemm_q8_0_f32, /* DISABLED: gemv_gate_up_swiglu_q4_0_f32 not available */
     gemv_q4_0_f32,
     gemv_q4_1_f32,
-    // DISABLED: gemv_q4_k_f32, gemv_q5_k_f32 not available
-    // gemv_q4_k_f32, gemv_q5_k_f32,
+    gemv_q4_k_f32,
+    gemv_q5_k_f32,
     gemv_q8_0_f32,
     gemv_q8_0_f32_lm_head,
     // DISABLED: gemv_qkv_q4_0_f32 not available (use fused_qkv_rope_q4_0_gqa_on_stream instead)
@@ -155,8 +156,9 @@ pub use safety::{
 pub use speculative::SpeculativeEngine;
 pub use vram_budget::VramSession;
 pub use vram_budget::{
-    check_allocation_fits, current_allocated_bytes, desktop_vram_reservation, format_vram_usage,
-    query_vram_budget, track_allocation, track_deallocation,
+    binary_vram_safety_preflight, check_allocation_fits, current_allocated_bytes,
+    desktop_vram_reservation, format_vram_usage, query_vram_budget, track_allocation,
+    track_deallocation,
 };
 pub use weights::{
     GpuBuffer, GpuLayerWeights, GpuModelWeights, SvdCorrection, TensorRole, WeightMeta,

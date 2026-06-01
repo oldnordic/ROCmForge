@@ -55,7 +55,14 @@ fn test_gguf_to_rfm_cpu_inference_equivalence() {
 
     // Step 2: Execute rocmforge-convert CLI tool directly (bypassing Cargo build locks) with 1 layer limit
     let status = Command::new("target/debug/rocmforge-convert")
-        .args([model_path, rfm_path.to_str().expect("invariant: rfm_path is valid UTF-8"), "--max-layers", "1"])
+        .args([
+            model_path,
+            rfm_path
+                .to_str()
+                .expect("invariant: rfm_path is valid UTF-8"),
+            "--max-layers",
+            "1",
+        ])
         .status()
         .expect("Failed to invoke rocmforge-convert");
 

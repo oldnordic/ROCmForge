@@ -27,6 +27,9 @@ fn kernel_library_search_paths() -> Vec<PathBuf> {
         paths.push(PathBuf::from(lib_path));
     }
 
+    // JIT compilation target directory
+    paths.push(PathBuf::from("target/jit"));
+
     // 2. Auto-detect ROCm installation
     if let Ok(rocm_path) = detect_rocm_path() {
         paths.push(rocm_path.join("lib"));
@@ -42,7 +45,17 @@ fn kernel_library_search_paths() -> Vec<PathBuf> {
     paths.push(PathBuf::from("/usr/lib"));
     paths.push(PathBuf::from("/opt/rocm/lib"));
 
-    // 4. Memoria fallback (development only)
+    // 5. Cargo build directories and current directory
+    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        paths.push(PathBuf::from(&manifest_dir).join("target/jit"));
+        paths.push(PathBuf::from(&manifest_dir).join("target/debug"));
+        paths.push(PathBuf::from(&manifest_dir).join("target/release"));
+    }
+    paths.push(PathBuf::from("target/debug"));
+    paths.push(PathBuf::from("target/release"));
+    paths.push(PathBuf::from("."));
+
+    // 4. Memoria fallback (development only - lowest priority, must be last)
     paths.push(PathBuf::from("/home/feanor/Projects/Memoria/gpu/libgpu.so"));
 
     paths
@@ -79,6 +92,160 @@ fn detect_rocm_path() -> Result<PathBuf, ()> {
     Err(())
 }
 
+/// Compute combined hash of HIP kernel sources and architecture name.
+fn compute_source_hash(arch: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::fs;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    let mut files = Vec::new();
+
+    // Helper to recursively collect files
+    fn collect_files(dir: &std::path::Path, files: &mut Vec<PathBuf>) {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    collect_files(&path, files);
+                } else if let Some(ext) = path.extension() {
+                    let ext_str = ext.to_string_lossy();
+                    if ext_str == "hip"
+                        || ext_str == "h"
+                        || ext_str == "cpp"
+                        || path
+                            .file_name()
+                            .map(|f| f == "CMakeLists.txt")
+                            .unwrap_or(false)
+                    {
+                        files.push(path);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut hip_kernels_path = PathBuf::from("hip_kernels");
+    if !hip_kernels_path.exists() {
+        if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+            let path = PathBuf::from(manifest_dir).join("hip_kernels");
+            if path.exists() {
+                hip_kernels_path = path;
+            }
+        }
+    }
+
+    collect_files(&hip_kernels_path, &mut files);
+    files.sort();
+
+    for file in &files {
+        if let Ok(content) = fs::read_to_string(file) {
+            content.hash(&mut hasher);
+        }
+    }
+
+    arch.hash(&mut hasher);
+
+    format!("{:016x}", hasher.finish())
+}
+
+/// Run hipcc compiler JIT to build dynamic libgpu.so from sources.
+fn compile_jit_libgpu(
+    target_dir: &std::path::Path,
+    arch: &str,
+    current_hash: &str,
+) -> GpuResult<()> {
+    use std::process::Command;
+
+    // Locate hipcc compiler
+    let rocm_path = if let Ok(rocm_path) = std::env::var("ROCM_PATH") {
+        PathBuf::from(rocm_path)
+    } else if let Ok(hip_path) = std::env::var("HIP_PATH") {
+        PathBuf::from(hip_path)
+    } else {
+        PathBuf::from("/opt/rocm")
+    };
+
+    let hipcc = rocm_path.join("bin/hipcc");
+    if !hipcc.exists() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "hipcc compiler not found for JIT compilation".to_string(),
+        });
+    }
+
+    // Locate hip_kernels/attention.hip
+    let mut attention_hip = PathBuf::from("hip_kernels/attention.hip");
+    if !attention_hip.exists() {
+        if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+            let path = PathBuf::from(manifest_dir).join("hip_kernels/attention.hip");
+            if path.exists() {
+                attention_hip = path;
+            }
+        }
+    }
+
+    if !attention_hip.exists() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "attention.hip source not found for JIT compilation".to_string(),
+        });
+    }
+
+    let out_so = target_dir.join("libgpu.so");
+
+    // Ensure target dir exists
+    let _ = std::fs::create_dir_all(target_dir);
+
+    // Compute wave size for this arch
+    let wave_size = match arch {
+        "gfx1201" => 32,
+        "gfx1100" | "gfx1101" | "gfx1102" => 32,
+        "gfx1030" | "gfx1031" | "gfx1032" => 32,
+        "gfx1010" | "gfx1011" | "gfx1012" => 32,
+        "gfx900" | "gfx906" | "gfx908" | "gfx90a" | "gfx90c" | "gfx942" => 64,
+        _ => 32,
+    };
+
+    let hip_include = rocm_path.join("include");
+
+    eprintln!(
+        "⚡ [JIT Compiler] Compiling libgpu.so for arch {} (wave size: {})...",
+        arch, wave_size
+    );
+
+    let compile_status = Command::new(&hipcc)
+        .arg("-shared")
+        .arg("-fPIC")
+        .arg("-O3")
+        .arg(format!("--offload-arch={}", arch))
+        .arg(format!("-DWARP_SIZE={}", wave_size))
+        .arg(format!("-I{}", hip_include.display()))
+        .arg(&attention_hip)
+        .arg("-o")
+        .arg(&out_so)
+        .status();
+
+    match compile_status {
+        Ok(s) if s.success() => {
+            let hash_path = target_dir.join("libgpu.hash");
+            if let Err(e) = std::fs::write(&hash_path, current_hash) {
+                eprintln!("⚠️ Warning: failed to write JIT hash file: {}", e);
+            }
+            eprintln!("⚡ [JIT Compiler] Successfully compiled and verified target/jit/libgpu.so");
+            Ok(())
+        }
+        Ok(s) => Err(GpuError::HipApiError {
+            code: s.code().unwrap_or(-1),
+            description: format!("hipcc returned non-zero status: {:?}", s),
+        }),
+        Err(e) => Err(GpuError::HipApiError {
+            code: -1,
+            description: format!("Failed to execute hipcc: {:?}", e),
+        }),
+    }
+}
+
 /// RAII wrapper for dynamically loaded library.
 ///
 /// Opens library on first access, closes on Drop.
@@ -100,6 +267,34 @@ impl DynamicLibrary {
     /// Ok(DynamicLibrary) if library found and loaded
     /// Err(GpuError::HipNotAvailable) if not found in any path
     pub fn load(library_name: &str) -> GpuResult<Self> {
+        let arch_str = if let Some(caps) = super::detect::GpuCapabilities::detect() {
+            caps.architecture.to_string()
+        } else {
+            "gfx1100".to_string()
+        };
+
+        if library_name == "libgpu.so" {
+            let current_hash = compute_source_hash(&arch_str);
+            let jit_dir = PathBuf::from("target/jit");
+            let jit_so = jit_dir.join("libgpu.so");
+            let jit_hash_file = jit_dir.join("libgpu.hash");
+
+            let mut needs_compile = true;
+            if jit_so.exists() && jit_hash_file.exists() {
+                if let Ok(stored_hash) = std::fs::read_to_string(&jit_hash_file) {
+                    if stored_hash.trim() == current_hash {
+                        needs_compile = false;
+                    }
+                }
+            }
+
+            if needs_compile {
+                if let Err(e) = compile_jit_libgpu(&jit_dir, &arch_str, &current_hash) {
+                    eprintln!("⚠️ [JIT Compiler] JIT compilation failed: {}. Falling back to standard paths.", e);
+                }
+            }
+        }
+
         let paths = kernel_library_search_paths();
 
         #[cfg(target_os = "linux")]
@@ -114,6 +309,22 @@ impl DynamicLibrary {
             };
 
             if !handle.is_null() {
+                // If library has a sidecar .hash file, verify it
+                let hash_file = base_path.join(format!(
+                    "{}.hash",
+                    library_name.strip_suffix(".so").unwrap_or(library_name)
+                ));
+                if hash_file.exists() {
+                    let current_hash = compute_source_hash(&arch_str);
+                    if let Ok(stored_hash) = std::fs::read_to_string(&hash_file) {
+                        if stored_hash.trim() != current_hash {
+                            eprintln!("⚠️ WARNING: loaded library {} hash mismatched expected source hash!", full_path.display());
+                            eprintln!("           Expected: {}", current_hash);
+                            eprintln!("           Stored:   {}", stored_hash.trim());
+                        }
+                    }
+                }
+
                 return Ok(Self {
                     handle,
                     library_path: full_path,

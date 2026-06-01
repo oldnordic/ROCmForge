@@ -690,13 +690,204 @@ pub(super) fn gpu_layer_forward_from_state_on_stream(
         return gpu_layer_forward_ssm_on_stream(device, gpu_layer, kv, scratch, layer_idx, config);
     }
 
-    // Block layer types we can't yet handle: fused QKV input projection for non-SSM layers.
-    // Per-head QK norms (attn_q_norm, attn_k_norm) are handled below.
+    // Fused QKV input projection for non-SSM layers: split into Q/K/V via GEMV
+    // and then proceed with standard attention path.
     if gpu_layer.attn_qkv.is_some() {
-        return Err(crate::gpu::error::GpuError::UnsupportedOperation {
-            operation: "attention decode".to_string(),
-            reason: "fused QKV input projection on non-SSM layers is not supported".to_string(),
-        });
+        let h = config.hidden_size;
+        let attn_head_dim = config.head_dim;
+        let num_q_heads = config.num_heads;
+        let num_kv_heads = config.num_kv_heads;
+        let q_size = num_q_heads * attn_head_dim;
+        let kv_size = num_kv_heads * attn_head_dim;
+        let eps = config.rms_norm_eps;
+
+        // 1. RMSNorm
+        gpu_dispatch_rms_norm(
+            device,
+            scratch.hidden.as_ptr() as *const f32,
+            gpu_layer.attn_norm.as_ptr() as *const f32,
+            scratch.normed.as_ptr() as *mut f32,
+            h,
+            eps,
+            device.stream(),
+        )?;
+
+        // 2. Fused QKV GEMV → [Q|K|V] concatenated output
+        let wqkv = gpu_layer.attn_qkv.as_ref().ok_or_else(|| GpuError::InvalidWeightLayout {
+            tensor: "attn_qkv".to_string(),
+            dims: vec![],
+            reason: "fused QKV buffer missing".to_string(),
+        })?;
+        let wqkv_meta = gpu_layer.attn_qkv_meta.as_ref().ok_or_else(|| GpuError::InvalidWeightLayout {
+            tensor: "attn_qkv_meta".to_string(),
+            dims: vec![],
+            reason: "fused QKV metadata missing".to_string(),
+        })?;
+        let qkv_dim = if wqkv_meta.dims[0] as usize == h {
+            wqkv_meta.dims[1] as usize
+        } else {
+            wqkv_meta.dims[0] as usize
+        };
+        let qkv_ptr = scratch.gate.as_ptr() as *mut f32;
+
+        gpu_dispatch_gemv_svd_on_stream(
+            device,
+            wqkv,
+            wqkv_meta,
+            None,
+            scratch.normed.as_ptr() as *const f32,
+            qkv_ptr,
+            qkv_dim,
+            h,
+            scratch.svd_scratch.as_ptr() as *mut f32,
+            device.stream(),
+        )?;
+
+        // 3. Split QKV into separate Q, K, V buffers
+        // Layout: [Q (q_size)| K (kv_size) | V (kv_size)]
+        let q_offset = 0;
+        let k_offset = q_size;
+        let v_offset = q_size + kv_size;
+
+        // Copy Q
+        unsafe {
+            crate::gpu::ffi::hip_memcpy_d2d(
+                scratch.q.as_ptr(),
+                qkv_ptr.add(q_offset) as *const u8,
+                q_size * std::mem::size_of::<f32>(),
+            )?;
+        }
+        // Copy K
+        unsafe {
+            crate::gpu::ffi::hip_memcpy_d2d(
+                scratch.k.as_ptr(),
+                qkv_ptr.add(k_offset) as *const u8,
+                kv_size * std::mem::size_of::<f32>(),
+            )?;
+        }
+        // Copy V
+        unsafe {
+            crate::gpu::ffi::hip_memcpy_d2d(
+                scratch.v.as_ptr(),
+                qkv_ptr.add(v_offset) as *const u8,
+                kv_size * std::mem::size_of::<f32>(),
+            )?;
+        }
+
+        // 4. Apply per-head QK norms if present
+        if let Some(q_norm_w) = gpu_layer.attn_q_norm.as_ref() {
+            rms_norm_batched(
+                scratch.q.as_ptr() as *const f32,
+                q_norm_w.as_ptr() as *const f32,
+                scratch.q.as_ptr() as *mut f32,
+                attn_head_dim,
+                eps,
+                num_q_heads,
+            )?;
+        }
+        if let Some(k_norm_w) = gpu_layer.attn_k_norm.as_ref() {
+            rms_norm_batched(
+                scratch.k.as_ptr() as *const f32,
+                k_norm_w.as_ptr() as *const f32,
+                scratch.k.as_ptr() as *mut f32,
+                attn_head_dim,
+                eps,
+                num_kv_heads,
+            )?;
+        }
+
+        // 5. Apply RoPE
+        rope_heads_from_state_on_stream(
+            scratch.q.as_ptr() as *mut f32,
+            scratch.decode_pos_ptr(),
+            num_q_heads,
+            attn_head_dim,
+            config.rope_theta,
+            config.rope_neox,
+            device.stream(),
+        )?;
+
+        kv_write_rope_from_state_on_stream(
+            kv,
+            layer_idx,
+            scratch.k.as_ptr() as *const f32,
+            scratch.v.as_ptr() as *const f32,
+            scratch.decode_pos_ptr(),
+            num_kv_heads,
+            attn_head_dim,
+            config.rope_theta,
+            config.rope_neox,
+            device.stream(),
+        )?;
+
+        // 6. Attention decode
+        gpu_attention_decode_from_state(
+            device,
+            scratch,
+            kv,
+            layer_idx,
+            num_q_heads,
+            num_kv_heads,
+            attn_head_dim,
+        )?;
+
+        // 7. Attention output projection
+        gpu_dispatch_gemv_on_stream(
+            device,
+            &gpu_layer.attn_o,
+            &gpu_layer.attn_o_meta,
+            scratch.attn_out.as_ptr() as *const f32,
+            scratch.layer_out.as_ptr() as *mut f32,
+            h,
+            q_size,
+            device.stream(),
+        )?;
+
+        // 8. Residual add
+        residual_add_inplace(device, &scratch.hidden, &scratch.layer_out, h)?;
+
+        // 9. FFN RMSNorm
+        gpu_dispatch_rms_norm(
+            device,
+            scratch.hidden.as_ptr() as *const f32,
+            gpu_layer.ffn_norm.as_ptr() as *const f32,
+            scratch.normed.as_ptr() as *mut f32,
+            h,
+            eps,
+            device.stream(),
+        )?;
+
+        // 10. FFN
+        let ff_size = config.intermediate_size;
+        gpu_dispatch_fused_gate_up_on_stream(
+            device,
+            &gpu_layer.ffn_gate,
+            &gpu_layer.ffn_gate_meta,
+            &gpu_layer.ffn_up,
+            &gpu_layer.ffn_up_meta,
+            gpu_layer.ffn_gate_up_interleaved.as_ref(),
+            gpu_layer.ffn_gate_up_interleaved_tile4.as_ref(),
+            scratch.normed.as_ptr() as *const f32,
+            scratch.layer_out.as_ptr() as *mut f32,
+            ff_size,
+            h,
+            device.stream(),
+        )?;
+
+        // 11. FFN output projection + residual
+        gpu_dispatch_gemv_on_stream(
+            device,
+            &gpu_layer.ffn_down,
+            &gpu_layer.ffn_down_meta,
+            scratch.layer_out.as_ptr() as *const f32,
+            scratch.gate.as_ptr() as *mut f32,
+            h,
+            ff_size,
+            device.stream(),
+        )?;
+        residual_add_inplace(device, &scratch.hidden, &scratch.gate, h)?;
+
+        return Ok(());
     }
 
     let h = config.hidden_size;
@@ -1054,13 +1245,199 @@ pub fn gpu_layer_forward_hybrid(
         return gpu_layer_forward_ssm_on_stream(device, gpu_layer, kv, scratch, layer_idx, config);
     }
 
-    // Block layer types we can't yet handle: fused QKV input projection for non-SSM layers.
-    // Per-head QK norms (attn_q_norm, attn_k_norm) are handled below.
+    // Fused QKV input projection for non-SSM layers: split into Q/K/V via GEMV
+    // and then proceed with standard attention path.
     if gpu_layer.attn_qkv.is_some() {
-        return Err(crate::gpu::error::GpuError::UnsupportedOperation {
-            operation: "attention decode".to_string(),
-            reason: "fused QKV input projection on non-SSM layers is not supported".to_string(),
-        });
+        let h = config.hidden_size;
+        let attn_head_dim = config.head_dim;
+        let num_q_heads = config.num_heads;
+        let num_kv_heads = config.num_kv_heads;
+        let q_size = num_q_heads * attn_head_dim;
+        let kv_size = num_kv_heads * attn_head_dim;
+        let eps = config.rms_norm_eps;
+
+        // Upload decode state first so pos_ptr has correct pos
+        scratch.upload_decode_state(pos, pos + 1, device.stream())?;
+
+        // 1. RMSNorm
+        gpu_dispatch_rms_norm(
+            device,
+            scratch.hidden.as_ptr() as *const f32,
+            gpu_layer.attn_norm.as_ptr() as *const f32,
+            scratch.normed.as_ptr() as *mut f32,
+            h,
+            eps,
+            device.stream(),
+        )?;
+
+        // 2. Fused QKV GEMV → [Q|K|V] concatenated output
+        let wqkv = gpu_layer.attn_qkv.as_ref().ok_or_else(|| GpuError::InvalidWeightLayout {
+            tensor: "attn_qkv".to_string(),
+            dims: vec![],
+            reason: "fused QKV buffer missing".to_string(),
+        })?;
+        let wqkv_meta = gpu_layer.attn_qkv_meta.as_ref().ok_or_else(|| GpuError::InvalidWeightLayout {
+            tensor: "attn_qkv_meta".to_string(),
+            dims: vec![],
+            reason: "fused QKV metadata missing".to_string(),
+        })?;
+        let qkv_dim = if wqkv_meta.dims[0] as usize == h {
+            wqkv_meta.dims[1] as usize
+        } else {
+            wqkv_meta.dims[0] as usize
+        };
+        let qkv_ptr = scratch.gate.as_ptr() as *mut f32;
+
+        gpu_dispatch_gemv_svd_on_stream(
+            device,
+            wqkv,
+            wqkv_meta,
+            None,
+            scratch.normed.as_ptr() as *const f32,
+            qkv_ptr,
+            qkv_dim,
+            h,
+            scratch.svd_scratch.as_ptr() as *mut f32,
+            device.stream(),
+        )?;
+
+        // 3. Split QKV into separate Q, K, V buffers
+        let q_offset = 0;
+        let k_offset = q_size;
+        let v_offset = q_size + kv_size;
+
+        unsafe {
+            crate::gpu::ffi::hip_memcpy_d2d(
+                scratch.q.as_ptr(),
+                qkv_ptr.add(q_offset) as *const u8,
+                q_size * std::mem::size_of::<f32>(),
+            )?;
+            crate::gpu::ffi::hip_memcpy_d2d(
+                scratch.k.as_ptr(),
+                qkv_ptr.add(k_offset) as *const u8,
+                kv_size * std::mem::size_of::<f32>(),
+            )?;
+            crate::gpu::ffi::hip_memcpy_d2d(
+                scratch.v.as_ptr(),
+                qkv_ptr.add(v_offset) as *const u8,
+                kv_size * std::mem::size_of::<f32>(),
+            )?;
+        }
+
+        // 4. Apply per-head QK norms if present
+        if let Some(q_norm_w) = gpu_layer.attn_q_norm.as_ref() {
+            rms_norm_batched(
+                scratch.q.as_ptr() as *const f32,
+                q_norm_w.as_ptr() as *const f32,
+                scratch.q.as_ptr() as *mut f32,
+                attn_head_dim,
+                eps,
+                num_q_heads,
+            )?;
+        }
+        if let Some(k_norm_w) = gpu_layer.attn_k_norm.as_ref() {
+            rms_norm_batched(
+                scratch.k.as_ptr() as *const f32,
+                k_norm_w.as_ptr() as *const f32,
+                scratch.k.as_ptr() as *mut f32,
+                attn_head_dim,
+                eps,
+                num_kv_heads,
+            )?;
+        }
+
+        // 5. Apply RoPE
+        rope_heads_from_state_on_stream(
+            scratch.q.as_ptr() as *mut f32,
+            scratch.decode_pos_ptr(),
+            num_q_heads,
+            attn_head_dim,
+            config.rope_theta,
+            config.rope_neox,
+            device.stream(),
+        )?;
+
+        kv_write_rope_from_state_on_stream(
+            kv,
+            layer_idx,
+            scratch.k.as_ptr() as *const f32,
+            scratch.v.as_ptr() as *const f32,
+            scratch.decode_pos_ptr(),
+            num_kv_heads,
+            attn_head_dim,
+            config.rope_theta,
+            config.rope_neox,
+            device.stream(),
+        )?;
+
+        // 6. Attention decode
+        gpu_attention_decode_from_state(
+            device,
+            scratch,
+            kv,
+            layer_idx,
+            num_q_heads,
+            num_kv_heads,
+            attn_head_dim,
+        )?;
+
+        // 7. Attention output projection
+        gpu_dispatch_gemv_on_stream(
+            device,
+            &gpu_layer.attn_o,
+            &gpu_layer.attn_o_meta,
+            scratch.attn_out.as_ptr() as *const f32,
+            scratch.layer_out.as_ptr() as *mut f32,
+            h,
+            q_size,
+            device.stream(),
+        )?;
+
+        // 8. Residual add
+        residual_add_inplace(device, &scratch.hidden, &scratch.layer_out, h)?;
+
+        // 9. FFN RMSNorm
+        gpu_dispatch_rms_norm(
+            device,
+            scratch.hidden.as_ptr() as *const f32,
+            gpu_layer.ffn_norm.as_ptr() as *const f32,
+            scratch.normed.as_ptr() as *mut f32,
+            h,
+            eps,
+            device.stream(),
+        )?;
+
+        // 10. FFN
+        let ff_size = config.intermediate_size;
+        gpu_dispatch_fused_gate_up_on_stream(
+            device,
+            &gpu_layer.ffn_gate,
+            &gpu_layer.ffn_gate_meta,
+            &gpu_layer.ffn_up,
+            &gpu_layer.ffn_up_meta,
+            gpu_layer.ffn_gate_up_interleaved.as_ref(),
+            gpu_layer.ffn_gate_up_interleaved_tile4.as_ref(),
+            scratch.normed.as_ptr() as *const f32,
+            scratch.layer_out.as_ptr() as *mut f32,
+            ff_size,
+            h,
+            device.stream(),
+        )?;
+
+        // 11. FFN output projection + residual
+        gpu_dispatch_gemv_on_stream(
+            device,
+            &gpu_layer.ffn_down,
+            &gpu_layer.ffn_down_meta,
+            scratch.layer_out.as_ptr() as *const f32,
+            scratch.gate.as_ptr() as *mut f32,
+            h,
+            ff_size,
+            device.stream(),
+        )?;
+        residual_add_inplace(device, &scratch.hidden, &scratch.gate, h)?;
+
+        return Ok(());
     }
 
     let h = config.hidden_size;

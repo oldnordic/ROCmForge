@@ -772,14 +772,14 @@ extern "C" {
         a: i32,
         b: i32,
         acc: i32,
-        out: *mut i32,
+        d_out: *mut i32,
         stream: *mut std::ffi::c_void,
     ) -> i32;
     fn gpu_test_dot4_manual(
         a: i32,
         b: i32,
         acc: i32,
-        out: *mut i32,
+        d_out: *mut i32,
         stream: *mut std::ffi::c_void,
     ) -> i32;
 }
@@ -788,9 +788,23 @@ extern "C" {
 #[cfg(feature = "gpu")]
 #[allow(dead_code)]
 pub unsafe fn test_dot4_hardware(a_packed: i32, b_packed: i32, acc: i32) -> i32 {
+    use crate::gpu::weights::GpuBuffer;
     let mut out = 0i32;
-    let res = gpu_test_dot4_hardware(a_packed, b_packed, acc, &mut out, std::ptr::null_mut());
+    let d_out_buf = GpuBuffer::alloc(std::mem::size_of::<i32>()).expect("DP4A test alloc");
+    let res = gpu_test_dot4_hardware(
+        a_packed,
+        b_packed,
+        acc,
+        d_out_buf.as_ptr() as *mut i32,
+        std::ptr::null_mut(),
+    );
     assert_eq!(res, 0, "gpu_test_dot4_hardware failed");
+    crate::gpu::ffi::hip_memcpy_d2h(
+        &mut out as *mut i32 as *mut u8,
+        d_out_buf.as_ptr(),
+        std::mem::size_of::<i32>(),
+    )
+    .expect("DP4A test memcpy");
     out
 }
 
@@ -798,9 +812,23 @@ pub unsafe fn test_dot4_hardware(a_packed: i32, b_packed: i32, acc: i32) -> i32 
 #[cfg(feature = "gpu")]
 #[allow(dead_code)]
 pub unsafe fn test_dot4_manual(a_packed: i32, b_packed: i32, acc: i32) -> i32 {
+    use crate::gpu::weights::GpuBuffer;
     let mut out = 0i32;
-    let res = gpu_test_dot4_manual(a_packed, b_packed, acc, &mut out, std::ptr::null_mut());
+    let d_out_buf = GpuBuffer::alloc(std::mem::size_of::<i32>()).expect("DP4A test alloc");
+    let res = gpu_test_dot4_manual(
+        a_packed,
+        b_packed,
+        acc,
+        d_out_buf.as_ptr() as *mut i32,
+        std::ptr::null_mut(),
+    );
     assert_eq!(res, 0, "gpu_test_dot4_manual failed");
+    crate::gpu::ffi::hip_memcpy_d2h(
+        &mut out as *mut i32 as *mut u8,
+        d_out_buf.as_ptr(),
+        std::mem::size_of::<i32>(),
+    )
+    .expect("DP4A test memcpy");
     out
 }
 
