@@ -2,10 +2,17 @@ rocmforge - LLM inference on AMD GPUs (HIP) with a CPU fallback path.
 
 ## Current status
 
-- The project currently works for local Qwen GGUF runs on this machine.
+- The project currently works for local Qwen GGUF runs and custom `.rfm` model architectures.
 - The GPU path is AMD-only and pure HIP. There is no CUDA or cross-vendor backend here.
-- Performance work is moving slowly and in small steps.
-- Recent changes improved 7B decode throughput, but this project is still behind llama.cpp on the same hardware.
+- Recent optimization passes introduced cutting-edge features: **F16 Embedding Support**, **TurboQuant KV Cache**, and **Pareto Synthesis** (VideoMLA/AdaState/MPO + GPU SVD + MoE VRAM optimizations).
+- Robust runtime safety rules dynamically select the fastest inference path based on model-profile routing.
+
+### Key Features & Optimizations
+
+*   **F16 Embedding Support**: High-performance half-precision (FP16) input embeddings.
+*   **TurboQuant KV Cache**: Ultra-low latency Key-Value cache management with automatic bounds and deadlock resolution.
+*   **Pareto Synthesis**: Hardware-aware combined optimization path featuring GPU SVD, MPO kernel compression, and mixture of experts (MoE) VRAM paging.
+*   **Inference Path Router**: Dynamically matches model traits to targeted hardware-optimized HIP fastpaths.
 
 ### Supported quantizations (GPU)
 
@@ -278,8 +285,9 @@ cargo bench --bench kernel_performance
 ## Documentation
 
 - Main manual: [MANUAL.md](MANUAL.md)
-- hipfire analysis: [hipfire_detailed_analysis.md](hipfire_detailed_analysis.md)
-- hipfire quick start: [hipfire_quick_start.md](hipfire_quick_start.md)
+- Project changelog: [CHANGELOG.md](CHANGELOG.md)
+- Developer instructions: [AGENTS.md](AGENTS.md)
+- License terms: [LICENSE](LICENSE)
 
 ## Positioning
 
