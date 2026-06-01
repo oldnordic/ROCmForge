@@ -3,6 +3,7 @@ name = "rocmforge"
 version = "0.1.0"
 edition = "2021"
 description = "AMD-first LLM inference engine for Qwen2.5"
+license = "GPL-3.0-only"
 
 [dependencies]
 # GGUF loading

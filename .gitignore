@@ -9,6 +9,24 @@ hip_kernels/quant/CMakeBuild/
 **/build/
 *.o
 *.a
+
+# Compiled binaries, libraries, and executables (no binary files allowed in repository)
+/arch
+/build
+tools/analyze_q6_k_registers
+*.rlib
+*.so
+*.dylib
+*.dll
+*.exe
+*.bin
+*.out
+*.lib
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+
 # Codegraph database and config
 .codegraph/
 *.codegraph.db
@@ -27,7 +45,8 @@ PLAN.md
 docs/
 docs/superpowers/
 DOCS/
-# Local agent guidance files
+
+# Agent, tool, and environment configurations/metadata (no agent state allowed in repository)
 GEMINI.md
 AGENTS.md
 CLAUDE.md
@@ -35,11 +54,19 @@ CLAUDE.md
 .gemini/
 .cursor/
 .roo/
+.hermes/
+.agents/
+.codex/
+.remember/
+.idea/
+.vscode/
+.vs/
+.venv/
 *.mirage.md
 .worktrees/
 .claude/settings.json
 
-# Local profiler/runtime outputs that Magellan should not index.
+# Local profiler/runtime outputs
 .git/
 .perf/
 .rocprofv3/
