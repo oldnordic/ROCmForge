@@ -713,16 +713,23 @@ pub(super) fn gpu_layer_forward_from_state_on_stream(
         )?;
 
         // 2. Fused QKV GEMV → [Q|K|V] concatenated output
-        let wqkv = gpu_layer.attn_qkv.as_ref().ok_or_else(|| GpuError::InvalidWeightLayout {
-            tensor: "attn_qkv".to_string(),
-            dims: vec![],
-            reason: "fused QKV buffer missing".to_string(),
-        })?;
-        let wqkv_meta = gpu_layer.attn_qkv_meta.as_ref().ok_or_else(|| GpuError::InvalidWeightLayout {
-            tensor: "attn_qkv_meta".to_string(),
-            dims: vec![],
-            reason: "fused QKV metadata missing".to_string(),
-        })?;
+        let wqkv = gpu_layer
+            .attn_qkv
+            .as_ref()
+            .ok_or_else(|| GpuError::InvalidWeightLayout {
+                tensor: "attn_qkv".to_string(),
+                dims: vec![],
+                reason: "fused QKV buffer missing".to_string(),
+            })?;
+        let wqkv_meta =
+            gpu_layer
+                .attn_qkv_meta
+                .as_ref()
+                .ok_or_else(|| GpuError::InvalidWeightLayout {
+                    tensor: "attn_qkv_meta".to_string(),
+                    dims: vec![],
+                    reason: "fused QKV metadata missing".to_string(),
+                })?;
         let qkv_dim = if wqkv_meta.dims[0] as usize == h {
             wqkv_meta.dims[1] as usize
         } else {
@@ -1271,16 +1278,23 @@ pub fn gpu_layer_forward_hybrid(
         )?;
 
         // 2. Fused QKV GEMV → [Q|K|V] concatenated output
-        let wqkv = gpu_layer.attn_qkv.as_ref().ok_or_else(|| GpuError::InvalidWeightLayout {
-            tensor: "attn_qkv".to_string(),
-            dims: vec![],
-            reason: "fused QKV buffer missing".to_string(),
-        })?;
-        let wqkv_meta = gpu_layer.attn_qkv_meta.as_ref().ok_or_else(|| GpuError::InvalidWeightLayout {
-            tensor: "attn_qkv_meta".to_string(),
-            dims: vec![],
-            reason: "fused QKV metadata missing".to_string(),
-        })?;
+        let wqkv = gpu_layer
+            .attn_qkv
+            .as_ref()
+            .ok_or_else(|| GpuError::InvalidWeightLayout {
+                tensor: "attn_qkv".to_string(),
+                dims: vec![],
+                reason: "fused QKV buffer missing".to_string(),
+            })?;
+        let wqkv_meta =
+            gpu_layer
+                .attn_qkv_meta
+                .as_ref()
+                .ok_or_else(|| GpuError::InvalidWeightLayout {
+                    tensor: "attn_qkv_meta".to_string(),
+                    dims: vec![],
+                    reason: "fused QKV metadata missing".to_string(),
+                })?;
         let qkv_dim = if wqkv_meta.dims[0] as usize == h {
             wqkv_meta.dims[1] as usize
         } else {

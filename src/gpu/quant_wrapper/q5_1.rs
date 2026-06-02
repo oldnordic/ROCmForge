@@ -4,9 +4,7 @@
 
 use crate::gpu::device::GpuDevice;
 use crate::gpu::error::{GpuError, GpuResult};
-use crate::gpu::kernels::{
-    gemm_q5_1_f32, gemv_q5_1_f32, gemv_q5_1_f32_on_stream,
-};
+use crate::gpu::kernels::{gemm_q5_1_f32, gemv_q5_1_f32, gemv_q5_1_f32_on_stream};
 use crate::gpu::quant::{Q5_1_BLOCK_SIZE, QK5_1};
 use crate::gpu::weights::GpuBuffer;
 
@@ -17,11 +15,7 @@ pub struct GpuQ5_1Weights {
 }
 
 impl GpuQ5_1Weights {
-    pub fn gemv(
-        &self,
-        input: &GpuBuffer,
-        output: &mut GpuBuffer,
-    ) -> GpuResult<()> {
+    pub fn gemv(&self, input: &GpuBuffer, output: &mut GpuBuffer) -> GpuResult<()> {
         gemv_q5_1_f32(
             self.weights.as_ptr() as *const u8,
             input.as_ptr() as *const f32,

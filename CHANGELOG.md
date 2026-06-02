@@ -35,18 +35,16 @@
   - Replaced `UnsupportedOperation` stubs in both `gpu_layer_forward_from_state_on_stream` and `gpu_layer_forward_hybrid` with full fused QKV → split → attention decode path for non-SSM layers (Qwen35-style hybrid).
   - Added `hip_memcpy_d2d` to `src/gpu/ffi.rs` for device-to-device copies needed for QKV split.
 - **Remaining `UnsupportedOperation` by design:**
-  |  - `ops/gemv.rs:219,259` — Transposed Tied LM Head (kernel doesn't support transposed layout).
-    - `ops/gemm.rs:92` — GEMM for Q2_K/Q3_K (no C++ kernels exist; CPU fallback available).
-    - `weights/model.rs:298,323,378,404` — Sparse CSR / MPO embeddings (needs lazy/offload execution path).
+  - `ops/gemv.rs:219,259` — Transposed Tied LM Head (kernel doesn't support transposed layout).
+  - `ops/gemm.rs:92` — GEMM for Q2_K/Q3_K (no C++ kernels exist; CPU fallback available).
+  - `weights/model.rs:298,323,378,404` — Sparse CSR / MPO embeddings (needs lazy/offload execution path).
 
-  ### TODO — ROCmForge Next Steps
-
-  | Priority | Item | Effort | Blockers |
-  |----------|------|--------|----------|
-  | P1 | Batched GEMM _on_stream variants for Q4_K/Q5_K/Q6_K/Q8_0 | ~2-3 hrs | Add stream param to C++ kernels |
-  | P1 | Sparse CSR / MPO lazy execution path | ~1-2 days | Architectural — CPU fallback or sparse kernel |
-  | P2 | Transposed LM Head kernel support | ~1 day | Weight layout change or new kernel |
-  | P2 | Q2_K / Q3_K GPU kernels | ~6-8 hrs each | No C++ kernels exist |
+- **P1: Batched GEMM `_on_stream` variants for Q4_K/Q5_K/Q6_K/Q8_0/Q5_0/Q5_1 (`src/gpu/kernels/quant/legacy.rs`, `src/gpu/ops/gemm.rs`):**
+  - Added `gemm_q4_k_f32_on_stream`, `gemm_q5_k_f32_on_stream`, `gemm_q6_k_f32_on_stream`, `gemm_q8_0_f32_on_stream`, `gemm_q5_0_f32_on_stream`, `gemm_q5_1_f32_on_stream` in `legacy.rs`.
+  - Each variant passes `hipStream_t` to the underlying `*_launch` FFI function instead of `hipStream_t::null()`.
+  - Updated `ops/gemm.rs` dispatch to use `_on_stream` variants, enabling stream-parallel prefill for all K-quant and Q5 types.
+  - Fixed unresolved import error by adding the 6 `_on_stream` symbols to the explicit `pub use quant::{...}` re-export list in `src/gpu/kernels/mod.rs`.
+  - **Status:** Complete.
 - **Verification:**
   - `cargo check --lib --features gpu`: zero errors.
   - `cargo test --lib --features gpu`: 311 passed, 0 failed.
