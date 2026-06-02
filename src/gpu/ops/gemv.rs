@@ -18,6 +18,7 @@ use super::super::safety::{
 use super::super::weights::{
     GpuBuffer, GpuMpoWeights, GpuSparseCsrWeights, SvdCorrection, TensorRole, WeightMeta,
 };
+use crate::gpu::kernel_dispatch_profile::record_gemv_dispatch;
 use crate::loader::GgmlType;
 
 use super::fastpath::{q8_fastpath_ok, try_q4_0_q8_0_fastpath};
@@ -55,6 +56,7 @@ pub(super) fn dispatch_gemv_impl(
                 let use_wave32 = force_wave32_enabled() || (is_rdna3 && !disable_wave32_enabled());
 
                 if use_wave32 {
+                    record_gemv_dispatch("Q4_0", "wave32");
                     gemv_q4_0_f32_wave32_on_stream_unchecked(
                         weights.as_ptr() as *const u8,
                         input,
@@ -64,6 +66,7 @@ pub(super) fn dispatch_gemv_impl(
                         stream,
                     )?;
                 } else {
+                    record_gemv_dispatch("Q4_0", "wave64");
                     gemv_q4_0_f32_on_stream_unchecked(
                         weights.as_ptr() as *const u8,
                         input,
@@ -80,6 +83,7 @@ pub(super) fn dispatch_gemv_impl(
                 let use_wave32 = force_wave32_enabled() || (is_rdna3 && !disable_wave32_enabled());
 
                 if use_wave32 {
+                    record_gemv_dispatch("Q4_1", "wave32");
                     gemv_q4_1_f32_wave32_on_stream_unchecked(
                         weights.as_ptr() as *const u8,
                         input,
@@ -89,6 +93,7 @@ pub(super) fn dispatch_gemv_impl(
                         stream,
                     )?;
                 } else {
+                    record_gemv_dispatch("Q4_1", "wave64");
                     gemv_q4_1_f32_on_stream_unchecked(
                         weights.as_ptr() as *const u8,
                         input,
@@ -100,6 +105,7 @@ pub(super) fn dispatch_gemv_impl(
                 }
             }
             GgmlType::Q8_0 => {
+                record_gemv_dispatch("Q8_0", "baseline");
                 if is_lm_head_role(meta.role) {
                     let capture_active = matches!(
                         hip_stream_is_capturing(stream),
@@ -159,6 +165,7 @@ pub(super) fn dispatch_gemv_impl(
                 }
             }
             GgmlType::Q4_K => {
+                record_gemv_dispatch("Q4_K", "baseline");
                 gemv_q4_k_f32_on_stream(
                     weights.as_ptr() as *const u8,
                     input,
@@ -169,6 +176,7 @@ pub(super) fn dispatch_gemv_impl(
                 )?;
             }
             GgmlType::Q5_K => {
+                record_gemv_dispatch("Q5_K", "baseline");
                 gemv_q5_k_f32_on_stream(
                     weights.as_ptr() as *const u8,
                     input,
@@ -179,6 +187,7 @@ pub(super) fn dispatch_gemv_impl(
                 )?;
             }
             GgmlType::Q6_K => {
+                record_gemv_dispatch("Q6_K", "baseline");
                 gemv_q6_k_f32_on_stream(
                     weights.as_ptr() as *const u8,
                     input,
@@ -189,6 +198,7 @@ pub(super) fn dispatch_gemv_impl(
                 )?;
             }
             GgmlType::Q5_0 => {
+                record_gemv_dispatch("Q5_0", "baseline");
                 gemv_q5_0_f32_on_stream(
                     weights.as_ptr() as *const u8,
                     input,
@@ -199,6 +209,7 @@ pub(super) fn dispatch_gemv_impl(
                 )?;
             }
             GgmlType::Q5_1 => {
+                record_gemv_dispatch("Q5_1", "baseline");
                 gemv_q5_1_f32_on_stream(
                     weights.as_ptr() as *const u8,
                     input,

@@ -17,6 +17,7 @@ use super::super::safety::{
     launch_autotune_enabled,
 };
 use super::super::weights::{GpuBuffer, WeightMeta};
+use crate::gpu::kernel_dispatch_profile::record_gemv_dispatch;
 use crate::loader::GgmlType;
 
 use super::fastpath::{
@@ -126,6 +127,7 @@ pub fn gpu_dispatch_gemv_residual_on_stream(
                 let use_wave32 = force_wave32_enabled() || (is_rdna3 && !disable_wave32_enabled());
 
                 if use_wave32 {
+                    record_gemv_dispatch("Q4_0", "wave32_residual");
                     gemv_q4_0_f32_wave32_residual_on_stream_unchecked(
                         weights.as_ptr() as *const u8,
                         input,
@@ -138,6 +140,7 @@ pub fn gpu_dispatch_gemv_residual_on_stream(
                     return Ok(true);
                 }
 
+                record_gemv_dispatch("Q4_0", "wave64_residual");
                 gemv_q4_0_f32_residual_on_stream_unchecked(
                     weights.as_ptr() as *const u8,
                     input,
@@ -156,6 +159,7 @@ pub fn gpu_dispatch_gemv_residual_on_stream(
                 let use_wave32 = force_wave32_enabled() || (is_rdna3 && !disable_wave32_enabled());
 
                 if use_wave32 {
+                    record_gemv_dispatch("Q4_1", "wave32_residual");
                     unsafe {
                         gemv_q4_1_f32_wave32_residual_on_stream_unchecked(
                             weights.as_ptr() as *const u8,
@@ -168,6 +172,7 @@ pub fn gpu_dispatch_gemv_residual_on_stream(
                         )?;
                     }
                 } else {
+                    record_gemv_dispatch("Q4_1", "wave64_residual");
                     let capture_active = matches!(
                         hip_stream_is_capturing(stream),
                         Err(_)

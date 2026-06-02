@@ -39,6 +39,14 @@
   - `ops/gemm.rs:92` — GEMM for Q2_K/Q3_K (no C++ kernels exist; CPU fallback available).
   - `weights/model.rs:298,323,378,404` — Sparse CSR / MPO embeddings (needs lazy/offload execution path).
 
+- **P1: Env var overrides for kernel dispatch (`src/gpu/safety.rs`, `src/gpu/ops/gemv.rs`, `src/gpu/ops/gemv_residual.rs`, `src/gpu/ops/qkv.rs`):**
+  - Added `ROCMFORGE_USE_DP4A` (default true), `ROCMFORGE_FORCE_WAVE32` (default false), `ROCMFORGE_DISABLE_WAVE32` (default false).
+  - All use `CachedEnvFlag` with process-local caching, `refresh_runtime_env_flags()` reset, and `GPU_SAFE_MODE` suppression.
+  - Wired into Q4_0/Q4_1 GEMV dispatch: `force_wave32 || (rdna3 && !disable_wave32)`.
+  - Wired into QKV GQA dispatch: `has_dp4a && use_dp4a_enabled()`.
+  - Added 4 test cases covering toggle and safe-mode behavior.
+  - **Status:** Complete.
+
 - **P1: Q6_K quant/dequant/verify kernels + quant_wrapper (`src/gpu/kernels/quant/q6_k.rs`, `src/gpu/quant_wrapper/q6_k.rs`, `src/gpu/quant_wrapper/mod.rs`):**
   - Activated `quantize_q6_k_launch`, `dequantize_q6_k_launch`, `verify_q6_k_launch` FFI bindings in `q6_k.rs`.
   - Implemented `quantize_q6_k`, `dequantize_q6_k`, `dequantize_q6_k_batched`, `verify_q6_k_accuracy` with bounds checking and error handling.

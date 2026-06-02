@@ -1,6 +1,7 @@
 use super::super::device::GpuDevice;
 use super::super::error::{GpuError, GpuResult};
 use super::super::weights::{GpuBuffer, WeightMeta};
+use crate::gpu::kernel_dispatch_profile::record_gemm_dispatch;
 use crate::gpu::kernels::{
     batched_gemm_q4_0_f32, batched_gemm_q4_1_f32, gemm_q4_k_f32_on_stream, gemm_q5_0_f32_on_stream,
     gemm_q5_1_f32_on_stream, gemm_q5_k_f32_on_stream, gemm_q6_k_f32_on_stream,
@@ -26,6 +27,7 @@ pub fn gpu_dispatch_gemm(
     }
 
     if seq_len > 1 && meta.wtype == GgmlType::Q4_0 {
+        record_gemm_dispatch("Q4_0", "batched");
         return batched_gemm_q4_0_f32(
             weights.as_ptr(),
             input,
@@ -38,6 +40,7 @@ pub fn gpu_dispatch_gemm(
     }
 
     if seq_len > 1 && meta.wtype == GgmlType::Q4_1 {
+        record_gemm_dispatch("Q4_1", "batched");
         return batched_gemm_q4_1_f32(
             weights.as_ptr(),
             input,
@@ -50,6 +53,7 @@ pub fn gpu_dispatch_gemm(
     }
 
     if seq_len > 1 && meta.wtype == GgmlType::Q4_K {
+        record_gemm_dispatch("Q4_K", "on_stream");
         return gemm_q4_k_f32_on_stream(
             weights.as_ptr() as *const u8,
             input,
@@ -62,6 +66,7 @@ pub fn gpu_dispatch_gemm(
     }
 
     if seq_len > 1 && meta.wtype == GgmlType::Q5_K {
+        record_gemm_dispatch("Q5_K", "on_stream");
         return gemm_q5_k_f32_on_stream(
             weights.as_ptr() as *const u8,
             input,
@@ -74,6 +79,7 @@ pub fn gpu_dispatch_gemm(
     }
 
     if seq_len > 1 && meta.wtype == GgmlType::Q6_K {
+        record_gemm_dispatch("Q6_K", "on_stream");
         return gemm_q6_k_f32_on_stream(
             weights.as_ptr() as *const u8,
             input,
@@ -86,6 +92,7 @@ pub fn gpu_dispatch_gemm(
     }
 
     if seq_len > 1 && meta.wtype == GgmlType::Q8_0 {
+        record_gemm_dispatch("Q8_0", "on_stream");
         return gemm_q8_0_f32_on_stream(
             weights.as_ptr() as *const u8,
             input,
@@ -98,6 +105,7 @@ pub fn gpu_dispatch_gemm(
     }
 
     if seq_len > 1 && meta.wtype == GgmlType::Q5_0 {
+        record_gemm_dispatch("Q5_0", "on_stream");
         return gemm_q5_0_f32_on_stream(
             weights.as_ptr() as *const u8,
             input,
@@ -110,6 +118,7 @@ pub fn gpu_dispatch_gemm(
     }
 
     if seq_len > 1 && meta.wtype == GgmlType::Q5_1 {
+        record_gemm_dispatch("Q5_1", "on_stream");
         return gemm_q5_1_f32_on_stream(
             weights.as_ptr() as *const u8,
             input,
