@@ -35,14 +35,46 @@
   - Replaced `UnsupportedOperation` stubs in both `gpu_layer_forward_from_state_on_stream` and `gpu_layer_forward_hybrid` with full fused QKV → split → attention decode path for non-SSM layers (Qwen35-style hybrid).
   - Added `hip_memcpy_d2d` to `src/gpu/ffi.rs` for device-to-device copies needed for QKV split.
 - **Remaining `UnsupportedOperation` by design:**
-  - `ops/gemv.rs:219,259` — Transposed Tied LM Head (kernel doesn't support transposed layout).
-  - `ops/gemm.rs:92` — GEMM for Q2_K/Q3_K (no C++ kernels exist; CPU fallback available).
-  - `weights/model.rs:298,323,378,404` — Sparse CSR / MPO embeddings (needs lazy/offload execution path).
+  - `ops/gemm.rs:92` — GEMM for Q2_K/Q3_K (no C++ kernels exist; CPU fallback handles both via `gemm_q3_k_fallback` for Q3_K and returns `UnsupportedOperation` for Q2_K since no models use it).
+  - ~~`weights/model.rs:298,323,378,404` — Sparse CSR / MPO embeddings (needs lazy/offload execution path).~~ **RESOLVED** — Implemented `GpuWeightTensor` enum abstraction (`Dense | SparseCsr | Mpo`) in `weights/model.rs`. Replaced all four `UnsupportedOperation` rejections with actual `try_load_sparse_csr` / `try_load_mpo` calls (reusing the existing layer-level loaders from `layer.rs`). Updated all forward paths (`embed.rs`, `logits.rs`, `forward_prefill.rs`, `forward/mod.rs`) to extract the dense buffer via `as_dense()`, and added clean `UnsupportedOperation` fallbacks for sparse/MPO at the dispatch points (experimental kernel gating not yet wired for token-embedding / LM-head roles). `GpuWeightTensor` exported through `weights/mod.rs` and `gpu/mod.rs`. `compute_model_binding_tag` and `vram_bytes` updated to handle all variants. Verified: `cargo check --all-targets` clean, `cargo test --lib` 149 passed, `magellan find GpuWeightTensor` indexed successfully.
+  - ~~`ops/gemv.rs:219,259` — Transposed Tied LM Head (kernel doesn't support transposed layout).~~ **RESOLVED** — this rejection was dead code. Tied LM head (`prepare_tied_lm_head_q8`) hardcodes `needs_transpose: false`. Explicit LM head (`build_matrix_meta`, `is_tied=false`) sets `role: TensorRole::LmHead` (not `TiedLmHead`) and `compute_transpose_flag` never returns `true` for `output.weight`. The guard was impossible to hit. Removed the two dead branches from `gpu_dispatch_gemv` and `gpu_dispatch_gemv_on_stream`. Verified: `cargo check --all-targets` clean, `cargo test --lib` 149 passed, zero remaining references in `src/`.
+
+- **P1: ROCmForge Remaining Gaps Audit (2026-06-02):**
+  - ~~**GPU-1: Decode with sparse/MPO LM head**~~ **RESOLVED** — `src/gpu/forward/logits.rs:95-132`. Wired `gpu_dispatch_sparse_csr_gemv_on_stream` and `gpu_dispatch_mpo_apply_on_stream` branches in `gpu_launch_greedy_logits_tail_on_stream` using `GpuWeightTensor::as_sparse_csr()` and `as_mpo()`. Final else returns `InvalidWeightLayout`.
+  - ~~**GPU-2: Decode with sparse/MPO LM head graph capture**~~ **RESOLVED** — `src/gpu/forward/utils.rs:43`. `decode_graph_disabled(gpu_weights)` now returns `true` when `gpu_weights.lm_head.as_dense().is_none()`, causing the decode path to skip HIP graph capture (which cannot record the dynamic indexing in sparse/MPO kernels) and fall back to the non-graph path. Verified: sparse/MPO LM head models degrade gracefully to `gpu_greedy_logits_tail_token`.
+  - ~~**GPU-3: Prefill with sparse/MPO token embeddings**~~ **RESOLVED** — `src/gpu/forward_prefill.rs:159-191`. Unified the Q8_0 and Q4_0 native batch embed paths under an `if let Some(dense)` guard. Added a shared fallback block `if wtype != Q8_0 && wtype != Q4_0 || token_emb.as_dense().is_none()` that falls through to CPU `embed_token` + row-by-row H2D copy. Sparse/MPO token embeddings now get a slow-but-working prefill path.
+  - ~~**GPU-4: Prefill logits with sparse/MPO LM head**~~ **RESOLVED** — `src/gpu/forward_prefill.rs:1150-1189`. In the prefill logits projection (both standard-batch and last-batch re-run paths), added sparse CSR and MPO dispatch branches identical to GPU-1. Final else returns `InvalidWeightLayout`.
+  - ~~**GPU-5: Forward with sparse/MPO LM head (GreedyArgmax / DownloadToHost)**~~ **RESOLVED** — `src/gpu/forward/mod.rs:75-122`. Added sparse CSR and MPO dispatch branches in the `GpuLogitsMode::DownloadToHost` closure. The graph-capture `GreedyArgmax` path is handled through `logits.rs` (GPU-1), and the fallback in `forward/mod.rs:133-165` catches `InvalidWeightLayout | UnsupportedWeightType | UnsupportedOperation` and falls back to CPU GEMV.
+  - ~~**GPU-6: Batched fused gate-up for non-Q4_0/Q4_0**~~ **RESOLVED** — `src/gpu/ops_batched.rs:170-260`. Renamed `gpu_dispatch_batched_fused_gate_up_q4_0` → `gpu_dispatch_batched_fused_gate_up_on_stream`; added `device` + `gate_scratch` params. **Q4_0/Q4_0**: existing `batched_fused_gate_up_q4_0_f32` fused kernel preserved. **Q8_0/Q8_0**: composes two `gemm_q8_0_f32_on_stream` calls + `silu_on_stream` + `mul_on_stream` per batch row using already-tested kernels. No new HIP kernels written. Per-token fallback handles all other combos (SVD, interleaved, generic). `cargo check --all-targets` + `cargo test --lib`: 156 passed. _Done: 2026-06-02._
+  - **GPU-7: Q2_K / Q3_K GPU GEMV kernels** — No HIP kernels exist. CPU fallback handles both. `supports_gemv_type` still rejects Q2_K/Q3_K. No production models use these formats. Effort-high, risk-high (display-attached GPU). **Blocked — low priority. Still open.**
+  - ~~**GPU-8: Q5_0 / Q5_1 batched GEMM**~~ **RESOLVED** — Was stale. `gemm_q5_0_f32_on_stream` and `gemm_q5_1_f32_on_stream` already exist in `src/gpu/kernels/quant/legacy.rs` (added in an earlier batch) and are wired into `gpu_dispatch_gemm` at `src/gpu/ops/gemm.rs:107` (Q5_0) and `:120` (Q5_1) for `seq_len > 1`. No remaining per-token fallback for these types in GEMM dispatch.
+  - ~~**CPU-1: Q2_K CPU dequant/embedding/GEMV/GEMM**~~ **RESOLVED** — `src/cpu/kernels/q2.rs` (`BlockQ2K`, 84 bytes/256 weights), `src/cpu/quant.rs` (`embed_q2_k`, `embed_q2_k_batch`), `src/cpu/ops/gemv.rs` (`gemv_q2_k`), `src/cpu/ops/gemm.rs` (`gemm_q2_k_fallback`). `dispatch_gemv` and `dispatch_gemm` both match `GgmlType::Q2_K` now.
+  - **CPU-2: Q3_K GPU GEMV** — Stale label: this is actually a GPU item. Q3_K CPU path is complete. GPU path still rejects Q3_K via `supports_gemv_type`. If a model uses Q3_K, GPU decode triggers CPU fallback. No production models use Q3_K. **Blocked. Still open.**
+  - ~~**CPU-3: Q2_K / Q3_K / Q5_K / Q6_K transposed GEMV**~~ **RESOLVED** — `src/cpu/ops/gemv.rs:840-918`. Added `gemv_q2_k_transposed`, `gemv_q3_k_transposed`, `gemv_q5_k_transposed`, `gemv_q6_k_transposed`. Each dequantizes full blocks to `[f32; 256]` then accumulates against the transposed layout. `dispatch_gemv` branches on `meta.needs_transpose` for all four types. Tested with `cargo test --lib` (156 passed).
+  - **PARSE-1/PARSE-2: Sparse CSR / MPO parse failures** — `weights/model.rs:385/473` and `:396/484` return `UnsupportedOperation` when `try_load_sparse_csr`/`try_load_mpo` return `None`. These are data-dependent (malformed file), not missing features. Will stay as errors.
+  - **Post-resolution GPU `UnsupportedOperation` inventory (2026-06-02):**
+    - `src/gpu/ops/gemm.rs:133` — Q2_K/Q3_K GEMM (no HIP kernels; CPU fallback handles Q3_K).
+    - `src/gpu/forward/decode.rs:115-116` — Graph capture fallback on `InvalidWeightLayout | UnsupportedWeightType | UnsupportedOperation`, intentionally triggers non-graph fallback.
+    - `src/gpu/forward/mod.rs:136-137` — Same intentional fallback catch for forward closure.
+    - `src/gpu/ops_batched.rs` — Non-Q4_0/non-Q8_0 batched fused gate-up (GPU-6). Now returns `UnsupportedWeightType` for Q4_1/Q4_1 etc.; per-token fallback handles.
+    - `src/gpu/ops/gemv.rs:255`/`288`/`329`/`553` — `supports_gemv_type` rejections for Q2_K, Q3_K, IQ4_NL, etc.
+    - `src/gpu/weights/model.rs:385`, `:396`, `:473`, `:484` — `try_load_sparse_csr`/`try_load_mpo` returning `None` (parse error on malformed data).
+    - `src/gpu/weights/model.rs:741` — `UnsupportedWeightType` for unsupported matrix upload type.
+    - `src/gpu/weights/upload.rs:47` — `UnsupportedWeightType` for unsupported GPU matrix type.
 
 - **P1: Q5_1 tied LM head dequantization (`src/cpu/quant.rs`, `src/gpu/weights/model.rs`):**
   - Added `embed_q5_1` and `embed_q5_1_batch` CPU dequantization functions for Q5_1 embedding table lookup.
   - Added `Q5_1_BLOCK_ELEMS` (32) and `Q5_1_BLOCK_BYTES` (24) constants.
   - Wired `GgmlType::Q5_1` dispatch into `prepare_tied_lm_head_q8` — previously fell through to `UnsupportedWeightType` even though Q5_1 GPU GEMV kernels exist and work.
+  - **Status:** Complete.
+
+- **P2: Q2_K / Q3_K CPU full-path support (`src/cpu/forward.rs`, `src/cpu/ops/gemv.rs`, `src/loader/ggml_type.rs`):**
+  - Fixed `Q2_K` block size bug in `bytes_for_elements`: was `256 bytes / 256 elements` (FP32-equivalent, impossible for a 2-bit format). Corrected to `84 bytes / 256 elements` matching llama.cpp `block_q2_K` (`sizeof(ggml_half)*2 + QK_K/16 + QK_K/4`). Added `bytes_q2_k` unit test.
+  - Wired `GgmlType::Q3_K` into `cpu_embed_token` dispatch (`src/cpu/forward.rs:518`) — previously fell through to `panic_any("Unsupported embedding type")`.
+  - Added `gemv_q3_k` wrapper in `src/cpu/ops/gemv.rs` (reuses existing `gemm_q3_k_fallback` with batch_size=1).
+  - Wired `GgmlType::Q3_K` into CPU `dispatch_gemv` match arm — previously returned `UnsupportedWeightType`.
+  - GPU path unchanged: `supports_gemv_type` still excludes Q2_K/Q3_K, `dispatch_gemv_impl` has no GPU kernels for them (no HIP kernels exist, correct to reject). GPU prefill falls back to CPU embed + H2D for all unsupported types including Q3_K.
+  - Q2_K: no CPU dequant exists (no models use this format). If a model appears, add `embed_q2_k` and `gemv_q2_k` following the Q3_K pattern.
   - **Status:** Complete.
 
 - **P1: Kernel dispatch profiling (`src/gpu/kernel_dispatch_profile.rs`, `src/gpu/ops/gemv.rs`, `src/gpu/ops/gemv_residual.rs`, `src/gpu/ops/gemm.rs`):**
@@ -1541,6 +1573,37 @@ Phase 1 COMPLETE ✅
 - **Files Changed:** `tests/quant_integration.rs`
 
 ### [CPU Backend]
+
+**feat(cpu): Full Q2_K CPU support (embed/GEMV/GEMM)**
+
+- **Issue:** `GgmlType::Q2_K` was defined with correct `bytes_for_elements` (84 bytes/256 elements), but no runtime support existed. `cpu_embed_token` panicked, `dispatch_gemv` and `dispatch_gemm` returned `UnsupportedWeightType(Q2_K)`.
+- **Root Cause:** No models use Q2_K, so it was never wired. Format differs from Q3_K: Q2_K stores `scales[16] + qs[64] + d(f16) + dmin(f16)` with 2-bit values and separate min/scale per block.
+- **Fix:**
+  - Added `src/cpu/kernels/q2.rs` with `BlockQ2K` struct (`#[repr(C)]`, 84 bytes) and `dequantize()` following llama.cpp `block_q2_K` layout.
+  - Added `Q2_K_BLOCK_ELEMS = 256`, `Q2_K_BLOCK_BYTES = 84` to `src/cpu/quant.rs`.
+  - Added `embed_q2_k` / `embed_q2_k_batch` to `src/cpu/quant.rs` reusing `BlockQ2K::dequantize()`.
+  - Added `gemm_q2_k_fallback` to `src/cpu/ops/gemm.rs` (dequantizes blocks to `[f32; 256]`, then dot with input).
+  - Added `gemv_q2_k` wrapper to `src/cpu/ops/gemv.rs` (reuses `gemm_q2_k_fallback` with `batch_size=1`).
+  - Wired `GgmlType::Q2_K` into `dispatch_gemv` and `dispatch_gemm` match arms in `src/cpu/ops/gemv.rs` and `src/cpu/ops/gemm.rs`.
+  - Wired `GgmlType::Q2_K` into `cpu_embed_token` in `src/cpu/forward.rs`.
+  - Wired `GgmlType::Q2_K` into both prefill embedding paths in `src/cpu/prefill.rs`.
+  - Updated `src/cpu/kernels/mod.rs` to export `BlockQ2K`.
+- **Verification:** `cargo check --all-targets`: 0 errors, 0 warnings. `cargo test --lib`: 153 passed, 0 failed. `cargo clippy --all-targets -- -D warnings`: 0 warnings.
+- **Files Changed:** `src/cpu/kernels/q2.rs` (new), `src/cpu/kernels/mod.rs`, `src/cpu/quant.rs`, `src/cpu/forward.rs`, `src/cpu/ops/gemv.rs`, `src/cpu/ops/gemm.rs`, `src/cpu/prefill.rs`.
+- **Risk:** Low. Pure CPU, no GPU code changes. Zero display risk.
+
+**feat(cpu): Transposed GEMV fallbacks for Q2_K / Q3_K / Q5_K / Q6_K**
+
+- **Issue:** `dispatch_gemv` only handled `needs_transpose` for Q4_0, Q4_1, Q8_0, F32. Q2_K, Q3_K, Q5_K, Q6_K had non-transposed GEMV via `gemm_*_fallback` but transposed variants were completely absent. Tied embeddings (weight-tying) with these quant types would return `UnsupportedWeightType`.
+- **Root Cause:** No model uses these types for tied embeddings, so transposed paths were never implemented.
+- **Fix:**
+  - Added `src/cpu/kernels/q6.rs` with `BlockQ6K` struct (`#[repr(C)]`, 210 bytes) and `dequantize()` following llama.cpp `block_q6_K` layout.
+  - Implemented `gemv_q2_k_transposed`, `gemv_q3_k_transposed`, `gemv_q5_k_transposed`, `gemv_q6_k_transposed` in `src/cpu/ops/gemv.rs`. Each iterates over output columns, dequantizes blocks on-the-fly, and computes dot products.
+  - Wired transpose branching into `dispatch_gemv` match arms for Q2_K, Q3_K, Q5_K, Q6_K.
+  - Updated `src/cpu/kernels/mod.rs` to export `BlockQ6K`.
+- **Verification:** `cargo check --all-targets`: 0 errors, 0 warnings. `cargo test --lib`: 156 passed, 0 failed. `cargo clippy --all-targets -- -D warnings`: 0 warnings.
+- **Files Changed:** `src/cpu/kernels/q6.rs` (new), `src/cpu/kernels/mod.rs`, `src/cpu/ops/gemv.rs`.
+- **Risk:** Low. Pure CPU, no GPU changes. Zero display risk.
 
 **perf(cpu): Add Q8_0 scratch buffer to eliminate heap allocations in hot paths**
 
