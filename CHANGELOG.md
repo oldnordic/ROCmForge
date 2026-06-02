@@ -39,6 +39,19 @@
   - `ops/gemm.rs:92` — GEMM for Q2_K/Q3_K (no C++ kernels exist; CPU fallback available).
   - `weights/model.rs:298,323,378,404` — Sparse CSR / MPO embeddings (needs lazy/offload execution path).
 
+- **P1: Q5_1 tied LM head dequantization (`src/cpu/quant.rs`, `src/gpu/weights/model.rs`):**
+  - Added `embed_q5_1` and `embed_q5_1_batch` CPU dequantization functions for Q5_1 embedding table lookup.
+  - Added `Q5_1_BLOCK_ELEMS` (32) and `Q5_1_BLOCK_BYTES` (24) constants.
+  - Wired `GgmlType::Q5_1` dispatch into `prepare_tied_lm_head_q8` — previously fell through to `UnsupportedWeightType` even though Q5_1 GPU GEMV kernels exist and work.
+  - **Status:** Complete.
+
+- **P1: Kernel dispatch profiling (`src/gpu/kernel_dispatch_profile.rs`, `src/gpu/ops/gemv.rs`, `src/gpu/ops/gemv_residual.rs`, `src/gpu/ops/gemm.rs`):**
+  - Added `KernelDispatchProfiler` singleton that records which kernel variant is selected per dispatch call (family, variant, quant type, prefill/decode mode).
+  - Convenience helpers: `record_gemv_dispatch`, `record_gemm_dispatch`.
+  - Wired into all GEMV and GEMM dispatch paths: Q4_0 (wave32/wave64), Q4_1 (wave32/wave64), Q8_0, Q4_K, Q5_K, Q6_K, Q5_0, Q5_1.
+  - Tests: `test_record_and_get`, `test_reset_clears_records`, `test_convenience_helpers`.
+  - **Status:** Complete.
+
 - **P1: Env var overrides for kernel dispatch (`src/gpu/safety.rs`, `src/gpu/ops/gemv.rs`, `src/gpu/ops/gemv_residual.rs`, `src/gpu/ops/qkv.rs`):**
   - Added `ROCMFORGE_USE_DP4A` (default true), `ROCMFORGE_FORCE_WAVE32` (default false), `ROCMFORGE_DISABLE_WAVE32` (default false).
   - All use `CachedEnvFlag` with process-local caching, `refresh_runtime_env_flags()` reset, and `GPU_SAFE_MODE` suppression.

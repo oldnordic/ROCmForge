@@ -634,6 +634,9 @@ fn prepare_tied_lm_head_q8(
             GgmlType::Q5_0 => {
                 crate::cpu::quant::embed_q5_0(id, data_to_use, out_row, hidden_size);
             }
+            GgmlType::Q5_1 => {
+                crate::cpu::quant::embed_q5_1(id, data_to_use, out_row, hidden_size);
+            }
             GgmlType::F32 => {
                 let f32_emb = unsafe {
                     std::slice::from_raw_parts(

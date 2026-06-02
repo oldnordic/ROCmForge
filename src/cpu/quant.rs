@@ -27,6 +27,16 @@ pub const Q4_K_BLOCK_BYTES: usize = 144;
 pub const Q5_0_BLOCK_ELEMS: usize = 32;
 pub const Q5_0_BLOCK_BYTES: usize = 22;
 
+/// Q5_1: 32 elements per block, 24 bytes (2 scale + 2 min + 4 qh + 16 qs)
+/// Q5_1 block format:
+/// - d: f16 scale (2 bytes)
+/// - m: f16 min offset (2 bytes)
+/// - qh: 4 bytes of high bits (1 bit per value)
+/// - qs: 16 bytes of low 4 bits (2 values per byte)
+/// Total: 24 bytes for 32 values (5.5 bits per weight)
+pub const Q5_1_BLOCK_ELEMS: usize = 32;
+pub const Q5_1_BLOCK_BYTES: usize = 24;
+
 /// Q3_K: 256 elements per block, 110 bytes (32 hmask + 64 qs + 12 scales + 2 d)
 ///
 /// Q3_K block format:
@@ -227,6 +237,43 @@ pub fn embed_q5_0_batch(ids: &[u32], emb: &[u8], out: &mut [f32], hidden_size: u
     for (s, &id) in ids.iter().enumerate() {
         let or = &mut out[s * hidden_size..(s + 1) * hidden_size];
         embed_q5_0(id as usize, emb, or, hidden_size);
+    }
+}
+
+/// Dequantize Q5_1 embedding row: out = dequant(emb[token_id])
+///
+/// Q5_1 block: [d f16 | m f16 | qh[4] | qs[16]] = 24 bytes for 32 values
+/// Uses 5-bit quantization with min offset: x = scale * q + min
+pub fn embed_q5_1(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usize) {
+    let num_blocks = hidden_size / Q5_1_BLOCK_ELEMS;
+    let row_offset = token_id * num_blocks * Q5_1_BLOCK_BYTES;
+
+    for b in 0..num_blocks {
+        let block =
+            &emb[row_offset + b * Q5_1_BLOCK_BYTES..row_offset + (b + 1) * Q5_1_BLOCK_BYTES];
+        let d = load_f16_scale(&block[0..2]);
+        let m = load_f16_scale(&block[2..4]);
+        let qh = &block[4..8]; // 4 bytes, 32 bits (high bit of each 5-bit value)
+        let qs = &block[8..24]; // 16 bytes, 32 nibbles (low 4 bits)
+        let base = b * Q5_1_BLOCK_ELEMS;
+
+        for i in 0..32 {
+            // Get high bit from qh
+            let high_bit = ((qh[i / 8] >> (i % 8)) & 1) << 4;
+            // Get low 4 bits from qs
+            let low_bits = qs[i / 2] >> ((i % 2) * 4) & 0x0F;
+            // Combine to get 5-bit value (0-31)
+            let q = (high_bit | low_bits) as f32;
+            out[base + i] = d * q + m;
+        }
+    }
+}
+
+/// Batch embed from Q5_1
+pub fn embed_q5_1_batch(ids: &[u32], emb: &[u8], out: &mut [f32], hidden_size: usize) {
+    for (s, &id) in ids.iter().enumerate() {
+        let or = &mut out[s * hidden_size..(s + 1) * hidden_size];
+        embed_q5_1(id as usize, emb, or, hidden_size);
     }
 }
 
