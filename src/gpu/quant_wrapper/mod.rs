@@ -9,6 +9,7 @@ mod q4_k;
 mod q5_0;
 mod q5_1;
 mod q5_k;
+mod q6_k;
 mod q8_0;
 
 use crate::gpu::device::GpuDevice;
