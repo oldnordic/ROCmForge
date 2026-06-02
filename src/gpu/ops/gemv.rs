@@ -11,7 +11,10 @@ use super::super::kernels::{
 use super::super::launch_autotune::{
     lookup_lm_head_q8_variant, select_lm_head_q8_variant, VariantId,
 };
-use super::super::safety::{experimental_q8_activation_fastpath_enabled, launch_autotune_enabled};
+use super::super::safety::{
+    disable_wave32_enabled, experimental_q8_activation_fastpath_enabled, force_wave32_enabled,
+    launch_autotune_enabled,
+};
 use super::super::weights::{
     GpuBuffer, GpuMpoWeights, GpuSparseCsrWeights, SvdCorrection, TensorRole, WeightMeta,
 };
@@ -49,8 +52,9 @@ pub(super) fn dispatch_gemv_impl(
 
                 let features = super::super::features::GpuFeatures::detect(device).ok();
                 let is_rdna3 = features.map_or(false, |f| f.arch.starts_with("gfx11"));
+                let use_wave32 = force_wave32_enabled() || (is_rdna3 && !disable_wave32_enabled());
 
-                if is_rdna3 {
+                if use_wave32 {
                     gemv_q4_0_f32_wave32_on_stream_unchecked(
                         weights.as_ptr() as *const u8,
                         input,
@@ -73,8 +77,9 @@ pub(super) fn dispatch_gemv_impl(
             GgmlType::Q4_1 => {
                 let features = super::super::features::GpuFeatures::detect(device).ok();
                 let is_rdna3 = features.map_or(false, |f| f.arch.starts_with("gfx11"));
+                let use_wave32 = force_wave32_enabled() || (is_rdna3 && !disable_wave32_enabled());
 
-                if is_rdna3 {
+                if use_wave32 {
                     gemv_q4_1_f32_wave32_on_stream_unchecked(
                         weights.as_ptr() as *const u8,
                         input,
@@ -335,7 +340,8 @@ pub fn gpu_dispatch_gemv_ptr_on_stream(
             GgmlType::Q4_0 => {
                 let features = super::super::features::GpuFeatures::detect(device).ok();
                 let is_rdna3 = features.map_or(false, |f| f.arch.starts_with("gfx11"));
-                if is_rdna3 {
+                let use_wave32 = force_wave32_enabled() || (is_rdna3 && !disable_wave32_enabled());
+                if use_wave32 {
                     gemv_q4_0_f32_wave32_on_stream_unchecked(
                         weights_ptr,
                         input,
@@ -358,7 +364,8 @@ pub fn gpu_dispatch_gemv_ptr_on_stream(
             GgmlType::Q4_1 => {
                 let features = super::super::features::GpuFeatures::detect(device).ok();
                 let is_rdna3 = features.map_or(false, |f| f.arch.starts_with("gfx11"));
-                if is_rdna3 {
+                let use_wave32 = force_wave32_enabled() || (is_rdna3 && !disable_wave32_enabled());
+                if use_wave32 {
                     gemv_q4_1_f32_wave32_on_stream_unchecked(
                         weights_ptr,
                         input,

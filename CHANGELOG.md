@@ -39,6 +39,13 @@
   - `ops/gemm.rs:92` — GEMM for Q2_K/Q3_K (no C++ kernels exist; CPU fallback available).
   - `weights/model.rs:298,323,378,404` — Sparse CSR / MPO embeddings (needs lazy/offload execution path).
 
+- **P1: Q6_K quant/dequant/verify kernels + quant_wrapper (`src/gpu/kernels/quant/q6_k.rs`, `src/gpu/quant_wrapper/q6_k.rs`, `src/gpu/quant_wrapper/mod.rs`):**
+  - Activated `quantize_q6_k_launch`, `dequantize_q6_k_launch`, `verify_q6_k_launch` FFI bindings in `q6_k.rs`.
+  - Implemented `quantize_q6_k`, `dequantize_q6_k`, `dequantize_q6_k_batched`, `verify_q6_k_accuracy` with bounds checking and error handling.
+  - Created `quant_wrapper/q6_k.rs` with `quantize_q6_k`, `dequantize_q6_k`, `verify_q6_k_accuracy`, `gemv_q6_k_f32` methods.
+  - Added `mod q6_k` to `quant_wrapper/mod.rs`.
+  - **Status:** Complete.
+
 - **P1: Batched GEMM `_on_stream` variants for Q4_K/Q5_K/Q6_K/Q8_0/Q5_0/Q5_1 (`src/gpu/kernels/quant/legacy.rs`, `src/gpu/ops/gemm.rs`):**
   - Added `gemm_q4_k_f32_on_stream`, `gemm_q5_k_f32_on_stream`, `gemm_q6_k_f32_on_stream`, `gemm_q8_0_f32_on_stream`, `gemm_q5_0_f32_on_stream`, `gemm_q5_1_f32_on_stream` in `legacy.rs`.
   - Each variant passes `hipStream_t` to the underlying `*_launch` FFI function instead of `hipStream_t::null()`.

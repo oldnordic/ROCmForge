@@ -6,7 +6,7 @@ use super::super::kernels::{
     gemv_qkv_q4_0_f32_on_stream_variant,
 };
 use super::super::launch_autotune::{lookup_qkv_variant, select_qkv_variant, VariantId};
-use super::super::safety::launch_autotune_enabled;
+use super::super::safety::{launch_autotune_enabled, use_dp4a_enabled};
 use super::super::weights::{GpuBuffer, SvdCorrection, WeightMeta};
 use crate::loader::GgmlType;
 
@@ -250,7 +250,9 @@ pub fn gpu_dispatch_fused_qkv_gqa_on_stream(
     let bias_k_ptr = k_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32);
     let bias_v_ptr = v_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32);
 
-    if features.has_dp4a {}
+    if features.has_dp4a && use_dp4a_enabled() {
+        // DP4A-optimized path available but not yet wired
+    }
 
     fused_qkv_rope_q4_0_gqa_on_stream(
         device,

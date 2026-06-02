@@ -12,7 +12,10 @@ use super::super::launch_autotune::{
     lookup_q4_0_q8_residual_variant, lookup_q4_1_residual_variant, select_q4_0_q8_residual_variant,
     select_q4_1_residual_variant, VariantId,
 };
-use super::super::safety::{experimental_q8_activation_fastpath_enabled, launch_autotune_enabled};
+use super::super::safety::{
+    disable_wave32_enabled, experimental_q8_activation_fastpath_enabled, force_wave32_enabled,
+    launch_autotune_enabled,
+};
 use super::super::weights::{GpuBuffer, WeightMeta};
 use crate::loader::GgmlType;
 
@@ -120,8 +123,9 @@ pub fn gpu_dispatch_gemv_residual_on_stream(
 
                 let features = super::super::features::GpuFeatures::detect(device).ok();
                 let is_rdna3 = features.map_or(false, |f| f.arch.starts_with("gfx11"));
+                let use_wave32 = force_wave32_enabled() || (is_rdna3 && !disable_wave32_enabled());
 
-                if is_rdna3 {
+                if use_wave32 {
                     gemv_q4_0_f32_wave32_residual_on_stream_unchecked(
                         weights.as_ptr() as *const u8,
                         input,
@@ -149,8 +153,9 @@ pub fn gpu_dispatch_gemv_residual_on_stream(
             GgmlType::Q4_1 => {
                 let features = super::super::features::GpuFeatures::detect(device).ok();
                 let is_rdna3 = features.map_or(false, |f| f.arch.starts_with("gfx11"));
+                let use_wave32 = force_wave32_enabled() || (is_rdna3 && !disable_wave32_enabled());
 
-                if is_rdna3 {
+                if use_wave32 {
                     unsafe {
                         gemv_q4_1_f32_wave32_residual_on_stream_unchecked(
                             weights.as_ptr() as *const u8,
