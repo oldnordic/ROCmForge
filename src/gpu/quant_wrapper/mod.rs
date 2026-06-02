@@ -6,6 +6,8 @@
 mod q4_0;
 mod q4_1;
 mod q4_k;
+mod q5_0;
+mod q5_1;
 mod q5_k;
 mod q8_0;
 
@@ -14,7 +16,8 @@ use crate::gpu::error::GpuResult;
 
 pub use crate::gpu::quant::{
     Q4KBlock, Q5KBlock, Q8_0Block, Q4_0_BLOCK_SIZE, Q4_1_BLOCK_SIZE, Q4_K_BLOCK_SIZE,
-    Q5_K_BLOCK_SIZE, Q8_0_BLOCK_SIZE, Q8_0_MAX, QK4_0, QK4_1, QK8_0, QK_K,
+    Q5_0_BLOCK_SIZE, Q5_1_BLOCK_SIZE, Q5_K_BLOCK_SIZE, Q8_0_BLOCK_SIZE, Q8_0_MAX, QK4_0, QK4_1,
+    QK5_0, QK5_1, QK8_0, QK_K,
 };
 
 pub struct GpuQuant {

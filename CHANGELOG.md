@@ -36,22 +36,20 @@
   - Added `hip_memcpy_d2d` to `src/gpu/ffi.rs` for device-to-device copies needed for QKV split.
 - **Remaining `UnsupportedOperation` by design:**
   |  - `ops/gemv.rs:219,259` — Transposed Tied LM Head (kernel doesn't support transposed layout).
-    - `ops/gemm.rs:92` — GEMM for Q5_0/Q5_1/Q2_K/Q3_K (no C++ kernels exist; CPU fallback available).
+    - `ops/gemm.rs:92` — GEMM for Q2_K/Q3_K (no C++ kernels exist; CPU fallback available).
     - `weights/model.rs:298,323,378,404` — Sparse CSR / MPO embeddings (needs lazy/offload execution path).
 
   ### TODO — ROCmForge Next Steps
 
   | Priority | Item | Effort | Blockers |
   |----------|------|--------|----------|
-  | P0 | Q5_0 GPU kernels (gemv + gemm) | ~4-6 hrs | New C++ HIP kernels + FFI + dispatch |
-  | P0 | Q5_1 GPU kernels (gemv + gemm) | ~4-6 hrs | Same as Q5_0 |
   | P1 | Batched GEMM _on_stream variants for Q4_K/Q5_K/Q6_K/Q8_0 | ~2-3 hrs | Add stream param to C++ kernels |
   | P1 | Sparse CSR / MPO lazy execution path | ~1-2 days | Architectural — CPU fallback or sparse kernel |
   | P2 | Transposed LM Head kernel support | ~1 day | Weight layout change or new kernel |
   | P2 | Q2_K / Q3_K GPU kernels | ~6-8 hrs each | No C++ kernels exist |
 - **Verification:**
   - `cargo check --lib --features gpu`: zero errors.
-  - `cargo test --lib --features gpu`: 307 passed, 0 failed.
+  - `cargo test --lib --features gpu`: 311 passed, 0 failed.
   - `cargo clippy --lib --features gpu -- -D warnings`: zero warnings.
   - Zero `hip_malloc`/`hip_free` bypasses in production code.
 

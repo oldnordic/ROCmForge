@@ -197,6 +197,10 @@ mod gpu_build {
                             ("libq5_k_dequantize.a", "q5_k_dequantize"),
                             ("libq5_k_verify.a", "q5_k_verify"),
                             ("libq5_k_gemv.a", "q5_k_gemv"),
+                            // Q5_0 libraries
+                            ("libq5_0_gemv.a", "q5_0_gemv"),
+                            // Q5_1 libraries
+                            ("libq5_1_gemv.a", "q5_1_gemv"),
                             // Q6_K libraries
                             ("libq6_k_quantize.a", "q6_k_quantize"),
                             ("libq6_k_dequantize.a", "q6_k_dequantize"),
@@ -233,6 +237,8 @@ mod gpu_build {
                             ("libq8_0_gemm.a", "q8_0_gemm"),
                             ("libq4_k_gemm.a", "q4_k_gemm"),
                             ("libq5_k_gemm.a", "q5_k_gemm"),
+                            ("libq5_0_gemm.a", "q5_0_gemm"),
+                            ("libq5_1_gemm.a", "q5_1_gemm"),
                             ("libq6_k_gemm.a", "q6_k_gemm"),
                             // RFM unpack library
                             ("librfm_unpack.a", "rfm_unpack"),

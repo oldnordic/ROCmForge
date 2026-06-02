@@ -136,6 +136,60 @@ pub const QK4_1: usize = 32;
 /// Total bytes per Q4_1 block
 pub const Q4_1_BLOCK_SIZE: usize = 20; // 2 (scale) + 2 (min) + 16 (data)
 
+// Q5_0 constants (from llama.cpp)
+/// Number of elements per Q5_0 block
+pub const QK5_0: usize = 32;
+
+/// Total bytes per Q5_0 block
+pub const Q5_0_BLOCK_SIZE: usize = 22; // 2 (scale) + 4 (qh) + 16 (qs)
+
+/// Rust-owned Q5_0 block
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
+pub struct Q5_0Block {
+    pub d: half::f16, // scale (2 bytes)
+    pub qh: [u8; 4],  // high bits (4 bytes)
+    pub qs: [u8; 16], // low 4 bits packed (16 bytes)
+}
+
+impl Default for Q5_0Block {
+    fn default() -> Self {
+        Self {
+            d: half::f16::from_f32(1.0),
+            qh: [0; 4],
+            qs: [0; 16],
+        }
+    }
+}
+
+// Q5_1 constants (from llama.cpp)
+/// Number of elements per Q5_1 block
+pub const QK5_1: usize = 32;
+
+/// Total bytes per Q5_1 block
+pub const Q5_1_BLOCK_SIZE: usize = 24; // 2 (scale) + 2 (min) + 4 (qh) + 16 (qs)
+
+/// Rust-owned Q5_1 block
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
+pub struct Q5_1Block {
+    pub d: half::f16, // scale (2 bytes)
+    pub m: half::f16, // min offset (2 bytes)
+    pub qh: [u8; 4],  // high bits (4 bytes)
+    pub qs: [u8; 16], // low 4 bits packed (16 bytes)
+}
+
+impl Default for Q5_1Block {
+    fn default() -> Self {
+        Self {
+            d: half::f16::from_f32(1.0),
+            m: half::f16::from_f32(0.0),
+            qh: [0; 4],
+            qs: [0; 16],
+        }
+    }
+}
+
 /// Rust-owned Q4_1 block (llama.cpp format: d + m + qs)
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(C)]

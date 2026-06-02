@@ -4,9 +4,9 @@ use super::super::ffi::{hipStreamCaptureStatus, hipStream_t, hip_stream_is_captu
 use super::super::kernels::{
     gemv_q4_0_f32_on_stream_unchecked, gemv_q4_0_f32_wave32_on_stream_unchecked,
     gemv_q4_1_f32_on_stream_unchecked, gemv_q4_1_f32_wave32_on_stream_unchecked,
-    gemv_q4_k_f32_on_stream, gemv_q5_k_f32_on_stream, gemv_q6_k_f32_on_stream,
-    gemv_q8_0_f32_lm_head_on_stream, gemv_q8_0_f32_lm_head_on_stream_variant,
-    gemv_q8_0_f32_on_stream,
+    gemv_q4_k_f32_on_stream, gemv_q5_0_f32_on_stream, gemv_q5_1_f32_on_stream,
+    gemv_q5_k_f32_on_stream, gemv_q6_k_f32_on_stream, gemv_q8_0_f32_lm_head_on_stream,
+    gemv_q8_0_f32_lm_head_on_stream_variant, gemv_q8_0_f32_on_stream,
 };
 use super::super::launch_autotune::{
     lookup_lm_head_q8_variant, select_lm_head_q8_variant, VariantId,
@@ -175,6 +175,26 @@ pub(super) fn dispatch_gemv_impl(
             }
             GgmlType::Q6_K => {
                 gemv_q6_k_f32_on_stream(
+                    weights.as_ptr() as *const u8,
+                    input,
+                    output,
+                    in_dim,
+                    out_dim,
+                    stream,
+                )?;
+            }
+            GgmlType::Q5_0 => {
+                gemv_q5_0_f32_on_stream(
+                    weights.as_ptr() as *const u8,
+                    input,
+                    output,
+                    in_dim,
+                    out_dim,
+                    stream,
+                )?;
+            }
+            GgmlType::Q5_1 => {
+                gemv_q5_1_f32_on_stream(
                     weights.as_ptr() as *const u8,
                     input,
                     output,
@@ -367,8 +387,11 @@ pub fn gpu_dispatch_gemv_ptr_on_stream(
             GgmlType::Q6_K => {
                 gemv_q6_k_f32_on_stream(weights_ptr, input, output, in_dim, out_dim, stream)?;
             }
-            GgmlType::Q5_K => {
-                gemv_q5_k_f32_on_stream(weights_ptr, input, output, in_dim, out_dim, stream)?;
+            GgmlType::Q5_0 => {
+                gemv_q5_0_f32_on_stream(weights_ptr, input, output, in_dim, out_dim, stream)?;
+            }
+            GgmlType::Q5_1 => {
+                gemv_q5_1_f32_on_stream(weights_ptr, input, output, in_dim, out_dim, stream)?;
             }
             _ => unreachable!("unsupported types return before dispatch"),
         }

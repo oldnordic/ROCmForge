@@ -312,6 +312,16 @@ add_library(q5_k_gemm STATIC q5_k_gemm.hip)
 target_link_libraries(q5_k_gemm quant_common)
 set_target_properties(q5_k_gemm PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
+# Q5_0 GEMM kernel
+add_library(q5_0_gemm STATIC q5_0_gemm.hip)
+target_link_libraries(q5_0_gemm quant_common)
+set_target_properties(q5_0_gemm PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+
+# Q5_1 GEMM kernel
+add_library(q5_1_gemm STATIC q5_1_gemm.hip)
+target_link_libraries(q5_1_gemm quant_common)
+set_target_properties(q5_1_gemm PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+
 add_library(q6_k_gemm STATIC q6_k_gemm.hip)
 target_link_libraries(q6_k_gemm quant_common)
 set_target_properties(q6_k_gemm PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
@@ -448,6 +458,34 @@ target_link_libraries(q5_k_gemv
 )
 
 set_target_properties(q5_k_gemv PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
+# Q5_0 GEMV kernel (Q5_0 × f32 matrix-vector multiplication)
+add_library(q5_0_gemv STATIC
+    q5_0_gemv.hip
+)
+
+target_link_libraries(q5_0_gemv
+    quant_common
+)
+
+set_target_properties(q5_0_gemv PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
+# Q5_1 GEMV kernel (Q5_1 × f32 matrix-vector multiplication)
+add_library(q5_1_gemv STATIC
+    q5_1_gemv.hip
+)
+
+target_link_libraries(q5_1_gemv
+    quant_common
+)
+
+set_target_properties(q5_1_gemv PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
