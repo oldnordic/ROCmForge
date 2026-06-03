@@ -15,9 +15,11 @@
 )]
 
 pub mod arch;
+pub mod batch_decode;
 pub mod cache;
-mod decode_graph_keys;
+pub mod decode_graph_keys;
 pub mod decode_profile;
+pub mod decode_scheduler;
 pub mod detect;
 pub mod device;
 pub mod dynamic_loader;
