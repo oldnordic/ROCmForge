@@ -8,6 +8,7 @@ use super::ffi;
 use super::vram_budget::DESKTOP_VRAM_RESERVATION_BYTES;
 use super::weights::GpuBuffer;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 
 const DEFAULT_Q8_WORKSPACE_BYTES: usize = 64 * 1024;
 
@@ -67,7 +68,23 @@ pub struct GpuDevice {
     q8_workspace: Mutex<Q8Workspace>,
 }
 
+unsafe impl Send for GpuDevice {}
+unsafe impl Sync for GpuDevice {}
+
+static GLOBAL_DEVICE: OnceLock<GpuDevice> = OnceLock::new();
+
 impl GpuDevice {
+    /// Get the process-wide global GPU device, or initialize it if it hasn't been initialized yet.
+    pub fn get_or_init(device_id: i32) -> GpuResult<&'static Self> {
+        if let Some(device) = GLOBAL_DEVICE.get() {
+            return Ok(device);
+        }
+        let device = Self::init(device_id)?;
+        let _ = GLOBAL_DEVICE.set(device);
+        Ok(GLOBAL_DEVICE
+            .get()
+            .expect("invariant: GLOBAL_DEVICE must be set"))
+    }
     /// Initialize GPU device with safety checks.
     ///
     /// Returns error if device ID invalid or HIP not available.

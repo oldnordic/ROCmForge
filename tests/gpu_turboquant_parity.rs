@@ -110,8 +110,8 @@ mod turboquant_tests {
         host_fwht(&mut rot_v);
 
         print!("HOST rot_v: ");
-        for c in 0..16 {
-            print!("{} ", rot_v[c]);
+        for &val in rot_v.iter().take(16) {
+            print!("{} ", val);
         }
         println!();
 
@@ -122,8 +122,8 @@ mod turboquant_tests {
             let val = rot_k[i];
             let mut best_c = 0;
             let mut min_dist = (val - centroids[0]).abs();
-            for c in 1..8 {
-                let dist = (val - centroids[c]).abs();
+            for (c, &centroid) in centroids.iter().enumerate().take(8).skip(1) {
+                let dist = (val - centroid).abs();
                 if dist < min_dist {
                     min_dist = dist;
                     best_c = c;
@@ -147,13 +147,13 @@ mod turboquant_tests {
 
         // 4. QJL sign of Q
         let mut sign_q = vec![0.0f32; d];
-        for i in 0..d {
+        for (i, val) in sign_q.iter_mut().enumerate() {
             let mut sum_q = 0.0f32;
-            for col in 0..d {
+            for (col, &q_val) in rot_q.iter().enumerate() {
                 let r_sign = get_host_random_projection_sign(i as i32, col as i32);
-                sum_q += r_sign * rot_q[col];
+                sum_q += r_sign * q_val;
             }
-            sign_q[i] = if sum_q >= 0.0f32 { 1.0 } else { -1.0 };
+            *val = if sum_q >= 0.0f32 { 1.0 } else { -1.0 };
         }
 
         // 5. Score computation
@@ -181,10 +181,10 @@ mod turboquant_tests {
             let val = rot_v[i];
             let mut best_c = 0;
             let mut min_dist = (val - centroids[0]).abs();
-            for c in 1..8 {
-                let dist = (val - centroids[c]).abs();
+            for (c, &centroid) in centroids.iter().enumerate().take(8).skip(1) {
+                let dist = (val - centroid).abs();
                 if i == 3 {
-                    println!("  c={}: centroid={}, dist={}", c, centroids[c], dist);
+                    println!("  c={}: centroid={}, dist={}", c, centroid, dist);
                 }
                 if dist < min_dist {
                     min_dist = dist;
@@ -198,8 +198,8 @@ mod turboquant_tests {
             deq_v[i] = centroids[best_c] * (rms_v / (d as f32).sqrt());
         }
         print!("HOST idx_v: ");
-        for c in 0..16 {
-            print!("{} ", idx_v[c]);
+        for &val in idx_v.iter().take(16) {
+            print!("{} ", val);
         }
         println!();
         println!(
@@ -221,7 +221,7 @@ mod turboquant_tests {
 
         let config = make_turboquant_test_config();
         let device = GpuDevice::init(0).expect("Initialize device");
-        let cache = GpuKvCache::new(&config, 256).expect("KV cache allocation");
+        let mut cache = GpuKvCache::new(&config, 256).expect("KV cache allocation");
 
         // Generate random vector data
         let mut test_k = vec![0.0f32; 128];
@@ -306,7 +306,7 @@ mod turboquant_tests {
 
         // Download attention output
         let mut downloaded_out = vec![0.0f32; 128];
-        let mut out_bytes = unsafe {
+        let out_bytes = unsafe {
             std::slice::from_raw_parts_mut(
                 downloaded_out.as_mut_ptr() as *mut u8,
                 128 * std::mem::size_of::<f32>(),
@@ -314,7 +314,7 @@ mod turboquant_tests {
         };
         scratch
             .attn_out
-            .copy_to_host(&mut out_bytes)
+            .copy_to_host(out_bytes)
             .expect("Download output");
 
         // Softmax of a single position is 1.0, so downloaded_out should exactly match dequantized/restored_v!

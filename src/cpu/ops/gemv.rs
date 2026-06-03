@@ -12,7 +12,7 @@ use super::avx2::{
     dot_f32_avx2, dot_q4_0_block_avx2, dot_q4_0_q8_0_block_avx2, dot_q4_0_q8_0_block_scalar,
     dot_q4_1_q8_0_block_avx2, dot_q4_1_q8_0_block_scalar,
 };
-use super::gemm::{gemm_q5_k_fallback, gemm_q6_k_fallback};
+use super::gemm::{gemm_q2_k_fallback, gemm_q3_k_fallback, gemm_q5_k_fallback, gemm_q6_k_fallback};
 
 // ── GEMV (matrix-vector multiply for decode) ────────────────────────────────
 
@@ -421,11 +421,119 @@ pub fn gemv_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
     });
 }
 
+/// Q3_K GEMV: dequant on-the-fly (fallback, slower but works).
+/// Reuses gemm_q3_k_fallback with batch_size=1 for consistency.
+pub fn gemv_q3_k(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    // GEMV is just GEMM with batch_size=1
+    gemm_q3_k_fallback(w, x, y, out_dim, in_dim);
+}
+
+/// Q2_K GEMV: dequant on-the-fly (fallback, slower but works).
+/// Reuses gemm_q2_k_fallback with batch_size=1 for consistency.
+pub fn gemv_q2_k(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    // GEMV is just GEMM with batch_size=1
+    gemm_q2_k_fallback(w, x, y, out_dim, in_dim);
+}
+
 /// Q6_K GEMV: dequant on-the-fly (fallback, slower but works).
 /// Reuses gemm_q6_k_fallback with batch_size=1 for consistency.
 pub fn gemv_q6_k(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
     // GEMV is just GEMM with batch_size=1
     gemm_q6_k_fallback(w, x, y, out_dim, in_dim);
+}
+
+/// Q2_K GEMV transposed for tied embeddings.
+///
+/// Computes: y = W^T * x where W is [in_dim, out_dim].
+fn gemv_q2_k_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    use super::super::kernels::BlockQ2K;
+    use super::super::quant::{Q2_K_BLOCK_BYTES, Q2_K_BLOCK_ELEMS};
+
+    let num_blocks = in_dim / Q2_K_BLOCK_ELEMS;
+    let col_bytes = num_blocks * Q2_K_BLOCK_BYTES;
+
+    for v in 0..out_dim {
+        let mut acc = 0.0f32;
+        let col_offset = v * col_bytes;
+        for b in 0..num_blocks {
+            let block =
+                unsafe { &*(w.as_ptr().add(col_offset + b * Q2_K_BLOCK_BYTES) as *const BlockQ2K) };
+            let mut deq = [0.0f32; Q2_K_BLOCK_ELEMS];
+            block.dequantize(&mut deq);
+            let xb = &x[b * Q2_K_BLOCK_ELEMS..(b + 1) * Q2_K_BLOCK_ELEMS];
+            acc += deq.iter().zip(xb.iter()).map(|(d, xi)| d * xi).sum::<f32>();
+        }
+        y[v] = acc;
+    }
+}
+
+/// Q3_K GEMV transposed for tied embeddings.
+fn gemv_q3_k_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    use super::super::kernels::BlockQ3K;
+    use super::super::quant::{Q3_K_BLOCK_BYTES, Q3_K_BLOCK_ELEMS};
+
+    let num_blocks = in_dim / Q3_K_BLOCK_ELEMS;
+    let col_bytes = num_blocks * Q3_K_BLOCK_BYTES;
+
+    for v in 0..out_dim {
+        let mut acc = 0.0f32;
+        let col_offset = v * col_bytes;
+        for b in 0..num_blocks {
+            let block =
+                unsafe { &*(w.as_ptr().add(col_offset + b * Q3_K_BLOCK_BYTES) as *const BlockQ3K) };
+            let mut deq = [0.0f32; Q3_K_BLOCK_ELEMS];
+            block.dequantize(&mut deq);
+            let xb = &x[b * Q3_K_BLOCK_ELEMS..(b + 1) * Q3_K_BLOCK_ELEMS];
+            acc += deq.iter().zip(xb.iter()).map(|(d, xi)| d * xi).sum::<f32>();
+        }
+        y[v] = acc;
+    }
+}
+
+/// Q5_K GEMV transposed for tied embeddings.
+fn gemv_q5_k_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    use super::super::kernels::BlockQ5K;
+    use super::super::quant::{Q5_K_BLOCK_BYTES, Q5_K_BLOCK_ELEMS};
+
+    let num_blocks = in_dim / Q5_K_BLOCK_ELEMS;
+    let col_bytes = num_blocks * Q5_K_BLOCK_BYTES;
+
+    for v in 0..out_dim {
+        let mut acc = 0.0f32;
+        let col_offset = v * col_bytes;
+        for b in 0..num_blocks {
+            let block =
+                unsafe { &*(w.as_ptr().add(col_offset + b * Q5_K_BLOCK_BYTES) as *const BlockQ5K) };
+            let mut deq = [0.0f32; Q5_K_BLOCK_ELEMS];
+            block.dequantize(&mut deq);
+            let xb = &x[b * Q5_K_BLOCK_ELEMS..(b + 1) * Q5_K_BLOCK_ELEMS];
+            acc += deq.iter().zip(xb.iter()).map(|(d, xi)| d * xi).sum::<f32>();
+        }
+        y[v] = acc;
+    }
+}
+
+/// Q6_K GEMV transposed for tied embeddings.
+fn gemv_q6_k_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    use super::super::kernels::BlockQ6K;
+    use super::super::quant::{Q6_K_BLOCK_BYTES, Q6_K_BLOCK_ELEMS};
+
+    let num_blocks = in_dim / Q6_K_BLOCK_ELEMS;
+    let col_bytes = num_blocks * Q6_K_BLOCK_BYTES;
+
+    for v in 0..out_dim {
+        let mut acc = 0.0f32;
+        let col_offset = v * col_bytes;
+        for b in 0..num_blocks {
+            let block =
+                unsafe { &*(w.as_ptr().add(col_offset + b * Q6_K_BLOCK_BYTES) as *const BlockQ6K) };
+            let mut deq = [0.0f32; Q6_K_BLOCK_ELEMS];
+            block.dequantize(&mut deq);
+            let xb = &x[b * Q6_K_BLOCK_ELEMS..(b + 1) * Q6_K_BLOCK_ELEMS];
+            acc += deq.iter().zip(xb.iter()).map(|(d, xi)| d * xi).sum::<f32>();
+        }
+        y[v] = acc;
+    }
 }
 
 /// Q5_K GEMV: dequantize weights on the fly during matrix-vector multiplication.
@@ -527,7 +635,7 @@ pub fn dispatch_gemv(
         GgmlType::Q8_0 => super::super::quant::Q8_BLOCK_ELEMS,
         GgmlType::Q4_0 | GgmlType::Q4_1 => super::super::quant::Q4_BLOCK_ELEMS,
         GgmlType::Q5_0 => super::super::quant::Q5_0_BLOCK_ELEMS,
-        GgmlType::Q4_K | GgmlType::Q6_K => super::super::quant::Q4_K_BLOCK_ELEMS,
+        GgmlType::Q4_K | GgmlType::Q6_K | GgmlType::Q2_K => super::super::quant::Q4_K_BLOCK_ELEMS,
         GgmlType::Q3_K => super::super::quant::Q3_K_BLOCK_ELEMS,
         GgmlType::Q5_K => super::super::quant::Q5_K_BLOCK_ELEMS,
         _ => 1,
@@ -567,6 +675,20 @@ pub fn dispatch_gemv(
         GgmlType::Q5_0 => {
             crate::cpu::kernels::gemm_q5_0_q8::gemv_q5_0_q8_0_dispatch(w, x, y, out_dim, in_dim);
         }
+        GgmlType::Q3_K => {
+            if meta.needs_transpose {
+                gemv_q3_k_transposed(w, x, y, out_dim, in_dim);
+            } else {
+                gemv_q3_k(w, x, y, out_dim, in_dim);
+            }
+        }
+        GgmlType::Q2_K => {
+            if meta.needs_transpose {
+                gemv_q2_k_transposed(w, x, y, out_dim, in_dim);
+            } else {
+                gemv_q2_k(w, x, y, out_dim, in_dim);
+            }
+        }
         GgmlType::Q8_0 => {
             if meta.needs_transpose {
                 gemv_q8_0_transposed(w, x, y, out_dim, in_dim);
@@ -584,10 +706,18 @@ pub fn dispatch_gemv(
             }
         }
         GgmlType::Q6_K => {
-            gemv_q6_k(w, x, y, out_dim, in_dim);
+            if meta.needs_transpose {
+                gemv_q6_k_transposed(w, x, y, out_dim, in_dim);
+            } else {
+                gemv_q6_k(w, x, y, out_dim, in_dim);
+            }
         }
         GgmlType::Q5_K => {
-            gemv_q5_k(w, x, y, out_dim, in_dim);
+            if meta.needs_transpose {
+                gemv_q5_k_transposed(w, x, y, out_dim, in_dim);
+            } else {
+                gemv_q5_k(w, x, y, out_dim, in_dim);
+            }
         }
         other => return Err(super::super::CpuError::UnsupportedWeightType(other)),
     }

@@ -42,18 +42,25 @@ struct Args {
     #[allow(dead_code)]
     /// If `Some(path)`, dump the post-prefill KV cache to this file.
     kv_dump: Option<String>,
+    server: bool,
+    #[cfg_attr(
+        not(feature = "server"),
+        expect(dead_code, reason = "used only with server feature")
+    )]
+    port: u16,
 }
 
 fn usage() -> ! {
     eprintln!("rocmforge - AMD-first LLM inference engine");
     eprintln!();
     eprintln!("Usage: rocmforge --model <path> --prompt <text> [OPTIONS]");
+    eprintln!("       rocmforge --model <path> --server [--port N]");
     eprintln!();
     eprintln!("Required:");
     eprintln!("  --model <path>         Path to GGUF model file");
-    eprintln!("  --prompt <text>        Input prompt");
     eprintln!();
-    eprintln!("Optional:");
+    eprintln!("Generation mode:");
+    eprintln!("  --prompt <text>        Input prompt");
     eprintln!("  --max-tokens N         Maximum tokens to generate [default: 256]");
     eprintln!("  --temperature F        Sampling temperature [default: 1.0]");
     eprintln!("  --top-p F              Nucleus sampling threshold [default: 0.9]");
@@ -67,6 +74,11 @@ fn usage() -> ! {
         "  --draft-model <path>   Path to draft GGUF/RFM model file for speculative decoding"
     );
     eprintln!("  --speculative-tokens N Number of draft tokens to speculate per step [default: 4]");
+    eprintln!();
+    eprintln!("Server mode:");
+    eprintln!("  --server               Start OpenAI-compatible HTTP API server");
+    eprintln!("  --port N               Port to bind [default: 8080]");
+    eprintln!();
     eprintln!();
     eprintln!("Examples:");
     eprintln!("  rocmforge --model qwen2.5-7b.gguf --prompt \"Hello, world!\"");
@@ -85,6 +97,8 @@ fn parse_args() -> Args {
     let mut list_tensors = false;
     let mut debug = false;
     let mut gpu = false;
+    let mut server = false;
+    let mut port = 8080u16;
     let mut prefill_only_validate = false;
     let mut draft_model = None;
     let mut speculative_tokens = 4usize;
@@ -119,6 +133,14 @@ fn parse_args() -> Args {
             "--list-tensors" => list_tensors = true,
             "--debug" => debug = true,
             "--gpu" => gpu = true,
+            "--server" => server = true,
+            "--port" => {
+                port = args
+                    .next()
+                    .unwrap_or_else(|| usage())
+                    .parse()
+                    .unwrap_or_else(|_| usage())
+            }
             "--prefill-only-validate" => prefill_only_validate = true,
             "--kv-dump" => kv_dump = Some(args.next().unwrap_or_else(|| usage())),
             "--draft-model" => draft_model = Some(args.next().unwrap_or_else(|| usage())),
@@ -151,6 +173,8 @@ fn parse_args() -> Args {
         draft_model,
         speculative_tokens,
         kv_dump,
+        server,
+        port,
     }
 }
 
@@ -220,7 +244,10 @@ fn print_top_k_tokens(logits: &[f32], tok: &BpeTokenizer, k: usize) {
 
     // Get top-k indices
     let mut indexed: Vec<(usize, f32)> = probs.iter().cloned().enumerate().collect();
-    indexed.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    indexed.sort_unstable_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .expect("invariant: partial_cmp failed (NaN in main logic)")
+    });
 
     eprintln!("Top-{} tokens:", k.min(indexed.len()));
     for (i, (id, prob)) in indexed.iter().take(k).enumerate() {
@@ -597,7 +624,7 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 
     eprint!("Initializing GPU device... ");
     let device =
-        gpu::GpuDevice::init(gpu_caps.device_id).map_err(|e| format!("gpu init: {}", e))?;
+        gpu::GpuDevice::get_or_init(gpu_caps.device_id).map_err(|e| format!("gpu init: {}", e))?;
     eprintln!("done");
 
     eprintln!("[Args] model path ({}): {}", file.format_name(), args.model);
@@ -725,7 +752,7 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                         prompt_tokens.len()
                     );
                     match gpu::gpu_batched_prefill_forward_q4_0(
-                        &device,
+                        device,
                         &gpu_weights,
                         &cpu_weights,
                         &mut kv,
@@ -746,7 +773,7 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             let mut prompt_next_token = None;
                             for (pos, &token_id) in prompt_tokens.iter().enumerate() {
                                 gpu::gpu_embed_token_hybrid(
-                                    &device,
+                                    device,
                                     token_id,
                                     &gpu_weights,
                                     &cpu_weights,
@@ -761,7 +788,7 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                     gpu::GpuLogitsMode::Skip
                                 };
                                 prompt_next_token = gpu::gpu_full_forward_hybrid(
-                                    &device,
+                                    device,
                                     &gpu_weights,
                                     &cpu_weights,
                                     &mut kv,
@@ -786,7 +813,7 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     let mut prompt_next_token = None;
                     for (pos, &token_id) in prompt_tokens.iter().enumerate() {
                         gpu::gpu_embed_token_hybrid(
-                            &device,
+                            device,
                             token_id,
                             &gpu_weights,
                             &cpu_weights,
@@ -801,7 +828,7 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             gpu::GpuLogitsMode::Skip
                         };
                         prompt_next_token = gpu::gpu_full_forward_hybrid(
-                            &device,
+                            device,
                             &gpu_weights,
                             &cpu_weights,
                             &mut kv,
@@ -822,7 +849,7 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             let mut prompt_next_token = None;
             for (pos, &token_id) in prompt_tokens.iter().enumerate() {
                 gpu::gpu_embed_token_hybrid(
-                    &device,
+                    device,
                     token_id,
                     &gpu_weights,
                     &cpu_weights,
@@ -837,7 +864,7 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     gpu::GpuLogitsMode::Skip
                 };
                 prompt_next_token = gpu::gpu_full_forward_hybrid(
-                    &device,
+                    device,
                     &gpu_weights,
                     &cpu_weights,
                     &mut kv,
@@ -865,7 +892,7 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             let mut prompt_next_token = None;
             for (pos, &token_id) in prompt_tokens.iter().enumerate() {
                 gpu::gpu_embed_token_hybrid(
-                    &device,
+                    device,
                     token_id,
                     &gpu_weights,
                     &cpu_weights,
@@ -880,7 +907,7 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     gpu::GpuLogitsMode::Skip
                 };
                 prompt_next_token = gpu::gpu_full_forward_hybrid(
-                    &device,
+                    device,
                     &gpu_weights,
                     &cpu_weights,
                     &mut kv,
@@ -1002,7 +1029,7 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         n_generated += 1;
 
         gpu::gpu_embed_token_hybrid(
-            &device,
+            device,
             next_token,
             &gpu_weights,
             &cpu_weights,
@@ -1017,7 +1044,7 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             gpu::GpuLogitsMode::DownloadToHost
         };
         let decode_next_token = gpu::gpu_full_forward_hybrid(
-            &device,
+            device,
             &gpu_weights,
             &cpu_weights,
             &mut kv,
@@ -1131,7 +1158,7 @@ fn run_gpu_speculative_inference(
 
     eprint!("Initializing GPU device... ");
     let device =
-        gpu::GpuDevice::init(gpu_caps.device_id).map_err(|e| format!("gpu init: {}", e))?;
+        gpu::GpuDevice::get_or_init(gpu_caps.device_id).map_err(|e| format!("gpu init: {}", e))?;
     eprintln!("done");
 
     eprintln!("[Args] model path ({}): {}", file.format_name(), args.model);
@@ -1152,7 +1179,7 @@ fn run_gpu_speculative_inference(
     eprintln!("Co-loading models into GPU VRAM (Speculative Engine)...");
     let t_load = Instant::now();
     let mut engine = gpu::SpeculativeEngine::new(
-        &device,
+        device,
         &args.model,
         draft_path,
         max_seq,
@@ -1179,7 +1206,7 @@ fn run_gpu_speculative_inference(
             prompt_tokens.len()
         );
         match gpu::gpu_batched_prefill_forward_q4_0(
-            &device,
+            device,
             &engine.target_model,
             &engine.target_cpu_weights,
             &mut engine.target_kv,
@@ -1204,7 +1231,7 @@ fn run_gpu_speculative_inference(
         // Fallback or standard decode-style prompt path for Target Model
         for (pos, &token_id) in prompt_tokens.iter().enumerate() {
             gpu::gpu_embed_token_hybrid(
-                &device,
+                device,
                 token_id,
                 &engine.target_model,
                 &engine.target_cpu_weights,
@@ -1221,7 +1248,7 @@ fn run_gpu_speculative_inference(
             };
 
             target_prompt_next_token = gpu::gpu_full_forward_hybrid(
-                &device,
+                device,
                 &engine.target_model,
                 &engine.target_cpu_weights,
                 &mut engine.target_kv,
@@ -1247,7 +1274,7 @@ fn run_gpu_speculative_inference(
             prompt_tokens.len()
         );
         match gpu::gpu_batched_prefill_forward_q4_0(
-            &device,
+            device,
             &engine.draft_model,
             &engine.draft_cpu_weights,
             &mut engine.draft_kv,
@@ -1271,7 +1298,7 @@ fn run_gpu_speculative_inference(
     if !draft_prefilled {
         for (pos, &token_id) in prompt_tokens.iter().enumerate() {
             gpu::gpu_embed_token_hybrid(
-                &device,
+                device,
                 token_id,
                 &engine.draft_model,
                 &engine.draft_cpu_weights,
@@ -1282,7 +1309,7 @@ fn run_gpu_speculative_inference(
             .map_err(|e| format!("gpu embed draft: {}", e))?;
 
             gpu::gpu_full_forward_hybrid(
-                &device,
+                device,
                 &engine.draft_model,
                 &engine.draft_cpu_weights,
                 &mut engine.draft_kv,
@@ -1355,12 +1382,12 @@ fn run_gpu_speculative_inference(
         if spec_count > 0 {
             // Autoregressively draft N speculative tokens on the GPU
             let draft_tokens = engine
-                .draft_tokens(&device, pos, spec_count, next_token)
+                .draft_tokens(device, pos, spec_count, next_token)
                 .map_err(|e| format!("draft tokens: {}", e))?;
 
             // Run target verification pass over the N drafted tokens
             let (accepted_tokens, num_accepted) = engine
-                .verify_tokens(&device, pos, &draft_tokens, next_token)
+                .verify_tokens(device, pos, &draft_tokens, next_token)
                 .map_err(|e| format!("verify tokens: {}", e))?;
 
             // Print accepted draft tokens
@@ -1383,7 +1410,7 @@ fn run_gpu_speculative_inference(
         } else {
             // Speculative count is 0, fall back to single target step
             gpu::gpu_embed_token_hybrid(
-                &device,
+                device,
                 next_token,
                 &engine.target_model,
                 &engine.target_cpu_weights,
@@ -1394,7 +1421,7 @@ fn run_gpu_speculative_inference(
             .map_err(|e| format!("gpu embed target step: {}", e))?;
 
             let opt_token = gpu::gpu_full_forward_hybrid(
-                &device,
+                device,
                 &engine.target_model,
                 &engine.target_cpu_weights,
                 &mut engine.target_kv,
@@ -1446,7 +1473,37 @@ fn run_gpu_speculative_inference(
 fn main() {
     let args = parse_args();
 
-    // Handle --list-tensors
+    #[cfg(feature = "server")]
+    if args.server {
+        use rocmforge::api::server::{create_router, ModelEntry, ModelManager};
+        let entry = ModelEntry::load(&args.model).unwrap_or_else(|e| {
+            eprintln!("Failed to load model: {}", e);
+            std::process::exit(1);
+        });
+        let manager = ModelManager::new(entry);
+        let state = std::sync::Arc::new(tokio::sync::Mutex::new(manager));
+        let router = create_router(state);
+        let addr = std::net::SocketAddr::from(([0, 0, 0, 0], args.port));
+        let rt = tokio::runtime::Runtime::new()
+            .expect("invariant: failed to build tokio runtime in main");
+        eprintln!("rocmforge server listening on http://{}/", addr);
+        rt.block_on(async {
+            let listener = tokio::net::TcpListener::bind(addr)
+                .await
+                .expect("invariant: failed to bind TCP address for server");
+            axum::serve(listener, router)
+                .await
+                .expect("invariant: failed to serve HTTP router");
+        });
+        return;
+    }
+
+    // Handle --server mode (requires server feature)
+    #[cfg(not(feature = "server"))]
+    if args.server {
+        eprintln!("Error: --server requires building with --features server");
+        std::process::exit(1);
+    }
     if args.list_tensors {
         if let Err(e) = list_tensors(&args.model) {
             eprintln!("Error: {}", e);
@@ -1513,6 +1570,8 @@ mod main_tests {
             draft_model: None,
             speculative_tokens: 0,
             kv_dump: None,
+            server: false,
+            port: 0,
         };
         assert!(!args.prefill_only_validate);
         assert!(args.draft_model.is_none());

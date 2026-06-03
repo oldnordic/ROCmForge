@@ -49,11 +49,15 @@ impl Profiler {
 
     /// Record a kernel execution timing.
     pub fn record(kernel_name: &str, elapsed_ns: u64) {
-        let profiler = Self::global().lock().unwrap();
+        let profiler = Self::global()
+            .lock()
+            .expect("invariant: Profiler global mutex poisoned");
 
         // Find existing timing record
         for timing in profiler.timings.iter() {
-            let mut t = timing.lock().unwrap();
+            let mut t = timing
+                .lock()
+                .expect("invariant: Profiler timing mutex poisoned");
             if t.name == kernel_name {
                 t.calls += 1;
                 t.total_ns += elapsed_ns;
@@ -65,7 +69,9 @@ impl Profiler {
         // Create new timing record
         // Need to drop the lock before creating new timing
         drop(profiler);
-        let mut profiler = Self::global().lock().unwrap();
+        let mut profiler = Self::global()
+            .lock()
+            .expect("invariant: Profiler global mutex poisoned");
         profiler.timings.push(Mutex::new(KernelTiming {
             name: kernel_name.to_string(),
             avg_ns: elapsed_ns,
@@ -78,7 +84,11 @@ impl Profiler {
     pub fn get_timings(&self) -> Vec<KernelTiming> {
         self.timings
             .iter()
-            .map(|t| t.lock().unwrap().clone())
+            .map(|t| {
+                t.lock()
+                    .expect("invariant: Profiler timing mutex poisoned")
+                    .clone()
+            })
             .collect()
     }
 

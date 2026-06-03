@@ -20,7 +20,10 @@ use crate::cpu::weights::CpuModelWeights;
 use crate::gpu::cache::{GpuForwardScratch, GpuKvCache};
 use crate::gpu::device::GpuDevice;
 use crate::gpu::error::{GpuError, GpuResult};
-use crate::gpu::ops::{gpu_dispatch_gemv_on_stream, gpu_dispatch_rms_norm};
+use crate::gpu::ops::{
+    gpu_dispatch_gemv_on_stream, gpu_dispatch_mpo_apply_on_stream, gpu_dispatch_rms_norm,
+    gpu_dispatch_sparse_csr_gemv_on_stream,
+};
 use crate::gpu::weights::GpuModelWeights;
 
 /// Full decode forward pass using GPU kernels plus targeted CPU fallbacks.
@@ -39,6 +42,10 @@ pub fn gpu_full_forward_hybrid(
         if let Some(token) =
             decode::gpu_try_full_greedy_decode_graph(device, gpu_weights, kv, scratch, pos, config)?
         {
+            // Sync/scatter the newly written token at `pos` to the paged cache for all layers
+            for layer_idx in 0..config.num_layers {
+                kv.scatter_to_paged(layer_idx, pos, 1)?;
+            }
             return Ok(Some(token));
         }
     }
@@ -59,6 +66,9 @@ pub fn gpu_full_forward_hybrid(
         // Without synchronization, layer N+1 can start writing to these buffers before
         // layer N's kernels finish reading from them, causing corruption.
         device.synchronize()?;
+
+        // Scatter the newly written token at `pos` to the paged cache
+        kv.scatter_to_paged(layer_idx, pos, 1)?;
     }
 
     if matches!(logits_mode, GpuLogitsMode::Skip) {
@@ -79,16 +89,44 @@ pub fn gpu_full_forward_hybrid(
                     config.rms_norm_eps,
                     device.stream(),
                 )?;
-                gpu_dispatch_gemv_on_stream(
-                    device,
-                    &gpu_weights.lm_head,
-                    &gpu_weights.lm_head_meta,
-                    scratch.normed.as_ptr() as *const f32,
-                    scratch.logits.as_ptr() as *mut f32,
-                    v,
-                    h,
-                    device.stream(),
-                )?;
+                if let Some(dense) = gpu_weights.lm_head.as_dense() {
+                    gpu_dispatch_gemv_on_stream(
+                        device,
+                        dense,
+                        &gpu_weights.lm_head_meta,
+                        scratch.normed.as_ptr() as *const f32,
+                        scratch.logits.as_ptr() as *mut f32,
+                        v,
+                        h,
+                        device.stream(),
+                    )?;
+                } else if let Some(sparse) = gpu_weights.lm_head.as_sparse_csr() {
+                    gpu_dispatch_sparse_csr_gemv_on_stream(
+                        device,
+                        sparse,
+                        scratch.normed.as_ptr() as *const f32,
+                        scratch.logits.as_ptr() as *mut f32,
+                        v,
+                        h,
+                        device.stream(),
+                    )?;
+                } else if let Some(mpo) = gpu_weights.lm_head.as_mpo() {
+                    gpu_dispatch_mpo_apply_on_stream(
+                        device,
+                        mpo,
+                        scratch.normed.as_ptr() as *const f32,
+                        scratch.logits.as_ptr() as *mut f32,
+                        v,
+                        h,
+                        device.stream(),
+                    )?;
+                } else {
+                    return Err(GpuError::InvalidWeightLayout {
+                        tensor: "lm_head".to_string(),
+                        dims: gpu_weights.lm_head_meta.dims.clone(),
+                        reason: "LM head is neither dense, sparse CSR, nor MPO".to_string(),
+                    });
+                }
                 utils::download_f32(&scratch.logits, &mut host_scratch.logits[..v])
             })();
             res.map(|_| None)

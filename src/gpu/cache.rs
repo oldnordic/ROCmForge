@@ -17,6 +17,61 @@ use super::vram_budget::query_vram_budget;
 use super::weights::{GpuBuffer, GpuPinnedBuffer};
 use crate::config::ModelConfig;
 
+// ── Block Allocator & Block Table ──────────────────────────────────────────────────
+
+#[derive(Clone, Debug)]
+pub struct BlockTable {
+    pub block_ids: Vec<usize>,
+}
+
+#[derive(Debug)]
+pub struct BlockAllocator {
+    pub block_size_tokens: usize,
+    pub free_list: Vec<usize>,
+    pub refcounts: Vec<usize>,
+    pub total_blocks: usize,
+}
+
+impl BlockAllocator {
+    pub fn new(block_size_tokens: usize) -> Self {
+        Self {
+            block_size_tokens,
+            free_list: Vec::new(),
+            refcounts: Vec::new(),
+            total_blocks: 0,
+        }
+    }
+
+    pub fn allocate(&mut self) -> usize {
+        if let Some(id) = self.free_list.pop() {
+            self.refcounts[id] = 1;
+            id
+        } else {
+            let id = self.total_blocks;
+            self.total_blocks += 1;
+            self.refcounts.push(1);
+            id
+        }
+    }
+
+    pub fn release(&mut self, id: usize) -> bool {
+        if id < self.refcounts.len() && self.refcounts[id] > 0 {
+            self.refcounts[id] -= 1;
+            if self.refcounts[id] == 0 {
+                self.free_list.push(id);
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn retain(&mut self, id: usize) {
+        if id < self.refcounts.len() {
+            self.refcounts[id] += 1;
+        }
+    }
+}
+
 // ── KV Cache ─────────────────────────────────────────────────────────────────────
 
 /// Key-value cache for autoregressive decoding, stored in GPU VRAM.
@@ -54,6 +109,14 @@ pub struct GpuKvCache {
     pub kv_quant_bits: Option<usize>,
     pub centroids: Option<GpuBuffer>,
     pub qjl_scale: f32,
+
+    // Paged Cache Storage & Metadata
+    pub block_size_tokens: usize,
+    pub pos_bytes: usize,
+    pub block_allocator: BlockAllocator,
+    pub block_table: BlockTable,
+    pub paged_k: Vec<Vec<Option<std::sync::Arc<GpuBuffer>>>>,
+    pub paged_v: Vec<Vec<Option<std::sync::Arc<GpuBuffer>>>>,
 }
 
 impl GpuKvCache {
@@ -98,6 +161,21 @@ impl GpuKvCache {
         }
         if let Some(ref buf) = self.centroids {
             total += buf.size();
+        }
+        // Include paged block buffers
+        for layer in &self.paged_k {
+            for opt_buf in layer {
+                if let Some(ref buf) = opt_buf {
+                    total += buf.size();
+                }
+            }
+        }
+        for layer in &self.paged_v {
+            for opt_buf in layer {
+                if let Some(ref buf) = opt_buf {
+                    total += buf.size();
+                }
+            }
         }
         total
     }
@@ -325,6 +403,15 @@ impl GpuKvCache {
             centroids = Some(buf);
         }
         let qjl_scale = config.qjl_scale.unwrap_or(0.0f32);
+        let pos_bytes = layer_bytes / max_seq_len;
+        let block_size_tokens = 16;
+
+        let block_allocator = BlockAllocator::new(block_size_tokens);
+        let block_table = BlockTable {
+            block_ids: Vec::new(),
+        };
+        let paged_k = vec![Vec::new(); config.num_layers];
+        let paged_v = vec![Vec::new(); config.num_layers];
 
         Ok(Self {
             k,
@@ -347,6 +434,12 @@ impl GpuKvCache {
             kv_quant_bits: config.kv_quant_bits,
             centroids,
             qjl_scale,
+            block_size_tokens,
+            pos_bytes,
+            block_allocator,
+            block_table,
+            paged_k,
+            paged_v,
         })
     }
 
@@ -425,7 +518,7 @@ impl GpuKvCache {
     /// Ok(()) on successful kernel launch
     /// Write K/V vectors to cache.
     pub fn write(
-        &self,
+        &mut self,
         layer: usize,
         pos: usize,
         k_gpu: *const f32,
@@ -436,7 +529,7 @@ impl GpuKvCache {
 
     /// Write K/V vectors to cache on an explicit HIP stream.
     pub fn write_on_stream(
-        &self,
+        &mut self,
         layer: usize,
         pos: usize,
         k_gpu: *const f32,
@@ -447,7 +540,7 @@ impl GpuKvCache {
     }
 
     fn write_on_stream_impl(
-        &self,
+        &mut self,
         layer: usize,
         pos: usize,
         k_gpu: *const f32,
@@ -504,6 +597,7 @@ impl GpuKvCache {
                 stream,
             )?;
             super::ffi::hip_stream_synchronize(stream)?;
+            self.scatter_to_paged(layer, pos, 1)?;
             Ok(())
         } else if let Some(dc) = self.kv_lora_dim {
             let temp_pos = pos as i32;
@@ -544,6 +638,7 @@ impl GpuKvCache {
                 stream,
             )?;
             super::ffi::hip_stream_synchronize(stream)?;
+            self.scatter_to_paged(layer, pos, 1)?;
             Ok(())
         } else {
             kv_write_on_stream(
@@ -555,7 +650,10 @@ impl GpuKvCache {
                 self.kv_size,
                 self.max_seq_len,
                 stream,
-            )
+            )?;
+            super::ffi::hip_stream_synchronize(stream)?;
+            self.scatter_to_paged(layer, pos, 1)?;
+            Ok(())
         }
     }
 
@@ -567,7 +665,7 @@ impl GpuKvCache {
     /// * `k_gpu` - GPU pointer to batched key vectors [seq_len * kv_size]
     /// * `v_gpu` - GPU pointer to batched value vectors
     pub fn write_batched(
-        &self,
+        &mut self,
         layer: usize,
         start_pos: usize,
         seq_len: usize,
@@ -577,7 +675,7 @@ impl GpuKvCache {
         let k_cache = self.k_ptr(layer)?;
         let v_cache = self.v_ptr(layer)?;
 
-        if self.kv_quant_bits.is_some() {
+        let res = if self.kv_quant_bits.is_some() {
             for s in 0..seq_len {
                 let pos = start_pos + s;
                 let k_ptr = unsafe { k_gpu.add(s * self.kv_size) };
@@ -643,7 +741,13 @@ impl GpuKvCache {
                 self.max_seq_len,
                 seq_len,
             )
+        };
+
+        if res.is_ok() {
+            super::ffi::hip_stream_synchronize(hipStream_t::null())?;
+            self.scatter_to_paged(layer, start_pos, seq_len)?;
         }
+        res
     }
 
     /// Clear all cached values (zero out via kernel).
@@ -679,6 +783,106 @@ impl GpuKvCache {
             }
         }
 
+        // Release all block table ids
+        for &id in &self.block_table.block_ids {
+            self.block_allocator.release(id);
+        }
+        self.block_table.block_ids.clear();
+
+        Ok(())
+    }
+
+    /// Sync a range of tokens from the contiguous working view to the paged cache.
+    pub fn scatter_to_paged(
+        &mut self,
+        layer: usize,
+        start_pos: usize,
+        seq_len: usize,
+    ) -> GpuResult<()> {
+        let block_size = self.block_size_tokens;
+        let pos_bytes = self.pos_bytes;
+
+        let start_block = start_pos / block_size;
+        let end_block = (start_pos + seq_len - 1) / block_size;
+
+        for lb in start_block..=end_block {
+            while lb >= self.block_table.block_ids.len() {
+                let pb = self.block_allocator.allocate();
+                self.block_table.block_ids.push(pb);
+            }
+            let pb = self.block_table.block_ids[lb];
+
+            if pb >= self.paged_k[layer].len() {
+                self.paged_k[layer].resize_with(pb + 1, || None);
+                self.paged_v[layer].resize_with(pb + 1, || None);
+            }
+
+            if self.paged_k[layer][pb].is_none() {
+                let k_buf = GpuBuffer::alloc(block_size * pos_bytes)?;
+                self.paged_k[layer][pb] = Some(std::sync::Arc::new(k_buf));
+            }
+            if self.paged_v[layer][pb].is_none() {
+                let v_buf = GpuBuffer::alloc(block_size * pos_bytes)?;
+                self.paged_v[layer][pb] = Some(std::sync::Arc::new(v_buf));
+            }
+
+            let lb_start_tok = lb * block_size;
+            let lb_end_tok = (lb + 1) * block_size;
+            let overlap_start = std::cmp::max(start_pos, lb_start_tok);
+            let overlap_end = std::cmp::min(start_pos + seq_len, lb_end_tok);
+            let num_toks = overlap_end - overlap_start;
+
+            if num_toks > 0 {
+                let k_block = self.paged_k[layer][pb]
+                    .as_ref()
+                    .expect("invariant: k block allocated above");
+                let v_block = self.paged_v[layer][pb]
+                    .as_ref()
+                    .expect("invariant: v block allocated above");
+
+                let contig_offset = overlap_start * pos_bytes;
+                let block_offset = (overlap_start - lb_start_tok) * pos_bytes;
+                let copy_size = num_toks * pos_bytes;
+
+                unsafe {
+                    let contig_k_ptr = (self.k[layer].as_ptr() as *const u8).add(contig_offset);
+                    let block_k_ptr = (k_block.as_ptr() as *mut u8).add(block_offset);
+                    super::ffi::hip_memcpy_d2d(block_k_ptr, contig_k_ptr, copy_size)?;
+
+                    let contig_v_ptr = (self.v[layer].as_ptr() as *const u8).add(contig_offset);
+                    let block_v_ptr = (v_block.as_ptr() as *mut u8).add(block_offset);
+                    super::ffi::hip_memcpy_d2d(block_v_ptr, contig_v_ptr, copy_size)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Sync all blocks from the paged cache back to the contiguous working view for a layer.
+    pub fn gather_to_contiguous(&self, layer: usize) -> GpuResult<()> {
+        let block_size = self.block_size_tokens;
+        let pos_bytes = self.pos_bytes;
+
+        for (lb, &pb) in self.block_table.block_ids.iter().enumerate() {
+            if pb < self.paged_k[layer].len() {
+                if let Some(ref k_block) = self.paged_k[layer][pb] {
+                    let contig_offset = lb * block_size * pos_bytes;
+                    let copy_size = block_size * pos_bytes;
+                    unsafe {
+                        let contig_k_ptr = (self.k[layer].as_ptr() as *mut u8).add(contig_offset);
+                        super::ffi::hip_memcpy_d2d(contig_k_ptr, k_block.as_ptr(), copy_size)?;
+                    }
+                }
+                if let Some(ref v_block) = self.paged_v[layer][pb] {
+                    let contig_offset = lb * block_size * pos_bytes;
+                    let copy_size = block_size * pos_bytes;
+                    unsafe {
+                        let contig_v_ptr = (self.v[layer].as_ptr() as *mut u8).add(contig_offset);
+                        super::ffi::hip_memcpy_d2d(contig_v_ptr, v_block.as_ptr(), copy_size)?;
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
@@ -763,13 +967,23 @@ impl KvDump {
         for _ in 0..num_layers {
             let k_floats: Vec<f32> = data[offset..offset + bytes_per_layer]
                 .chunks_exact(4)
-                .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+                .map(|b| {
+                    f32::from_le_bytes(
+                        b.try_into()
+                            .expect("invariant: chunks_exact(4) produces 4-byte slices"),
+                    )
+                })
                 .collect();
             offset += bytes_per_layer;
 
             let v_floats: Vec<f32> = data[offset..offset + bytes_per_layer]
                 .chunks_exact(4)
-                .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+                .map(|b| {
+                    f32::from_le_bytes(
+                        b.try_into()
+                            .expect("invariant: chunks_exact(4) produces 4-byte slices"),
+                    )
+                })
                 .collect();
             offset += bytes_per_layer;
 
@@ -1072,6 +1286,31 @@ mod tests {
 
         let result = KvDump::load(f.path());
         assert!(result.is_err(), "should fail on truncated body");
+    }
+
+    #[test]
+    fn test_block_allocator_and_table() {
+        let mut allocator = BlockAllocator::new(16);
+        assert_eq!(allocator.block_size_tokens, 16);
+
+        let b1 = allocator.allocate();
+        let b2 = allocator.allocate();
+        assert_eq!(b1, 0);
+        assert_eq!(b2, 1);
+
+        allocator.retain(b1); // refcount of b1 becomes 2
+        assert!(!allocator.release(b1)); // refcount becomes 1, not freed
+        assert!(allocator.release(b1)); // refcount becomes 0, freed
+
+        let b3 = allocator.allocate();
+        assert_eq!(b3, 0); // reuses 0
+
+        let mut table = BlockTable {
+            block_ids: Vec::new(),
+        };
+        table.block_ids.push(b3);
+        table.block_ids.push(b2);
+        assert_eq!(table.block_ids, vec![0, 1]);
     }
 }
 

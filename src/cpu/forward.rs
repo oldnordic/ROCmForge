@@ -515,6 +515,12 @@ pub fn cpu_embed_token(
         GgmlType::Q8_0 => {
             super::quant::embed_q8_0(token_id as usize, &weights.token_emb, &mut hidden[..h], h);
         }
+        GgmlType::Q3_K => {
+            super::quant::embed_q3_k(token_id as usize, &weights.token_emb, &mut hidden[..h], h);
+        }
+        GgmlType::Q2_K => {
+            super::quant::embed_q2_k(token_id as usize, &weights.token_emb, &mut hidden[..h], h);
+        }
         _ => {
             let msg = format!(
                 "Unsupported embedding type: {:?}",

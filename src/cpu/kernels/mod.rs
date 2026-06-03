@@ -37,13 +37,17 @@ pub mod gemm_q4k_q8;
 pub mod gemm_q4k_q8_avx512;
 pub mod gemm_q4k_q8_scalar;
 pub mod gemm_q5_0_q8;
+pub mod q2;
 pub mod q3;
 pub mod q4;
 pub mod q5;
+pub mod q6;
 pub mod q8;
 pub mod q8_scalar;
 
+pub use q2::BlockQ2K;
 pub use q3::BlockQ3K;
 pub use q4::BlockQ4K;
 pub use q5::BlockQ5K;
+pub use q6::BlockQ6K;
 pub use q8::BlockQ8K;

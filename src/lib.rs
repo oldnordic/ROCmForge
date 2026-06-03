@@ -17,3 +17,6 @@ pub mod tokenizer;
 
 #[cfg(feature = "gpu")]
 pub mod gpu;
+
+#[cfg(feature = "server")]
+pub mod api;

@@ -251,13 +251,6 @@ pub fn gpu_dispatch_gemv(
 ) -> GpuResult<()> {
     validate_gemv_layout(meta, out_dim, in_dim)?;
 
-    if meta.needs_transpose && meta.role == TensorRole::TiedLmHead {
-        return Err(GpuError::UnsupportedOperation {
-            operation: "gpu_dispatch_gemv".to_string(),
-            reason: "Transposed Tied LM Head is not supported on GPU".to_string(),
-        });
-    }
-
     if !supports_gemv_type(meta.wtype) {
         return Err(GpuError::UnsupportedWeightType {
             tensor: "gpu_dispatch_gemv".to_string(),
@@ -290,13 +283,6 @@ pub fn gpu_dispatch_gemv_on_stream(
     stream: hipStream_t,
 ) -> GpuResult<()> {
     validate_gemv_layout(meta, out_dim, in_dim)?;
-
-    if meta.needs_transpose && meta.role == TensorRole::TiedLmHead {
-        return Err(GpuError::UnsupportedOperation {
-            operation: "gpu_dispatch_gemv_on_stream".to_string(),
-            reason: "Transposed Tied LM Head is not supported on GPU".to_string(),
-        });
-    }
 
     if !supports_gemv_type(meta.wtype) {
         return Err(GpuError::UnsupportedWeightType {

@@ -139,7 +139,9 @@ pub use launch_autotune::{
 pub use ops::{
     gpu_dispatch_fused_gate_up, gpu_dispatch_fused_qkv, gpu_dispatch_gemm, gpu_dispatch_gemv,
 };
-pub use ops_batched::gpu_dispatch_batched_gemv_batched;
+pub use ops_batched::{
+    gpu_dispatch_batched_fused_gate_up_on_stream, gpu_dispatch_batched_gemv_batched,
+};
 pub use profile::{KernelTimer, KernelTiming, Profiler};
 pub use quant::{
     Q4KBlock, Q4_0Block, Q4_1Block, Q5KBlock, Q6KBlock, Q8_0Block, K_SCALE_SIZE, Q4_0_BLOCK_SIZE,
@@ -165,7 +167,8 @@ pub use vram_budget::{
     track_deallocation,
 };
 pub use weights::{
-    GpuBuffer, GpuLayerWeights, GpuModelWeights, SvdCorrection, TensorRole, WeightMeta,
+    GpuBuffer, GpuLayerWeights, GpuModelWeights, GpuWeightTensor, SvdCorrection, TensorRole,
+    WeightMeta,
 };
 
 /// Detect AMD GPU capabilities (safe wrapper).

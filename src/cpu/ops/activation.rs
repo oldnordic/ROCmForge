@@ -72,7 +72,10 @@ pub fn online_softmax_update(
 pub fn argmax(x: &[f32]) -> usize {
     x.iter()
         .enumerate()
-        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+        .max_by(|a, b| {
+            a.1.partial_cmp(b.1)
+                .expect("invariant: partial_cmp failed (NaN in argmax)")
+        })
         .map(|(i, _)| i)
         .unwrap_or(0)
 }

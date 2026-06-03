@@ -40,8 +40,16 @@ pub(super) fn cpu_fallback_error(op: &str, err: impl std::fmt::Display) -> GpuEr
     }
 }
 
-pub(super) fn decode_graph_disabled(_gpu_weights: &GpuModelWeights) -> bool {
-    decode_stage_profiling_enabled() || decode_graph_disabled_override_requested()
+pub(super) fn decode_graph_disabled(gpu_weights: &GpuModelWeights) -> bool {
+    decode_stage_profiling_enabled()
+        || decode_graph_disabled_override_requested()
+        // Sparse / MPO LM heads cannot be captured in a HIP graph
+        // because the dispatch functions perform dynamic indexing.
+        || gpu_weights.lm_head.as_dense().is_none()
+}
+
+pub(super) fn lm_head_is_dense(gpu_weights: &GpuModelWeights) -> bool {
+    gpu_weights.lm_head.as_dense().is_some()
 }
 
 pub(super) fn validate_token_embedding_layout(

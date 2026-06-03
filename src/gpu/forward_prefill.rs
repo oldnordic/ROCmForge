@@ -14,10 +14,11 @@ use super::kernels::{
 };
 use super::ops::{
     gpu_dispatch_fused_gate_up_on_stream, gpu_dispatch_gemv_on_stream,
-    gpu_dispatch_gemv_svd_on_stream, gpu_dispatch_rms_norm,
+    gpu_dispatch_gemv_svd_on_stream, gpu_dispatch_mpo_apply_on_stream, gpu_dispatch_rms_norm,
+    gpu_dispatch_sparse_csr_gemv_on_stream,
 };
 use super::ops_batched::{
-    gpu_dispatch_batched_fused_gate_up_q4_0, gpu_dispatch_batched_gemv_batched,
+    gpu_dispatch_batched_fused_gate_up_on_stream, gpu_dispatch_batched_gemv_batched,
 };
 use super::weights::{GpuBuffer, GpuLayerWeights, GpuModelWeights, WeightMeta};
 use crate::config::ModelConfig;
@@ -156,24 +157,39 @@ fn embed_prompt_tokens(
 
     // Check if we have Q8_0 token embeddings (native GPU path)
     if gpu_weights.token_emb_meta.wtype == GgmlType::Q8_0 {
-        embed_q8_0_batch(
-            gpu_weights.token_emb.as_ptr() as *const u8,
-            scratch.token_ids.as_ptr() as *const i32,
-            scratch.hidden.as_ptr() as *mut f32,
-            h,
-            config.vocab_size,
-            seq_len,
-        )?;
+        if let Some(dense) = gpu_weights.token_emb.as_dense() {
+            embed_q8_0_batch(
+                dense.as_ptr() as *const u8,
+                scratch.token_ids.as_ptr() as *const i32,
+                scratch.hidden.as_ptr() as *mut f32,
+                h,
+                config.vocab_size,
+                seq_len,
+            )?;
+        } else {
+            // Sparse / MPO Q8_0 embeddings: fall through to CPU embed fallback below
+        }
     } else if gpu_weights.token_emb_meta.wtype == GgmlType::Q4_0 {
-        embed_q4_0_batch(
-            gpu_weights.token_emb.as_ptr() as *const u8,
-            scratch.token_ids.as_ptr() as *const i32,
-            scratch.hidden.as_ptr() as *mut f32,
-            h,
-            config.vocab_size,
-            seq_len,
-        )?;
-    } else {
+        if let Some(dense) = gpu_weights.token_emb.as_dense() {
+            embed_q4_0_batch(
+                dense.as_ptr() as *const u8,
+                scratch.token_ids.as_ptr() as *const i32,
+                scratch.hidden.as_ptr() as *mut f32,
+                h,
+                config.vocab_size,
+                seq_len,
+            )?;
+        } else {
+            // Sparse / MPO Q4_0 embeddings: fall through to CPU embed fallback below
+        }
+    }
+
+    // If we didn't embed natively on GPU (sparse/MPO or unsupported format),
+    // fall back to CPU embed + H2D copy.
+    if gpu_weights.token_emb_meta.wtype != GgmlType::Q8_0
+        && gpu_weights.token_emb_meta.wtype != GgmlType::Q4_0
+        || gpu_weights.token_emb.as_dense().is_none()
+    {
         // Fallback: embed all tokens on CPU and upload row-by-row
         for (pos, &token_id) in token_ids.iter().enumerate() {
             let hidden_row = scratch.hidden_row_ptr(pos, h);
@@ -920,19 +936,22 @@ pub fn gpu_batched_prefill_forward_q4_0(
             );
         }
 
-        // Gate-up projection - use batched kernel for Q4_0/Q4_0, fallback to per-token loop for other types
+        // Gate-up projection — use batched kernel when both weights support it,
+        // otherwise fall back to per-token loop.
         let mut gate_up_result = Err(GpuError::UnsupportedWeightType {
             tensor: "forced_svd_fallback".to_string(),
             wtype: GgmlType::Q4_0,
         });
         if false {
-            gate_up_result = gpu_dispatch_batched_fused_gate_up_q4_0(
+            gate_up_result = gpu_dispatch_batched_fused_gate_up_on_stream(
+                device,
                 &gpu_layer.ffn_gate,
                 &gpu_layer.ffn_gate_meta,
                 &gpu_layer.ffn_up,
                 &gpu_layer.ffn_up_meta,
                 scratch.normed.as_ptr() as *const f32,
                 scratch.swiglu.as_ptr() as *mut f32,
+                scratch.gate.as_ptr() as *mut f32,
                 h,
                 ff_size,
                 seq_len,
@@ -1131,16 +1150,44 @@ pub fn gpu_batched_prefill_forward_q4_0(
     )?;
 
     // Vocabulary / LM head projection directly on GPU
-    gpu_dispatch_gemv_on_stream(
-        device,
-        &gpu_weights.lm_head,
-        &gpu_weights.lm_head_meta,
-        last_normed,
-        scratch.logits.as_ptr() as *mut f32,
-        config.vocab_size,
-        h,
-        device.stream(),
-    )?;
+    if let Some(dense) = gpu_weights.lm_head.as_dense() {
+        gpu_dispatch_gemv_on_stream(
+            device,
+            dense,
+            &gpu_weights.lm_head_meta,
+            last_normed,
+            scratch.logits.as_ptr() as *mut f32,
+            config.vocab_size,
+            h,
+            device.stream(),
+        )?;
+    } else if let Some(sparse) = gpu_weights.lm_head.as_sparse_csr() {
+        gpu_dispatch_sparse_csr_gemv_on_stream(
+            device,
+            sparse,
+            last_normed,
+            scratch.logits.as_ptr() as *mut f32,
+            config.vocab_size,
+            h,
+            device.stream(),
+        )?;
+    } else if let Some(mpo) = gpu_weights.lm_head.as_mpo() {
+        gpu_dispatch_mpo_apply_on_stream(
+            device,
+            mpo,
+            last_normed,
+            scratch.logits.as_ptr() as *mut f32,
+            config.vocab_size,
+            h,
+            device.stream(),
+        )?;
+    } else {
+        return Err(crate::gpu::error::GpuError::InvalidWeightLayout {
+            tensor: "lm_head".to_string(),
+            dims: gpu_weights.lm_head_meta.dims.clone(),
+            reason: "LM head is neither dense, sparse CSR, nor MPO".to_string(),
+        });
+    }
 
     // Download GPU logits back to host_scratch.logits if requested
     match logits_mode {
@@ -1467,13 +1514,15 @@ pub fn gpu_prefill_ssm_layer_on_stream(
         wtype: GgmlType::Q4_0,
     });
     if gpu_layer.ffn_gate_svd.is_none() && gpu_layer.ffn_up_svd.is_none() {
-        gate_up_result = gpu_dispatch_batched_fused_gate_up_q4_0(
+        gate_up_result = gpu_dispatch_batched_fused_gate_up_on_stream(
+            device,
             &gpu_layer.ffn_gate,
             &gpu_layer.ffn_gate_meta,
             &gpu_layer.ffn_up,
             &gpu_layer.ffn_up_meta,
             scratch.normed.as_ptr() as *const f32,
             scratch.swiglu.as_ptr() as *mut f32,
+            scratch.gate.as_ptr() as *mut f32,
             h,
             ff_size,
             seq_len,

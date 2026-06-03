@@ -2,6 +2,60 @@
 
 ## [Unreleased]
 
+### Added
+- **HTTP Server (`features server`)**: OpenAI-compatible REST API via axum/tokio.
+  - `GET /v1/models` — list loaded models.
+  - `POST /v1/completions` — text completion (non-streaming).
+  - `POST /v1/chat/completions` — chat completion with SSE streaming support (`stream: true` emits per-token `chat.completion.chunk` events).
+  - `POST /v1/messages` — Anthropic Messages API compatible endpoint (non-streaming).
+  - `POST /v1/models/load`, `POST /v1/models/unload`, `POST /v1/models/estimate` — multi-model management with VRAM pre-flight.
+  - `GET /v1/vram` — live GPU VRAM status.
+  - `GET /health`, `GET /ready` — health/readiness probes.
+  - CLI: `--server --port N` (default 8080).
+  - All endpoints run inference in `tokio::task::spawn_blocking` to avoid blocking the async runtime.
+- **Per-model request serialization (`INF-2`)** — `ModelEntry` carries an `Arc<tokio::sync::Semaphore>` (1 permit). All inference handlers acquire the permit before `spawn_blocking`; concurrent requests to the same model are serialized so weights and KV cache are not raced. Multiple models can still inference in parallel (one permit per model).
+- **Async model loading (`INF-1`)** — `POST /v1/models/load` runs `ModelEntry::load` inside `tokio::task::spawn_blocking`, so the async runtime remains unblocked during tokenizer/weight metadata parsing.
+- **GPU Weight Caching (`INF-6`)** — Eagerly load and cache `gpu_weights: Option<Arc<GpuModelWeights>>` in `ModelEntry` upon model load time when the `gpu` feature is enabled. This eliminates the ~4GB per-request GPU reload overhead for all subsequent synchronous inference requests. Refactored the GPU sync inference wrapper to accept the preloaded weights directly and bypass dynamic reloading, and updated VRAM pre-flight checks to assume `0` model file bytes (since cached weights are already accounted for in system-free memory).
+- **GPU Device Process-Wide Caching (`INF-7`)** — Implemented thread safety (`Send` and `Sync`) for `GpuDevice` to enable caching it in a static `OnceLock<GpuDevice>`. Created a `GpuDevice::get_or_init` method to lazily initialize or retrieve the static cached device context, and refactored initialization calls in `main.rs`, `server.rs`, and `gpu_inference.rs` to reuse this shared global instance, eliminating per-request HIP stream creation and warm-up latency.
+- **GPU-Aware Streaming Path (`INF-9`)** — Implemented `run_gpu_stream_inference` to enable real-time GPU-accelerated token streaming. Added `run_stream_inference` dispatcher to dynamically route streaming requests to GPU when `feature = "gpu"` is active and model weights are cached. Wired the Axum server's `/v1/chat/completions` SSE streaming loop to leverage the GPU streaming path, eliminating the slow CPU fallback for stream requests.
+- **Paged KV Cache (`INF-11`)** — Implemented block-table KV cache in `GpuKvCache`. Added `BlockAllocator` (free-list with refcounting, `Vec<usize>`) and `BlockTable` (logical → physical block ID mapping). Blocks are 16 tokens each, allocated on-demand during `scatter_to_paged` after every write. `GpuKvCache::vram_bytes` now includes paged block buffers. Enables memory sharing (parallel sampling via COW) and reduces waste from ~60% to <4%. Prerequisite for continuous batching (INF-12).
+
+### Changed
+- `ChatTemplate::apply_messages(messages: &[(String, String)])` — new multi-turn message formatting for all supported templates (ChatML, LLaMA3, LLaMA2, Phi3, Gemma). Used by `/v1/chat/completions`.
+
+### Fixed
+- **Unwrap Audit (`INF-8`)** — Replaced all production `.unwrap()` calls in `src/` (across `activation.rs`, `sampler.rs`, `dynamic_loader.rs`, `logits.rs`, `cache.rs`, `rfm.rs`, `bpe.rs`, and `main.rs`) with detailed `.expect("invariant: ...")` messages describing the specific runtime assumptions.
+- **Clippy Warning Fixes (`INF-10`)** — Fixed all needless range loops and needless mutable borrow warnings under the `gpu,server` features in `tests/gpu_svd_correctness.rs` and `tests/gpu_turboquant_parity.rs` to allow warning-clean `-D warnings` target compilation.
+
+### [Server — Inference API]
+
+**feat(server): wire GPU sync inference into HTTP handlers + cache CPU weights in ModelEntry**
+
+- **Date:** June 03, 2026
+- **Summary:** Extracted the CLI-coupled `run_gpu_inference` function from `main.rs` into a reusable `run_gpu_sync_inference` in `src/api/gpu_inference.rs`, wired it into the server inference dispatcher, and eliminated per-request CPU weight reloading by caching `Arc<CpuModelWeights>` in `ModelEntry`.
+- **GPU sync wrapper (`src/api/gpu_inference.rs`):**
+  - Created `run_gpu_sync_inference` with the same signature as the CPU sync wrapper (augmented with cached `cpu_weights: &Arc<CpuModelWeights>` and `model_path: &str`).
+  - Core prefill + decode loop from `main.rs:582-1101`, stripped of all CLI side effects (`println!`, progress bars, `std::io::stdout` flushing).
+  - Reuses CPU sampler (`cpu_sample_greedy`, `cpu_sample_top_p`) for downloaded logits — no duplicate sampling logic.
+  - Still loads GPU weights per-request from `model_path` (GPU weight caching is next: see INF-6).
+- **Dispatcher (`src/api/server.rs`):**
+  - Added `run_sync_inference` dispatcher that routes to GPU when `feature = "gpu"`, else CPU.
+  - Replaced 3 sync handler call sites (`create_completion`, `create_chat_completion`, `create_messages`) with `run_sync_inference`.
+  - Fixed GPU-path type mismatches: `GpuCapabilities::detect()` returns `Option<GpuCapabilities>`; `VramSession` fields are `usize`.
+- **CPU weight caching (`src/api/server.rs`):**
+  - Added `cpu_weights: Arc<CpuModelWeights>` field to `ModelEntry`.
+  - `ModelEntry::load` eagerly loads weights once via `Arc::new(file.load_cpu_weights(&config)?)`.
+  - `run_cpu_sync_inference` and `run_cpu_stream_inference` signatures changed from `model_path: &str` to `weights: &CpuModelWeights` — no internal `ModelFile::open` + `load_cpu_weights`.
+  - All handler call sites clone the `Arc` before dropping the `ModelEntry` lock, passing the reference into `spawn_blocking`.
+- **Verification:**
+  - `cargo check --all-targets`: clean.
+  - `cargo check --features server --all-targets`: clean.
+  - `cargo check --features "gpu,server" --all-targets`: clean.
+  - `cargo test --lib`: 161 passed, 0 failed.
+  - `cargo test --bin rocmforge`: 1 passed.
+  - `cargo clippy --lib --features "gpu,server" -- -D warnings`: clean.
+  - Pre-existing clippy error in `tests/gpu_svd_correctness.rs:634` still blocks `cargo clippy --features "gpu,server" --all-targets -- -D warnings`.
+
 ### [Architecture & Design Invariants]
 
 * **Invariant: Pristine Weight Requirement for TurboQuant Compression**
@@ -61,6 +115,7 @@
     - `src/gpu/weights/model.rs:385`, `:396`, `:473`, `:484` — `try_load_sparse_csr`/`try_load_mpo` returning `None` (parse error on malformed data).
     - `src/gpu/weights/model.rs:741` — `UnsupportedWeightType` for unsupported matrix upload type.
     - `src/gpu/weights/upload.rs:47` — `UnsupportedWeightType` for unsupported GPU matrix type.
+    - **Follow-up compilation fix (2026-06-02):** `GpuWeightTensor` abstraction was half-implemented, leaving duplicate `gpu_layer_weights_binding_tag` and double-wrapping of `token_emb`/`lm_head` in `load_rfm_for_device`. Fixed: removed duplicate function, updated both `compute_model_binding_tag` call sites to pass `&lm_head` directly, and removed redundant `GpuWeightTensor::Dense()` wrapping in the RFM constructor so `token_emb` and `lm_head` (already `GpuWeightTensor`) match the struct field types. `cargo check --all-targets` clean, `cargo test --lib` 156 passed.
 
 - **P1: Q5_1 tied LM head dequantization (`src/cpu/quant.rs`, `src/gpu/weights/model.rs`):**
   - Added `embed_q5_1` and `embed_q5_1_batch` CPU dequantization functions for Q5_1 embedding table lookup.

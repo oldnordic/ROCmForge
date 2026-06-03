@@ -26,13 +26,33 @@ pub fn gpu_embed_token_hybrid(
     match gpu_weights.token_emb_meta.wtype {
         GgmlType::Q8_0 => {
             validate_token_embedding_layout(&gpu_weights.token_emb_meta, config)?;
-            embed_q8_0_token(
-                gpu_weights.token_emb.as_ptr(),
-                scratch.hidden.as_ptr() as *mut f32,
-                h,
-                config.vocab_size,
-                token_id,
-            )
+            if let Some(dense) = gpu_weights.token_emb.as_dense() {
+                embed_q8_0_token(
+                    dense.as_ptr(),
+                    scratch.hidden.as_ptr() as *mut f32,
+                    h,
+                    config.vocab_size,
+                    token_id,
+                )
+            } else {
+                // Sparse / MPO embeddings are not yet supported for the Q8_0 fast-path.
+                // Fall back to CPU embed + async H2D copy.
+                cpu_embed_token(
+                    token_id,
+                    cpu_weights,
+                    &mut scratch.input_hidden_pinned.as_slice_mut::<f32>()[..h],
+                    config,
+                );
+                unsafe {
+                    ffi::hip_memcpy_h2d_async(
+                        scratch.hidden.as_ptr(),
+                        scratch.input_hidden_pinned.as_ptr(),
+                        h * std::mem::size_of::<f32>(),
+                        device.stream(),
+                    )?;
+                }
+                Ok(())
+            }
         }
         _ => {
             // CPU embed into pinned buffer

@@ -11,4 +11,4 @@ pub use layer::{
     CpuCompressedExperts, GpuLayerWeights, GpuMpoWeights, GpuSparseCsrWeights, SvdCorrection,
 };
 pub use metadata::{TensorRole, WeightMeta};
-pub use model::GpuModelWeights;
+pub use model::{GpuModelWeights, GpuWeightTensor};

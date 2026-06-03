@@ -246,6 +246,36 @@ pub fn gemm_q6_k_fallback(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in
         });
 }
 
+/// Q2_K GEMM fallback: dequantize blocks on the fly and compute matrix multiply.
+pub fn gemm_q2_k_fallback(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    use super::super::quant::{Q2_K_BLOCK_BYTES, Q2_K_BLOCK_ELEMS};
+
+    let num_blocks = in_dim / Q2_K_BLOCK_ELEMS;
+    let row_bytes = num_blocks * Q2_K_BLOCK_BYTES;
+
+    y.par_chunks_mut(out_dim)
+        .enumerate()
+        .for_each(|(s, y_row)| {
+            let x_row = &x[s * in_dim..(s + 1) * in_dim];
+            for o in 0..out_dim {
+                let row_w = &w[o * row_bytes..(o + 1) * row_bytes];
+                let mut acc = 0.0f32;
+                for b in 0..num_blocks {
+                    let block_bytes = &row_w[b * Q2_K_BLOCK_BYTES..(b + 1) * Q2_K_BLOCK_BYTES];
+                    let block = unsafe {
+                        &*(block_bytes.as_ptr() as *const super::super::kernels::BlockQ2K)
+                    };
+                    let mut deq = [0.0f32; Q2_K_BLOCK_ELEMS];
+                    block.dequantize(&mut deq);
+
+                    let xb = &x_row[b * Q2_K_BLOCK_ELEMS..(b + 1) * Q2_K_BLOCK_ELEMS];
+                    acc += deq.iter().zip(xb.iter()).map(|(d, x)| d * x).sum::<f32>();
+                }
+                y_row[o] = acc;
+            }
+        });
+}
+
 /// Q3_K GEMM fallback: dequantize blocks on the fly and compute matrix multiply.
 ///
 /// For each output row:
@@ -469,7 +499,7 @@ pub fn dispatch_gemm(
         GgmlType::Q8_0 => super::super::quant::Q8_BLOCK_ELEMS,
         GgmlType::Q4_0 | GgmlType::Q4_1 => super::super::quant::Q4_BLOCK_ELEMS,
         GgmlType::Q5_0 => super::super::quant::Q5_0_BLOCK_ELEMS,
-        GgmlType::Q4_K | GgmlType::Q6_K => super::super::quant::Q4_K_BLOCK_ELEMS,
+        GgmlType::Q4_K | GgmlType::Q6_K | GgmlType::Q2_K => super::super::quant::Q4_K_BLOCK_ELEMS,
         GgmlType::Q3_K => super::super::quant::Q3_K_BLOCK_ELEMS,
         GgmlType::Q5_K => super::super::quant::Q5_K_BLOCK_ELEMS,
         _ => 1,
@@ -539,6 +569,10 @@ pub fn dispatch_gemm(
         GgmlType::Q3_K => {
             // Q3_K: dequantize to f32 on the fly (slower but works)
             gemm_q3_k_fallback(w, x, y, out_dim, in_dim);
+        }
+        GgmlType::Q2_K => {
+            // Q2_K: dequantize to f32 on the fly (slower but works)
+            gemm_q2_k_fallback(w, x, y, out_dim, in_dim);
         }
         GgmlType::Q5_K => {
             // Q5_K: dequantize to f32 on the fly (slower but works)

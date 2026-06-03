@@ -13,7 +13,7 @@ use std::hash::{Hash, Hasher};
 static REGEX_QWEN2: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
         r"(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+",
-    ).unwrap()
+    ).expect("invariant: static Qwen2 regex pattern is valid")
 });
 
 // ── Internal types ─────────────────────────────────────────────────────────────

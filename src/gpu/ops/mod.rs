@@ -15,6 +15,7 @@ pub use gemm::gpu_dispatch_gemm;
 pub use gemv::{
     gpu_dispatch_gemv, gpu_dispatch_gemv_on_stream, gpu_dispatch_gemv_ptr_on_stream,
     gpu_dispatch_gemv_svd_on_stream, gpu_dispatch_gemv_with_fallback_on_stream,
+    gpu_dispatch_mpo_apply_on_stream, gpu_dispatch_sparse_csr_gemv_on_stream,
 };
 pub use gemv_residual::gpu_dispatch_gemv_residual_on_stream;
 pub use norm::gpu_dispatch_rms_norm;

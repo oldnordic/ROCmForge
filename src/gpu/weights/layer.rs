@@ -22,6 +22,7 @@ pub struct SvdCorrection {
 }
 
 /// Sparse CSR weight representation for GPU execution.
+#[derive(Debug)]
 pub struct GpuSparseCsrWeights {
     pub values: GpuBuffer,
     pub col_idx: GpuBuffer,
@@ -32,6 +33,7 @@ pub struct GpuSparseCsrWeights {
 }
 
 /// MPO (Matrix Product Operator) weight representation for GPU execution.
+#[derive(Debug)]
 pub struct GpuMpoWeights {
     pub site_data: GpuBuffer,
     pub site_dims: GpuBuffer,
@@ -337,7 +339,7 @@ fn load_qwen35_ssm_rfm(
     })
 }
 
-fn try_load_sparse_csr(
+pub(super) fn try_load_sparse_csr(
     file: &RfmFile,
     name: &str,
     device_id: i32,
@@ -365,7 +367,11 @@ fn try_load_sparse_csr(
     }))
 }
 
-fn try_load_mpo(file: &RfmFile, name: &str, device_id: i32) -> GpuResult<Option<GpuMpoWeights>> {
+pub(super) fn try_load_mpo(
+    file: &RfmFile,
+    name: &str,
+    device_id: i32,
+) -> GpuResult<Option<GpuMpoWeights>> {
     let t = match file.tensor(name) {
         Ok(Some(t)) => t,
         _ => return Ok(None),

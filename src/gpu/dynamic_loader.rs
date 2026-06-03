@@ -304,7 +304,8 @@ impl DynamicLibrary {
             // Try to open the library
             let handle = unsafe {
                 let path_str = full_path.to_string_lossy();
-                let c_path = std::ffi::CString::new(path_str.as_ref()).unwrap();
+                let c_path = std::ffi::CString::new(path_str.as_ref())
+                    .expect("invariant: file path contains null byte");
                 libc::dlopen(c_path.as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL)
             };
 
@@ -414,7 +415,9 @@ impl KernelRegistry {
             }));
         }
 
-        Ok(REGISTRY.get().unwrap())
+        Ok(REGISTRY
+            .get()
+            .expect("invariant: KernelRegistry OnceLock must be initialized"))
     }
 
     /// Load a kernel function pointer by name.

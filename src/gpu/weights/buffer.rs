@@ -13,6 +13,7 @@ use std::ptr::NonNull;
 ///
 /// Ensures memory is freed when dropped.
 /// Never leaks VRAM, even on panic.
+#[derive(Debug)]
 pub struct GpuBuffer {
     /// Pointer to GPU memory (null if empty)
     ptr: Option<NonNull<u8>>,

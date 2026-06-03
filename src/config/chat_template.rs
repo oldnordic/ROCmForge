@@ -51,6 +51,102 @@ impl ChatTemplate {
         }
     }
 
+    pub fn apply_messages(&self, messages: &[(String, String)]) -> String {
+        match self {
+            ChatTemplate::None => messages
+                .iter()
+                .map(|(role, text)| format!("{}: {}", role, text))
+                .collect::<Vec<_>>()
+                .join("\n"),
+
+            ChatTemplate::ChatML => {
+                messages
+                    .iter()
+                    .map(|(role, text)| format!("<|im_start|>{}\n{}<|im_end|>", role, text))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    + "\n<|im_start|>assistant\n"
+            }
+
+            ChatTemplate::LLaMA3 => {
+                let parts: Vec<String> = messages
+                    .iter()
+                    .map(|(role, text)| {
+                        let r = match role.as_str() {
+                            "system" => "system",
+                            "user" => "user",
+                            _ => "assistant",
+                        };
+                        format!(
+                            "<|start_header_id|>{}<|end_header_id|>\n\n{}<|eot_id|>",
+                            r, text
+                        )
+                    })
+                    .collect();
+                let mut out = String::new();
+                out.push_str("<|begin_of_text|>");
+                for p in &parts {
+                    out.push_str(p);
+                }
+                out.push_str("<|start_header_id|>assistant<|end_header_id|>\n\n");
+                out
+            }
+
+            ChatTemplate::LLaMA2 => {
+                let mut out = String::new();
+                let mut first_user = true;
+                for (role, text) in messages {
+                    match role.as_str() {
+                        "system" => {
+                            out.push_str(&format!("[INST] <<SYS>>\n{}\n<</SYS>>\n\n", text))
+                        }
+                        "user" if first_user => {
+                            if out.is_empty() {
+                                out.push_str(&format!("[INST] {} [/INST]", text));
+                            } else {
+                                out.push_str(&format!("{} [/INST]", text));
+                            }
+                            first_user = false;
+                        }
+                        "user" => out.push_str(&format!(" [INST] {} [/INST]", text)),
+                        "assistant" => out.push_str(&format!(" {} ", text)),
+                        _ => out.push_str(&format!(" {}: {} ", role, text)),
+                    }
+                }
+                if !out.ends_with("[/INST]") {
+                    out.push_str(" [/INST]");
+                }
+                // Strip trailing INST and add assistant
+                if let Some(idx) = out.rfind("[/INST]") {
+                    out.truncate(idx + 7);
+                }
+                out.push(' ');
+                out
+            }
+
+            ChatTemplate::Phi3 => {
+                messages
+                    .iter()
+                    .map(|(role, text)| format!("<|{}|>\n{}<|end|>", role, text))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    + "\n<|assistant|>\n"
+            }
+
+            ChatTemplate::Gemma => {
+                messages
+                    .iter()
+                    .map(|(role, text)| {
+                        let r = if role == "assistant" { "model" } else { role };
+                        format!("<start_of_turn>{}\n{}<end_of_turn>", r, text)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    + "\n<start_of_turn>model\n"
+            }
+        }
+    }
+
     /// Human-readable name for logging.
     pub fn name(&self) -> &'static str {
         match self {
@@ -166,5 +262,63 @@ mod tests {
     fn none_apply_passthrough() {
         let text = "raw prompt";
         assert_eq!(ChatTemplate::None.apply(text), text);
+    }
+
+    #[test]
+    fn chatml_multi_turn() {
+        let msgs = vec![
+            ("system".to_string(), "You are helpful.".to_string()),
+            ("user".to_string(), "Hello".to_string()),
+        ];
+        let out = ChatTemplate::ChatML.apply_messages(&msgs);
+        assert!(out.contains("<|im_start|>system"));
+        assert!(out.contains("<|im_start|>user"));
+        assert!(out.ends_with("<|im_start|>assistant\n"));
+    }
+
+    #[test]
+    fn llama3_roundtrip_multi_turn() {
+        let msgs = vec![
+            ("system".to_string(), "SYS".to_string()),
+            ("user".to_string(), "Hi".to_string()),
+        ];
+        let out = ChatTemplate::LLaMA3.apply_messages(&msgs);
+        assert!(out.starts_with("<|begin_of_text|>"));
+        assert!(out.contains("<|start_header_id|>system"));
+        assert!(out.contains("<|start_header_id|>user"));
+        assert!(out.ends_with("<|start_header_id|>assistant<|end_header_id|>\n\n"));
+    }
+
+    #[test]
+    fn llama2_roundtrip_multi_turn() {
+        let msgs = vec![
+            ("user".to_string(), "First".to_string()),
+            ("assistant".to_string(), "Ok".to_string()),
+            ("user".to_string(), "Second".to_string()),
+        ];
+        let out = ChatTemplate::LLaMA2.apply_messages(&msgs);
+        // LLaMA2 flattens to a single [INST] block.
+        assert!(out.starts_with("[INST]"));
+        assert!(out.contains("Second"));
+    }
+
+    #[test]
+    fn phi3_multi_turn() {
+        let msgs = vec![("user".to_string(), "Q".to_string())];
+        let out = ChatTemplate::Phi3.apply_messages(&msgs);
+        assert!(out.contains("<|user|>"));
+        assert!(out.ends_with("<|assistant|>\n"));
+    }
+
+    #[test]
+    fn gemma_multi_turn_remaps_assistant() {
+        let msgs = vec![
+            ("user".to_string(), "Q".to_string()),
+            ("assistant".to_string(), "A".to_string()),
+        ];
+        let out = ChatTemplate::Gemma.apply_messages(&msgs);
+        assert!(out.contains("<start_of_turn>user"));
+        assert!(out.contains("<start_of_turn>model"));
+        assert!(!out.contains("<start_of_turn>assistant"));
     }
 }

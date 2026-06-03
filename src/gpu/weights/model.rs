@@ -5,13 +5,79 @@ use super::super::vram_budget::{
     active_or_default_device_id, check_model_load_headroom, query_vram_budget,
 };
 use super::buffer::GpuBuffer;
-use super::layer::GpuLayerWeights;
+use super::layer::{GpuLayerWeights, GpuMpoWeights, GpuSparseCsrWeights};
 use super::metadata::{TensorRole, WeightMeta};
 use super::upload::*;
 use crate::config::{ModelConfig, TensorName};
 use crate::cpu::transpose::compute_transpose_flag;
 use crate::gpu::kernels::quant;
 use crate::loader::{GgmlType, GgufFile, RfmFile, RfmType};
+
+// ── GPU Weight Tensor Abstraction ────────────────────────────────────────────────
+
+/// A GPU-resident weight tensor that may be stored as dense quantized bytes,
+/// sparse CSR, or MPO (matrix product operator) compressed format.
+///
+/// The enum abstracts over the storage so forward paths don't need to
+/// branch on every combination of type + role.  It also makes it
+/// impossible to accidentally pass a sparse CSR buffer to a dense GEMV
+/// kernel, because the dense `GpuBuffer` is only accessible via the
+/// `Dense` variant.
+#[derive(Debug)]
+pub enum GpuWeightTensor {
+    /// Standard dense quantized buffer (Q4_0, Q8_0, F32, etc.)
+    Dense(GpuBuffer),
+    /// Sparse CSR representation — values, column indices, row pointers.
+    SparseCsr(GpuSparseCsrWeights),
+    /// MPO compressed representation — site data + site dimensions.
+    Mpo(GpuMpoWeights),
+}
+
+impl GpuWeightTensor {
+    /// Return the dense `GpuBuffer` if this is the `Dense` variant.
+    pub fn as_dense(&self) -> Option<&GpuBuffer> {
+        match self {
+            GpuWeightTensor::Dense(buf) => Some(buf),
+            _ => None,
+        }
+    }
+
+    /// Return the sparse CSR weights if this is the `SparseCsr` variant.
+    pub fn as_sparse_csr(&self) -> Option<&GpuSparseCsrWeights> {
+        match self {
+            GpuWeightTensor::SparseCsr(sparse) => Some(sparse),
+            _ => None,
+        }
+    }
+
+    /// Return the MPO weights if this is the `Mpo` variant.
+    pub fn as_mpo(&self) -> Option<&GpuMpoWeights> {
+        match self {
+            GpuWeightTensor::Mpo(mpo) => Some(mpo),
+            _ => None,
+        }
+    }
+
+    /// VRAM bytes allocated for this tensor.
+    pub fn size(&self) -> usize {
+        match self {
+            GpuWeightTensor::Dense(buf) => buf.size(),
+            GpuWeightTensor::SparseCsr(sparse) => {
+                sparse.values.size() + sparse.col_idx.size() + sparse.row_ptr.size()
+            }
+            GpuWeightTensor::Mpo(mpo) => mpo.site_data.size() + mpo.site_dims.size(),
+        }
+    }
+
+    /// Raw GPU pointer of the primary data buffer (for dense variants).
+    /// Returns null for sparse/MPO since they have multiple buffers.
+    pub fn as_ptr(&self) -> *mut u8 {
+        match self {
+            GpuWeightTensor::Dense(buf) => buf.as_ptr(),
+            _ => std::ptr::null_mut(),
+        }
+    }
+}
 
 // ── GPU Model Weights ─────────────────────────────────────────────────────────────
 
@@ -21,13 +87,13 @@ use crate::loader::{GgmlType, GgufFile, RfmFile, RfmType};
 pub struct GpuModelWeights {
     /// Per-layer weights (all in VRAM)
     pub layers: Vec<GpuLayerWeights>,
-    /// Token embedding matrix (quantized, in VRAM)
-    pub token_emb: GpuBuffer,
+    /// Token embedding matrix (dense, sparse CSR, or MPO)
+    pub token_emb: GpuWeightTensor,
     pub token_emb_meta: WeightMeta,
     /// Final RMS norm weights (F32, in VRAM)
     pub output_norm: GpuBuffer,
-    /// Language model head / output projection (quantized, in VRAM)
-    pub lm_head: GpuBuffer,
+    /// Language model head / output projection (dense, sparse CSR, or MPO)
+    pub lm_head: GpuWeightTensor,
     pub lm_head_meta: WeightMeta,
     /// Whether LM head is tied to token embeddings
     pub lm_head_tied: bool,
@@ -140,7 +206,7 @@ impl GpuModelWeights {
             let (buf, meta) =
                 load_tensor_no_track(file, &lm_head_name, config, true, false, device_id)?;
             estimated_vram_used += buf.size();
-            (buf, meta, false)
+            (GpuWeightTensor::Dense(buf), meta, false)
         } else {
             // Materialize a second GPU buffer for the tied head.
             // Instead of keeping it in Q4_0 and using slow CPU transposition fallback,
@@ -155,7 +221,7 @@ impl GpuModelWeights {
                 device_id,
             )?;
             estimated_vram_used += buf.size();
-            (buf, tied_meta, true)
+            (GpuWeightTensor::Dense(buf), tied_meta, true)
         };
 
         // Load all layers
@@ -179,7 +245,7 @@ impl GpuModelWeights {
 
         Ok(Self {
             layers,
-            token_emb,
+            token_emb: GpuWeightTensor::Dense(token_emb),
             token_emb_meta,
             output_norm,
             lm_head,
@@ -294,13 +360,6 @@ impl GpuModelWeights {
         let token_emb_wtype = rfm_type_to_ggml(&token_emb_view.wtype);
         let token_emb_unpacked_size = match token_emb_view.wtype {
             RfmType::Q4Split => (token_emb_view.element_count() / 32) * 18,
-            RfmType::SparseCsr { .. } | RfmType::Mpo { .. } => {
-                return Err(GpuError::UnsupportedOperation {
-                    operation: format!("load RFM tensor {}", token_emb_name),
-                    reason: "sparse CSR and MPO embeddings require a lazy/offload execution path"
-                        .to_string(),
-                });
-            }
             _ => token_emb_view.data.len(),
         };
 
@@ -317,16 +376,34 @@ impl GpuModelWeights {
                     num_blocks,
                     hipStream_t::null(),
                 )?;
-                out_gpu_buf
+                GpuWeightTensor::Dense(out_gpu_buf)
             }
-            RfmType::SparseCsr { .. } | RfmType::Mpo { .. } => {
-                return Err(GpuError::UnsupportedOperation {
-                    operation: format!("load RFM tensor {}", token_emb_name),
-                    reason: "sparse CSR and MPO embeddings require a lazy/offload execution path"
-                        .to_string(),
-                });
+            RfmType::SparseCsr { .. } => {
+                match super::layer::try_load_sparse_csr(file, token_emb_name, device_id)? {
+                    Some(sparse) => GpuWeightTensor::SparseCsr(sparse),
+                    None => {
+                        return Err(GpuError::UnsupportedOperation {
+                            operation: format!("load RFM tensor {}", token_emb_name),
+                            reason: "sparse CSR tensor parsing failed".to_string(),
+                        });
+                    }
+                }
             }
-            _ => upload_tensor_bytes_for_device(token_emb_view.data, device_id)?,
+            RfmType::Mpo { .. } => {
+                match super::layer::try_load_mpo(file, token_emb_name, device_id)? {
+                    Some(mpo) => GpuWeightTensor::Mpo(mpo),
+                    None => {
+                        return Err(GpuError::UnsupportedOperation {
+                            operation: format!("load RFM tensor {}", token_emb_name),
+                            reason: "MPO tensor parsing failed".to_string(),
+                        });
+                    }
+                }
+            }
+            _ => GpuWeightTensor::Dense(upload_tensor_bytes_for_device(
+                token_emb_view.data,
+                device_id,
+            )?),
         };
 
         let token_emb_meta = WeightMeta {
@@ -374,20 +451,12 @@ impl GpuModelWeights {
 
             let lm_unpacked_size = match lm_view.wtype {
                 RfmType::Q4Split => (lm_view.element_count() / 32) * 18,
-                RfmType::SparseCsr { .. } | RfmType::Mpo { .. } => {
-                    return Err(GpuError::UnsupportedOperation {
-                        operation: format!("load RFM tensor {}", lm_head_name),
-                        reason:
-                            "sparse CSR and MPO output heads require a lazy/offload execution path"
-                                .to_string(),
-                    });
-                }
                 _ => lm_view.data.len(),
             };
 
             check_model_load_headroom(budget, estimated_vram_used, lm_unpacked_size)?;
 
-            let buf = match lm_view.wtype {
+            let lm_head = match lm_view.wtype {
                 RfmType::Q4Split => {
                     let raw_gpu_buf = upload_tensor_bytes_for_device(lm_view.data, device_id)?;
                     let num_blocks = lm_view.element_count() / 32;
@@ -398,17 +467,33 @@ impl GpuModelWeights {
                         num_blocks,
                         hipStream_t::null(),
                     )?;
-                    out_gpu_buf
+                    GpuWeightTensor::Dense(out_gpu_buf)
                 }
-                RfmType::SparseCsr { .. } | RfmType::Mpo { .. } => {
-                    return Err(GpuError::UnsupportedOperation {
-                        operation: format!("load RFM tensor {}", lm_head_name),
-                        reason:
-                            "sparse CSR and MPO output heads require a lazy/offload execution path"
-                                .to_string(),
-                    });
+                RfmType::SparseCsr { .. } => {
+                    match super::layer::try_load_sparse_csr(file, lm_head_name, device_id)? {
+                        Some(sparse) => GpuWeightTensor::SparseCsr(sparse),
+                        None => {
+                            return Err(GpuError::UnsupportedOperation {
+                                operation: format!("load RFM tensor {}", lm_head_name),
+                                reason: "sparse CSR tensor parsing failed".to_string(),
+                            });
+                        }
+                    }
                 }
-                _ => upload_tensor_bytes_for_device(lm_view.data, device_id)?,
+                RfmType::Mpo { .. } => {
+                    match super::layer::try_load_mpo(file, lm_head_name, device_id)? {
+                        Some(mpo) => GpuWeightTensor::Mpo(mpo),
+                        None => {
+                            return Err(GpuError::UnsupportedOperation {
+                                operation: format!("load RFM tensor {}", lm_head_name),
+                                reason: "MPO tensor parsing failed".to_string(),
+                            });
+                        }
+                    }
+                }
+                _ => {
+                    GpuWeightTensor::Dense(upload_tensor_bytes_for_device(lm_view.data, device_id)?)
+                }
             };
 
             let meta = WeightMeta {
@@ -418,8 +503,8 @@ impl GpuModelWeights {
                 role: TensorRole::LmHead,
                 svd_k: None,
             };
-            estimated_vram_used += buf.size();
-            (buf, meta, false)
+            estimated_vram_used += lm_head.size();
+            (lm_head, meta, false)
         } else {
             // Weight tying
             // Instead of keeping it in Q4_0 and using slow CPU transposition fallback,
@@ -434,7 +519,7 @@ impl GpuModelWeights {
                 device_id,
             )?;
             estimated_vram_used += buf.size();
-            (buf, tied_meta, true)
+            (GpuWeightTensor::Dense(buf), tied_meta, true)
         };
 
         // Load all layers
@@ -561,7 +646,7 @@ fn gpu_layer_weights_binding_tag(layer: &GpuLayerWeights) -> u64 {
 fn compute_model_binding_tag(
     layers: &[GpuLayerWeights],
     output_norm: &GpuBuffer,
-    lm_head: &GpuBuffer,
+    lm_head: &GpuWeightTensor,
 ) -> u64 {
     let mut tag = 0u64;
     tag = mix_binding_tag(tag, output_norm.as_ptr() as usize);

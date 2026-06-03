@@ -6,7 +6,10 @@ use crate::gpu::error::{GpuError, GpuResult};
 use crate::gpu::ffi;
 use crate::gpu::graph::HipGraph;
 use crate::gpu::kernels::elementwise::{argmax_f32, argmax_f32_on_stream};
-use crate::gpu::ops::{gpu_dispatch_gemv_on_stream, gpu_dispatch_rms_norm};
+use crate::gpu::ops::{
+    gpu_dispatch_gemv_on_stream, gpu_dispatch_mpo_apply_on_stream, gpu_dispatch_rms_norm,
+    gpu_dispatch_sparse_csr_gemv_on_stream,
+};
 use crate::gpu::weights::GpuModelWeights;
 
 use super::utils::decode_graph_disabled;
@@ -89,16 +92,44 @@ pub(super) fn gpu_launch_greedy_logits_tail_on_stream(
         )
     })?;
     profile_decode_stage(device, DecodeStage::LogitsProj, || {
-        gpu_dispatch_gemv_on_stream(
-            device,
-            &gpu_weights.lm_head,
-            &gpu_weights.lm_head_meta,
-            scratch.normed.as_ptr() as *const f32,
-            scratch.logits.as_ptr() as *mut f32,
-            v,
-            h,
-            device.stream(),
-        )
+        if let Some(dense) = gpu_weights.lm_head.as_dense() {
+            gpu_dispatch_gemv_on_stream(
+                device,
+                dense,
+                &gpu_weights.lm_head_meta,
+                scratch.normed.as_ptr() as *const f32,
+                scratch.logits.as_ptr() as *mut f32,
+                v,
+                h,
+                device.stream(),
+            )
+        } else if let Some(sparse) = gpu_weights.lm_head.as_sparse_csr() {
+            gpu_dispatch_sparse_csr_gemv_on_stream(
+                device,
+                sparse,
+                scratch.normed.as_ptr() as *const f32,
+                scratch.logits.as_ptr() as *mut f32,
+                v,
+                h,
+                device.stream(),
+            )
+        } else if let Some(mpo) = gpu_weights.lm_head.as_mpo() {
+            gpu_dispatch_mpo_apply_on_stream(
+                device,
+                mpo,
+                scratch.normed.as_ptr() as *const f32,
+                scratch.logits.as_ptr() as *mut f32,
+                v,
+                h,
+                device.stream(),
+            )
+        } else {
+            Err(GpuError::InvalidWeightLayout {
+                tensor: "lm_head".to_string(),
+                dims: gpu_weights.lm_head_meta.dims.clone(),
+                reason: "LM head is neither dense, sparse CSR, nor MPO".to_string(),
+            })
+        }
     })?;
     profile_decode_stage(device, DecodeStage::Argmax, || {
         argmax_f32_on_stream(
@@ -184,7 +215,7 @@ pub(super) fn gpu_try_greedy_decode_graph(
     let next_pos = scratch.decode_state_next_pos();
 
     if next_pos.is_some() {
-        let pos = next_pos.unwrap();
+        let pos = next_pos.expect("invariant: next_pos checked as Some");
         let has_graph = scratch.decode_graph().is_some();
 
         if has_graph {

@@ -631,8 +631,8 @@ fn test_fwht_and_svd_mathematical_equivalence() {
 
     // Generate random input vector and random matrix
     let mut x_in = vec![0.0f32; cols];
-    for i in 0..cols {
-        x_in[i] = ((i as f32 * 0.15).cos() + (i as f32 * 0.08).sin()) * 0.5;
+    for (i, val) in x_in.iter_mut().enumerate() {
+        *val = ((i as f32 * 0.15).cos() + (i as f32 * 0.08).sin()) * 0.5;
     }
 
     let left1: Vec<f32> = (0..rows).map(|r| (r as f32 * 0.1).sin()).collect();

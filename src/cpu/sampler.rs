@@ -45,7 +45,10 @@ pub fn cpu_sample_top_p(logits: &[f32], temperature: f32, top_p: f32, seed: u64)
         .enumerate()
         .map(|(i, p)| (p, i as u32))
         .collect();
-    pairs.sort_unstable_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+    pairs.sort_unstable_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .expect("invariant: partial_cmp failed (NaN in sampling)")
+    });
 
     // Find nucleus (smallest set of tokens with cumsum >= top_p)
     let mut cumsum = 0.0f32;
@@ -80,7 +83,10 @@ pub fn cpu_sample_top_k(logits: &[f32], temperature: f32, top_k: usize, seed: u6
 
     // Find top-k indices (store as (index, logit) then sort)
     let mut indexed: Vec<(usize, f32)> = logits.iter().copied().enumerate().collect();
-    indexed.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    indexed.sort_unstable_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .expect("invariant: partial_cmp failed (NaN in sampling)")
+    });
 
     let k = top_k.min(indexed.len());
     let top_k_pairs: Vec<(usize, f32)> = indexed[..k].to_vec();
@@ -125,7 +131,10 @@ pub fn cpu_sample_top_k_top_p(
 
     // Find top-k indices
     let mut indexed: Vec<(usize, f32)> = logits.iter().copied().enumerate().collect();
-    indexed.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    indexed.sort_unstable_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .expect("invariant: partial_cmp failed (NaN in sampling)")
+    });
 
     let k = top_k.min(indexed.len());
     let top_k_pairs: Vec<(usize, f32)> = indexed[..k].to_vec();
@@ -151,7 +160,10 @@ pub fn cpu_sample_top_k_top_p(
         .collect();
 
     // Re-sort by probability
-    pairs.sort_unstable_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+    pairs.sort_unstable_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .expect("invariant: partial_cmp failed (NaN in sampling)")
+    });
 
     // Find nucleus
     let mut cumsum = 0.0f32;

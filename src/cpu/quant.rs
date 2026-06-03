@@ -37,6 +37,19 @@ pub const Q5_0_BLOCK_BYTES: usize = 22;
 pub const Q5_1_BLOCK_ELEMS: usize = 32;
 pub const Q5_1_BLOCK_BYTES: usize = 24;
 
+/// Q2_K: 256 elements per block, 84 bytes (16 scales + 64 qs + 2 d + 2 dmin)
+///
+/// Q2_K block format:
+/// - scales[16]: packed scale/min values, quantized with 4 bits each
+/// - qs[64]: 2-bit quantized weights (4 elements per byte)
+/// - d: f16 super-block scale (2 bytes)
+/// - dmin: f16 super-block min scale (2 bytes)
+///
+/// Each weight is 2 bits + 4-bit scale/min pair.
+/// Total: 84 bytes for 256 values (~2.625 bits per weight)
+pub const Q2_K_BLOCK_ELEMS: usize = 256;
+pub const Q2_K_BLOCK_BYTES: usize = 84;
+
 /// Q3_K: 256 elements per block, 110 bytes (32 hmask + 64 qs + 12 scales + 2 d)
 ///
 /// Q3_K block format:
@@ -450,6 +463,30 @@ pub fn embed_q6_k_batch(ids: &[u32], emb: &[u8], out: &mut [f32], hidden_size: u
     for (s, &id) in ids.iter().enumerate() {
         let or = &mut out[s * hidden_size..(s + 1) * hidden_size];
         embed_q6_k(id as usize, emb, or, hidden_size);
+    }
+}
+
+/// Dequantize Q2_K embedding row: out = dequant(emb[token_id])
+pub fn embed_q2_k(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usize) {
+    use super::kernels::BlockQ2K;
+    let num_blocks = hidden_size / Q2_K_BLOCK_ELEMS;
+    let row_offset = token_id * num_blocks * Q2_K_BLOCK_BYTES;
+
+    for b in 0..num_blocks {
+        let block =
+            &emb[row_offset + b * Q2_K_BLOCK_BYTES..row_offset + (b + 1) * Q2_K_BLOCK_BYTES];
+        let block_ptr = block.as_ptr() as *const BlockQ2K;
+        let block_ref = unsafe { &*block_ptr };
+        let base = b * Q2_K_BLOCK_ELEMS;
+        block_ref.dequantize(&mut out[base..base + Q2_K_BLOCK_ELEMS]);
+    }
+}
+
+/// Batch embed from Q2_K
+pub fn embed_q2_k_batch(ids: &[u32], emb: &[u8], out: &mut [f32], hidden_size: usize) {
+    for (s, &id) in ids.iter().enumerate() {
+        let or = &mut out[s * hidden_size..(s + 1) * hidden_size];
+        embed_q2_k(id as usize, emb, or, hidden_size);
     }
 }
 

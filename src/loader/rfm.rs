@@ -323,13 +323,25 @@ impl RfmFile {
             return Err(LoadError::InvalidMagic(got_magic));
         }
 
-        let version = u32::from_le_bytes(mmap[4..8].try_into().unwrap());
+        let version = u32::from_le_bytes(
+            mmap[4..8]
+                .try_into()
+                .expect("invariant: mmap[4..8] is 4 bytes"),
+        );
         if version != 1 {
             return Err(LoadError::UnsupportedVersion(version));
         }
 
-        let metadata_size = u64::from_le_bytes(mmap[8..16].try_into().unwrap()) as usize;
-        let tensor_table_size = u64::from_le_bytes(mmap[16..24].try_into().unwrap()) as usize;
+        let metadata_size = u64::from_le_bytes(
+            mmap[8..16]
+                .try_into()
+                .expect("invariant: mmap[8..16] is 8 bytes"),
+        ) as usize;
+        let tensor_table_size = u64::from_le_bytes(
+            mmap[16..24]
+                .try_into()
+                .expect("invariant: mmap[16..24] is 8 bytes"),
+        ) as usize;
 
         if len < 24 + metadata_size + tensor_table_size {
             return Err(LoadError::Io(std::io::Error::new(
