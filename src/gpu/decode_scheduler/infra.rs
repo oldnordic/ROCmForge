@@ -12,6 +12,7 @@ use crate::gpu::cache::{GpuForwardScratch, GpuKvCache};
 use crate::gpu::decode_scheduler::{DecodeBatch, DecodeBatchError, SequenceState};
 use crate::gpu::device::GpuDevice;
 use crate::gpu::error::{GpuError, GpuResult};
+use crate::gpu::forward::gpu_full_forward_hybrid;
 use crate::gpu::forward::GpuLogitsMode;
 use crate::gpu::weights::GpuModelWeights;
 
@@ -80,11 +81,7 @@ impl DecodeSession {
     /// Allocate `num_slots` slots and a scheduler of the same capacity.
     ///
     /// Fails eagerly if any slot allocation fails (OOM, no GPU, etc.).
-    pub fn new(
-        device: &GpuDevice,
-        config: &ModelConfig,
-        num_slots: usize,
-    ) -> GpuResult<Self> {
+    pub fn new(device: &GpuDevice, config: &ModelConfig, num_slots: usize) -> GpuResult<Self> {
         let mut slots = Vec::with_capacity(num_slots);
         let batch = DecodeBatch::new(num_slots);
         for i in 0..num_slots {
@@ -106,10 +103,7 @@ impl DecodeSession {
     }
 
     /// Remove a completed sequence by ID, resetting its slot.
-    pub fn remove_sequence(
-        &mut self,
-        seq_id: u64,
-    ) -> Result<usize, DecodeBatchError> {
+    pub fn remove_sequence(&mut self, seq_id: u64) -> Result<usize, DecodeBatchError> {
         let slot = self.batch.remove_sequence(seq_id)?;
         self.slots[slot].position = 0;
         self.slots[slot].state = SequenceState::Awaiting;
@@ -152,24 +146,23 @@ impl DecodeSession {
         // This requires re-borrow or using the slice directly. Since we have
         // separate Vec<RefCell> we call inline logic.
 
+        // Run decode forward for every active slot.
+        // We collect active slot info first to avoid borrowing `self.slots` multiple times.
+        let active: Vec<(usize, u64, usize)> = self.batch.active_slots().collect();
         let mut results = Vec::new();
-        for (slot_idx, seq_id, pos) in self.batch.active_slots() {
-            let kv = &mut self.slots[slot_idx].kv;
-            let scratch = &mut self.slots[slot_idx].scratch;
-            let host = &mut self.slots[slot_idx].host_scratch;
-
+        for (slot_idx, seq_id, pos) in active {
+            let slot = &mut self.slots[slot_idx];
             let token_opt = gpu_full_forward_hybrid(
                 device,
                 gpu_weights,
                 cpu_weights,
-                kv,
-                scratch,
-                host,
+                &mut slot.kv,
+                &mut slot.scratch,
+                &mut slot.host_scratch,
                 pos,
                 config,
                 logits_mode,
             )?;
-
             if let Some(token) = token_opt {
                 results.push((slot_idx, seq_id, token));
             }

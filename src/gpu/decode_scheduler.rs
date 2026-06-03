@@ -1,11 +1,14 @@
-//! INF-12: Decode batch scheduler for continuous multi-sequence generation.
+//! INF-12 + INF-13: Decode batch scheduler for continuous multi-sequence generation
+//! with chunked prefill support.
 //!
-//! A slot table manages up to `N` concurrent decoding sequences on one GPU.
-//! Admission and eviction are out-of-band: the caller adds sequences and advances
-//! them until they emit `EOS`, then removes them to free slots.
+//! A slot table manages up to `N` concurrent sequences on one GPU.
+//! Sequences can be admitted with or without a prompt.  Prompt-bearing sequences
+//! enter the `Prefilling` state and are advanced chunk-by-chunk by the caller.
+//! Once the prompt is fully prefilled they transition to `Decoding`.
 //!
-//! This module is pure logic (no GPU kernels).  It coordinates multiple
-//! `GpuKvCache` + `GpuForwardScratch` pairs that the caller owns.
+//! Admission and eviction are out-of-band: the caller adds sequences and
+//! advances them until they emit `EOS`, then removes them to free slots.
+//! This module is pure logic (no GPU kernels).
 
 use core::fmt;
 use std::str::FromStr;
@@ -14,16 +17,21 @@ use std::str::FromStr;
 /// The default `EOS=2` matches the LLaMa / Gemma convention.
 pub const DEFAULT_EOS_TOKEN: u32 = 2;
 
-/// What a given batch slot is doing right now.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Default chunk size (in tokens) for prefill steps.
+pub const DEFAULT_PREFILL_CHUNK_TOKENS: usize = 512;
+
+/// Lifecycle state for a slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SequenceState {
-    /// Slot has never held a sequence.
+    /// Slot is available — no sequence admitted.
     Awaiting,
-    /// Sequence is active and has not yet emitted EOS.
+    /// Slot is actively prefill-processing a prompt — output tokens not yet generated.
+    Prefilling,
+    /// Slot is actively generating decode tokens.
     Decoding,
-    /// Sequence emitted EOS. Slot is stale until removed.
+    /// Slot emitted EOS or hit max_tokens — waiting for caller to remove it.
     Completed,
-    /// Slot was freed after removal.
+    /// Slot was removed (temporary state until next add_sequence overwrites it).
     Freed,
 }
 
@@ -31,6 +39,7 @@ impl SequenceState {
     pub fn as_str(&self) -> &'static str {
         match self {
             SequenceState::Awaiting => "awaiting",
+            SequenceState::Prefilling => "prefilling",
             SequenceState::Decoding => "decoding",
             SequenceState::Completed => "completed",
             SequenceState::Freed => "freed",
@@ -50,6 +59,7 @@ impl FromStr for SequenceState {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "awaiting" => Ok(SequenceState::Awaiting),
+            "prefilling" => Ok(SequenceState::Prefilling),
             "decoding" => Ok(SequenceState::Decoding),
             "completed" => Ok(SequenceState::Completed),
             "freed" => Ok(SequenceState::Freed),
@@ -58,18 +68,23 @@ impl FromStr for SequenceState {
     }
 }
 
-/// Per-slot bookkeeping.  The GPU buffers (`GpuKvCache`, `GpuForwardScratch`)
-/// are stored OUTSIDE this struct — the caller indexes `BatchHandle{> into its own pools.
+/// Per-slot bookkeeping.
 #[derive(Clone, Debug)]
 pub struct DecodeBatchSlot {
     /// Unique request ID (opaque to the scheduler).
     pub sequence_id: u64,
     /// Current lifecycle state.
     pub state: SequenceState,
-    /// Number of tokens already generated (starts at 0 after prefill).
+    /// Number of tokens already processed/generated (starts at 0).
     pub position: usize,
     /// Maximum tokens to allow in this sequence before forced termination.
     pub max_tokens: usize,
+    /// Prompt token IDs that are pending prefill (empty for decode-only slots).
+    pub prompt_tokens: Vec<u32>,
+    /// Number of prompt tokens already processed during chunked prefill.
+    pub prefill_done: usize,
+    /// Maximum number of tokens per prefill chunk.
+    pub prefill_budget: usize,
     /// Last emitted token, if any.
     pub last_token: Option<u32>,
 }
@@ -82,6 +97,9 @@ impl DecodeBatchSlot {
             state: SequenceState::Awaiting,
             position: 0,
             max_tokens: 0,
+            prompt_tokens: Vec::new(),
+            prefill_done: 0,
+            prefill_budget: DEFAULT_PREFILL_CHUNK_TOKENS,
             last_token: None,
         }
     }
@@ -92,6 +110,9 @@ impl DecodeBatchSlot {
         self.state = SequenceState::Awaiting;
         self.position = 0;
         self.max_tokens = 0;
+        self.prompt_tokens.clear();
+        self.prefill_done = 0;
+        self.prefill_budget = DEFAULT_PREFILL_CHUNK_TOKENS;
         self.last_token = None;
     }
 }
@@ -103,6 +124,8 @@ pub enum DecodeBatchError {
     SlotNotFound(u64),
     InvalidState(String),
     SlotNotActive { slot: usize, state: SequenceState },
+    NotPrefilling,
+    InvalidChunkSize,
 }
 
 impl fmt::Display for DecodeBatchError {
@@ -116,25 +139,21 @@ impl fmt::Display for DecodeBatchError {
             DecodeBatchError::SlotNotActive { slot, state } => {
                 write!(f, "slot {slot} is not active (state = {state})")
             }
+            DecodeBatchError::NotPrefilling => f.write_str("slot is not in Prefilling state"),
+            DecodeBatchError::InvalidChunkSize => f.write_str("prefill chunk size must be > 0"),
         }
     }
 }
 
 impl std::error::Error for DecodeBatchError {}
 
-/// Slot table for up to `NUM_SLOTS` concurrent sequences.
-///
-/// Design decisions (grounded in existing infra):
-/// 1. **No GPU inside** — caller owns `GpuKvCache` / `GpuForwardScratch` arrays.
-///    The scheduler only tells the caller *which* slots to run.
-/// 2. **Round-robin by default** — active slots are yielded in ascending order.
-///    The caller runs `gpu_layer_forward_hybrid` once per active slot per token.
-/// 3. **EOS detection** — configurable per batch; default = 2.
-/// 4. **Bounded lifetime** — `max_tokens` per sequence prevents runaway.
+pub mod infra;
 pub struct DecodeBatch {
     slots: Vec<DecodeBatchSlot>,
     /// Token signalling completion.
     eos_token: u32,
+    /// Prefill chunk size.
+    prefill_budget: usize,
 }
 
 impl DecodeBatch {
@@ -147,6 +166,7 @@ impl DecodeBatch {
         Self {
             slots,
             eos_token: DEFAULT_EOS_TOKEN,
+            prefill_budget: DEFAULT_PREFILL_CHUNK_TOKENS,
         }
     }
 
@@ -170,6 +190,13 @@ impl DecodeBatch {
             .any(|s| s.state == SequenceState::Decoding)
     }
 
+    /// Is there at least one `Prefilling` slot?
+    pub fn any_prefilling(&self) -> bool {
+        self.slots
+            .iter()
+            .any(|s| s.state == SequenceState::Prefilling)
+    }
+
     /// Return the state of a given slot, if it exists.
     pub fn slot_state(&self, idx: usize) -> Option<SequenceState> {
         self.slots.get(idx).map(|s| s.state)
@@ -190,8 +217,7 @@ impl DecodeBatch {
             .unwrap_or(false)
     }
 
-    /// Admit a new sequence into the first free (`Awaiting` or `Freed`) slot.
-    /// Returns the slot index on success.
+    /// Admit a decode-only sequence (no prompt) into the first free slot.
     pub fn add_sequence(
         &mut self,
         seq_id: u64,
@@ -207,6 +233,37 @@ impl DecodeBatch {
                 self.slots[idx].state = SequenceState::Decoding;
                 self.slots[idx].position = 0;
                 self.slots[idx].max_tokens = max_tokens;
+                self.slots[idx].prompt_tokens.clear();
+                self.slots[idx].prefill_done = 0;
+                self.slots[idx].prefill_budget = self.prefill_budget;
+                self.slots[idx].last_token = None;
+                Ok(idx)
+            }
+            None => Err(DecodeBatchError::NoFreeSlots),
+        }
+    }
+
+    /// Admit a sequence with a prompt. The slot enters `Prefilling` state
+    /// and must be advanced via `prefill_next_chunk` until empty.
+    pub fn add_sequence_with_prompt(
+        &mut self,
+        seq_id: u64,
+        prompt_tokens: &[u32],
+        max_tokens: usize,
+    ) -> Result<usize, DecodeBatchError> {
+        let free_idx = self
+            .slots
+            .iter()
+            .position(|s| s.state == SequenceState::Awaiting || s.state == SequenceState::Freed);
+        match free_idx {
+            Some(idx) => {
+                self.slots[idx].sequence_id = seq_id;
+                self.slots[idx].state = SequenceState::Prefilling;
+                self.slots[idx].position = 0;
+                self.slots[idx].max_tokens = max_tokens;
+                self.slots[idx].prompt_tokens = prompt_tokens.to_vec();
+                self.slots[idx].prefill_done = 0;
+                self.slots[idx].prefill_budget = self.prefill_budget;
                 self.slots[idx].last_token = None;
                 Ok(idx)
             }
@@ -225,7 +282,7 @@ impl DecodeBatch {
         Ok(idx)
     }
 
-    /// Advance one token in `slot_idx`.
+    /// Advance one token in a `Decoding` slot.
     ///
     /// If `token` is `EOS` or `position >= max_tokens`, the slot transitions to `Completed`.
     pub fn advance_slot(
@@ -254,7 +311,53 @@ impl DecodeBatch {
         Ok(())
     }
 
-    /// Current token position for a slot (number of decode steps taken).
+    /// Number of prompt tokens still awaiting prefill for `slot_idx`.
+    pub fn prefill_remaining(&self, slot_idx: usize) -> usize {
+        self.slots
+            .get(slot_idx)
+            .map(|s| s.prompt_tokens.len().saturating_sub(s.prefill_done))
+            .unwrap_or(0)
+    }
+
+    /// Number of prompt tokens already processed for `slot_idx`.
+    pub fn prefill_done(&self, slot_idx: usize) -> usize {
+        self.slots
+            .get(slot_idx)
+            .map(|s| s.prefill_done)
+            .unwrap_or(0)
+    }
+
+    /// Advance a `Prefilling` slot by processing up to `chunk_size` prompt tokens.
+    ///
+    /// Returns the number of prompt tokens *remaining* after this chunk.
+    /// When 0 is returned the slot automatically transitions to `Decoding`.
+    pub fn prefill_next_chunk(
+        &mut self,
+        slot_idx: usize,
+        chunk_size: usize,
+    ) -> Result<usize, DecodeBatchError> {
+        let slot = self
+            .slots
+            .get_mut(slot_idx)
+            .ok_or(DecodeBatchError::SlotNotFound(slot_idx as u64))?;
+        if slot.state != SequenceState::Prefilling {
+            return Err(DecodeBatchError::NotPrefilling);
+        }
+        if chunk_size == 0 {
+            return Err(DecodeBatchError::InvalidChunkSize);
+        }
+        let remaining = slot.prompt_tokens.len().saturating_sub(slot.prefill_done);
+        let consumed = chunk_size.min(remaining);
+        slot.prefill_done += consumed;
+        let still_remaining = slot.prompt_tokens.len().saturating_sub(slot.prefill_done);
+        if still_remaining == 0 {
+            slot.state = SequenceState::Decoding;
+            slot.position = slot.prefill_done; // position tracks total sequence length
+        }
+        Ok(still_remaining)
+    }
+
+    /// Current token position for a slot.
     pub fn position_for_slot(&self, slot_idx: usize) -> usize {
         self.slots.get(slot_idx).map(|s| s.position).unwrap_or(0)
     }
@@ -269,7 +372,7 @@ impl DecodeBatch {
         self.slots.get(slot_idx).map(|s| s.sequence_id)
     }
 
-    /// Call `f` once for every `Decoding` slot, passing (slot_idx, sequence_id, position).
+    /// Call `f` once for every `Decoding` slot.
     pub fn foreach_active<F>(&self, mut f: F)
     where
         F: FnMut(usize, u64, usize),
@@ -281,13 +384,27 @@ impl DecodeBatch {
         }
     }
 
-    /// Iterate active slots for testing/inspection.
+    /// Iterate active (`Decoding`) slots.
     pub fn active_slots(&self) -> impl Iterator<Item = (usize, u64, usize)> + '_ {
         self.slots
             .iter()
             .enumerate()
             .filter(|(_, s)| s.state == SequenceState::Decoding)
             .map(|(idx, s)| (idx, s.sequence_id, s.position))
+    }
+
+    /// Iterate prefill (`Prefilling`) slots.
+    pub fn prefill_slots(&self) -> impl Iterator<Item = (usize, u64, &[u32], usize)> + '_ {
+        self.slots
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.state == SequenceState::Prefilling)
+            .map(|(idx, s)| {
+                let chunk_start = s.prefill_done;
+                let chunk_end = (s.prefill_done + s.prefill_budget).min(s.prompt_tokens.len());
+                let remaining = &s.prompt_tokens[chunk_start..chunk_end];
+                (idx, s.sequence_id, remaining, chunk_start)
+            })
     }
 
     /// Force-set EOS token (for models with a non-default EOS ID).
@@ -304,6 +421,7 @@ mod tests {
     fn state_roundtrip() {
         for state in [
             SequenceState::Awaiting,
+            SequenceState::Prefilling,
             SequenceState::Decoding,
             SequenceState::Completed,
             SequenceState::Freed,
