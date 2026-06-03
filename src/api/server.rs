@@ -37,10 +37,12 @@ pub struct ModelEntry {
     pub cpu_weights: Arc<CpuModelWeights>,
     #[cfg(feature = "gpu")]
     pub gpu_weights: Option<Arc<crate::gpu::GpuModelWeights>>,
+    #[cfg(feature = "gpu")]
+    pub speculative_engine: Option<Arc<Mutex<crate::gpu::SpeculativeEngine>>>,
 }
 
 impl ModelEntry {
-    pub fn load(model_path: &str) -> Result<Self, String> {
+    pub fn load(model_path: &str, draft_path: Option<&str>) -> Result<Self, String> {
         let file = ModelFile::open(model_path).map_err(|e| format!("model open: {}", e))?;
         let config = file.config().map_err(|e| format!("config: {}", e))?;
         let tokenizer = file.tokenizer();
@@ -65,6 +67,25 @@ impl ModelEntry {
             }
         };
 
+        #[cfg(feature = "gpu")]
+        let speculative_engine = if let Some(dp) = draft_path {
+            let gpu_caps = crate::gpu::detect()
+                .ok_or("GPU requested for speculative decoding but no AMD GPU detected")?;
+            let device = crate::gpu::GpuDevice::get_or_init(gpu_caps.device_id)
+                .map_err(|e| format!("gpu init: {}", e))?;
+            let engine = crate::gpu::SpeculativeEngine::new(
+                &device,
+                model_path,
+                dp,
+                config.max_seq_len.min(2048),
+                256,
+            )
+            .map_err(|e| format!("failed to instantiate speculative engine: {:?}", e))?;
+            Some(Arc::new(Mutex::new(engine)))
+        } else {
+            None
+        };
+
         Ok(ModelEntry {
             model_path: model_path.to_string(),
             config,
@@ -75,6 +96,8 @@ impl ModelEntry {
             cpu_weights,
             #[cfg(feature = "gpu")]
             gpu_weights,
+            #[cfg(feature = "gpu")]
+            speculative_engine,
         })
     }
 }
@@ -93,8 +116,8 @@ impl ModelManager {
         Self { models: map }
     }
 
-    pub fn try_load(&mut self, path: &str) -> Result<(), String> {
-        let entry = ModelEntry::load(path)?;
+    pub fn try_load(&mut self, path: &str, draft_path: Option<&str>) -> Result<(), String> {
+        let entry = ModelEntry::load(path, draft_path)?;
         self.models
             .insert(path.to_string(), Arc::new(Mutex::new(entry)));
         Ok(())
@@ -171,6 +194,15 @@ async fn load_model(
             "invalid_model",
         );
     }
+    if let Some(ref dp) = req.draft_model {
+        if !std::path::Path::new(dp).exists() {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                format!("Draft model file not found: {}", dp),
+                "invalid_draft_model",
+            );
+        }
+    }
 
     let guard = state.lock().await;
     if guard.get(&path).is_some() {
@@ -187,23 +219,27 @@ async fn load_model(
     drop(guard);
 
     let path2 = path.clone();
-    let entry = match tokio::task::spawn_blocking(move || ModelEntry::load(&path2)).await {
-        Ok(Ok(e)) => e,
-        Ok(Err(e)) => {
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to load model: {}", e),
-                "load_error",
-            );
-        }
-        Err(e) => {
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Task panic: {}", e),
-                "load_error",
-            );
-        }
-    };
+    let draft_path2 = req.draft_model.clone();
+    let entry =
+        match tokio::task::spawn_blocking(move || ModelEntry::load(&path2, draft_path2.as_deref()))
+            .await
+        {
+            Ok(Ok(e)) => e,
+            Ok(Err(e)) => {
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to load model: {}", e),
+                    "load_error",
+                );
+            }
+            Err(e) => {
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Task panic: {}", e),
+                    "load_error",
+                );
+            }
+        };
 
     let mut guard = state.lock().await;
     if guard.get(&path).is_some() {
@@ -394,6 +430,8 @@ async fn create_completion(
     let cpu_weights2 = Arc::clone(&e.cpu_weights);
     #[cfg(feature = "gpu")]
     let gpu_weights2 = e.gpu_weights.clone();
+    #[cfg(feature = "gpu")]
+    let speculative_engine2 = e.speculative_engine.clone();
     let sem = Arc::clone(&e.inference_sem);
     drop(e);
     drop(guard);
@@ -419,6 +457,8 @@ async fn create_completion(
             &cpu_weights2,
             #[cfg(feature = "gpu")]
             &gpu_weights2,
+            #[cfg(feature = "gpu")]
+            &speculative_engine2,
             &model_path2,
             &config,
             &tok,
@@ -503,6 +543,8 @@ async fn create_chat_completion(
     let cpu_weights2 = Arc::clone(&e.cpu_weights);
     #[cfg(feature = "gpu")]
     let gpu_weights2 = e.gpu_weights.clone();
+    #[cfg(feature = "gpu")]
+    let speculative_engine2 = e.speculative_engine.clone();
     let sem = Arc::clone(&e.inference_sem);
     drop(e);
     drop(guard);
@@ -530,6 +572,8 @@ async fn create_chat_completion(
                 &cpu_weights2,
                 #[cfg(feature = "gpu")]
                 &gpu_weights2,
+                #[cfg(feature = "gpu")]
+                &speculative_engine2,
                 &model_path2,
                 &config,
                 &tok,
@@ -596,6 +640,8 @@ async fn create_chat_completion(
             &cpu_weights2,
             #[cfg(feature = "gpu")]
             &gpu_weights2,
+            #[cfg(feature = "gpu")]
+            &speculative_engine2,
             &config,
             &tok,
             &prompt_tokens,
@@ -672,6 +718,8 @@ async fn create_messages(
     let cpu_weights2 = Arc::clone(&e.cpu_weights);
     #[cfg(feature = "gpu")]
     let gpu_weights2 = e.gpu_weights.clone();
+    #[cfg(feature = "gpu")]
+    let speculative_engine2 = e.speculative_engine.clone();
     let sem = Arc::clone(&e.inference_sem);
     drop(e);
     drop(guard);
@@ -698,6 +746,8 @@ async fn create_messages(
             &cpu_weights2,
             #[cfg(feature = "gpu")]
             &gpu_weights2,
+            #[cfg(feature = "gpu")]
+            &speculative_engine2,
             &model_path2,
             &config,
             &tok,
@@ -789,6 +839,7 @@ fn format_chat_messages(messages: &[ChatMessage], template: ChatTemplate) -> Str
 fn run_sync_inference(
     cpu_weights: &Arc<CpuModelWeights>,
     #[cfg(feature = "gpu")] gpu_weights: &Option<Arc<crate::gpu::GpuModelWeights>>,
+    #[cfg(feature = "gpu")] speculative_engine: &Option<Arc<Mutex<crate::gpu::SpeculativeEngine>>>,
     model_path: &str,
     config: &ModelConfig,
     tok: &BpeTokenizer,
@@ -799,6 +850,14 @@ fn run_sync_inference(
 ) -> Result<(String, usize), String> {
     #[cfg(feature = "gpu")]
     {
+        if let Some(spec_engine_arc) = speculative_engine {
+            let gpu_caps = crate::gpu::detect().ok_or("GPU requested but no AMD GPU detected")?;
+            let device = crate::gpu::GpuDevice::get_or_init(gpu_caps.device_id)
+                .map_err(|e| format!("gpu init: {}", e))?;
+            let mut engine = spec_engine_arc.blocking_lock();
+            let orchestrator = crate::gpu::SpeculativeOrchestrator::new(4)?;
+            return orchestrator.generate(&device, &mut engine, tok, prompt_tokens, max_tokens);
+        }
         if let Some(gw) = gpu_weights {
             crate::api::gpu_inference::run_gpu_sync_inference(
                 gw,
@@ -838,6 +897,7 @@ fn run_sync_inference(
 fn run_stream_inference(
     cpu_weights: &Arc<CpuModelWeights>,
     #[cfg(feature = "gpu")] gpu_weights: &Option<Arc<crate::gpu::GpuModelWeights>>,
+    #[cfg(feature = "gpu")] speculative_engine: &Option<Arc<Mutex<crate::gpu::SpeculativeEngine>>>,
     config: &ModelConfig,
     tok: &BpeTokenizer,
     prompt_tokens: &[u32],
@@ -848,6 +908,21 @@ fn run_stream_inference(
 ) -> Result<(), String> {
     #[cfg(feature = "gpu")]
     {
+        if let Some(spec_engine_arc) = speculative_engine {
+            let gpu_caps = crate::gpu::detect().ok_or("GPU requested but no AMD GPU detected")?;
+            let device = crate::gpu::GpuDevice::get_or_init(gpu_caps.device_id)
+                .map_err(|e| format!("gpu init: {}", e))?;
+            let mut engine = spec_engine_arc.blocking_lock();
+            let orchestrator = crate::gpu::SpeculativeOrchestrator::new(4)?;
+            return orchestrator.generate_stream(
+                &device,
+                &mut engine,
+                tok,
+                prompt_tokens,
+                max_tokens,
+                tx,
+            );
+        }
         if let Some(gw) = gpu_weights {
             crate::api::gpu_inference::run_gpu_stream_inference(
                 gw,

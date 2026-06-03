@@ -1921,16 +1921,20 @@ impl GpuForwardScratch {
 
     pub fn try_update_decode_graph(
         &mut self,
-        new_graph: &crate::gpu::graph::HipGraph,
-    ) -> GpuResult<bool> {
-        if let Some(graph) = &self.captured_decode {
-            let updated = graph.update(new_graph)?;
-            if updated {
-                self.decode_state_next_pos = None;
+        new_graph: crate::gpu::graph::HipGraph,
+        new_key: crate::gpu::graph::DecodeGraphKey,
+    ) -> GpuResult<Result<(), crate::gpu::graph::HipGraph>> {
+        if let Some(graph) = &mut self.captured_decode {
+            match graph.update(new_graph)? {
+                Ok(()) => {
+                    graph.set_key(new_key);
+                    self.decode_state_next_pos = None;
+                    Ok(Ok(()))
+                }
+                Err(g) => Ok(Err(g)),
             }
-            Ok(updated)
         } else {
-            Ok(false)
+            Ok(Err(new_graph))
         }
     }
 

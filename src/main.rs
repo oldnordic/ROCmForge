@@ -1476,10 +1476,11 @@ fn main() {
     #[cfg(feature = "server")]
     if args.server {
         use rocmforge::api::server::{create_router, ModelEntry, ModelManager};
-        let entry = ModelEntry::load(&args.model).unwrap_or_else(|e| {
-            eprintln!("Failed to load model: {}", e);
-            std::process::exit(1);
-        });
+        let entry =
+            ModelEntry::load(&args.model, args.draft_model.as_deref()).unwrap_or_else(|e| {
+                eprintln!("Failed to load model: {}", e);
+                std::process::exit(1);
+            });
         let manager = ModelManager::new(entry);
         let state = std::sync::Arc::new(tokio::sync::Mutex::new(manager));
         let router = create_router(state);

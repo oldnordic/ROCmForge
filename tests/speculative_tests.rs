@@ -61,3 +61,46 @@ fn test_speculative_engine_instantiation_and_verification() {
     assert_eq!(accepted_tokens.len(), 5); // 4 accepted + 1 next target token
     assert_eq!(&accepted_tokens[0..4], &draft_tokens[..]);
 }
+
+#[test]
+#[serial]
+fn test_speculative_orchestrator_generate() {
+    require_gpu!();
+
+    let model_path = "/home/feanor/Projects/rocmforge/llama3.2-1b-instruct-q4_0.rfm";
+    let path = std::path::Path::new(model_path);
+    if !path.exists() {
+        eprintln!(
+            "Skipping speculative generation test: LLaMA 1B RFM not found at {}",
+            model_path
+        );
+        return;
+    }
+
+    let device = GpuDevice::init(0).expect("Failed to initialize GPU");
+
+    // Co-load the same model as both Target and Draft models for deterministic verification!
+    let mut engine = SpeculativeEngine::new(&device, model_path, model_path, 256, 32)
+        .expect("Failed to construct SpeculativeEngine");
+
+    let file = rocmforge::loader::ModelFile::open(model_path).expect("Failed to open model file");
+    let tokenizer = file.tokenizer();
+
+    let orchestrator = rocmforge::gpu::SpeculativeOrchestrator::new(4)
+        .expect("Failed to create SpeculativeOrchestrator");
+
+    // Run generation on a simple prompt
+    let prompt = "Hello";
+    let prompt_tokens = tokenizer.encode(prompt, false);
+
+    let (text, tokens_len) = orchestrator
+        .generate(&device, &mut engine, &tokenizer, &prompt_tokens, 10)
+        .expect("Failed to generate tokens speculatively");
+
+    println!(
+        "SPECULATIVE GENERATION RESULT: '{}' ({} tokens)",
+        text, tokens_len
+    );
+    assert!(tokens_len > 0);
+    assert!(!text.is_empty());
+}

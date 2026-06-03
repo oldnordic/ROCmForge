@@ -256,6 +256,10 @@ impl CapturedDecodeGraph {
         self.key
     }
 
+    pub fn set_key(&mut self, key: DecodeGraphKey) {
+        self.key = key;
+    }
+
     pub fn matches_key(&self, key: DecodeGraphKey) -> bool {
         self.key == key
     }
@@ -264,8 +268,15 @@ impl CapturedDecodeGraph {
         self.exec.launch(stream)
     }
 
-    pub fn update(&self, new_graph: &HipGraph) -> GpuResult<bool> {
-        self.exec.update(new_graph)
+    pub fn update(&mut self, new_graph: HipGraph) -> GpuResult<Result<(), HipGraph>> {
+        let updated = self.exec.update(&new_graph)?;
+        if updated {
+            self.kernel_nodes = new_graph.kernel_nodes()?;
+            self.graph = new_graph;
+            Ok(Ok(()))
+        } else {
+            Ok(Err(new_graph))
+        }
     }
 
     pub fn kernel_nodes(&self) -> &[ffi::hipGraphNode_t] {
@@ -303,6 +314,13 @@ impl CapturedDecodeGraph {
             })
     }
 }
+
+unsafe impl Send for HipGraph {}
+unsafe impl Sync for HipGraph {}
+unsafe impl Send for HipGraphExec {}
+unsafe impl Sync for HipGraphExec {}
+unsafe impl Send for CapturedDecodeGraph {}
+unsafe impl Sync for CapturedDecodeGraph {}
 
 #[cfg(test)]
 mod tests {

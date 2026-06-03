@@ -209,6 +209,7 @@ pub struct MessagesUsage {
 #[derive(Debug, Deserialize)]
 pub struct LoadModelRequest {
     pub model: String,
+    pub draft_model: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

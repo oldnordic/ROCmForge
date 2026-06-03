@@ -1,8 +1,14 @@
 #![cfg(feature = "gpu")]
 
+mod common;
+
 use rocmforge::config::{AttentionLayout, ModelConfig, TensorNameRegistry, TensorNamingScheme};
-use rocmforge::gpu::{DecodeGraphKey, GpuLogitsMode, TensorRole};
+use rocmforge::gpu::{
+    CapturedDecodeGraph, DecodeGraphKey, GpuBuffer, GpuDevice, GpuForwardScratch, GpuLogitsMode,
+    HipGraph, TensorRole,
+};
 use rocmforge::loader::GgmlType;
+use serial_test::serial;
 
 fn make_test_config() -> ModelConfig {
     ModelConfig {
@@ -73,4 +79,85 @@ fn decode_graph_key_depends_on_bound_tensors() {
     );
 
     assert_ne!(base, retied);
+}
+
+#[test]
+#[serial]
+fn test_decode_graph_exec_update() {
+    require_gpu!();
+
+    let caps = rocmforge::gpu::detect().expect("GPU should be detected"); // test
+    let device = GpuDevice::init(caps.device_id).expect("GPU device should initialize"); // test
+
+    let config = make_test_config();
+    let mut scratch = GpuForwardScratch::new(&config).expect("Failed to create scratch"); // test
+
+    // Create initial key
+    let key1 = DecodeGraphKey::from_parts_with_bindings(
+        device.device_id(),
+        device.warp_size(),
+        &config,
+        GpuLogitsMode::GreedyArgmax,
+        0x1000,
+        0x2000,
+        GgmlType::F32,
+        TensorRole::Generic,
+    );
+
+    // Allocate all buffers upfront before starting capture
+    let dummy_src = GpuBuffer::alloc(4).unwrap(); // test
+    let mut dummy_dst = GpuBuffer::alloc(4).unwrap(); // test
+    let dummy_src2 = GpuBuffer::alloc(4).unwrap(); // test
+    let mut dummy_dst2 = GpuBuffer::alloc(4).unwrap(); // test
+
+    // Capture graph 1
+    device
+        .begin_capture(rocmforge::gpu::ffi::hipStreamCaptureMode::hipStreamCaptureModeGlobal)
+        .unwrap(); // test
+    // Do a dummy copy to have some node in the graph
+    dummy_dst
+        .copy_from_buffer_async(&dummy_src, 4, device.stream())
+        .unwrap(); // test
+    let raw_graph1 = device.end_capture().unwrap(); // test
+    let graph1 = HipGraph::from_raw(raw_graph1);
+
+    // Instantiate CapturedDecodeGraph
+    let captured = CapturedDecodeGraph::from_captured_graph(graph1, key1).unwrap(); // test
+    scratch.replace_decode_graph(captured);
+
+    assert!(scratch.has_decode_graph_for(key1));
+
+    // Create a new key (different pointer binding)
+    let key2 = DecodeGraphKey::from_parts_with_bindings(
+        device.device_id(),
+        device.warp_size(),
+        &config,
+        GpuLogitsMode::GreedyArgmax,
+        0x1008, // changed pointer
+        0x2000,
+        GgmlType::F32,
+        TensorRole::Generic,
+    );
+
+    assert!(!scratch.has_decode_graph_for(key2));
+
+    // Capture graph 2 (same structure, different pointers)
+    device
+        .begin_capture(rocmforge::gpu::ffi::hipStreamCaptureMode::hipStreamCaptureModeGlobal)
+        .unwrap(); // test
+    dummy_dst2
+        .copy_from_buffer_async(&dummy_src2, 4, device.stream())
+        .unwrap(); // test
+    let raw_graph2 = device.end_capture().unwrap(); // test
+    let graph2 = HipGraph::from_raw(raw_graph2);
+
+    // Try fast update
+    let update_res = scratch.try_update_decode_graph(graph2, key2).unwrap(); // test
+
+    // Since topology is identical (just different buffers/pointers), update should succeed
+    assert!(update_res.is_ok(), "Fast update of graph should succeed");
+
+    // Verify key has been updated and key1 is no longer matched
+    assert!(scratch.has_decode_graph_for(key2));
+    assert!(!scratch.has_decode_graph_for(key1));
 }

@@ -136,6 +136,28 @@ impl GpuBuffer {
         ffi::hip_memcpy_h2d_async(self.as_ptr(), src.as_ptr(), self.size, stream)
     }
 
+    /// Copy data from another GPU buffer to this GPU buffer asynchronously on a HIP stream.
+    pub fn copy_from_buffer_async(
+        &mut self,
+        src: &GpuBuffer,
+        size: usize,
+        stream: ffi::hipStream_t,
+    ) -> GpuResult<()> {
+        if size > self.size || size > src.size {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: format!(
+                    "size out of bounds: copying {} bytes, src size {}, dst size {}",
+                    size, src.size, self.size
+                ),
+            });
+        }
+        if size == 0 {
+            return Ok(());
+        }
+        ffi::hip_memcpy_d2d_async(self.as_ptr(), src.as_ptr(), size, stream)
+    }
+
     /// Copy data from GPU buffer to CPU.
     pub fn copy_to_host(&self, dst: &mut [u8]) -> GpuResult<()> {
         if dst.len() != self.size {

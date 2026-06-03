@@ -242,6 +242,85 @@ impl SpeculativeEngine {
         })
     }
 
+    /// Run the initial prompt prefill pass on both models to populate the KV caches.
+    pub fn prefill(&mut self, device: &GpuDevice, prompt_tokens: &[u32]) -> GpuResult<u32> {
+        let prompt_len = prompt_tokens.len();
+        if prompt_len == 0 {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: "prefill: prompt_tokens must not be empty".to_string(),
+            });
+        }
+
+        // 1. Target model prefill
+        let mut target_token = 0;
+        for (pos, &token_id) in prompt_tokens.iter().enumerate() {
+            super::forward::gpu_embed_token_hybrid(
+                device,
+                token_id,
+                &self.target_model,
+                &self.target_cpu_weights,
+                &mut self.target_scratch,
+                &mut self.target_host_scratch,
+                &self.target_config,
+            )?;
+
+            let logits_mode = if pos + 1 == prompt_len {
+                super::forward::GpuLogitsMode::GreedyArgmax
+            } else {
+                super::forward::GpuLogitsMode::Skip
+            };
+
+            let opt = super::forward::gpu_full_forward_hybrid(
+                device,
+                &self.target_model,
+                &self.target_cpu_weights,
+                &mut self.target_kv,
+                &mut self.target_scratch,
+                &mut self.target_host_scratch,
+                pos,
+                &self.target_config,
+                logits_mode,
+            )?;
+
+            if pos + 1 == prompt_len {
+                target_token = opt.unwrap_or_else(|| {
+                    let _ = device.synchronize(); // fallback sync
+                    crate::cpu::sampler::cpu_sample_greedy(
+                        &self.target_host_scratch.logits[..self.target_config.vocab_size],
+                    )
+                });
+            }
+        }
+
+        // 2. Draft model prefill (populates draft cache)
+        for (pos, &token_id) in prompt_tokens.iter().enumerate() {
+            super::forward::gpu_embed_token_hybrid(
+                device,
+                token_id,
+                &self.draft_model,
+                &self.draft_cpu_weights,
+                &mut self.draft_scratch,
+                &mut self.draft_host_scratch,
+                &self.draft_config,
+            )?;
+
+            let _ = super::forward::gpu_full_forward_hybrid(
+                device,
+                &self.draft_model,
+                &self.draft_cpu_weights,
+                &mut self.draft_kv,
+                &mut self.draft_scratch,
+                &mut self.draft_host_scratch,
+                pos,
+                &self.draft_config,
+                super::forward::GpuLogitsMode::Skip,
+            )?;
+        }
+
+        Ok(target_token)
+    }
+
     /// Autoregressively draft N speculative tokens using the draft model on the GPU.
     pub fn draft_tokens(
         &mut self,
@@ -480,5 +559,207 @@ impl SpeculativeEngine {
         )?;
 
         Ok((accepted_tokens, num_accepted))
+    }
+}
+
+// ── INF-15: Speculative Decode Server Plumbing ────────────────────────────────
+
+/// Lightweight orchestrator that wraps [`SpeculativeEngine`] draft/verify
+/// into a single-step callable usable from the HTTP server pipeline.
+///
+/// Handles the multi-step speculative loop:
+/// 1. `draft_tokens` — draft N tokens from the draft model.
+/// 2. `verify_tokens` — run target model verification against draft tokens.
+/// 3. Sync draft KV cache with accepted state.
+/// 4. Return accepted tokens + metadata.
+///
+/// The orchestrator owns configuration (draft_count, etc.) but does NOT
+/// own the `SpeculativeEngine`. The caller holds the engine and passes
+/// `&mut SpeculativeEngine` into each step.
+pub struct SpeculativeOrchestrator {
+    /// Number of speculative tokens to draft per step.
+    pub draft_count: usize,
+}
+
+impl SpeculativeOrchestrator {
+    /// Create a new orchestrator with the given draft count.
+    ///
+    /// # Errors
+    /// Returns `Err` if `draft_count` is zero.
+    pub fn new(draft_count: usize) -> Result<Self, String> {
+        if draft_count == 0 {
+            Err("speculative draft_count must be greater than 0".to_string())
+        } else {
+            Ok(Self { draft_count })
+        }
+    }
+
+    /// Autoregressively generate tokens from a prompt using the draft-and-verify speculative loop.
+    pub fn generate(
+        &self,
+        device: &GpuDevice,
+        engine: &mut SpeculativeEngine,
+        tok: &crate::tokenizer::BpeTokenizer,
+        prompt_tokens: &[u32],
+        max_tokens: usize,
+    ) -> Result<(String, usize), String> {
+        if prompt_tokens.is_empty() {
+            return Err("Prompt tokens cannot be empty".to_string());
+        }
+
+        // 1. Prefill
+        let target_token = engine
+            .prefill(device, prompt_tokens)
+            .map_err(|e| format!("Prefill error: {:?}", e))?;
+
+        let mut output_tokens = Vec::with_capacity(max_tokens);
+        let mut last_verified_token = target_token;
+        let mut current_pos = prompt_tokens.len();
+        let max_seq = engine.target_config.max_seq_len;
+
+        // 2. Speculative Decode loop
+        while output_tokens.len() < max_tokens && current_pos < max_seq {
+            // Check EOS on last_verified_token from previous verify/prefill
+            if tok.is_eog(last_verified_token) {
+                break;
+            }
+            output_tokens.push(last_verified_token);
+
+            let draft_limit = self
+                .draft_count
+                .min(max_tokens - output_tokens.len())
+                .min(max_seq - current_pos - 1);
+            if draft_limit == 0 {
+                break;
+            }
+
+            // Draft speculative tokens
+            let draft_tokens = engine
+                .draft_tokens(device, current_pos, draft_limit, last_verified_token)
+                .map_err(|e| format!("Draft error: {:?}", e))?;
+
+            // Verify drafted tokens
+            let (accepted, num_accepted) = engine
+                .verify_tokens(device, current_pos, &draft_tokens, last_verified_token)
+                .map_err(|e| format!("Verify error: {:?}", e))?;
+
+            // Add accepted tokens (excluding the last next target token)
+            for &t in &accepted[..num_accepted] {
+                if tok.is_eog(t) {
+                    break;
+                }
+                output_tokens.push(t);
+            }
+
+            // The last token in accepted is always the next target token (sampled at pos current_pos + num_accepted)
+            let next_target_token = *accepted.last().ok_or("No tokens returned from verify")?;
+
+            // If we hit EOS inside the accepted block or on the next target token, stop
+            let mut hit_eos = false;
+            for &t in &accepted[..num_accepted] {
+                if tok.is_eog(t) {
+                    hit_eos = true;
+                    break;
+                }
+            }
+            if hit_eos {
+                break;
+            }
+
+            last_verified_token = next_target_token;
+            current_pos += num_accepted + 1; // Advanced by draft size + 1 verification step
+        }
+
+        let generated_text = tok.decode(&output_tokens, false);
+        Ok((generated_text, output_tokens.len()))
+    }
+
+    /// Autoregressively generate tokens from a prompt using the draft-and-verify speculative loop, streaming tokens as they are verified.
+    #[cfg(feature = "server")]
+    pub fn generate_stream(
+        &self,
+        device: &GpuDevice,
+        engine: &mut SpeculativeEngine,
+        tok: &crate::tokenizer::BpeTokenizer,
+        prompt_tokens: &[u32],
+        max_tokens: usize,
+        tx: tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> Result<(), String> {
+        if prompt_tokens.is_empty() {
+            return Err("Prompt tokens cannot be empty".to_string());
+        }
+
+        // 1. Prefill
+        let target_token = engine
+            .prefill(device, prompt_tokens)
+            .map_err(|e| format!("Prefill error: {:?}", e))?;
+
+        let mut output_tokens = Vec::new();
+        let mut last_verified_token = target_token;
+        let mut current_pos = prompt_tokens.len();
+        let max_seq = engine.target_config.max_seq_len;
+
+        // 2. Speculative Decode loop
+        while output_tokens.len() < max_tokens && current_pos < max_seq {
+            // Check EOS on last_verified_token from previous verify/prefill
+            if tok.is_eog(last_verified_token) {
+                break;
+            }
+            output_tokens.push(last_verified_token);
+            let text = tok.decode(&[last_verified_token], false);
+            let _ = tx.send(text);
+
+            let draft_limit = self
+                .draft_count
+                .min(max_tokens - output_tokens.len())
+                .min(max_seq - current_pos - 1);
+            if draft_limit == 0 {
+                break;
+            }
+
+            // Draft speculative tokens
+            let draft_tokens = engine
+                .draft_tokens(device, current_pos, draft_limit, last_verified_token)
+                .map_err(|e| format!("Draft error: {:?}", e))?;
+
+            // Verify drafted tokens
+            let (accepted, num_accepted) = engine
+                .verify_tokens(device, current_pos, &draft_tokens, last_verified_token)
+                .map_err(|e| format!("Verify error: {:?}", e))?;
+
+            // Send each accepted token
+            let mut hit_eos = false;
+            for &t in &accepted[..num_accepted] {
+                if tok.is_eog(t) {
+                    hit_eos = true;
+                    break;
+                }
+                output_tokens.push(t);
+                let text = tok.decode(&[t], false);
+                let _ = tx.send(text);
+            }
+            if hit_eos {
+                break;
+            }
+
+            let next_target_token = *accepted.last().ok_or("No tokens returned from verify")?;
+
+            // If we hit EOS inside the accepted block or on the next target token, stop
+            let mut hit_eos_next = false;
+            for &t in &accepted[..num_accepted] {
+                if tok.is_eog(t) {
+                    hit_eos_next = true;
+                    break;
+                }
+            }
+            if hit_eos_next {
+                break;
+            }
+
+            last_verified_token = next_target_token;
+            current_pos += num_accepted + 1; // Advanced by draft size + 1 verification step
+        }
+
+        Ok(())
     }
 }

@@ -161,7 +161,7 @@ pub use safety::{
     ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH_ENV, ENABLE_LAUNCH_AUTOTUNE_ENV, GPU_SAFE_MODE_ENV,
     RUN_EXPERIMENTAL_GPU_TESTS_ENV, RUN_GPU_BENCHES_ENV, RUN_REAL_MODEL_GPU_TESTS_ENV,
 };
-pub use speculative::SpeculativeEngine;
+pub use speculative::{SpeculativeEngine, SpeculativeOrchestrator};
 pub use vram_budget::VramSession;
 pub use vram_budget::{
     binary_vram_safety_preflight, check_allocation_fits, current_allocated_bytes,

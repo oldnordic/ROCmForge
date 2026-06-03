@@ -120,8 +120,20 @@ pub(super) fn gpu_try_full_greedy_decode_graph(
         }
 
         let new_graph = HipGraph::from_raw(raw_graph);
-        let captured = crate::gpu::graph::CapturedDecodeGraph::from_captured_graph(new_graph, key)?;
-        scratch.replace_decode_graph(captured);
+        if scratch.decode_graph().is_some() {
+            match scratch.try_update_decode_graph(new_graph, key)? {
+                Ok(()) => {}
+                Err(g) => {
+                    let captured =
+                        crate::gpu::graph::CapturedDecodeGraph::from_captured_graph(g, key)?;
+                    scratch.replace_decode_graph(captured);
+                }
+            }
+        } else {
+            let captured =
+                crate::gpu::graph::CapturedDecodeGraph::from_captured_graph(new_graph, key)?;
+            scratch.replace_decode_graph(captured);
+        }
     }
 
     // For each token: upload new decode state and launch the graph
