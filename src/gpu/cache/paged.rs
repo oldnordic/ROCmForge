@@ -66,6 +66,9 @@ impl GpuKvCache {
         let pos_bytes = self.pos_bytes;
         let block_bytes = block_size * pos_bytes;
 
+        if seq_len == 0 {
+            return Ok(());
+        }
         let start_block = start_pos / block_size;
         let end_block = (start_pos + seq_len - 1) / block_size;
 

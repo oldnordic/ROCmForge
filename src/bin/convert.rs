@@ -19,19 +19,12 @@ mod quant;
 use std::fs::File;
 use std::io::{Seek, SeekFrom, Write};
 
-use rayon::prelude::*;
-
 use rocmforge::config::ModelConfig;
 use rocmforge::loader::{GgmlType, GgufFile, TensorView};
 use rocmforge::loader::{RfmMetadata, RfmTensorEntry, RfmType};
 
 use self::cli::parse_args;
-use self::layout::{pack_gate_up_fused, pack_tensor, rfm_type_for_tensor};
-use self::pipeline::{
-    convert_moe_expert_svd_sparse, convert_mpo_tensor, convert_sparse_csr_tensor,
-    convert_svd_quant_tensor, convert_svd_sparse_tensor, estimate_nnz_ratio, parse_layer_idx,
-    should_compress_tensor, should_svd_tensor,
-};
+use self::pipeline::{convert_all_tensors, convert_mpo_tensor, convert_sparse_csr_tensor};
 
 /// Magic bytes identifying the ROCmForge Model format.
 pub const RFM_MAGIC: &[u8; 4] = b"RFM\0";
@@ -163,190 +156,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut current_offset = 0u64;
 
     println!("[4/4] Writing and converting weight payload...");
-
-    // Helper function to align payload offsets to 256 bytes
-    let align_offset = |file: &mut File, offset: &mut u64| -> Result<(), std::io::Error> {
-        let remainder = *offset % 256;
-        if remainder > 0 {
-            let padding = 256 - remainder;
-            let pad_bytes = vec![0u8; padding as usize];
-            file.write_all(&pad_bytes)?;
-            *offset += padding;
-        }
-        Ok(())
-    };
-
-    // Generic complete conversion path: preserve every GGUF tensor under its
-    // original name. Architecture-specific runtime loaders can then decide
-    // which tensors they understand without the converter silently dropping
-    // fused QKV, SSM, MoE expert, or future tensors.
-    let mut tensor_names: Vec<String> = gguf.tensor_names().map(str::to_string).collect();
-    tensor_names.sort();
-
-    for tensor_name in tensor_names {
-        if let Some(layer_idx) = parse_layer_idx(&tensor_name) {
-            if let Some(ml) = options.max_layers {
-                if layer_idx >= ml as usize {
-                    // Skip layers beyond max_layers
-                    continue;
-                }
-            }
-        }
-
-        let tensor = gguf
-            .tensor(&tensor_name)?
-            .ok_or_else(|| format!("tensor disappeared during conversion: {}", tensor_name))?;
-        align_offset(&mut out_file, &mut current_offset)?;
-
-        // 3D MoE expert tensors: always use per-expert SVD+sparse when --svd-k is set.
-        // Must be checked BEFORE the 2D combined path to avoid falling through.
-        if tensor.dims.len() == 3 && should_svd_tensor(&tensor_name, &tensor, options.svd_attn_only)
-        {
-            if let Some(k_val) = options.svd_k {
-                let used_sparse = convert_moe_expert_svd_sparse(
-                    &tensor,
-                    k_val,
-                    use_gpu,
-                    options.sparse_threshold,
-                    options.residual_prune_threshold,
-                    options.use_fwht,
-                    &tensor_name,
-                    &mut out_file,
-                    &mut current_offset,
-                    &mut entries,
-                    &align_offset,
-                )?;
-                if used_sparse {
-                    println!(
-                        "  MoE expert SVD+sparse (FWHT={}): {} ({} experts, k={})",
-                        options.use_fwht, tensor_name, tensor.dims[2], k_val
-                    );
-                } else {
-                    println!("  MoE passthrough: {} (residual too dense)", tensor_name);
-                }
-                continue;
-            }
-        }
-
-        // Combined SVD+sparse: when both --svd-k and --sparse-threshold are set
-        // for a suitable tensor, decompose with SVD, check if the residual is
-        // sparse, and store the residual as CSR.  Falls back to Q4 residual when
-        // the residual is too dense.
-        if let (Some(k_val), Some(threshold)) = (
-            options
-                .svd_k
-                .filter(|_| should_svd_tensor(&tensor_name, &tensor, options.svd_attn_only)),
-            options
-                .sparse_threshold
-                .filter(|_| should_compress_tensor(&tensor_name, &tensor)),
-        ) {
-            let used_sparse = convert_svd_sparse_tensor(
-                &tensor,
-                k_val,
-                use_gpu,
-                threshold,
-                options.residual_prune_threshold,
-                &tensor_name,
-                &mut out_file,
-                &mut current_offset,
-                &mut entries,
-                &align_offset,
-            )?;
-            if used_sparse {
-                println!(
-                    "  SVD+sparse residual: {} rank {} (sparse CSR residual)",
-                    tensor_name, k_val
-                );
-            } else {
-                println!(
-                    "  SVD+sparse→dense fallback: {} rank {} (residual too dense, using Q4)",
-                    tensor_name, k_val
-                );
-            }
-        } else if let Some(k_val) = options
-            .svd_k
-            .filter(|_| should_svd_tensor(&tensor_name, &tensor, options.svd_attn_only))
-        {
-            convert_svd_quant_tensor(
-                &tensor,
-                k_val,
-                use_gpu,
-                &tensor_name,
-                &mut out_file,
-                &mut current_offset,
-                &mut entries,
-                &align_offset,
-            )?;
-            println!("  SVD: {} rank {}", tensor_name, k_val);
-        } else if let Some(threshold) = options
-            .sparse_threshold
-            .filter(|_| should_compress_tensor(&tensor_name, &tensor))
-        {
-            let nnz_ratio = estimate_nnz_ratio(&tensor);
-            if nnz_ratio < threshold {
-                convert_sparse_csr_tensor(
-                    &tensor,
-                    &tensor_name,
-                    &mut out_file,
-                    &mut current_offset,
-                    &mut entries,
-                    &align_offset,
-                )?;
-                println!(
-                    "  Converted to sparse CSR: {} (nnz ratio {:.2}%)",
-                    tensor_name,
-                    nnz_ratio * 100.0
-                );
-            } else {
-                let wtype = rfm_type_for_tensor(&tensor, options.mq4, options.mq6);
-                let payload_size = pack_tensor(&tensor, &mut out_file, wtype)?;
-                entries.push(RfmTensorEntry {
-                    name: tensor_name.clone(),
-                    dims: tensor.dims.to_vec(),
-                    wtype,
-                    offset: current_offset,
-                    size: payload_size,
-                });
-                current_offset += payload_size;
-                println!(
-                    "  Packed tensor: {} with type {:?} (sparse skipped: nnz ratio {:.2}%)",
-                    tensor_name,
-                    wtype,
-                    nnz_ratio * 100.0
-                );
-            }
-        } else if let Some(chi_max) = options
-            .mpo_chi_max
-            .filter(|_| should_compress_tensor(&tensor_name, &tensor))
-        {
-            convert_mpo_tensor(
-                &tensor,
-                chi_max,
-                use_gpu,
-                &tensor_name,
-                &mut out_file,
-                &mut current_offset,
-                &mut entries,
-                &align_offset,
-            )?;
-            println!(
-                "  Converted to MPO: {} with chi_max {}",
-                tensor_name, chi_max
-            );
-        } else {
-            let wtype = rfm_type_for_tensor(&tensor, options.mq4, options.mq6);
-            let payload_size = pack_tensor(&tensor, &mut out_file, wtype)?;
-            entries.push(RfmTensorEntry {
-                name: tensor_name.clone(),
-                dims: tensor.dims.to_vec(),
-                wtype,
-                offset: current_offset,
-                size: payload_size,
-            });
-            current_offset += payload_size;
-            println!("  Packed tensor: {} with type {:?}", tensor_name, wtype);
-        }
-    }
+    convert_all_tensors(
+        &gguf,
+        &options,
+        use_gpu,
+        &mut out_file,
+        &mut current_offset,
+        &mut entries,
+    )?;
 
     let table_bytes = serde_json::to_vec(&entries)?;
     if table_bytes.len() > tensor_table_allocated_size as usize {
