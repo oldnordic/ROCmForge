@@ -658,6 +658,13 @@ pub fn dispatch_gemv(
                 gemv_f32(wf, x, y);
             }
         }
+        GgmlType::F16 => {
+            if meta.needs_transpose {
+                gemv_f16_transposed(w, x, y, out_dim, in_dim);
+            } else {
+                gemv_f16(w, x, y);
+            }
+        }
         GgmlType::Q4_0 => {
             if meta.needs_transpose {
                 gemv_q4_0_transposed(w, x, y, out_dim, in_dim);
@@ -888,6 +895,13 @@ pub fn dispatch_gemv_transposed(
                 gemv_f32(wf, x, y);
             }
         }
+        GgmlType::F16 => {
+            if transposed {
+                gemv_f16_transposed(w, x, y, out_dim, in_dim);
+            } else {
+                gemv_f16(w, x, y);
+            }
+        }
         GgmlType::Q8_0 => {
             if transposed {
                 gemv_q8_0_transposed(w, x, y, out_dim, in_dim);
@@ -928,6 +942,34 @@ fn gemv_f32_transposed(w: &[f32], x: &[f32], y: &mut [f32], out_dim: usize, in_d
         let mut acc = 0.0f32;
         for i in 0..in_dim {
             acc += x[i] * w[i * out_dim + v];
+        }
+        y[v] = acc;
+    }
+}
+
+/// F16 GEMV: y[row] = dot(W[row, :], x)
+fn gemv_f16(w: &[u8], x: &[f32], y: &mut [f32]) {
+    let in_dim = x.len();
+    y.par_iter_mut().enumerate().for_each(|(row, out)| {
+        let row_offset = row * in_dim * 2;
+        let mut acc = 0.0f32;
+        for i in 0..in_dim {
+            let offset = row_offset + i * 2;
+            let val = load_f16_scale(&w[offset..offset + 2]);
+            acc += val * x[i];
+        }
+        *out = acc;
+    });
+}
+
+/// F16 GEMV transposed for tied embeddings.
+fn gemv_f16_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    for v in 0..out_dim {
+        let mut acc = 0.0f32;
+        for i in 0..in_dim {
+            let offset = (i * out_dim + v) * 2;
+            let val = load_f16_scale(&w[offset..offset + 2]);
+            acc += x[i] * val;
         }
         y[v] = acc;
     }

@@ -117,8 +117,10 @@ fn test_ffn_down_dimensions_correct_in_hybrid_forward() {
     gpu_layer_forward_hybrid(
         &device,
         gpu_weights.layer(layer_idx),
+        Some(cpu_weights.layer(layer_idx)),
         &mut gpu_kv,
         &mut gpu_scratch,
+        Some(&mut cpu_scratch),
         layer_idx,
         0, // pos
         &config,

@@ -27,7 +27,7 @@ use super::error::{GpuError, GpuResult};
 use super::weights::{TensorRole, WeightMeta};
 use crate::loader::GgmlType;
 
-fn supports_gemv_type(wtype: GgmlType) -> bool {
+pub(crate) fn supports_gemv_type(wtype: GgmlType) -> bool {
     matches!(
         wtype,
         GgmlType::Q4_0
@@ -38,6 +38,8 @@ fn supports_gemv_type(wtype: GgmlType) -> bool {
             | GgmlType::Q6_K
             | GgmlType::Q5_0
             | GgmlType::Q5_1
+            | GgmlType::Q2_K
+            | GgmlType::Q3_K
     )
 }
 

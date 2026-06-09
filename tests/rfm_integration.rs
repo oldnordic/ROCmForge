@@ -15,6 +15,7 @@ use std::path::Path;
 use std::process::Command;
 
 const CANDIDATE_PATHS: &[&str] = &[
+    "/home/feanor/Projects/models/qwen2.5-0.5b-instruct-q8_0.gguf",
     "/home/feanor/Projects/llama.cpp/models/llama3.2-1b-instruct-q4_0.gguf",
     "/home/feanor/Projects/Memoria/models/qwen2.5-0.5b-instruct-q4_0.gguf",
 ];
@@ -107,6 +108,91 @@ fn test_gguf_to_rfm_cpu_inference_equivalence() {
         CpuModelWeights::load(&gguf, &gguf_config).expect("Failed to load GGUF weights");
     let rfm_weights =
         CpuModelWeights::load_rfm(&rfm, &rfm_config).expect("Failed to load RFM weights");
+
+    // Compare model weights
+    println!("Comparing token embedding weights...");
+    println!(
+        "  GGUF token_emb len: {}, RFM token_emb len: {}",
+        gguf_weights.token_emb.len(),
+        rfm_weights.token_emb.len()
+    );
+    println!(
+        "  GGUF token_emb meta: {:?}, RFM token_emb meta: {:?}",
+        gguf_weights.token_emb_meta, rfm_weights.token_emb_meta
+    );
+    assert_eq!(
+        gguf_weights.token_emb, rfm_weights.token_emb,
+        "token_emb mismatch"
+    );
+
+    println!("Comparing output norm weights...");
+    println!(
+        "  GGUF output_norm len: {}, RFM output_norm len: {}",
+        gguf_weights.output_norm.len(),
+        rfm_weights.output_norm.len()
+    );
+    assert_eq!(
+        gguf_weights.output_norm, rfm_weights.output_norm,
+        "output_norm mismatch"
+    );
+
+    println!("Comparing lm_head weights...");
+    println!(
+        "  GGUF lm_head len: {}, RFM lm_head len: {}",
+        gguf_weights.lm_head.len(),
+        rfm_weights.lm_head.len()
+    );
+    println!(
+        "  GGUF lm_head meta: {:?}, RFM lm_head meta: {:?}",
+        gguf_weights.lm_head_meta, rfm_weights.lm_head_meta
+    );
+    assert_eq!(
+        gguf_weights.lm_head, rfm_weights.lm_head,
+        "lm_head mismatch"
+    );
+
+    // Compare layer weights
+    for i in 0..rfm_config.num_layers {
+        println!("Comparing layer {} weights...", i);
+        let gl = &gguf_weights.layers[i];
+        let rl = &rfm_weights.layers[i];
+
+        assert_eq!(gl.attn_norm, rl.attn_norm, "layer {} attn_norm mismatch", i);
+        assert_eq!(
+            gl.attn_q_meta.needs_transpose, rl.attn_q_meta.needs_transpose,
+            "layer {} attn_q needs_transpose mismatch",
+            i
+        );
+        assert_eq!(gl.attn_q, rl.attn_q, "layer {} attn_q mismatch", i);
+        assert_eq!(gl.attn_k, rl.attn_k, "layer {} attn_k mismatch", i);
+        assert_eq!(gl.attn_v, rl.attn_v, "layer {} attn_v mismatch", i);
+        assert_eq!(
+            gl.attn_o_meta.needs_transpose, rl.attn_o_meta.needs_transpose,
+            "layer {} attn_o needs_transpose mismatch",
+            i
+        );
+        assert_eq!(gl.attn_o, rl.attn_o, "layer {} attn_o mismatch", i);
+
+        assert_eq!(gl.ffn_norm, rl.ffn_norm, "layer {} ffn_norm mismatch", i);
+        assert_eq!(
+            gl.ffn_gate_meta.needs_transpose, rl.ffn_gate_meta.needs_transpose,
+            "layer {} ffn_gate needs_transpose mismatch",
+            i
+        );
+        assert_eq!(gl.ffn_gate, rl.ffn_gate, "layer {} ffn_gate mismatch", i);
+        assert_eq!(
+            gl.ffn_up_meta.needs_transpose, rl.ffn_up_meta.needs_transpose,
+            "layer {} ffn_up needs_transpose mismatch",
+            i
+        );
+        assert_eq!(gl.ffn_up, rl.ffn_up, "layer {} ffn_up mismatch", i);
+        assert_eq!(
+            gl.ffn_down_meta.needs_transpose, rl.ffn_down_meta.needs_transpose,
+            "layer {} ffn_down needs_transpose mismatch",
+            i
+        );
+        assert_eq!(gl.ffn_down, rl.ffn_down, "layer {} ffn_down mismatch", i);
+    }
 
     // Step 6: Initialize Tokenizers
     let gguf_tok = BpeTokenizer::from_gguf(gguf.tokenizer_data());

@@ -215,30 +215,12 @@ pub fn gpu_dispatch_fused_gate_up_on_stream(
     w_gate_up_interleaved: Option<&GpuBuffer>,
     w_gate_up_interleaved_tile4: Option<&GpuBuffer>,
     input: *const f32,
+    gate_scratch: *mut f32,
     output: *mut f32,
     ff_size: usize,
     h: usize,
     stream: hipStream_t,
 ) -> GpuResult<()> {
-    if gate_meta.wtype == GgmlType::Q4_0 && up_meta.wtype == GgmlType::Q4_0 {
-        return gpu_dispatch_fused_gate_up_with_scratch_on_stream(
-            device,
-            w_gate,
-            gate_meta,
-            w_up,
-            up_meta,
-            w_gate_up_interleaved,
-            w_gate_up_interleaved_tile4,
-            input,
-            std::ptr::null_mut(),
-            output,
-            ff_size,
-            h,
-            stream,
-        );
-    }
-
-    let gate_scratch = GpuBuffer::alloc(ff_size * std::mem::size_of::<f32>())?;
     gpu_dispatch_fused_gate_up_with_scratch_on_stream(
         device,
         w_gate,
@@ -248,7 +230,7 @@ pub fn gpu_dispatch_fused_gate_up_on_stream(
         w_gate_up_interleaved,
         w_gate_up_interleaved_tile4,
         input,
-        gate_scratch.as_ptr() as *mut f32,
+        gate_scratch,
         output,
         ff_size,
         h,
@@ -269,6 +251,7 @@ pub fn gpu_dispatch_fused_gate_up(
     ff_size: usize,
     h: usize,
 ) -> GpuResult<()> {
+    let mut scratch = GpuBuffer::alloc(ff_size * std::mem::size_of::<f32>())?;
     gpu_dispatch_fused_gate_up_on_stream(
         device,
         w_gate,
@@ -278,6 +261,7 @@ pub fn gpu_dispatch_fused_gate_up(
         w_gate_up_interleaved,
         w_gate_up_interleaved_tile4,
         input,
+        scratch.as_ptr() as *mut f32,
         output,
         ff_size,
         h,

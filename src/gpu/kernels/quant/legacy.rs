@@ -6,7 +6,6 @@
 //! - Gate-up fusion kernels (gemv_gate_up_q4_0_f32)
 //! - SwiGLU fusion kernels (gemv_gate_up_swiglu_q4_0_f32)
 //! - DP4A-optimized kernels (gemv_norm_qkv_rope_kvwrite_q4_0_f32_dp4a_on_stream)
-//! - Vulkan-style variants (gemv_q4_0_f32_vulkan_style)
 //! - GEMM kernels for all quant types
 //!
 //! Basic quantize/dequantize/GEMV functions have been moved to separate modules:
@@ -47,6 +46,150 @@ pub use super::super::q8_gemv::{
 ///
 /// # Returns
 /// Ok(()) on success, Err if kernel launch fails
+// ── Q2_K GEMV ─────────────────────────────────────────────────────────────────────
+
+pub fn gemv_q2_k_f32(
+    weights_q2_k: *const u8,
+    input: *const f32,
+    output: *mut f32,
+    n_rows: usize,
+    ncols_dst: usize,
+) -> GpuResult<()> {
+    gemv_q2_k_f32_on_stream(
+        weights_q2_k,
+        input,
+        output,
+        n_rows,
+        ncols_dst,
+        hipStream_t::null(),
+    )
+}
+
+pub fn gemv_q2_k_f32_on_stream(
+    weights_q2_k: *const u8,
+    input: *const f32,
+    output: *mut f32,
+    n_rows: usize,
+    ncols_dst: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    if n_rows == 0 || ncols_dst == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "gemv_q2_k_f32: n_rows and ncols_dst cannot be zero".to_string(),
+        });
+    }
+
+    if n_rows % 256 != 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!(
+                "gemv_q2_k_f32: n_rows must be multiple of 256, got {}",
+                n_rows
+            ),
+        });
+    }
+
+    if weights_q2_k.is_null() || input.is_null() || output.is_null() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "gemv_q2_k_f32: pointers must be non-null".to_string(),
+        });
+    }
+
+    let result = unsafe {
+        gemv_q2_k_f32_launch(
+            weights_q2_k,
+            input,
+            output,
+            n_rows as c_int,
+            ncols_dst as c_int,
+            stream,
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("gemv_q2_k_f32 kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
+// ── Q3_K GEMV ─────────────────────────────────────────────────────────────────────
+
+pub fn gemv_q3_k_f32(
+    weights_q3_k: *const u8,
+    input: *const f32,
+    output: *mut f32,
+    n_rows: usize,
+    ncols_dst: usize,
+) -> GpuResult<()> {
+    gemv_q3_k_f32_on_stream(
+        weights_q3_k,
+        input,
+        output,
+        n_rows,
+        ncols_dst,
+        hipStream_t::null(),
+    )
+}
+
+pub fn gemv_q3_k_f32_on_stream(
+    weights_q3_k: *const u8,
+    input: *const f32,
+    output: *mut f32,
+    n_rows: usize,
+    ncols_dst: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    if n_rows == 0 || ncols_dst == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "gemv_q3_k_f32: n_rows and ncols_dst cannot be zero".to_string(),
+        });
+    }
+
+    if n_rows % 256 != 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!(
+                "gemv_q3_k_f32: n_rows must be multiple of 256, got {}",
+                n_rows
+            ),
+        });
+    }
+
+    if weights_q3_k.is_null() || input.is_null() || output.is_null() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: "gemv_q3_k_f32: pointers must be non-null".to_string(),
+        });
+    }
+
+    let result = unsafe {
+        gemv_q3_k_f32_launch(
+            weights_q3_k,
+            input,
+            output,
+            n_rows as c_int,
+            ncols_dst as c_int,
+            stream,
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("gemv_q3_k_f32 kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}
+
 // ── Q4_K GEMV ─────────────────────────────────────────────────────────────────────
 
 pub fn gemv_q4_k_f32(
@@ -1050,64 +1193,6 @@ pub fn gemv_gate_up_swiglu_vulkan_q4_0_f32(
     Ok(())
 }
 
-// ── Vulkan-Style Q4_0 GEMV ────────────────────────────────────────────────────────
-
-pub fn gemv_q4_0_f32_vulkan_style(
-    device: &GpuDevice,
-    weights_q4_0: *const u8,
-    input: *const f32,
-    output: *mut f32,
-    n_rows: usize,
-    ncols_dst: usize,
-    n_waves: usize,
-    stream: hipStream_t,
-) -> GpuResult<()> {
-    if n_rows == 0 || ncols_dst == 0 || n_waves == 0 {
-        return Err(GpuError::HipApiError {
-            code: -1,
-            description: "gemv_q4_0_f32_vulkan_style: dimensions cannot be zero".to_string(),
-        });
-    }
-
-    if !n_rows.is_multiple_of(32) {
-        return Err(GpuError::HipApiError {
-            code: -1,
-            description: format!(
-                "gemv_q4_0_f32_vulkan_style: n_rows must be multiple of 32, got {}",
-                n_rows
-            ),
-        });
-    }
-
-    if weights_q4_0.is_null() || input.is_null() || output.is_null() {
-        return Err(GpuError::HipApiError {
-            code: -1,
-            description: "gemv_q4_0_f32_vulkan_style: pointers must be non-null".to_string(),
-        });
-    }
-
-    let result = unsafe {
-        gemv_q4_0_f32_vulkan_style_launch(
-            weights_q4_0,
-            input,
-            output,
-            n_rows as c_int,
-            ncols_dst as c_int,
-            n_waves as c_int,
-            stream,
-        )
-    };
-
-    if result != hipError_t::hipSuccess {
-        return Err(GpuError::HipApiError {
-            code: result as i32,
-            description: format!("gemv_q4_0_f32_vulkan_style kernel failed: {:?}", result),
-        });
-    }
-
-    Ok(())
-}
-
 // ── GEMM Kernels ──────────────────────────────────────────────────────────────────
 
 pub fn gemm_q4_0_f32(
@@ -1672,6 +1757,26 @@ pub fn gemv_norm_qkv_rope_kvwrite_q4_0_f32_dp4a_on_stream(
 // ── FFI Declarations ───────────────────────────────────────────────────────────────
 
 unsafe extern "C" {
+    // Q2_K GEMV
+    fn gemv_q2_k_f32_launch(
+        weights_q2_k: *const u8,
+        input: *const f32,
+        output: *mut f32,
+        n_rows: c_int,
+        ncols_dst: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
+    // Q3_K GEMV
+    fn gemv_q3_k_f32_launch(
+        weights_q3_k: *const u8,
+        input: *const f32,
+        output: *mut f32,
+        n_rows: c_int,
+        ncols_dst: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
     // Q4_K GEMV
     fn gemv_q4_k_f32_launch(
         weights_q4_k: *const u8,
@@ -1807,17 +1912,6 @@ unsafe extern "C" {
         out_swiglu: *mut f32,
         n_rows: c_int,
         n_ff: c_int,
-        n_waves: c_int,
-        stream: hipStream_t,
-    ) -> hipError_t;
-
-    // Vulkan-style variants
-    fn gemv_q4_0_f32_vulkan_style_launch(
-        weights_q4_0: *const u8,
-        input: *const f32,
-        output: *mut f32,
-        n_rows: c_int,
-        ncols_dst: c_int,
         n_waves: c_int,
         stream: hipStream_t,
     ) -> hipError_t;

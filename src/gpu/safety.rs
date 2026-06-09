@@ -424,4 +424,158 @@ mod tests {
         }
         refresh_runtime_env_flags();
     }
+
+    #[test]
+    fn test_gpu_lock_and_preflight_native() {
+        if let Some(_) = crate::gpu::detect() {
+            let lock = super::GpuLock::acquire(5).expect("Should acquire lock");
+            super::gpu_safety_preflight().expect("Preflight should pass");
+            let lock2 = super::GpuLock::acquire(1);
+            assert!(lock2.is_err());
+            drop(lock);
+            let _lock3 = super::GpuLock::acquire(1).expect("Should acquire lock after drop");
+        }
+    }
+}
+
+// ── Native Safety and Lock Infrastructure ─────────────────────────────────────────
+
+use crate::gpu::kernels;
+use crate::gpu::{detect, GpuBuffer};
+use std::fs::File;
+use std::os::unix::io::AsRawFd;
+use std::path::Path;
+
+/// Path to the cross-process GPU lock file.
+const GPU_LOCK_PATH: &str = "/tmp/rocmforge_gpu_tests.lock";
+
+/// Cross-process GPU lock using flock(2).
+pub struct GpuLock {
+    _file: File,
+}
+
+impl GpuLock {
+    /// Acquire the GPU lock, waiting up to `timeout_secs` if it is held by another process.
+    pub fn acquire(timeout_secs: u64) -> Result<Self, String> {
+        let path = Path::new(GPU_LOCK_PATH);
+        let file = File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)
+            .map_err(|e| format!("Failed to open lock file: {}", e))?;
+
+        let start = std::time::Instant::now();
+        loop {
+            unsafe {
+                let fd = file.as_raw_fd();
+                let ret = libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB);
+                if ret == 0 {
+                    return Ok(Self { _file: file });
+                }
+            }
+
+            if start.elapsed().as_secs() >= timeout_secs {
+                return Err(format!(
+                    "Timeout after {}s waiting for GPU lock",
+                    timeout_secs
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+}
+
+/// Run staged GPU preflight checks.
+/// Returns Ok(()) if all checks pass, Err(description) otherwise.
+pub fn gpu_safety_preflight() -> Result<(), String> {
+    // 1. Render node detection
+    let mut render_node_found = false;
+    if std::path::Path::new("/dev/dri").exists() {
+        if let Ok(entries) = std::fs::read_dir("/dev/dri") {
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if name.starts_with("renderD") {
+                        render_node_found = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if !render_node_found {
+        return Err("No render node found in /dev/dri".to_string());
+    }
+
+    // 2. HIP runtime device visibility
+    let _caps = detect().ok_or_else(|| "No AMD GPU detected via HIP/ROCm runtime".to_string())?;
+
+    // 3. Memory round-trip
+    let size = 1024;
+    let mut h_in1 = vec![1.0f32; size];
+    let h_in2 = vec![2.0f32; size];
+
+    let mut d_in1 = GpuBuffer::alloc(size * std::mem::size_of::<f32>())
+        .map_err(|e| format!("hipMalloc (in1) failed: {:?}", e))?;
+    let mut d_in2 = GpuBuffer::alloc(size * std::mem::size_of::<f32>())
+        .map_err(|e| format!("hipMalloc (in2) failed: {:?}", e))?;
+    let mut d_out = GpuBuffer::alloc(size * std::mem::size_of::<f32>())
+        .map_err(|e| format!("hipMalloc (out) failed: {:?}", e))?;
+
+    d_in1
+        .copy_from_host(unsafe {
+            std::slice::from_raw_parts(h_in1.as_ptr() as *const u8, h_in1.len() * 4)
+        })
+        .map_err(|e| format!("hipMemcpy H2D (in1) failed: {:?}", e))?;
+
+    d_in2
+        .copy_from_host(unsafe {
+            std::slice::from_raw_parts(h_in2.as_ptr() as *const u8, h_in2.len() * 4)
+        })
+        .map_err(|e| format!("hipMemcpy H2D (in2) failed: {:?}", e))?;
+
+    let mut h_verify = vec![0.0f32; size];
+    d_in1
+        .copy_to_host(unsafe {
+            std::slice::from_raw_parts_mut(h_verify.as_mut_ptr() as *mut u8, h_verify.len() * 4)
+        })
+        .map_err(|e| format!("hipMemcpy D2H (in1) failed: {:?}", e))?;
+
+    for i in 0..size {
+        if h_verify[i] != h_in1[i] {
+            return Err("Memory roundtrip verification failed".to_string());
+        }
+    }
+
+    // 4. Trivial kernel launch
+    kernels::add(
+        d_in1.as_ptr() as *const f32,
+        d_in2.as_ptr() as *const f32,
+        d_out.as_ptr() as *mut f32,
+        size,
+    )
+    .map_err(|e| format!("Elementwise add kernel launch failed: {:?}", e))?;
+
+    crate::gpu::ffi::hip_device_synchronize()
+        .map_err(|e| format!("hipDeviceSynchronize failed: {:?}", e))?;
+
+    let mut h_out = vec![0.0f32; size];
+    d_out
+        .copy_to_host(unsafe {
+            std::slice::from_raw_parts_mut(h_out.as_mut_ptr() as *mut u8, h_out.len() * 4)
+        })
+        .map_err(|e| format!("hipMemcpy D2H (out) failed: {:?}", e))?;
+
+    for i in 0..size {
+        if (h_out[i] - 3.0f32).abs() > 1e-5f32 {
+            return Err(format!(
+                "Kernel execution verification failed: got {}, expected 3.0",
+                h_out[i]
+            ));
+        }
+    }
+
+    Ok(())
 }

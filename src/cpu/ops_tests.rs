@@ -138,6 +138,79 @@ mod tests {
     }
 
     #[test]
+    fn gemv_f16_correct() -> Result<(), Box<dyn std::error::Error>> {
+        use half::f16;
+        // 2x3 matrix times 3-vector
+        // Row 0: 1.0, 2.0, 3.0
+        // Row 1: 4.0, 5.0, 6.0
+        let w_f16 = vec![
+            f16::from_f32(1.0),
+            f16::from_f32(2.0),
+            f16::from_f32(3.0),
+            f16::from_f32(4.0),
+            f16::from_f32(5.0),
+            f16::from_f32(6.0),
+        ];
+        let mut w_bytes = vec![0u8; 12];
+        for (i, val) in w_f16.iter().enumerate() {
+            let bytes = val.to_bits().to_le_bytes();
+            w_bytes[i * 2] = bytes[0];
+            w_bytes[i * 2 + 1] = bytes[1];
+        }
+        let x = vec![1.0, 2.0, 3.0];
+        let mut y = vec![0.0; 2];
+
+        let mut meta = crate::cpu::weights::WeightMeta {
+            wtype: crate::loader::GgmlType::F16,
+            dims: vec![2, 3],
+            needs_transpose: false,
+            svd_k: None,
+        };
+        crate::cpu::ops::dispatch_gemv(&w_bytes, &meta, &x, &mut y, 2, 3, None)?;
+
+        // Row 0: 1*1 + 2*2 + 3*3 = 14
+        // Row 1: 4*1 + 5*2 + 6*3 = 32
+        assert!(
+            (y[0] - 14.0_f32).abs() < 1e-3,
+            "expected 14.0, got {}",
+            y[0]
+        );
+        assert!(
+            (y[1] - 32.0_f32).abs() < 1e-3,
+            "expected 32.0, got {}",
+            y[1]
+        );
+
+        // Test transposed version:
+        // W^T * x
+        // x has len 2 (e.g. [1.0, 2.0])
+        // y has len 3
+        // Row 0 of W^T: [1.0, 4.0] -> y[0] = 1*1 + 4*2 = 9
+        // Row 1 of W^T: [2.0, 5.0] -> y[1] = 2*1 + 5*2 = 12
+        // Row 2 of W^T: [3.0, 6.0] -> y[2] = 3*1 + 6*2 = 15
+        meta.needs_transpose = true;
+        let x_trans = vec![1.0, 2.0];
+        let mut y_trans = vec![0.0; 3];
+        crate::cpu::ops::dispatch_gemv(&w_bytes, &meta, &x_trans, &mut y_trans, 3, 2, None)?;
+        assert!(
+            (y_trans[0] - 9.0_f32).abs() < 1e-3,
+            "expected 9.0, got {}",
+            y_trans[0]
+        );
+        assert!(
+            (y_trans[1] - 12.0_f32).abs() < 1e-3,
+            "expected 12.0, got {}",
+            y_trans[1]
+        );
+        assert!(
+            (y_trans[2] - 15.0_f32).abs() < 1e-3,
+            "expected 15.0, got {}",
+            y_trans[2]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn gemv_q4_0_matches_f32() {
         // Create a simple Q4_0 weight matrix: 2 rows, 32 cols (1 block per row)
         // Scale = 1.0 for both blocks

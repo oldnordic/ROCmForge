@@ -16,6 +16,8 @@ pub(super) fn supports_gpu_matrix_type(wtype: GgmlType) -> bool {
             | GgmlType::Q5_K
             | GgmlType::Q6_K
             | GgmlType::Q8_0
+            | GgmlType::Q2_K
+            | GgmlType::Q3_K
     )
 }
 
@@ -184,27 +186,6 @@ pub(super) fn rfm_type_to_ggml(t: &RfmType) -> GgmlType {
     }
 }
 
-// NOTE: unpack_q4_split is currently dead code (GPU path uses gpu_unpack_q4_split instead).
-// Kept for potential future CPU-side fallback or testing use.
-#[allow(dead_code)]
-pub(super) fn unpack_q4_split(data: &[u8], num_elements: usize) -> Vec<u8> {
-    let num_blocks = num_elements / 32;
-    let mut out = Vec::with_capacity(num_blocks * 18);
-
-    let scales_size = num_blocks * 2;
-    let zp_size = num_blocks * 2;
-
-    let scales = &data[0..scales_size];
-    let nibbles = &data[scales_size + zp_size..];
-
-    for i in 0..num_blocks {
-        out.push(scales[i * 2]);
-        out.push(scales[i * 2 + 1]);
-        out.extend_from_slice(&nibbles[i * 16..(i + 1) * 16]);
-    }
-    out
-}
-
 pub(super) fn unpack_q4_fused_gate_up(data: &[u8], gate_elements: usize) -> (Vec<u8>, Vec<u8>) {
     let num_blocks = gate_elements / 32;
     let rfm_blocks = num_blocks / 8;
@@ -349,7 +330,7 @@ mod matrix_meta_tests {
     }
 
     #[test]
-    fn tied_lm_head_is_marked_transposed() {
+    fn tied_lm_head_is_not_transposed() {
         let config = make_test_config();
         let meta = build_matrix_meta(
             "output.weight",
@@ -361,7 +342,7 @@ mod matrix_meta_tests {
         )
         .unwrap();
 
-        assert!(meta.needs_transpose);
+        assert!(!meta.needs_transpose);
         assert_eq!(meta.role, TensorRole::TiedLmHead);
     }
 
@@ -371,7 +352,7 @@ mod matrix_meta_tests {
         let err = build_matrix_meta(
             "blk.0.attn_q.weight",
             &[1024, 1024],
-            GgmlType::Q3_K,
+            GgmlType::Q5_0,
             &config,
             false,
             false,
@@ -395,5 +376,30 @@ mod matrix_meta_tests {
         .unwrap_err();
 
         assert!(matches!(err, GpuError::InvalidWeightLayout { .. }));
+    }
+
+    #[test]
+    fn supports_q2_k_and_q3_k_matrix_types() -> Result<(), Box<dyn std::error::Error>> {
+        let config = make_test_config();
+        let meta_q2 = build_matrix_meta(
+            "blk.0.attn_q.weight",
+            &[1024, 1024],
+            GgmlType::Q2_K,
+            &config,
+            false,
+            false,
+        )?;
+        assert_eq!(meta_q2.wtype, GgmlType::Q2_K);
+
+        let meta_q3 = build_matrix_meta(
+            "blk.0.attn_q.weight",
+            &[1024, 1024],
+            GgmlType::Q3_K,
+            &config,
+            false,
+            false,
+        )?;
+        assert_eq!(meta_q3.wtype, GgmlType::Q3_K);
+        Ok(())
     }
 }

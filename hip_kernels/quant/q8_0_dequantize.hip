@@ -1,7 +1,7 @@
 #include "common.hip"
 
 #define QK8_0 32
-#define Q8_0_BLOCK_SIZE 36
+#define Q8_0_BLOCK_SIZE 34
 
 //! Q8_0 dequantization kernel
 //!
@@ -33,16 +33,16 @@ __global__ void dequantize_q8_0_device(
     // Thread 0 reads the scale from block header
     if (threadIdx.x == 0) {
         const uint8_t* in = static_cast<const uint8_t*>(input) + block_idx * Q8_0_BLOCK_SIZE;
-        s_scale = *reinterpret_cast<const float*>(in);  // First 4 bytes = scale (f32)
+        s_scale = __half2float(*reinterpret_cast<const half*>(in));  // First 2 bytes = scale (f16)
     }
     __syncthreads();
 
     // Convert scale to f32 once
     const float scale = s_scale;
 
-    // Read quantized values and dequantize (starting at byte 4)
+    // Read quantized values and dequantize (starting at byte 2)
     const int8_t* qs = reinterpret_cast<const int8_t*>(
-        static_cast<const uint8_t*>(input) + block_idx * Q8_0_BLOCK_SIZE + 4
+        static_cast<const uint8_t*>(input) + block_idx * Q8_0_BLOCK_SIZE + 2
     );
 
     // Each thread processes one element (32 threads = QK8_0)
@@ -74,15 +74,15 @@ __global__ void dequantize_q8_0_batched_device(
     // Thread 0 reads the scale
     if (threadIdx.x == 0) {
         const uint8_t* in = static_cast<const uint8_t*>(input) + batch_input_offset + block_idx * Q8_0_BLOCK_SIZE;
-        s_scale = *reinterpret_cast<const float*>(in);  // First 4 bytes = scale (f32)
+        s_scale = __half2float(*reinterpret_cast<const half*>(in));  // First 2 bytes = scale (f16)
     }
     __syncthreads();
 
     const float scale = s_scale;
 
-    // Read and dequantize values (starting at byte 4)
+    // Read and dequantize values (starting at byte 2)
     const int8_t* qs = reinterpret_cast<const int8_t*>(
-        static_cast<const uint8_t*>(input) + batch_input_offset + block_idx * Q8_0_BLOCK_SIZE + 4
+        static_cast<const uint8_t*>(input) + batch_input_offset + block_idx * Q8_0_BLOCK_SIZE + 2
     );
     float* out_ptr = output + batch_output_offset;
 

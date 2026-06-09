@@ -83,28 +83,24 @@ pub fn compute_transpose_flag(
     // Standard GEMV expects: [out_dim, in_dim]
     // Transposed layout is: [in_dim, out_dim]
 
-    // Handle tied LM head: stored as [hidden_size, vocab_size], need transpose
+    // Handle tied LM head: stored as [hidden_size, vocab_size], standard layout
     if is_lm_head && is_tied {
-        // Tied embeddings: [hidden_size, vocab_size] -> need W^T * x
-        // We expect to compute y = W^T * x where W is [hidden_size, vocab_size]
-        // This means y[v] = sum_i(x[i] * W[i, v])
-        // So we need transposed access (column-major storage)
-        return true;
+        // Tied embeddings: [hidden_size, vocab_size] where hidden_size is dim0 (innermost).
+        // Since hidden_size is the contiguous dimension, we can access row-major directly
+        // on CPU, so no transpose is needed.
+        return false;
     }
 
     // Handle FFN down projection
-    // Expected: [hidden_size, intermediate_size] -> no transpose
-    // Actual often: [intermediate_size, hidden_size] -> needs transpose
     if weight_name.contains("ffn_down.weight") {
-        // Check if dimensions are swapped
-        // FFN down projects from intermediate_size to hidden_size
-        // GEMV expects W [hidden_size, intermediate_size]
-        // GGUF may store as [intermediate_size, hidden_size]
+        // FFN down projects from intermediate_size to hidden_size.
+        // Input is intermediate_size, output is hidden_size.
+        // Standard layout has dim0 = intermediate_size (innermost/contiguous), dim1 = hidden_size (no transpose).
+        // Transposed layout would have dim0 = hidden_size (innermost/contiguous), dim1 = intermediate_size (needs transpose).
         let h = config.hidden_size;
         let ff = config.intermediate_size;
 
-        // If actual is [ff, h] instead of [h, ff], need transpose
-        return dim0 == ff && dim1 == h;
+        return dim0 == h && dim1 == ff;
     }
 
     // Handle attention output projection

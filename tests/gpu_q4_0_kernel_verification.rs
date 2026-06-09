@@ -83,10 +83,12 @@ fn test_q4_0_transposed_kernel_behavior() {
     let mut cpu_output_dispatch = vec![0.0f32; h];
     let mut cpu_output_transposed = vec![0.0f32; h];
 
-    // CPU: dispatch_gemv (which should call transposed variant)
+    // CPU: dispatch_gemv (force transposed variant by setting needs_transpose to true)
+    let mut test_meta = cpu_layer.ffn_down_meta.clone();
+    test_meta.needs_transpose = true;
     dispatch_gemv(
         &cpu_layer.ffn_down,
-        &cpu_layer.ffn_down_meta,
+        &test_meta,
         &cpu_input,
         &mut cpu_output_dispatch,
         h,

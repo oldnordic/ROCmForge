@@ -95,8 +95,10 @@ fn test_multi_layer_divergence_isolation() {
         gpu_layer_forward_hybrid(
             &device,
             gpu_weights.layer(layer_idx),
+            Some(cpu_weights.layer(layer_idx)),
             &mut gpu_kv,
             &mut gpu_scratch,
+            Some(&mut cpu_scratch),
             0,
             0,
             &config,

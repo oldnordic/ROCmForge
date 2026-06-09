@@ -2,11 +2,12 @@ use super::super::device::GpuDevice;
 use super::super::error::{GpuError, GpuResult};
 use super::super::ffi::{hipStreamCaptureStatus, hipStream_t, hip_stream_is_capturing};
 use super::super::kernels::{
-    gemv_q4_0_f32_on_stream_unchecked, gemv_q4_0_f32_wave32_on_stream_unchecked,
-    gemv_q4_1_f32_on_stream_unchecked, gemv_q4_1_f32_wave32_on_stream_unchecked,
-    gemv_q4_k_f32_on_stream, gemv_q5_0_f32_on_stream, gemv_q5_1_f32_on_stream,
-    gemv_q5_k_f32_on_stream, gemv_q6_k_f32_on_stream, gemv_q8_0_f32_lm_head_on_stream,
-    gemv_q8_0_f32_lm_head_on_stream_variant, gemv_q8_0_f32_on_stream,
+    gemv_q2_k_f32_on_stream, gemv_q3_k_f32_on_stream, gemv_q4_0_f32_on_stream_unchecked,
+    gemv_q4_0_f32_wave32_on_stream_unchecked, gemv_q4_1_f32_on_stream_unchecked,
+    gemv_q4_1_f32_wave32_on_stream_unchecked, gemv_q4_k_f32_on_stream, gemv_q5_0_f32_on_stream,
+    gemv_q5_1_f32_on_stream, gemv_q5_k_f32_on_stream, gemv_q6_k_f32_on_stream,
+    gemv_q8_0_f32_lm_head_on_stream, gemv_q8_0_f32_lm_head_on_stream_variant,
+    gemv_q8_0_f32_on_stream,
 };
 use super::super::launch_autotune::{
     lookup_lm_head_q8_variant, select_lm_head_q8_variant, VariantId,
@@ -219,6 +220,28 @@ pub(super) fn dispatch_gemv_impl(
                     stream,
                 )?;
             }
+            GgmlType::Q2_K => {
+                record_gemv_dispatch("Q2_K", "baseline");
+                gemv_q2_k_f32_on_stream(
+                    weights.as_ptr() as *const u8,
+                    input,
+                    output,
+                    in_dim,
+                    out_dim,
+                    stream,
+                )?;
+            }
+            GgmlType::Q3_K => {
+                record_gemv_dispatch("Q3_K", "baseline");
+                gemv_q3_k_f32_on_stream(
+                    weights.as_ptr() as *const u8,
+                    input,
+                    output,
+                    in_dim,
+                    out_dim,
+                    stream,
+                )?;
+            }
             _ => unreachable!("unsupported types return before dispatch"),
         }
     }
@@ -250,6 +273,18 @@ pub fn gpu_dispatch_gemv(
     in_dim: usize,
 ) -> GpuResult<()> {
     validate_gemv_layout(meta, out_dim, in_dim)?;
+
+    if meta.wtype == GgmlType::F32 {
+        crate::gpu::kernels::elementwise::dispatch_gemv_f32_on_stream(
+            weights.as_ptr() as *const f32,
+            input,
+            output,
+            in_dim,
+            out_dim,
+            hipStream_t::null(),
+        )?;
+        return Ok(());
+    }
 
     if !supports_gemv_type(meta.wtype) {
         return Err(GpuError::UnsupportedWeightType {
@@ -283,6 +318,18 @@ pub fn gpu_dispatch_gemv_on_stream(
     stream: hipStream_t,
 ) -> GpuResult<()> {
     validate_gemv_layout(meta, out_dim, in_dim)?;
+
+    if meta.wtype == GgmlType::F32 {
+        crate::gpu::kernels::elementwise::dispatch_gemv_f32_on_stream(
+            weights.as_ptr() as *const f32,
+            input,
+            output,
+            in_dim,
+            out_dim,
+            stream,
+        )?;
+        return Ok(());
+    }
 
     if !supports_gemv_type(meta.wtype) {
         return Err(GpuError::UnsupportedWeightType {
@@ -396,6 +443,15 @@ pub fn gpu_dispatch_gemv_ptr_on_stream(
             }
             GgmlType::Q5_1 => {
                 gemv_q5_1_f32_on_stream(weights_ptr, input, output, in_dim, out_dim, stream)?;
+            }
+            GgmlType::Q5_K => {
+                gemv_q5_k_f32_on_stream(weights_ptr, input, output, in_dim, out_dim, stream)?;
+            }
+            GgmlType::Q2_K => {
+                gemv_q2_k_f32_on_stream(weights_ptr, input, output, in_dim, out_dim, stream)?;
+            }
+            GgmlType::Q3_K => {
+                gemv_q3_k_f32_on_stream(weights_ptr, input, output, in_dim, out_dim, stream)?;
             }
             _ => unreachable!("unsupported types return before dispatch"),
         }
@@ -548,6 +604,32 @@ pub fn gpu_dispatch_gemv_svd_on_stream(
     stream: hipStream_t,
 ) -> GpuResult<()> {
     validate_gemv_layout(meta, out_dim, in_dim)?;
+
+    if meta.wtype == GgmlType::F32 {
+        if let Some(svd_corr) = svd {
+            crate::gpu::kernels::elementwise::dispatch_svd_correction(
+                stream,
+                &svd_corr.u,
+                &svd_corr.v,
+                svd_corr.k,
+                input,
+                output,
+                in_dim,
+                out_dim,
+                temp_vector,
+            )?;
+        } else {
+            crate::gpu::kernels::elementwise::dispatch_gemv_f32_on_stream(
+                weights.as_ptr() as *const f32,
+                input,
+                output,
+                in_dim,
+                out_dim,
+                stream,
+            )?;
+        }
+        return Ok(());
+    }
 
     if !supports_gemv_type(meta.wtype) {
         return Err(GpuError::UnsupportedWeightType {

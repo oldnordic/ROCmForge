@@ -111,8 +111,10 @@ fn test_gpu_state_accumulation_across_layers() {
         gpu_layer_forward_hybrid(
             &device,
             gpu_weights.layer(layer_idx),
+            Some(cpu_weights.layer(layer_idx)),
             &mut gpu_kv,
             &mut gpu_scratch,
+            Some(&mut cpu_scratch),
             0,
             0,
             &config,
@@ -180,8 +182,10 @@ fn test_gpu_state_accumulation_across_layers() {
         gpu_layer_forward_hybrid(
             &device,
             gpu_weights.layer(layer_idx),
+            Some(cpu_weights.layer(layer_idx)),
             &mut gpu_kv_accum,
             &mut gpu_scratch_accum,
+            Some(&mut cpu_scratch_accum),
             layer_idx,
             layer_idx, // position equals layer_idx for decode
             &config,

@@ -2,19 +2,19 @@
 
 // Q8_0 constants
 #define QK8_0 32
-#define Q8_0_BLOCK_SIZE 36
+#define Q8_0_BLOCK_SIZE 34
 #define Q8_0_LM_HEAD_COLS 4
 #define Q8_0_LM_HEAD_COLS_V2 8
 
 constexpr int Q8_0_LM_HEAD_SHARED_MEM_LIMIT = 32 * 1024;
 
 struct Q8_0_block {
-    float d;
+    half d;
     int8_t qs[32];
 };
 
 __device__ inline float vec_dot_q8_0(const Q8_0_block* block, const float* vec, int offset) {
-    float d = block->d;
+    float d = __half2float(block->d);
     float sum = 0.0f;
     #pragma unroll
     for (int i = 0; i < 32; ++i) {
@@ -133,7 +133,7 @@ __global__ void gemv_q8_0_f32_lm_head_multi_row_kernel(
             }
 
             const Q8_0_block* block = &w_cols[c][block_idx];
-            const float d = block->d;
+            const float d = __half2float(block->d);
             float dot = 0.0f;
 
             #pragma unroll
@@ -212,7 +212,7 @@ __global__ void gemv_q8_0_f32_lm_head_multi_row_v2_kernel(
         #pragma unroll
         for (int c = 0; c < Q8_0_LM_HEAD_COLS_V2; ++c) {
             const Q8_0_block* block = &w_cols[c][block_idx];
-            const float d = block->d;
+            const float d = __half2float(block->d);
             float dot = 0.0f;
 
             #pragma unroll

@@ -57,6 +57,8 @@ Valid CLI options from current binary:
 | `--prefill-only-validate` | Run prefill only; exits 0 on finite logits, 1 on NaN/Inf |
 | `--draft-model <path>` | Draft model for speculative decoding |
 | `--speculative-tokens N` | Speculative tokens per step (default: 4) |
+| `--threads N` / `-t N` | Number of CPU threads/cores to use (default: auto-detect) |
+| `--ctx-size N` / `-c N` | Override maximum context window size (default: model default) |
 
 `--device` is not supported by the current CLI.
 
@@ -71,10 +73,17 @@ ROCMFORGE_GPU_SAFE_MODE=1 \
 
 Tuned mode:
 
+The GPU Decode Graph is **enabled by default** for GPU execution when greedy decoding is active (e.g. `--top-p 1.0`). To explicitly force or toggle features, use:
+
 ```bash
+# Explicitly enable graph capture (default behavior for greedy paths)
 ROCMFORGE_ENABLE_DECODE_GRAPH=1 \
 ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH=1 \
-./target/release/rocmforge --model /path/to/model.gguf --prompt "Hello" --gpu
+./target/release/rocmforge --model /path/to/model.gguf --prompt "Hello" --gpu --top-p 1.0
+
+# Disable graph capture to fall back to the standard decode loop
+ROCMFORGE_DISABLE_DECODE_GRAPH=1 \
+./target/release/rocmforge --model /path/to/model.gguf --prompt "Hello" --gpu --top-p 1.0
 ```
 
 ### VRAM Management (display-attached GPU safety)
@@ -109,6 +118,13 @@ Estimated usage:
   Scratch buffers       0.00 GB
   Total required        0.31 GB  [OK]
 ```
+
+For `cargo test` GPU work, the repo default is already conservative:
+- `RUST_TEST_THREADS=1`
+- `ROCMFORGE_GPU_LOCK_TIMEOUT=30`
+- `ROCMFORGE_DESKTOP_VRAM_GB=4.0`
+
+These defaults come from [`.cargo/config.toml`](/home/feanor/Projects/rocmforge/.cargo/config.toml). The shared test helper now skips based on the guarded allocation budget after desktop reservation and safety margin, not raw free VRAM.
 
 ### Experimental Kernels (opt-in, potentially unsafe)
 
@@ -191,18 +207,25 @@ Observed:
 
 - Decode average: `486.0 tok/s`
 
+### 7.4 Qwen2.5-0.5B-Instruct Q8_0 (`qwen2.5-0.5b-instruct-q8_0.rfm` / `.gguf`, CLI, greedy `--top-p 1.0`)
+
+- Prefill: `151.8 tok/s`
+- Decode speed (baseline / graph capture disabled or invalidated): `87.7 tok/s`
+- Decode speed (optimized / graph capture active): `340.4 tok/s`
+- Reference Native `llama.cpp` speed: `239.2 tok/s` (ROCmForge is ~42% faster with decode graph replay active)
+
 ## 8. What Works and What Still Needs Work
 
 What works now:
 
-- End-to-end local inference on AMD GPU with Qwen2.5 GGUF models
-- Decode graph replay path
+- End-to-end local inference on AMD GPU with Qwen2.5 GGUF and `.rfm` models
+- Decode graph replay path with zero dynamic allocations in the generation hotpath
+- Parity/outperformance vs native `llama.cpp` for supported quantizations (e.g. Q8_0, Q4_0)
 - Profiling and benchmark scripts in-repo
 
 What still needs work:
 
-- Further decode throughput improvements
-- Better parity with llama.cpp on the same hardware
+- Further decode throughput improvements for other quantization styles (K-quants)
 - Cleaner and lower-noise profiling workflow
 - Broader model-family validation beyond the current Qwen-first scope
 
@@ -247,3 +270,18 @@ ROCmForge automatically prevents hardcoded architectural mismatches or overlaps.
 2. `gpu::router::select_path` inspects layer weight characteristics (checking for MoE, SSM, SVD) and automatically dispatches to the correct `InferencePath` (e.g. `BatchedPrefill`, `SvdOptimized`, or `DecodeStyle`).
 3. Under GQA-only mode (unprojected weights), the GPU kernels bypass MLA projection blocks dynamically to guarantee bit-level attention score correctness.
 
+### 10.4 Inference Change Discipline
+
+When changing inference behavior, do not validate only one model source or one
+runtime path. Use `docs/inference-change-checklist.md` and audit:
+- `ModelFile`
+- GGUF loader path
+- RFM loader path
+- converter assumptions when `.rfm` behavior can change
+- router selection
+- decode-graph eligibility
+- GEMV/GEMM dispatch eligibility
+- speculative loading if model-open logic changed
+
+This prevents the common failure mode where a fix improves one path while
+quietly regressing the other.

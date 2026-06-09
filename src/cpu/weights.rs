@@ -286,17 +286,21 @@ impl CpuLayerWeights {
             )
         };
 
-        let (attn_o, attn_o_meta) = if layer_has_fused_qkv {
-            let meta = attn_qkv_meta
-                .as_ref()
-                .ok_or(WeightError::Load(LoadError::UnknownTensorType(999)))?;
-            (Vec::new(), meta.clone())
+        let o_name = config
+            .tensor_registry
+            .resolve(TensorName::AttnOutput, layer);
+        let (attn_o, attn_o_meta) = if file.has_tensor(&o_name) {
+            load_weight(&o_name)?
         } else {
-            load_weight(
-                &config
-                    .tensor_registry
-                    .resolve(TensorName::AttnOutput, layer),
-            )?
+            (
+                Vec::new(),
+                WeightMeta {
+                    wtype: GgmlType::F32,
+                    dims: vec![0, 0],
+                    needs_transpose: false,
+                    svd_k: None,
+                },
+            )
         };
 
         let attn_q_norm_name = format!("blk.{}.attn_q_norm.weight", layer);
@@ -314,9 +318,13 @@ impl CpuLayerWeights {
 
         let (attn_gate, attn_gate_meta, ssm) = if layer_has_fused_qkv {
             let attn_gate_name = format!("blk.{}.attn_gate.weight", layer);
-            let (attn_gate, attn_gate_meta) = load_weight(&attn_gate_name)?;
-            let ssm = load_qwen35_ssm_gguf(file, layer, config)?;
-            (Some(attn_gate), Some(attn_gate_meta), Some(ssm))
+            if file.has_tensor(&attn_gate_name) {
+                let (attn_gate, attn_gate_meta) = load_weight(&attn_gate_name)?;
+                let ssm = load_qwen35_ssm_gguf(file, layer, config)?;
+                (Some(attn_gate), Some(attn_gate_meta), Some(ssm))
+            } else {
+                (None, None, None)
+            }
         } else {
             (None, None, None)
         };
@@ -479,11 +487,11 @@ impl CpuModelWeights {
             (data, meta, false)
         } else {
             // Weight tying: lm_head shares embedding weights
-            // Tied embeddings need transposed access (W is [hidden_size, vocab_size])
+            // Tied embeddings do not need transpose on CPU (hidden_size is contiguous)
             let tied_meta = WeightMeta {
                 wtype: token_emb_meta.wtype,
                 dims: token_emb_meta.dims.clone(),
-                needs_transpose: true, // Tied embeddings always need transpose
+                needs_transpose: false,
                 svd_k: None,
             };
             (token_emb.clone(), tied_meta, true)
@@ -864,12 +872,7 @@ impl CpuLayerWeights {
                 None,
             )
         };
-        let (attn_o, attn_o_meta) = if layer_has_fused_qkv {
-            let meta = attn_qkv_meta
-                .as_ref()
-                .ok_or(WeightError::Load(LoadError::UnknownTensorType(999)))?;
-            (Vec::new(), meta.clone())
-        } else {
+        let (attn_o, attn_o_meta) = if file.has_tensor(&o_name) {
             let o_view = file
                 .tensor(&o_name)
                 .map_err(WeightError::Load)?
@@ -883,11 +886,56 @@ impl CpuLayerWeights {
                 false,
             );
             load_rfm_weight(&o_name, o_tr)?
+        } else {
+            (
+                Vec::new(),
+                WeightMeta {
+                    wtype: GgmlType::F32,
+                    dims: vec![0, 0],
+                    needs_transpose: false,
+                    svd_k: None,
+                },
+            )
         };
-
-        let attn_q_bias = None;
-        let attn_k_bias = None;
-        let attn_v_bias = None;
+        let attn_q_bias = match config
+            .tensor_registry
+            .resolve_optional(TensorName::AttnQBias, layer)
+        {
+            Some(name) => {
+                if file.has_tensor(&name) {
+                    Some(copy_f32_from_bytes(&copy_rfm_tensor(file, &name)?))
+                } else {
+                    None
+                }
+            }
+            None => None,
+        };
+        let attn_k_bias = match config
+            .tensor_registry
+            .resolve_optional(TensorName::AttnKBias, layer)
+        {
+            Some(name) => {
+                if file.has_tensor(&name) {
+                    Some(copy_f32_from_bytes(&copy_rfm_tensor(file, &name)?))
+                } else {
+                    None
+                }
+            }
+            None => None,
+        };
+        let attn_v_bias = match config
+            .tensor_registry
+            .resolve_optional(TensorName::AttnVBias, layer)
+        {
+            Some(name) => {
+                if file.has_tensor(&name) {
+                    Some(copy_f32_from_bytes(&copy_rfm_tensor(file, &name)?))
+                } else {
+                    None
+                }
+            }
+            None => None,
+        };
 
         let attn_q_norm_name = format!("blk.{}.attn_q_norm.weight", layer);
         let attn_k_norm_name = format!("blk.{}.attn_k_norm.weight", layer);
@@ -910,21 +958,25 @@ impl CpuLayerWeights {
 
         let (attn_gate, attn_gate_meta, ssm) = if layer_has_fused_qkv {
             let attn_gate_name = format!("blk.{}.attn_gate.weight", layer);
-            let attn_gate_view = file
-                .tensor(&attn_gate_name)
-                .map_err(WeightError::Load)?
-                .ok_or_else(|| WeightError::TensorNotFound(attn_gate_name.clone()))?;
-            let attn_gate_tr = compute_transpose_flag(
-                &attn_gate_name,
-                attn_gate_view.dims,
-                rfm_type_to_ggml(&attn_gate_view.wtype),
-                config,
-                false,
-                false,
-            );
-            let (attn_gate, attn_gate_meta) = load_rfm_weight(&attn_gate_name, attn_gate_tr)?;
-            let ssm = load_qwen35_ssm_rfm(file, layer, config)?;
-            (Some(attn_gate), Some(attn_gate_meta), Some(ssm))
+            if file.has_tensor(&attn_gate_name) {
+                let attn_gate_view = file
+                    .tensor(&attn_gate_name)
+                    .map_err(WeightError::Load)?
+                    .ok_or_else(|| WeightError::TensorNotFound(attn_gate_name.clone()))?;
+                let attn_gate_tr = compute_transpose_flag(
+                    &attn_gate_name,
+                    attn_gate_view.dims,
+                    rfm_type_to_ggml(&attn_gate_view.wtype),
+                    config,
+                    false,
+                    false,
+                );
+                let (attn_gate, attn_gate_meta) = load_rfm_weight(&attn_gate_name, attn_gate_tr)?;
+                let ssm = load_qwen35_ssm_rfm(file, layer, config)?;
+                (Some(attn_gate), Some(attn_gate_meta), Some(ssm))
+            } else {
+                (None, None, None)
+            }
         } else {
             (None, None, None)
         };
@@ -1216,7 +1268,7 @@ impl CpuModelWeights {
             let tied_meta = WeightMeta {
                 wtype: token_emb_meta.wtype,
                 dims: token_emb_meta.dims.clone(),
-                needs_transpose: true,
+                needs_transpose: false,
                 svd_k: None,
             };
             (token_emb.clone(), tied_meta, true)

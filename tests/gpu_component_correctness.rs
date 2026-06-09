@@ -180,8 +180,10 @@ fn test_gpu_single_layer_forward_matches_cpu() {
     gpu::gpu_layer_forward_hybrid(
         &device,
         gpu_weights.layer(0),
+        Some(cpu_weights.layer(0)),
         &mut gpu_kv,
         &mut gpu_scratch,
+        Some(&mut cpu_scratch),
         0,
         0,
         &config,

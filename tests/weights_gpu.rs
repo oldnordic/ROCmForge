@@ -151,14 +151,14 @@ fn test_gpu_weights_lm_head_tied() {
     let tied_meta = WeightMeta {
         wtype: token_emb_meta.wtype,
         dims: token_emb_meta.dims.clone(),
-        needs_transpose: true, // LM head needs transpose
+        needs_transpose: false, // LM head does not need transpose on CPU
         role: TensorRole::TiedLmHead,
         svd_k: None,
     };
 
     assert_eq!(tied_meta.wtype, rocmforge::loader::GgmlType::Q4_0);
     assert_eq!(tied_meta.dims, vec![32000, 1024]);
-    assert!(tied_meta.needs_transpose);
+    assert!(!tied_meta.needs_transpose);
     assert_eq!(tied_meta.role, TensorRole::TiedLmHead);
 }
 

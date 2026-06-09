@@ -14,7 +14,8 @@ use super::kernels::{
 };
 use super::ops::{
     gpu_dispatch_fused_gate_up_on_stream, gpu_dispatch_gemv_on_stream,
-    gpu_dispatch_gemv_svd_on_stream, gpu_dispatch_mpo_apply_on_stream, gpu_dispatch_rms_norm,
+    gpu_dispatch_gemv_svd_on_stream, gpu_dispatch_gemv_with_fallback_on_stream,
+    gpu_dispatch_mpo_apply_on_stream, gpu_dispatch_rms_norm,
     gpu_dispatch_sparse_csr_gemv_on_stream,
 };
 use super::ops_batched::{
@@ -293,7 +294,7 @@ pub fn gpu_batched_prefill_forward_q4_0(
         });
     }
 
-    let debug_prefill = false;
+    let debug_prefill = true;
     let mut cpu_acts = None;
     if debug_prefill {
         println!("DEBUG PREFILL: Computing CPU reference activations for layer 0...");
@@ -971,11 +972,13 @@ pub fn gpu_batched_prefill_forward_q4_0(
                     let t_scratch =
                         unsafe { (scratch.svd_scratch.as_ptr() as *mut f32).add(pos * 32) };
 
-                    gpu_dispatch_gemv_svd_on_stream(
+                    gpu_dispatch_gemv_with_fallback_on_stream(
                         device,
                         &gpu_layer.ffn_gate,
                         &gpu_layer.ffn_gate_meta,
                         gpu_layer.ffn_gate_svd.as_ref(),
+                        gpu_layer.ffn_gate_sparse.as_ref(),
+                        gpu_layer.ffn_gate_mpo.as_ref(),
                         normed_row,
                         gate_row,
                         ff_size,
@@ -983,11 +986,13 @@ pub fn gpu_batched_prefill_forward_q4_0(
                         t_scratch,
                         device.stream(),
                     )?;
-                    gpu_dispatch_gemv_svd_on_stream(
+                    gpu_dispatch_gemv_with_fallback_on_stream(
                         device,
                         &gpu_layer.ffn_up,
                         &gpu_layer.ffn_up_meta,
                         gpu_layer.ffn_up_svd.as_ref(),
+                        gpu_layer.ffn_up_sparse.as_ref(),
+                        gpu_layer.ffn_up_mpo.as_ref(),
                         normed_row,
                         swiglu_row,
                         ff_size,
@@ -1013,6 +1018,7 @@ pub fn gpu_batched_prefill_forward_q4_0(
                         gpu_layer.ffn_gate_up_interleaved.as_ref(),
                         gpu_layer.ffn_gate_up_interleaved_tile4.as_ref(),
                         normed_row,
+                        std::ptr::null_mut(),
                         swiglu_row,
                         ff_size,
                         h,
@@ -1044,6 +1050,31 @@ pub fn gpu_batched_prefill_forward_q4_0(
                     .swiglu,
                 &gpu_swiglu,
             );
+            let cpu_swiglu = &cpu_acts
+                .as_ref()
+                .expect("invariant: cpu_acts populated before validation block")
+                .swiglu;
+            println!(
+                "DEBUG PREFILL: layer0 SwiGLU[0..4] CPU: {:?}",
+                &cpu_swiglu[0..4]
+            );
+            println!(
+                "DEBUG PREFILL: layer0 SwiGLU[0..4] GPU: {:?}",
+                &gpu_swiglu[0..4]
+            );
+            let mut max_err = 0.0f32;
+            let mut max_err_idx = 0;
+            for (idx, (c, g)) in cpu_swiglu.iter().zip(gpu_swiglu.iter()).enumerate() {
+                let err = (c - g).abs();
+                if err > max_err {
+                    max_err = err;
+                    max_err_idx = idx;
+                }
+            }
+            println!(
+                "DEBUG PREFILL: Max SwiGLU error at index {}: CPU={}, GPU={}, diff={}",
+                max_err_idx, cpu_swiglu[max_err_idx], gpu_swiglu[max_err_idx], max_err
+            );
             println!(
                 "DEBUG PREFILL: layer0 FFN Gate-Up max_abs_error: Gate={}, SwiGLU={}",
                 err_gate, err_swiglu
@@ -1054,37 +1085,21 @@ pub fn gpu_batched_prefill_forward_q4_0(
         for pos in 0..seq_len {
             let swiglu_row = unsafe { (scratch.swiglu.as_ptr() as *const f32).add(pos * ff_size) };
             let layer_out_row = scratch.layer_out_row_mut_ptr(pos, h);
-            crate::gpu::ops::gpu_dispatch_gemv_on_stream(
+            let t_scratch = unsafe { (scratch.svd_scratch.as_ptr() as *mut f32).add(pos * 32) };
+            gpu_dispatch_gemv_with_fallback_on_stream(
                 device,
                 &gpu_layer.ffn_down,
                 &gpu_layer.ffn_down_meta,
+                gpu_layer.ffn_down_svd.as_ref(),
+                gpu_layer.ffn_down_sparse.as_ref(),
+                gpu_layer.ffn_down_mpo.as_ref(),
                 swiglu_row,
                 layer_out_row,
                 h,
                 ff_size,
+                t_scratch,
                 device.stream(),
             )?;
-        }
-
-        // Apply SVD correction for ffn_down if present
-        if let Some(svd) = gpu_layer.ffn_down_svd.as_ref() {
-            for pos in 0..seq_len {
-                let swiglu_row =
-                    unsafe { (scratch.swiglu.as_ptr() as *const f32).add(pos * ff_size) };
-                let layer_out_row = scratch.layer_out_row_mut_ptr(pos, h);
-                let t_scratch = unsafe { (scratch.svd_scratch.as_ptr() as *mut f32).add(pos * 32) };
-                crate::gpu::kernels::elementwise::dispatch_svd_correction(
-                    device.stream(),
-                    &svd.u,
-                    &svd.v,
-                    svd.k,
-                    swiglu_row,
-                    layer_out_row,
-                    ff_size,
-                    h,
-                    t_scratch,
-                )?;
-            }
         }
         device.synchronize()?;
 
@@ -1537,11 +1552,13 @@ pub fn gpu_prefill_ssm_layer_on_stream(
             if gpu_layer.ffn_gate_svd.is_some() || gpu_layer.ffn_up_svd.is_some() {
                 let gate_row = scratch.gate_row_mut_ptr(pos, ff_size);
                 let t_scratch = unsafe { (scratch.svd_scratch.as_ptr() as *mut f32).add(pos * 32) };
-                gpu_dispatch_gemv_svd_on_stream(
+                gpu_dispatch_gemv_with_fallback_on_stream(
                     device,
                     &gpu_layer.ffn_gate,
                     &gpu_layer.ffn_gate_meta,
                     gpu_layer.ffn_gate_svd.as_ref(),
+                    gpu_layer.ffn_gate_sparse.as_ref(),
+                    gpu_layer.ffn_gate_mpo.as_ref(),
                     normed_row,
                     gate_row,
                     ff_size,
@@ -1549,11 +1566,13 @@ pub fn gpu_prefill_ssm_layer_on_stream(
                     t_scratch,
                     stream,
                 )?;
-                gpu_dispatch_gemv_svd_on_stream(
+                gpu_dispatch_gemv_with_fallback_on_stream(
                     device,
                     &gpu_layer.ffn_up,
                     &gpu_layer.ffn_up_meta,
                     gpu_layer.ffn_up_svd.as_ref(),
+                    gpu_layer.ffn_up_sparse.as_ref(),
+                    gpu_layer.ffn_up_mpo.as_ref(),
                     normed_row,
                     swiglu_row,
                     ff_size,
@@ -1579,6 +1598,7 @@ pub fn gpu_prefill_ssm_layer_on_stream(
                     gpu_layer.ffn_gate_up_interleaved.as_ref(),
                     gpu_layer.ffn_gate_up_interleaved_tile4.as_ref(),
                     normed_row,
+                    std::ptr::null_mut(),
                     swiglu_row,
                     ff_size,
                     h,

@@ -1,7 +1,6 @@
 use super::super::error::GpuResult;
 use super::super::ffi::hipStream_t;
-use super::super::kernels::{rms_norm_on_stream, rms_norm_vulkan_style};
-use super::super::safety::experimental_gpu_kernels_enabled;
+use super::super::kernels::rms_norm_on_stream;
 
 pub fn gpu_dispatch_rms_norm(
     _device: &super::super::device::GpuDevice,
@@ -12,11 +11,5 @@ pub fn gpu_dispatch_rms_norm(
     eps: f32,
     stream: hipStream_t,
 ) -> GpuResult<()> {
-    if experimental_gpu_kernels_enabled() {
-        if let Ok(()) = rms_norm_vulkan_style(x, weight, out, n, eps, stream) {
-            return Ok(());
-        }
-    }
-
     rms_norm_on_stream(x, weight, out, n, eps, stream)
 }

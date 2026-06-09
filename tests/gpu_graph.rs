@@ -114,7 +114,7 @@ fn test_decode_graph_exec_update() {
     device
         .begin_capture(rocmforge::gpu::ffi::hipStreamCaptureMode::hipStreamCaptureModeGlobal)
         .unwrap(); // test
-    // Do a dummy copy to have some node in the graph
+                   // Do a dummy copy to have some node in the graph
     dummy_dst
         .copy_from_buffer_async(&dummy_src, 4, device.stream())
         .unwrap(); // test

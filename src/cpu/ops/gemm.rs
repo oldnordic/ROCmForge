@@ -522,6 +522,13 @@ pub fn dispatch_gemm(
                 gemm_f32(wf, x, y, out_dim, in_dim);
             }
         }
+        GgmlType::F16 => {
+            if meta.needs_transpose {
+                gemm_f16_transposed(w, x, y, out_dim, in_dim);
+            } else {
+                gemm_f16(w, x, y, out_dim, in_dim);
+            }
+        }
         GgmlType::Q4_0 => {
             if meta.needs_transpose {
                 gemm_q4_0_transposed_gemm(w, x, y, out_dim, in_dim);
@@ -606,6 +613,13 @@ pub fn dispatch_gemm_transposed(
                 gemm_f32_transposed(wf, x, y, out_dim, in_dim);
             } else {
                 gemm_f32(wf, x, y, out_dim, in_dim);
+            }
+        }
+        GgmlType::F16 => {
+            if transposed {
+                gemm_f16_transposed(w, x, y, out_dim, in_dim);
+            } else {
+                gemm_f16(w, x, y, out_dim, in_dim);
             }
         }
         GgmlType::Q4_0 => {
@@ -837,6 +851,42 @@ fn gemm_f32_transposed(w: &[f32], x: &[f32], y: &mut [f32], out_dim: usize, in_d
                     acc += x_row[i] * w[i * out_dim + o];
                 }
 
+                y_row[o] = acc;
+            });
+    }
+}
+
+/// F16 GEMM: Y[s, o] = dot(W[o, :], X[s, :])
+fn gemm_f16(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    y.par_chunks_mut(out_dim)
+        .enumerate()
+        .for_each(|(s, y_row)| {
+            let x_row = &x[s * in_dim..(s + 1) * in_dim];
+            for o in 0..out_dim {
+                let w_row_offset = o * in_dim * 2;
+                let mut acc = 0.0f32;
+                for i in 0..in_dim {
+                    let val = load_f16_as_f32(&w[w_row_offset + i * 2..w_row_offset + i * 2 + 2]);
+                    acc += val * x_row[i];
+                }
+                y_row[o] = acc;
+            }
+        });
+}
+
+/// F16 GEMM transposed.
+fn gemm_f16_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    for o in 0..out_dim {
+        y.par_chunks_mut(out_dim)
+            .enumerate()
+            .for_each(|(s, y_row)| {
+                let x_row = &x[s * in_dim..(s + 1) * in_dim];
+                let mut acc = 0.0f32;
+                for i in 0..in_dim {
+                    let offset = (i * out_dim + o) * 2;
+                    let val = load_f16_as_f32(&w[offset..offset + 2]);
+                    acc += x_row[i] * val;
+                }
                 y_row[o] = acc;
             });
     }

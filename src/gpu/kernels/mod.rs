@@ -32,12 +32,13 @@ pub use attention::{
     reconstruct_kv_cache_prefix_sum,
 };
 pub use elementwise::{
-    add, add_batched, add_on_stream, argmax_f32, argmax_f32_on_stream, dot_f16_f32_on_stream,
+    add, add_batched, add_on_stream, argmax_f32, argmax_f32_on_stream,
+    dispatch_gemv_f32_add_on_stream, dispatch_gemv_f32_on_stream, dot_f16_f32_on_stream,
     embed_q4_0_batch, embed_q4_0_token, embed_q8_0_batch, embed_q8_0_token, gelu,
     increment_decode_state_on_stream, mul, mul_batched, mul_on_stream, scale, silu, silu_on_stream,
     weighted_add_on_stream, zero_fill,
 };
-pub use norm::{rms_norm, rms_norm_batched, rms_norm_on_stream, rms_norm_vulkan_style};
+pub use norm::{rms_norm, rms_norm_batched, rms_norm_on_stream};
 pub use q8_decode::{
     gemv_gate_up_q4_0_q8_0_on_stream, gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_on_stream,
     gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_tile4_on_stream,
@@ -61,16 +62,15 @@ pub use quant::{
     gemm_q5_k_f32_on_stream, gemm_q6_k_f32, gemm_q6_k_f32_on_stream, gemm_q8_0_f32,
     gemm_q8_0_f32_on_stream, gemv_gate_up_q4_0_f32, gemv_gate_up_q4_0_f32_on_stream,
     gemv_gate_up_swiglu_q4_0_f32, gemv_gate_up_swiglu_q4_0_f32_on_stream,
-    gemv_norm_qkv_rope_kvwrite_q4_0_f32_dp4a_on_stream, gemv_q4_0_f32, gemv_q4_0_f32_on_stream,
-    gemv_q4_0_f32_on_stream_unchecked, gemv_q4_0_f32_residual_on_stream,
-    gemv_q4_0_f32_residual_on_stream_unchecked, gemv_q4_0_f32_vulkan_style,
-    gemv_q4_0_f32_wave32_on_stream_unchecked, gemv_q4_0_f32_wave32_residual_on_stream_unchecked,
-    gemv_q4_1_f32, gemv_q4_1_f32_on_stream, gemv_q4_1_f32_on_stream_unchecked,
-    gemv_q4_1_f32_residual_on_stream, gemv_q4_1_f32_residual_on_stream_unchecked,
-    gemv_q4_1_f32_residual_on_stream_variant_unchecked, gemv_q4_1_f32_wave32_on_stream_unchecked,
-    gemv_q4_1_f32_wave32_residual_on_stream_unchecked,
+    gemv_norm_qkv_rope_kvwrite_q4_0_f32_dp4a_on_stream,
     /* DISABLED: gemv_q4_k_f32 and gemv_q4_k_f32_on_stream not available */
-    /* gemv_q4_k_f32, gemv_q4_k_f32_on_stream, */
+    gemv_q2_k_f32, gemv_q2_k_f32_on_stream, gemv_q3_k_f32, gemv_q3_k_f32_on_stream, gemv_q4_0_f32,
+    gemv_q4_0_f32_on_stream, gemv_q4_0_f32_on_stream_unchecked, gemv_q4_0_f32_residual_on_stream,
+    gemv_q4_0_f32_residual_on_stream_unchecked, gemv_q4_0_f32_wave32_on_stream_unchecked,
+    gemv_q4_0_f32_wave32_residual_on_stream_unchecked, gemv_q4_1_f32, gemv_q4_1_f32_on_stream,
+    gemv_q4_1_f32_on_stream_unchecked, gemv_q4_1_f32_residual_on_stream,
+    gemv_q4_1_f32_residual_on_stream_unchecked, gemv_q4_1_f32_residual_on_stream_variant_unchecked,
+    gemv_q4_1_f32_wave32_on_stream_unchecked, gemv_q4_1_f32_wave32_residual_on_stream_unchecked,
     gemv_q4_k_f32, gemv_q4_k_f32_on_stream, gemv_q5_0_f32, gemv_q5_0_f32_on_stream, gemv_q5_1_f32,
     gemv_q5_1_f32_on_stream, gemv_q5_k_f32, gemv_q5_k_f32_on_stream, gemv_q6_k_f32,
     gemv_q6_k_f32_on_stream, gemv_qkv_q4_0_f32, gemv_qkv_q4_0_f32_on_stream,

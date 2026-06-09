@@ -4,11 +4,13 @@ rocmforge - LLM inference on AMD GPUs (HIP) with a CPU fallback path.
 
 - The project currently works for local Qwen GGUF runs and custom `.rfm` model architectures.
 - The GPU path is AMD-only and pure HIP. There is no CUDA or cross-vendor backend here.
-- Recent optimization passes introduced cutting-edge features: **F16 Embedding Support**, **TurboQuant KV Cache**, and **Pareto Synthesis** (VideoMLA/AdaState/MPO + GPU SVD + MoE VRAM optimizations).
+- Recent optimization passes introduced features: **GPU Decode Graph**, **F16 Embedding Support**, **TurboQuant KV Cache**, and **Pareto Synthesis** (VideoMLA/AdaState/MPO + GPU SVD + MoE VRAM optimizations).
+- Measured token generation speed for a 0.5B model (e.g., Qwen2.5-0.5B Q8_0) reaches **~340 tok/s** on an AMD Radeon RX 7900 XT via the pre-compiled GPU Decode Graph path.
 - Robust runtime safety rules dynamically select the fastest inference path based on model-profile routing.
 
 ### Key Features & Optimizations
 
+*   **GPU Decode Graph**: Captures the entire token generation execution sequence (including QKV projection, split, norms, attention, activations, and projection kernels) into a single HIP graph to bypass runtime host-to-device kernel launch overhead.
 *   **F16 Embedding Support**: High-performance half-precision (FP16) input embeddings.
 *   **TurboQuant KV Cache**: Ultra-low latency Key-Value cache management with automatic bounds and deadlock resolution.
 *   **Pareto Synthesis**: Hardware-aware combined optimization path featuring GPU SVD, MPO kernel compression, and mixture of experts (MoE) VRAM paging.
@@ -102,6 +104,9 @@ Safety rules:
 - MoE/SSM models route to `DecodeStyle` (no batched kernels yet)
 - SVD models only use `SvdOptimized` when `ROCMFORGE_ENABLE_EXPERIMENTAL_GPU_KERNELS=1`
 
+Engineering note:
+- Inference-path, converter, router, or kernel-dispatch changes should follow the repo checklist in `docs/inference-change-checklist.md` so GGUF and `.rfm` paths are audited together.
+
 ## Runtime safety controls
 
 - `ROCMFORGE_GPU_SAFE_MODE=1`
@@ -118,6 +123,10 @@ Safety rules:
   - Configures VRAM reserved for desktop/compositor (default: 4.0).
   - Lower for single-monitor setups (2.0), higher for multi-monitor 4K (6.0+).
   - Prevents inference from stealing memory needed by the display.
+
+- `ROCMFORGE_GPU_LOCK_TIMEOUT=<seconds>`
+  - Configures how long GPU tests wait for the shared cross-process GPU lock.
+  - Cargo-launched tests default to `30`, so separate `cargo test` runs queue instead of colliding.
 
 - `ROCMFORGE_ENABLE_EXPERIMENTAL_GPU_KERNELS=1`
   - Enables sparse CSR and MPO kernels (potentially unsafe on display-attached GPUs).
@@ -162,6 +171,8 @@ cargo test --release --features gpu --test gpu_decode_real \
   -- --ignored --nocapture --test-threads=1
 ```
 
+`cargo test` already inherits `RUST_TEST_THREADS=1`, `ROCMFORGE_GPU_LOCK_TIMEOUT=30`, and `ROCMFORGE_DESKTOP_VRAM_GB=4.0` from [`.cargo/config.toml`](/home/feanor/Projects/rocmforge/.cargo/config.toml). The explicit `--test-threads=1` in examples is retained for clarity, but sequential execution and conservative VRAM gating are the default.
+
 - Prefill average: `408.7 tok/s`
 - Decode average: `526.8 tok/s`
 
@@ -191,6 +202,22 @@ cargo test --release --features gpu --test gpu_decode_real \
 ```
 
 - Decode average: `486.0 tok/s`
+
+4) Qwen2.5-0.5B-Instruct Q8_0 (`qwen2.5-0.5b-instruct-q8_0.rfm` / `.gguf`, CLI, greedy `--top-p 1.0`)
+
+```bash
+./target/release/rocmforge \
+  --model /path/to/qwen2.5-0.5b-instruct-q8_0.rfm \
+  --prompt "Hello" \
+  --gpu \
+  --top-p 1.0 \
+  --max-tokens 128
+```
+
+- Prefill speed: `151.8 tok/s`
+- Decode speed (baseline / graph capture disabled or invalidated): `87.7 tok/s`
+- Decode speed (optimized / graph capture active): `340.4 tok/s`
+- Reference Native `llama.cpp` speed: `239.2 tok/s` (ROCmForge is ~42% faster with decode graph replay active)
 
 ## GPU Architecture Optimizations
 

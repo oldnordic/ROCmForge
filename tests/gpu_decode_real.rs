@@ -250,8 +250,10 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
         gpu::gpu_layer_forward_hybrid(
             &device,
             gpu_weights.layer(0),
+            Some(cpu_weights.layer(0)),
             &mut gpu_kv_l0,
             &mut gpu_scratch_l0,
+            Some(&mut cpu_scratch_l0),
             0,
             0,
             &config,
@@ -336,8 +338,10 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
                 gpu::gpu_layer_forward_hybrid(
                     &device,
                     gpu_weights.layer(layer_idx),
+                    Some(cpu_weights.layer(layer_idx)),
                     &mut gpu_kv_diag,
                     &mut gpu_scratch_diag,
+                    Some(&mut cpu_scratch_diag),
                     layer_idx,
                     diag_pos,
                     &config,
@@ -825,13 +829,19 @@ fn test_gpu_prefill_real_model_matches_cpu_greedy_token() {
     let prompt_tokens = tok.encode(&prompt, false);
     assert!(!prompt_tokens.is_empty(), "prompt should tokenize");
 
+    println!("DEBUG: Running CPU prompt reference...");
     let cpu_logits = run_cpu_prompt_reference(&prompt_tokens, &cpu_weights, &config);
+    println!("DEBUG: CPU prompt reference done.");
     let cpu_next = cpu_sample_greedy(&cpu_logits);
 
+    println!("DEBUG: Allocating GpuKvCache...");
     let mut kv =
         GpuKvCache::new(&config, prompt_tokens.len().max(1)).expect("GPU KV should allocate");
+    println!("DEBUG: GpuKvCache allocated.");
+    println!("DEBUG: Allocating GpuPrefillScratch...");
     let mut prefill =
         gpu::GpuPrefillScratch::new(&config, prompt_tokens.len()).expect("GPU prefill scratch");
+    println!("DEBUG: GpuPrefillScratch allocated.");
     let mut host_scratch = CpuForwardScratch::new(&config);
 
     println!("DEBUG: Starting batched prefill call...");

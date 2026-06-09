@@ -14,7 +14,7 @@ pub const Q4_K_BLOCK_SIZE: usize = 128 + 12 + 4; // qs + scales + d/dmin
 pub const QK8_0: usize = 32;
 
 /// Total bytes per Q8_0 block
-pub const Q8_0_BLOCK_SIZE: usize = 36; // 4 (scale) + 32 (data)
+pub const Q8_0_BLOCK_SIZE: usize = 34; // 2 (scale) + 32 (data)
 
 /// Maximum quantized value for Q8_0
 pub const Q8_0_MAX: f32 = 127.0;
@@ -92,14 +92,14 @@ impl Default for Q5KBlock {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct Q8_0Block {
-    pub d: f32,       // scale (4 bytes) - changed from f16 to fix conversion bug
+    pub d: half::f16, // scale (2 bytes)
     pub qs: [i8; 32], // quantized values (32 bytes)
 }
 
 impl Default for Q8_0Block {
     fn default() -> Self {
         Self {
-            d: 1.0f32, // Changed from f16 to f32
+            d: half::f16::from_f32(1.0),
             qs: [0; 32],
         }
     }

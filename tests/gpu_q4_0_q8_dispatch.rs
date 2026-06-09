@@ -508,6 +508,7 @@ fn test_gpu_dispatch_fused_gate_up_uses_q8_fastpath_when_enabled() {
         None,
         None,
         d_input.as_ptr() as *const f32,
+        std::ptr::null_mut(),
         d_output_dispatch.as_ptr() as *mut f32,
         ff_dim,
         in_dim,

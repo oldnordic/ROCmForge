@@ -5,56 +5,41 @@
 //! This module provides cross-process GPU locking and VRAM safety checks
 //! to prevent GPU reset and out-of-memory errors during parallel testing.
 
-use std::fs::File;
-use std::os::unix::io::AsRawFd;
-use std::path::Path;
+const DEFAULT_GPU_TEST_LOCK_TIMEOUT_SECS: u64 = 30;
 
-/// Path to the cross-process GPU lock file.
-const GPU_LOCK_PATH: &str = "/tmp/rocmforge_gpu_tests.lock";
+pub const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
+
+fn gpu_test_lock_timeout_secs() -> u64 {
+    std::env::var("ROCMFORGE_GPU_LOCK_TIMEOUT")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|&secs| secs > 0)
+        .unwrap_or(DEFAULT_GPU_TEST_LOCK_TIMEOUT_SECS)
+}
 
 /// Cross-process GPU lock using flock(2).
 ///
 /// Ensures only one test process uses the GPU at a time.
-/// Uses LOCK_EX | LOCK_NB for non-blocking exclusive lock.
 pub struct GpuLock {
-    _file: File,
+    _inner: rocmforge::gpu::GpuLock,
 }
 
 impl GpuLock {
-    /// Acquire the GPU lock.
+    /// Acquire the GPU lock using the default timeout policy.
     ///
-    /// Returns Ok if lock acquired, Err if lock held by another process.
+    /// Separate `cargo test` invocations should queue instead of racing the
+    /// display-attached GPU. The timeout is configurable via
+    /// `ROCMFORGE_GPU_LOCK_TIMEOUT` and defaults to 30 seconds.
     pub fn acquire() -> std::io::Result<Self> {
-        let path = Path::new(GPU_LOCK_PATH);
-
-        // Create lock file if it doesn't exist
-        let file = File::options()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(path)?;
-
-        // Try to acquire exclusive lock (non-blocking)
-        unsafe {
-            let fd = file.as_raw_fd();
-            let ret = libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB);
-
-            if ret != 0 {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::WouldBlock,
-                    "GPU lock held by another process",
-                ));
-            }
-        }
-
-        Ok(Self { _file: file })
+        Self::acquire_with_timeout(gpu_test_lock_timeout_secs())
     }
-}
 
-impl Drop for GpuLock {
-    fn drop(&mut self) {
-        // Lock is automatically released when file is closed
+    /// Acquire the GPU lock with an explicit timeout in seconds.
+    pub fn acquire_with_timeout(timeout_secs: u64) -> std::io::Result<Self> {
+        match rocmforge::gpu::GpuLock::acquire(timeout_secs) {
+            Ok(inner) => Ok(Self { _inner: inner }),
+            Err(e) => Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, e)),
+        }
     }
 }
 
@@ -68,14 +53,23 @@ pub fn gpu_available() -> bool {
     false
 }
 
-/// Get free VRAM in bytes.
+/// Get the safe GPU test VRAM budget in bytes.
 ///
-/// Returns None if GPU unavailable or query fails.
+/// This returns the guarded allocation budget after subtracting the desktop
+/// reservation and the standard safety margin, not raw free VRAM. Tests should
+/// skip based on this value so they do not consume compositor headroom.
+pub fn get_safe_test_vram_budget() -> Option<u64> {
+    rocmforge::gpu::query_vram_budget(0)
+        .ok()
+        .map(|budget| budget.safe_allocation_size as u64)
+}
+
+/// Backward-compatible alias for older tests.
+///
+/// This intentionally returns the guarded test budget rather than raw free
+/// VRAM so existing callers inherit the safer semantics automatically.
 pub fn get_free_vram() -> Option<u64> {
-    if let Some(caps) = rocmforge::gpu::detect() {
-        return Some(caps.free_vram_bytes as u64);
-    }
-    None
+    get_safe_test_vram_budget()
 }
 
 #[allow(dead_code)]
@@ -122,20 +116,20 @@ macro_rules! require_gpu {
 #[macro_export]
 macro_rules! require_vram {
     ($gib:expr) => {
-        match $crate::common::get_free_vram() {
-            Some(free_bytes) => {
-                let required_bytes = $gib * 1024 * 1024 * 1024;
-                if free_bytes < required_bytes {
+        match $crate::common::get_safe_test_vram_budget() {
+            Some(safe_bytes) => {
+                let required_bytes = ($gib as u64) * $crate::common::BYTES_PER_GIB;
+                if safe_bytes < required_bytes {
                     eprintln!(
-                        "Skipping test: Insufficient VRAM ({} GiB free, {} GiB required)",
-                        free_bytes / (1024 * 1024 * 1024),
+                        "Skipping test: Insufficient safe GPU test budget ({} GiB safe after desktop reservation and margin, {} GiB required)",
+                        safe_bytes / $crate::common::BYTES_PER_GIB,
                         $gib
                     );
                     return;
                 }
             }
             None => {
-                eprintln!("Skipping test: Could not determine VRAM usage");
+                eprintln!("Skipping test: Could not determine safe GPU test VRAM budget");
                 return;
             }
         }
@@ -269,7 +263,7 @@ mod tests {
     #[test]
     fn gpu_lock_blocks_when_held() {
         let _lock1 = GpuLock::acquire().unwrap();
-        let lock2 = GpuLock::acquire();
+        let lock2 = GpuLock::acquire_with_timeout(0);
         assert!(lock2.is_err());
     }
 
@@ -280,8 +274,22 @@ mod tests {
     }
 
     #[test]
-    fn get_free_vram_returns_optional() {
-        let result = get_free_vram();
+    fn get_safe_test_vram_budget_returns_optional() {
+        let result = get_safe_test_vram_budget();
         let _ = result; // Just verify it doesn't panic
+    }
+
+    #[test]
+    fn gpu_test_lock_timeout_honors_env() {
+        std::env::set_var("ROCMFORGE_GPU_LOCK_TIMEOUT", "7");
+        assert_eq!(gpu_test_lock_timeout_secs(), 7);
+
+        std::env::set_var("ROCMFORGE_GPU_LOCK_TIMEOUT", "0");
+        assert_eq!(
+            gpu_test_lock_timeout_secs(),
+            DEFAULT_GPU_TEST_LOCK_TIMEOUT_SECS
+        );
+
+        std::env::remove_var("ROCMFORGE_GPU_LOCK_TIMEOUT");
     }
 }

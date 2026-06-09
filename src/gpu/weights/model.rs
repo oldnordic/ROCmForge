@@ -114,6 +114,36 @@ impl GpuModelWeights {
         total
     }
 
+    pub fn has_unsupported_gpu_gemv_weights(&self) -> bool {
+        for layer in &self.layers {
+            if let Some(ref meta) = layer.attn_qkv_meta {
+                if !crate::gpu::ops::supports_gemv_type(meta.wtype) {
+                    return true;
+                }
+            } else {
+                if !crate::gpu::ops::supports_gemv_type(layer.attn_q_meta.wtype)
+                    || !crate::gpu::ops::supports_gemv_type(layer.attn_k_meta.wtype)
+                    || !crate::gpu::ops::supports_gemv_type(layer.attn_v_meta.wtype)
+                {
+                    return true;
+                }
+            }
+            if let Some(ref meta) = layer.attn_gate_meta {
+                if !crate::gpu::ops::supports_gemv_type(meta.wtype) {
+                    return true;
+                }
+            }
+            if !crate::gpu::ops::supports_gemv_type(layer.attn_o_meta.wtype)
+                || !crate::gpu::ops::supports_gemv_type(layer.ffn_gate_meta.wtype)
+                || !crate::gpu::ops::supports_gemv_type(layer.ffn_up_meta.wtype)
+                || !crate::gpu::ops::supports_gemv_type(layer.ffn_down_meta.wtype)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Load all weights from GGUF file into GPU memory.
     ///
     /// Returns error if any allocation or transfer fails.
@@ -732,14 +762,11 @@ fn prepare_tied_lm_head_q8(
                 crate::cpu::quant::embed_f32(id, f32_emb, out_row);
             }
             GgmlType::F16 => {
-                let f16_emb = unsafe {
-                    std::slice::from_raw_parts(
-                        data_to_use.as_ptr() as *const half::f16,
-                        data_to_use.len() / 2,
-                    )
-                };
+                let start_idx = id * hidden_size;
                 for i in 0..hidden_size {
-                    out_row[i] = f16_emb[id * hidden_size + i].to_f32();
+                    let offset = (start_idx + i) * 2;
+                    let bits = u16::from_le_bytes([data_to_use[offset], data_to_use[offset + 1]]);
+                    out_row[i] = half::f16::from_bits(bits).to_f32();
                 }
             }
             other => {
@@ -751,21 +778,21 @@ fn prepare_tied_lm_head_q8(
         }
     }
 
-    // 2. Quantize the float32 matrix to Q8_0 format row-by-row
+    // 2. Quantize the float32 matrix to standard Q8_0 format (34 bytes per block) row-by-row
     let num_blocks_per_row = hidden_size / 32;
-    let mut q8_data = vec![0u8; vocab_size * num_blocks_per_row * 36];
+    let mut q8_data = vec![0u8; vocab_size * num_blocks_per_row * 34];
 
     for id in 0..vocab_size {
         let f32_row = &f32_data[id * hidden_size..(id + 1) * hidden_size];
-        let q8_row = &mut q8_data[id * num_blocks_per_row * 36..(id + 1) * num_blocks_per_row * 36];
+        let q8_row = &mut q8_data[id * num_blocks_per_row * 34..(id + 1) * num_blocks_per_row * 34];
 
         for b in 0..num_blocks_per_row {
             let src_block = &f32_row[b * 32..(b + 1) * 32];
-            let dst_block = &mut q8_row[b * 36..(b + 1) * 36];
+            let dst_block = &mut q8_row[b * 34..(b + 1) * 34];
 
-            let scale = crate::cpu::quant::quantize_f32_to_q8_0(src_block, &mut dst_block[4..36]);
-            let scale_bytes = scale.to_le_bytes();
-            dst_block[0..4].copy_from_slice(&scale_bytes);
+            let scale = crate::cpu::quant::quantize_f32_to_q8_0(src_block, &mut dst_block[2..34]);
+            let scale_bytes = half::f16::from_f32(scale).to_bits().to_le_bytes();
+            dst_block[0..2].copy_from_slice(&scale_bytes);
         }
     }
 

@@ -449,6 +449,10 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_q8_inline_vulkan_style_v2_kernel(
         }
     }
 
+    if (lane_id == 0 && blockIdx.x == 0 && wave_id == 0) {
+        printf("GPU KERNEL: ff_idx_base=%d, sum_gate[0]=%f, sum_up[0]=%f\n", ff_idx_base, sum_gate[0], sum_up[0]);
+    }
+
     if (lane_id == 0) {
         #pragma unroll
         for (int c = 0; c < 4; ++c) {

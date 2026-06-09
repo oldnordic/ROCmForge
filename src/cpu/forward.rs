@@ -487,14 +487,19 @@ pub fn cpu_embed_token(
             super::quant::embed_f32(token_id as usize, emb, &mut hidden[..h]);
         }
         GgmlType::F16 => {
-            let emb = unsafe {
-                std::slice::from_raw_parts(
-                    weights.token_emb.as_ptr() as *const half::f16,
-                    weights.token_emb.len() / 2,
-                )
-            };
+            let start_idx = token_id as usize * h;
             for i in 0..h {
-                hidden[i] = emb[token_id as usize * h + i].to_f32();
+                let offset = (start_idx + i) * 2;
+                let bits =
+                    u16::from_le_bytes([weights.token_emb[offset], weights.token_emb[offset + 1]]);
+                let val = half::f16::from_bits(bits).to_f32();
+                if val.is_nan() {
+                    panic!(
+                        "NaN detected in cpu_embed_token for token_id {} at index {}",
+                        token_id, i
+                    );
+                }
+                hidden[i] = val;
             }
         }
         GgmlType::Q4_0 => {

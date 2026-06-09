@@ -54,8 +54,10 @@ pub fn gpu_full_forward_hybrid(
         layer::gpu_layer_forward_hybrid(
             device,
             gpu_weights.layer(layer_idx),
+            Some(cpu_weights.layer(layer_idx)),
             kv,
             scratch,
+            Some(host_scratch),
             layer_idx,
             pos,
             config,
@@ -66,6 +68,17 @@ pub fn gpu_full_forward_hybrid(
         // Without synchronization, layer N+1 can start writing to these buffers before
         // layer N's kernels finish reading from them, causing corruption.
         device.synchronize()?;
+
+        let mut check_hidden = vec![0.0f32; config.hidden_size];
+        utils::download_f32(&scratch.hidden, &mut check_hidden)?;
+        for (idx, &val) in check_hidden.iter().enumerate() {
+            if val.is_nan() {
+                panic!(
+                    "NaN detected in scratch.hidden after layer {} at index {}",
+                    layer_idx, idx
+                );
+            }
+        }
 
         // Scatter the newly written token at `pos` to the paged cache
         kv.scatter_to_paged(layer_idx, pos, 1)?;
@@ -89,6 +102,16 @@ pub fn gpu_full_forward_hybrid(
                     config.rms_norm_eps,
                     device.stream(),
                 )?;
+                let mut check_normed = vec![0.0f32; h];
+                utils::download_f32(&scratch.normed, &mut check_normed)?;
+                for (idx, &val) in check_normed.iter().enumerate() {
+                    if val.is_nan() {
+                        panic!(
+                            "NaN detected in scratch.normed (after output norm) at index {}",
+                            idx
+                        );
+                    }
+                }
                 if let Some(dense) = gpu_weights.lm_head.as_dense() {
                     gpu_dispatch_gemv_on_stream(
                         device,
@@ -127,7 +150,16 @@ pub fn gpu_full_forward_hybrid(
                         reason: "LM head is neither dense, sparse CSR, nor MPO".to_string(),
                     });
                 }
-                utils::download_f32(&scratch.logits, &mut host_scratch.logits[..v])
+                utils::download_f32(&scratch.logits, &mut host_scratch.logits[..v])?;
+                for (idx, &val) in host_scratch.logits[..v].iter().enumerate() {
+                    if val.is_nan() {
+                        panic!(
+                            "NaN detected in logits (after lm_head GEMV) at index {}",
+                            idx
+                        );
+                    }
+                }
+                Ok(())
             })();
             res.map(|_| None)
         }

@@ -384,6 +384,15 @@ pub fn cpu_prefill_forward(
     config: &ModelConfig,
     batch_config: &BatchConfig,
 ) -> Result<(), CpuError> {
+    if config.architecture == "qwen35"
+        || weights.layer(0).attn_qkv.is_some()
+        || weights.layer(0).ssm.is_some()
+    {
+        return Err(CpuError::InvalidOperation(
+            "qwen35 hybrid attention/SSM CPU prefill is not implemented yet".to_string(),
+        ));
+    }
+
     let seq_len = tokens.len();
     assert!(seq_len > 0, "cpu_prefill_forward: empty token list");
     assert!(
@@ -523,6 +532,15 @@ pub fn cpu_prefill_forward_parallel(
     config: &ModelConfig,
     batch_config: &BatchConfig,
 ) -> Result<(), CpuError> {
+    if config.architecture == "qwen35"
+        || weights.layer(0).attn_qkv.is_some()
+        || weights.layer(0).ssm.is_some()
+    {
+        return Err(CpuError::InvalidOperation(
+            "qwen35 hybrid attention/SSM CPU prefill is not implemented yet".to_string(),
+        ));
+    }
+
     let seq_len = tokens.len();
     assert!(
         seq_len > 0,

@@ -336,8 +336,10 @@ fn test_single_layer_correctness() {
     rocmforge::gpu::gpu_layer_forward_hybrid(
         &device,
         gpu_layer_weights,
+        Some(cpu_weights.layer(layer_idx)),
         &mut gpu_kv,
         &mut gpu_scratch,
+        Some(&mut cpu_scratch),
         layer_idx,
         0,
         &config,

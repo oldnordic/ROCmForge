@@ -557,6 +557,30 @@ set_target_properties(wmma_matmul PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
 
+# Q2_K GEMV kernel
+add_library(q2_k_gemv STATIC
+    q2_k_gemv.hip
+)
+target_link_libraries(q2_k_gemv
+    quant_common
+)
+set_target_properties(q2_k_gemv PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
+# Q3_K GEMV kernel
+add_library(q3_k_gemv STATIC
+    q3_k_gemv.hip
+)
+target_link_libraries(q3_k_gemv
+    quant_common
+)
+set_target_properties(q3_k_gemv PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
 # Print build info
 message(STATUS "ROCm GPU Quantization Build Configuration:")
 message(STATUS "  CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")

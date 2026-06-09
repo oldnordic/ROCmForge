@@ -48,6 +48,8 @@ struct Args {
         expect(dead_code, reason = "used only with server feature")
     )]
     port: u16,
+    threads: Option<usize>,
+    ctx_size: Option<usize>,
 }
 
 fn usage() -> ! {
@@ -68,6 +70,10 @@ fn usage() -> ! {
     eprintln!("  --list-tensors         List tensors in model file and exit");
     eprintln!("  --debug                Show debug info (top logits, etc.)");
     eprintln!("  --gpu                  Use GPU backend (requires ROCm/HIP)");
+    eprintln!("  --threads N, -t N      Number of CPU threads/cores to use [default: auto-detect]");
+    eprintln!(
+        "  --ctx-size N, -c N     Override maximum context window size [default: model default]"
+    );
     eprintln!("  --prefill-only-validate Run prefill only, exit with validation status");
     eprintln!("  --kv-dump <path>       Dump post-prefill KV cache to binary file");
     eprintln!(
@@ -82,7 +88,6 @@ fn usage() -> ! {
     eprintln!();
     eprintln!("Examples:");
     eprintln!("  rocmforge --model qwen2.5-7b.gguf --prompt \"Hello, world!\"");
-    eprintln!("  rocmforge -m model.gguf -p \"Write a poem\" --temp 0.7 --top-p 0.95");
     std::process::exit(1);
 }
 
@@ -103,6 +108,8 @@ fn parse_args() -> Args {
     let mut draft_model = None;
     let mut speculative_tokens = 4usize;
     let mut kv_dump: Option<String> = None;
+    let mut threads = None;
+    let mut ctx_size = None;
 
     while let Some(flag) = args.next() {
         match flag.as_str() {
@@ -115,7 +122,7 @@ fn parse_args() -> Args {
                     .parse()
                     .unwrap_or_else(|_| usage())
             }
-            "-t" | "--temp" | "--temperature" => {
+            "--temp" | "--temperature" => {
                 temperature = args
                     .next()
                     .unwrap_or_else(|| usage())
@@ -140,6 +147,22 @@ fn parse_args() -> Args {
                     .unwrap_or_else(|| usage())
                     .parse()
                     .unwrap_or_else(|_| usage())
+            }
+            "-t" | "--threads" => {
+                threads = Some(
+                    args.next()
+                        .unwrap_or_else(|| usage())
+                        .parse()
+                        .unwrap_or_else(|_| usage()),
+                )
+            }
+            "-c" | "--ctx-size" => {
+                ctx_size = Some(
+                    args.next()
+                        .unwrap_or_else(|| usage())
+                        .parse()
+                        .unwrap_or_else(|_| usage()),
+                )
             }
             "--prefill-only-validate" => prefill_only_validate = true,
             "--kv-dump" => kv_dump = Some(args.next().unwrap_or_else(|| usage())),
@@ -175,6 +198,8 @@ fn parse_args() -> Args {
         kv_dump,
         server,
         port,
+        threads,
+        ctx_size,
     }
 }
 
@@ -345,7 +370,10 @@ fn run_cpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // 2. Derive batch config from hardware + model
-    let batch_config: BatchConfig = derive_batch_config(&caps, &config);
+    let mut batch_config: BatchConfig = derive_batch_config(&caps, &config);
+    if let Some(t) = args.threads {
+        batch_config.num_cores = t;
+    }
     eprintln!(
         "Batch config: max {} tokens/batch, use {} cores",
         batch_config.max_tokens_per_batch, batch_config.num_cores
@@ -361,7 +389,9 @@ fn run_cpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("Prompt: {} tokens", prompt_tokens.len());
 
     // Allocate KV cache and scratch buffers
-    let max_seq = (prompt_tokens.len() + args.max_tokens).min(config.max_seq_len);
+    let max_seq = args
+        .ctx_size
+        .unwrap_or_else(|| (prompt_tokens.len() + args.max_tokens).min(config.max_seq_len));
     let mut kv = CpuKvCache::new(&config, max_seq);
     let mut scratch = CpuForwardScratch::new(&config);
     let use_greedy = args.top_p >= 1.0;
@@ -605,7 +635,9 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     // Estimate VRAM before allocating anything.
     // For MoE models, experts are CPU-resident; only sum GPU-resident tensors.
     let model_file_bytes = estimate_gpu_resident_model_bytes(&args.model, &file, &config);
-    let max_seq_estimate = config.max_seq_len.min(args.max_tokens + 2048);
+    let max_seq_estimate = args
+        .ctx_size
+        .unwrap_or_else(|| config.max_seq_len.min(args.max_tokens + 2048));
     let kv_estimate = gpu::GpuKvCache::estimate_bytes(&config, max_seq_estimate);
     let scratch_estimate = gpu::GpuForwardScratch::estimate_bytes(&config);
 
@@ -667,7 +699,9 @@ fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     }
     eprintln!("Prompt: {} tokens", prompt_tokens.len());
 
-    let max_seq = (prompt_tokens.len() + args.max_tokens).min(config.max_seq_len);
+    let max_seq = args
+        .ctx_size
+        .unwrap_or_else(|| (prompt_tokens.len() + args.max_tokens).min(config.max_seq_len));
     let mut kv = gpu::GpuKvCache::new(&config, max_seq).map_err(|e| format!("gpu kv: {}", e))?;
     let mut gpu_scratch =
         gpu::GpuForwardScratch::new(&config).map_err(|e| format!("gpu scratch: {}", e))?;
@@ -1137,7 +1171,9 @@ fn run_gpu_speculative_inference(
         .map(|m| m.len() as usize)
         .unwrap_or(0);
 
-    let max_seq_estimate = target_config.max_seq_len.min(args.max_tokens + 2048);
+    let max_seq_estimate = args
+        .ctx_size
+        .unwrap_or_else(|| target_config.max_seq_len.min(args.max_tokens + 2048));
     let target_kv_estimate = gpu::GpuKvCache::estimate_bytes(&target_config, max_seq_estimate);
     let draft_kv_estimate = gpu::GpuKvCache::estimate_bytes(&draft_config, max_seq_estimate);
 
@@ -1174,7 +1210,9 @@ fn run_gpu_speculative_inference(
     }
     eprintln!("Prompt: {} tokens", prompt_tokens.len());
 
-    let max_seq = (prompt_tokens.len() + args.max_tokens).min(target_config.max_seq_len);
+    let max_seq = args
+        .ctx_size
+        .unwrap_or_else(|| (prompt_tokens.len() + args.max_tokens).min(target_config.max_seq_len));
 
     eprintln!("Co-loading models into GPU VRAM (Speculative Engine)...");
     let t_load = Instant::now();
@@ -1525,6 +1563,21 @@ fn main() {
         };
         gpu::binary_vram_safety_preflight(caps.device_id);
 
+        // 1. Acquire cross-process GPU lock
+        let _gpu_lock = match gpu::GpuLock::acquire(30) {
+            Ok(lock) => lock,
+            Err(e) => {
+                eprintln!("Error: Failed to acquire GPU lock ({}).", e);
+                std::process::exit(10);
+            }
+        };
+
+        // 2. Run GPU hardware/driver safety preflight checks
+        if let Err(e) = gpu::gpu_safety_preflight() {
+            eprintln!("❌ Error: GPU safety preflight failed: {}. Refusing execution to prevent driver freeze.", e);
+            std::process::exit(1);
+        }
+
         if let Some(ref draft_path) = args.draft_model {
             if let Err(e) = run_gpu_speculative_inference(&args, draft_path) {
                 eprintln!("Error: {}", e);
@@ -1573,6 +1626,8 @@ mod main_tests {
             kv_dump: None,
             server: false,
             port: 0,
+            threads: None,
+            ctx_size: None,
         };
         assert!(!args.prefill_only_validate);
         assert!(args.draft_model.is_none());

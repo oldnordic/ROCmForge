@@ -9,3 +9,9 @@ jobs = 4
 # GPU tests must run sequentially — parallel execution causes GPU lock
 # contention and can trigger amdgpu driver hangs on display-attached GPUs.
 RUST_TEST_THREADS = "1"
+# Separate cargo test invocations should queue for the shared GPU instead of
+# racing or silently skipping when another process already holds the lock.
+ROCMFORGE_GPU_LOCK_TIMEOUT = "30"
+# Tests inherit the conservative desktop reservation by default so VRAM gating
+# uses the guarded budget, not raw free memory.
+ROCMFORGE_DESKTOP_VRAM_GB = "4.0"

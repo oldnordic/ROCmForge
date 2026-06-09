@@ -1919,6 +1919,8 @@ fn test_fused_gate_up_q4_1_fallback_matches_cpu_oracle() {
         svd_k: None,
     };
 
+    let test_gate_scratch = GpuBuffer::alloc(n_ff * std::mem::size_of::<f32>())
+        .expect("GPU scratch alloc for gate/up test");
     rocmforge::gpu::ops::gpu_dispatch_fused_gate_up_on_stream(
         &device,
         &d_gate_quantized,
@@ -1928,6 +1930,7 @@ fn test_fused_gate_up_q4_1_fallback_matches_cpu_oracle() {
         None,
         None,
         d_input.as_ptr() as *const f32,
+        test_gate_scratch.as_ptr() as *mut f32,
         d_output.as_ptr() as *mut f32,
         n_ff,
         n_rows,

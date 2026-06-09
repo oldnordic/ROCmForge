@@ -1,5 +1,6 @@
 use crate::config::ModelConfig;
 use crate::cpu::ops::dispatch_gemv as cpu_dispatch_gemv;
+use crate::cpu::quant::load_f16_scale;
 use crate::gpu::decode_profile::decode_stage_profiling_enabled;
 use crate::gpu::device::GpuDevice;
 use crate::gpu::error::{GpuError, GpuResult};
@@ -46,6 +47,7 @@ pub(super) fn decode_graph_disabled(gpu_weights: &GpuModelWeights) -> bool {
         // Sparse / MPO LM heads cannot be captured in a HIP graph
         // because the dispatch functions perform dynamic indexing.
         || gpu_weights.lm_head.as_dense().is_none()
+        || gpu_weights.has_unsupported_gpu_gemv_weights()
 }
 
 pub(super) fn lm_head_is_dense(gpu_weights: &GpuModelWeights) -> bool {
@@ -134,5 +136,42 @@ pub(super) fn cpu_fallback_gemv(
         in_dim,
         Some(q8_scratch),
     )
-    .map_err(|e| cpu_fallback_error(op, e))
+    .map_err(|e| cpu_fallback_error(op, e))?;
+
+    Ok(())
+}
+
+pub(super) fn cpu_fallback_gemv_and_upload(
+    op: &str,
+    weights: &[u8],
+    meta: &crate::cpu::weights::WeightMeta,
+    input_gpu: &GpuBuffer,
+    input_host: &mut Vec<f32>,
+    output_host: &mut Vec<f32>,
+    output_gpu: &mut GpuBuffer,
+    out_dim: usize,
+    in_dim: usize,
+    q8_scratch: &mut Vec<u8>,
+) -> GpuResult<()> {
+    ensure_size(input_host, in_dim);
+    ensure_size(output_host, out_dim);
+    cpu_fallback_gemv(
+        op,
+        weights,
+        meta,
+        input_gpu,
+        input_host,
+        output_host,
+        out_dim,
+        in_dim,
+        q8_scratch,
+    )?;
+    upload_f32(output_gpu, &output_host[..out_dim])?;
+    Ok(())
+}
+
+pub(super) fn ensure_size(v: &mut Vec<f32>, size: usize) {
+    if v.len() < size {
+        v.resize(size, 0.0);
+    }
 }
