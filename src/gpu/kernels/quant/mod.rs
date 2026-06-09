@@ -22,6 +22,12 @@ pub mod batched;
 // Legacy code - contains shared GEMV/GEMM utilities and fusion kernels
 mod legacy;
 
+// Fusion kernels: QKV projection, gate-up, SwiGLU, DP4A
+mod fusion;
+
+// GEMM kernels for all quantization types
+mod gemm;
+
 // Re-export Q4_0 functions
 pub use q4_0::{
     bench_dot4_hardware, bench_dot4_manual, dequantize_q4_0, dequantize_q4_0_batched,
@@ -67,8 +73,14 @@ pub use q8_0::{
 // Re-export batched functions for prefill processing
 pub use batched::{batched_gemm_q4_0_f32, batched_gemm_q4_1_f32, wmma_matmul_q4_0_f32};
 
-// Re-export legacy functions (fusion kernels, specialized GEMV variants, etc.)
+// Re-export legacy functions (specialized GEMV variants: Q2_K, Q3_K, Q4_K, Q5_K, Q6_K)
 pub use legacy::*;
+
+// Re-export fusion kernels (QKV, gate-up, SwiGLU, DP4A)
+pub use fusion::*;
+
+// Re-export GEMM kernels
+pub use gemm::*;
 
 // RFM Unpack GPU Kernels
 mod rfm_unpack;
