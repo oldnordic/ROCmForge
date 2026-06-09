@@ -29,6 +29,9 @@ pub mod ffi;
 pub mod forward;
 pub mod forward_prefill;
 pub mod graph;
+mod prefill_debug;
+pub mod prefill_helpers;
+pub mod prefill_layer;
 pub mod kernel_dispatch_profile;
 pub mod kernels;
 pub mod launch_autotune;
@@ -57,9 +60,9 @@ pub use features::GpuFeatures;
 pub use forward::{
     gpu_embed_token_hybrid, gpu_full_forward_hybrid, gpu_layer_forward_hybrid, GpuLogitsMode,
 };
-pub use forward_prefill::{
-    gpu_batched_prefill_forward_q4_0, gpu_batched_qkv_projection, gpu_prefill_layer_forward_q4_0,
-};
+pub use forward_prefill::gpu_batched_prefill_forward_q4_0;
+pub use prefill_helpers::gpu_batched_qkv_projection;
+pub use prefill_layer::gpu_prefill_layer_forward_q4_0;
 pub use graph::{CapturedDecodeGraph, DecodeGraphKey, HipGraph, HipGraphExec};
 pub use kernel_dispatch_profile::{
     record_gemm_dispatch, record_gemv_dispatch, DispatchRecord, KernelDispatchProfiler,

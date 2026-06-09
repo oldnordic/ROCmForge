@@ -27,6 +27,16 @@
 - **MOD-3 slice: `bin/convert.rs` conversion pipeline extracted** — Moved the converter’s sparse CSR, MPO, SVD+sparse, MoE SVD+sparse, and SVD-quant conversion helpers out of `src/bin/convert.rs` into `src/bin/convert/pipeline.rs`. The converter entrypoint stays focused on orchestration while the RFM conversion strategies remain behaviorally unchanged.
 - **MOD-3 slice: `bin/convert.rs` layout packers extracted** — Moved the RFM payload packing, MQ4/MQ6 pre-rotation + quantization, Q4 split layout writing, tensor type mapping, and fused gate/up packers out of `src/bin/convert.rs` into `src/bin/convert/layout.rs`. The converter entrypoint now keeps only orchestration and policy helpers while the output byte layout remains unchanged.
 - **MOD-3 slice: `bin/convert.rs` policy helpers extracted** — Moved `parse_layer_idx` and `should_svd_tensor` out of `src/bin/convert.rs` into `src/bin/convert/pipeline.rs`, where they sit alongside the peer `should_compress_tensor` and `estimate_nnz_ratio` functions. Deleted the stale orphaned doc-comment block left over from a prior SVD extraction. `convert.rs` is now 587 LOC (down from 687), containing only `main()`, the two RFM magic constants, and the test suite.
+- **MOD-4 slice: `gpu/kernels/quant/legacy.rs` decomposed** — Split 2033-LOC quant kernel god file into three focused modules:
+  - `fusion.rs` (825 LOC) — Q4_0/Q4_1/Q8_0/K-quant fused QKV projection kernels and DP4A GEMM/GEMV launch wrappers
+  - `gemm.rs` (514 LOC) — batched GEMM kernels for Q4_0/Q4_1/Q8_0/Q4_K/Q5_K/Q6_K; each module declares its own `unsafe extern "C"` block (linker resolves duplicate symbol declarations)
+  - `legacy.rs` (854 LOC) — K-quant GEMV + Q5_0/Q5_1 GEMV/GEMM wrappers
+- **MOD-5 slice: `gpu/forward_prefill.rs` decomposed** — Split 1695-LOC prefill forward god file into three new modules:
+  - `prefill_debug.rs` (285 LOC) — CPU reference activations for layer-0 GPU validation (`CpuLayer0Activations`, `compute_layer0_cpu_reference`, `download_gpu_buffer`, `max_abs_error_slice`)
+  - `prefill_helpers.rs` (224 LOC) — QKV projection, token embedding, and helper tests (`gpu_batched_qkv_projection`, `embed_prompt_tokens`)
+  - `prefill_layer.rs` (418 LOC) — per-layer forward passes (`gpu_prefill_layer_forward_q4_0`, `gpu_prefill_ssm_layer_on_stream`)
+  - `forward_prefill.rs` shrinks to 791 LOC (from 1695), containing only `gpu_batched_prefill_forward_q4_0` and its per-layer debug validation loop
+  - `mod.rs` updated: new module declarations, re-exports updated to source from new modules; `pub use prefill_helpers::gpu_batched_qkv_projection`
 
 ### Added
 - **Native Q2_K/Q3_K GPU Kernels**: Implemented native AMD HIP GEMV kernels for Q2_K and Q3_K formats (`q2_k_gemv.hip` and `q3_k_gemv.hip`). Integrated these into the static library linkage and dispatch routing (`src/gpu/ops/gemv.rs`), allowing full GPU execution of Q2_K/Q3_K models without CPU fallback.
