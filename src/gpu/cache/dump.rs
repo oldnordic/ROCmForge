@@ -9,6 +9,7 @@ pub const KV_DUMP_MAGIC: &[u8; 8] = b"KVCACHE1";
 /// - `k[layer]`: flat `Vec<f32>` of shape `[num_tokens × kv_size]`
 ///   where `kv_size = num_kv_heads × head_dim`.
 /// - `v[layer]`: same shape.
+#[derive(Debug)]
 pub struct KvDump {
     pub num_layers: usize,
     pub num_kv_heads: usize,

@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Status
+- **Current modularization state (`COMPLETE`)** — All files in `src/` are now under the **1,000 LOC limit**.
+  - `src/main.rs` (100 LOC): thin entrypoint.
+  - `src/gpu/forward/layer/` (multiple files): decomposed `decode.rs` (1611 LOC outlier removed).
+  - `src/cpu/weights/` (multiple files): decomposed `weights.rs` (1297 LOC outlier removed).
+  - `src/api/server/` (multiple files): decomposed `server.rs` (1119 LOC outlier removed).
+  - `src/gpu/kernels/attention/` (multiple files): decomposed `attention.rs` (1106 LOC outlier removed).
+- **Core Engineering Mandate** — No source file exceeds 1,000 lines. The codebase is now fully modularized across CPU, GPU, API, and Kernel layers.
+
 ### Refactored
 - **Phase 1: `gpu/forward/layer.rs` decomposition** — Split the 2778-LOC god file into four focused modules under `src/gpu/forward/layer/`:
   - `mod.rs` — module declarations, private re-imports enabling cross-sibling access, re-exports
@@ -37,6 +46,38 @@
   - `prefill_layer.rs` (418 LOC) — per-layer forward passes (`gpu_prefill_layer_forward_q4_0`, `gpu_prefill_ssm_layer_on_stream`)
   - `forward_prefill.rs` shrinks to 791 LOC (from 1695), containing only `gpu_batched_prefill_forward_q4_0` and its per-layer debug validation loop
   - `mod.rs` updated: new module declarations, re-exports updated to source from new modules; `pub use prefill_helpers::gpu_batched_qkv_projection`
+- **MOD-6 slice: `main.rs` CLI and tensor inspection extracted** — Moved `Args`, `usage`, and argument parsing out of `src/main.rs` into `src/main/cli.rs`, and moved `list_tensors` into `src/main/inspect.rs`. Added narrow CLI parsing tests. `main.rs` now keeps inference/runtime orchestration and debug helpers instead of mixing them with entrypoint argument plumbing.
+- **MOD-6 slice: `main.rs` debug helper extracted** — Moved the logit-inspection / top-k token printing logic out of `src/main.rs` into `src/main/debug.rs`, and added pure unit tests for top-k ordering and non-finite logit detection. `main.rs` keeps calling the same debug helper while the entry file sheds more non-runtime utility code.
+- **MOD-6 slice: `main.rs` CPU reporting helpers extracted** — Moved the CPU-path reporting and debug/stat formatting out of `src/main.rs` into `src/main/cpu_debug.rs`, including hardware summary, batch/prompt/prefill reporting, per-token hidden/logit stats, and generation completion reporting. The CPU execution flow stays unchanged while the entry file sheds more non-runtime utility code.
+- **MOD-6 slice: `main.rs` CPU setup extracted** — Moved CPU-side file/config/tokenizer/weight loading, batch-config preparation, prompt tokenization, and KV/scratch allocation out of `src/main.rs` into `src/main/cpu_setup.rs`. Added narrow unit tests for max-sequence computation. `main.rs` now keeps less setup plumbing and more direct orchestration.
+- **MOD-6 slice: `main.rs` CPU decode loop extracted** — Moved the CPU token generation loop out of `src/main.rs` into `src/main/cpu_decode.rs`, including next-token sampling, token emission, per-token hidden/logit debug reporting, decode forward passes, and final generation/EOS stats. Removed the dead local `generated_ids` buffer while keeping CPU inference behavior unchanged.
+- **MOD-6 slice: `main.rs` CPU prefill phase extracted** — Moved the CPU prefill phase out of `src/main.rs` into `src/main/cpu_prefill.rs`, including the first-token embedding debug path, batch prefill execution, post-prefill top-logit debug output, and prefill timing/stats reporting. `main.rs` now keeps less CPU-side execution detail and more high-level orchestration.
+- **MOD-6 slice: `main.rs` CPU runtime/bootstrap extracted** — Moved the CPU capability detection, SIMD kernel selection summary, optional GPU-capability probe, and backend choice guard out of `src/main.rs` into `src/main/cpu_runtime.rs`. Added a narrow backend-selection unit test. `run_cpu_inference()` now starts closer to pure CPU orchestration instead of mixing runtime/device bootstrap with execution flow.
+- **MOD-6 slice: `main.rs` non-server CLI dispatch extracted** — Moved the list-tensors path and GPU CLI dispatch block out of `src/main.rs` into `src/main/dispatch.rs`, including GPU preflight, cross-process GPU lock acquisition, safety preflight, and speculative-vs-plain GPU dispatch. `main()` now keeps less branch/exit plumbing and more top-level entrypoint orchestration.
+- **MOD-6 slice: `main.rs` server entry extracted** — Moved the `--server` boot path out of `src/main.rs` into `src/main/server_entry.rs`, including model manager initialization, router construction, Tokio runtime creation, listener bind, and Axum serve loop, plus the non-server-feature error path. `main()` now keeps less feature-gated server boot plumbing and more top-level dispatch orchestration.
+- **MOD-6 slice: `main.rs` shared GPU prompt setup extracted** — Moved the shared GPU prompt/setup path out of `src/main.rs` into `src/main/gpu_setup.rs`, including model-path logging, chat-template application, prompt tokenization, and max-sequence computation. Both `run_gpu_inference()` and `run_gpu_speculative_inference()` now reuse the same setup path while keeping their GPU execution behavior unchanged.
+- **MOD-6 slice: `main.rs` shared GPU runtime bootstrap extracted** — Moved the shared GPU runtime bootstrap out of `src/main.rs` into `src/main/gpu_runtime.rs`, including GPU capability detection, VRAM session creation, optional experimental-kernel warning, and `GpuDevice::get_or_init` device bootstrap. Both GPU entrypoints now reuse the same runtime bootstrap while keeping their VRAM sizing and execution paths unchanged.
+- **MOD-6 slice: `main.rs` GPU inference setup extracted** — Moved the GPU inference setup block out of `src/main.rs` into `src/main/gpu_inference_setup.rs`, including CPU/GPU weight loading, KV and forward-scratch allocation, expert-scratch sizing for compressed experts, and greedy/logits-mode setup. `run_gpu_inference()` now keeps less setup/allocation detail and more inference control flow.
+- **MOD-6 slice: `main.rs` decode-style GPU prompt path extracted** — Moved the repeated decode-style GPU prompt loop out of `src/main.rs` into `src/main/gpu_prompt_decode.rs`, including per-token embed, last-token logits-mode selection, and forward execution over the prompt. `run_gpu_inference()` now reuses one helper across batched-prefill fallback, SVD-optimized, and decode-style branches instead of duplicating the same prompt loop.
+- **MOD-6 slice: `main.rs` inference loops extracted** — Moved all remaining inference loops (CPU sync, GPU sync/stream, and speculative) out of `src/main.rs` into `src/main/cpu_inference.rs` and `src/main/gpu_inference.rs`. `main.rs` is now a thin entrypoint (100 LOC) focused on orchestration.
+- **MOD-7 slice: `cpu/weights.rs` decomposed** — Split 1297-LOC CPU weight management file into a focused module tree under `src/cpu/weights/`:
+  - `meta.rs` — `WeightMeta` and `WeightError` types.
+  - `helpers.rs` — lower-level tensor copy and RFM-to-GGML type mapping logic.
+  - `ssm.rs` — specialized Qwen 3.5 SSM weight loading.
+  - `layer.rs` — `CpuLayerWeights` loading for GGUF and RFM.
+  - `model.rs` — `CpuModelWeights` container and top-level model loader.
+- **MOD-8 slice: `api/server.rs` decomposed** — Split 1119-LOC HTTP server into a focused module tree under `src/api/server/`:
+  - `state.rs` — `ModelEntry` and `ModelManager` state management.
+  - `handlers.rs` — OpenAI-compatible REST route handlers.
+  - `inference.rs` — internal sync/stream inference runners.
+  - `vram.rs` — VRAM estimation and budget logic.
+  - `utils.rs` — error response and message formatting helpers.
+- **MOD-9 slice: `gpu/kernels/attention.rs` decomposed** — Split 1106-LOC attention kernel god file into a focused module tree under `src/gpu/kernels/attention/`:
+  - `ffi.rs` — raw `unsafe extern "C"` HIP kernel declarations.
+  - `kv_cache.rs` — high-level KV cache write wrappers (rope, state-aware).
+  - `flash_attn.rs` — flash attention prefill/decode wrappers.
+  - `turboquant.rs` — compressed turboquant attention variants.
+  - `prefix_sum.rs` — KV cache reconstruction helpers.
 
 ### Added
 - **Native Q2_K/Q3_K GPU Kernels**: Implemented native AMD HIP GEMV kernels for Q2_K and Q3_K formats (`q2_k_gemv.hip` and `q3_k_gemv.hip`). Integrated these into the static library linkage and dispatch routing (`src/gpu/ops/gemv.rs`), allowing full GPU execution of Q2_K/Q3_K models without CPU fallback.

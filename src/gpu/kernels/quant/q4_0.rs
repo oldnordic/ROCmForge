@@ -786,7 +786,6 @@ extern "C" {
 
 /// Test helper: Call hardware DP4A path (only available on RDNA2)
 #[cfg(feature = "gpu")]
-#[allow(dead_code)]
 pub unsafe fn test_dot4_hardware(a_packed: i32, b_packed: i32, acc: i32) -> i32 {
     use crate::gpu::weights::GpuBuffer;
     let mut out = 0i32;
@@ -810,7 +809,6 @@ pub unsafe fn test_dot4_hardware(a_packed: i32, b_packed: i32, acc: i32) -> i32 
 
 /// Test helper: Call manual dot4 path (works on all architectures)
 #[cfg(feature = "gpu")]
-#[allow(dead_code)]
 pub unsafe fn test_dot4_manual(a_packed: i32, b_packed: i32, acc: i32) -> i32 {
     use crate::gpu::weights::GpuBuffer;
     let mut out = 0i32;
@@ -836,14 +834,12 @@ pub unsafe fn test_dot4_manual(a_packed: i32, b_packed: i32, acc: i32) -> i32 {
 
 /// Benchmark helper: Hardware DP4A path
 #[cfg(feature = "gpu")]
-#[allow(dead_code)]
 pub unsafe fn bench_dot4_hardware(a_packed: i32, b_packed: i32, acc: i32) -> i32 {
     test_dot4_hardware(a_packed, b_packed, acc)
 }
 
 /// Benchmark helper: Manual dot4 path
 #[cfg(feature = "gpu")]
-#[allow(dead_code)]
 pub unsafe fn bench_dot4_manual(a_packed: i32, b_packed: i32, acc: i32) -> i32 {
     test_dot4_manual(a_packed, b_packed, acc)
 }
