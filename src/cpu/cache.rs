@@ -151,7 +151,9 @@ impl CpuForwardScratch {
         // Size: (hidden_size / 32) * 34 bytes per Q8_0 block
         use super::quant::Q8_BLOCK_BYTES;
         use super::quant::Q8_BLOCK_ELEMS;
-        let num_blocks = h / Q8_BLOCK_ELEMS;
+        // Size for the largest GEMV in_dim: hidden_size or intermediate_size
+        let max_in_dim = h.max(ff);
+        let num_blocks = max_in_dim / Q8_BLOCK_ELEMS;
         let q8_scratch = vec![0u8; num_blocks * Q8_BLOCK_BYTES];
 
         Self {

@@ -68,10 +68,10 @@ impl CpuPrefillScratch {
         let kv = config.num_kv_heads * config.head_dim;
         let ff = config.intermediate_size;
 
-        // Q8_0 scratch buffer
+        // Q8_0 scratch buffer sized for largest GEMV in_dim
         use super::quant::Q8_BLOCK_BYTES;
         use super::quant::Q8_BLOCK_ELEMS;
-        let num_blocks = h / Q8_BLOCK_ELEMS;
+        let num_blocks = h.max(ff) / Q8_BLOCK_ELEMS;
         let q8_scratch = vec![0u8; num_blocks * Q8_BLOCK_BYTES];
 
         Self {
@@ -132,10 +132,10 @@ impl CpuParallelPrefillScratch {
         let sub_batch_len = 1; // Will be set dynamically per batch
         let n = sub_batch_len;
 
-        // Q8_0 scratch buffer size
+        // Q8_0 scratch buffer size for largest GEMV in_dim
         use super::quant::Q8_BLOCK_BYTES;
         use super::quant::Q8_BLOCK_ELEMS;
-        let num_blocks = h / Q8_BLOCK_ELEMS;
+        let num_blocks = h.max(ff) / Q8_BLOCK_ELEMS;
         let q8_scratch_size = num_blocks * Q8_BLOCK_BYTES;
 
         Self {
@@ -162,10 +162,10 @@ impl CpuParallelPrefillScratch {
         let kv = config.num_kv_heads * config.head_dim;
         let ff = config.intermediate_size;
 
-        // Q8_0 scratch buffer size (doesn't depend on batch_len)
+        // Q8_0 scratch buffer size for largest GEMV in_dim
         use super::quant::Q8_BLOCK_BYTES;
         use super::quant::Q8_BLOCK_ELEMS;
-        let num_blocks = h / Q8_BLOCK_ELEMS;
+        let num_blocks = h.max(ff) / Q8_BLOCK_ELEMS;
         let q8_scratch_size = num_blocks * Q8_BLOCK_BYTES;
 
         for i in 0..self.num_threads {
