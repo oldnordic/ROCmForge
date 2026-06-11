@@ -31,25 +31,22 @@ pub struct ModelEntry {
 }
 
 impl ModelEntry {
-    pub fn load(model_path: &str, draft_path: Option<&str>) -> Result<Self, String> {
-        let file = ModelFile::open(model_path).map_err(|e| format!("model open: {}", e))?;
-        let config = file.config().map_err(|e| format!("config: {}", e))?;
+    pub fn load(model_path: &str, draft_path: Option<&str>) -> crate::error::RocmForgeResult<Self> {
+        let file = ModelFile::open(model_path)?;
+        let config = file.config()?;
         let tokenizer = file.tokenizer();
         let chat_template = file.chat_template(&config, false); // enable template by default
         let cpu_weights = Arc::new(
-            file.load_cpu_weights(&config)
-                .map_err(|e| format!("weight load: {}", e))?,
+            file.load_cpu_weights(&config)?
         );
 
         #[cfg(feature = "gpu")]
         let gpu_weights = {
             let gpu_caps = crate::gpu::detect();
             if let Some(caps) = gpu_caps {
-                crate::gpu::GpuDevice::get_or_init(caps.device_id)
-                    .map_err(|e| format!("gpu init: {}", e))?;
+                crate::gpu::GpuDevice::get_or_init(caps.device_id)?;
                 let w = file
-                    .load_gpu_weights(&config, caps.device_id)
-                    .map_err(|e| format!("gpu weight load: {}", e))?;
+                    .load_gpu_weights(&config, caps.device_id)?;
                 Some(Arc::new(w))
             } else {
                 None
@@ -60,16 +57,14 @@ impl ModelEntry {
         let speculative_engine = if let Some(dp) = draft_path {
             let gpu_caps = crate::gpu::detect()
                 .ok_or("GPU requested for speculative decoding but no AMD GPU detected")?;
-            let device = crate::gpu::GpuDevice::get_or_init(gpu_caps.device_id)
-                .map_err(|e| format!("gpu init: {}", e))?;
+            let device = crate::gpu::GpuDevice::get_or_init(gpu_caps.device_id)?;
             let engine = crate::gpu::SpeculativeEngine::new(
                 &device,
                 model_path,
                 dp,
                 config.max_seq_len.min(2048),
                 256,
-            )
-            .map_err(|e| format!("failed to instantiate speculative engine: {:?}", e))?;
+            )?;
             Some(Arc::new(Mutex::new(engine)))
         } else {
             None
@@ -116,6 +111,22 @@ impl ModelManager {
 
     pub async fn try_load_entry(&self, entry: Arc<ModelEntry>) -> Result<(), String> {
         self.active_models.lock().await.insert(entry.model_path.clone(), entry);
+        Ok(())
+    }
+
+    pub async fn unload(&self, model_path: &str) {
+        self.active_models.lock().await.remove(model_path);
+    }
+
+    pub async fn get(&self, model_path: &str) -> Option<Arc<ModelEntry>> {
+        self.active_models.lock().await.get(model_path).cloned()
+    }
+
+    pub async fn keys(&self) -> Vec<String> {
+        self.active_models.lock().await.keys().cloned().collect()
+    }
+}
+path.clone(), entry);
         Ok(())
     }
 

@@ -586,9 +586,9 @@ impl SpeculativeOrchestrator {
     ///
     /// # Errors
     /// Returns `Err` if `draft_count` is zero.
-    pub fn new(draft_count: usize) -> Result<Self, String> {
+    pub fn new(draft_count: usize) -> crate::error::RocmForgeResult<Self> {
         if draft_count == 0 {
-            Err("speculative draft_count must be greater than 0".to_string())
+            Err("speculative draft_count must be greater than 0".into())
         } else {
             Ok(Self { draft_count })
         }
@@ -602,15 +602,15 @@ impl SpeculativeOrchestrator {
         tok: &crate::tokenizer::BpeTokenizer,
         prompt_tokens: &[u32],
         max_tokens: usize,
-    ) -> Result<(String, usize), String> {
+    ) -> crate::error::RocmForgeResult<(String, usize)> {
         if prompt_tokens.is_empty() {
-            return Err("Prompt tokens cannot be empty".to_string());
+            return Err("Prompt tokens cannot be empty".into());
         }
 
         // 1. Prefill
         let target_token = engine
             .prefill(device, prompt_tokens)
-            .map_err(|e| format!("Prefill error: {:?}", e))?;
+            ?;
 
         let mut output_tokens = Vec::with_capacity(max_tokens);
         let mut last_verified_token = target_token;
@@ -636,12 +636,12 @@ impl SpeculativeOrchestrator {
             // Draft speculative tokens
             let draft_tokens = engine
                 .draft_tokens(device, current_pos, draft_limit, last_verified_token)
-                .map_err(|e| format!("Draft error: {:?}", e))?;
+                ?;
 
             // Verify drafted tokens
             let (accepted, num_accepted) = engine
                 .verify_tokens(device, current_pos, &draft_tokens, last_verified_token)
-                .map_err(|e| format!("Verify error: {:?}", e))?;
+                ?;
 
             // Add accepted tokens (excluding the last next target token)
             for &t in &accepted[..num_accepted] {
@@ -684,15 +684,15 @@ impl SpeculativeOrchestrator {
         prompt_tokens: &[u32],
         max_tokens: usize,
         tx: tokio::sync::mpsc::UnboundedSender<String>,
-    ) -> Result<(), String> {
+    ) -> crate::error::RocmForgeResult<()> {
         if prompt_tokens.is_empty() {
-            return Err("Prompt tokens cannot be empty".to_string());
+            return Err("Prompt tokens cannot be empty".into());
         }
 
         // 1. Prefill
         let target_token = engine
             .prefill(device, prompt_tokens)
-            .map_err(|e| format!("Prefill error: {:?}", e))?;
+            ?;
 
         let mut output_tokens = Vec::new();
         let mut last_verified_token = target_token;
@@ -720,12 +720,12 @@ impl SpeculativeOrchestrator {
             // Draft speculative tokens
             let draft_tokens = engine
                 .draft_tokens(device, current_pos, draft_limit, last_verified_token)
-                .map_err(|e| format!("Draft error: {:?}", e))?;
+                ?;
 
             // Verify drafted tokens
             let (accepted, num_accepted) = engine
                 .verify_tokens(device, current_pos, &draft_tokens, last_verified_token)
-                .map_err(|e| format!("Verify error: {:?}", e))?;
+                ?;
 
             // Send each accepted token
             let mut hit_eos = false;

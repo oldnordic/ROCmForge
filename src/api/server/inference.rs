@@ -15,7 +15,7 @@ pub(crate) fn run_sync_inference(
     max_tokens: usize,
     temperature: f32,
     top_p: f32,
-) -> Result<(String, usize), String> {
+) -> crate::error::RocmForgeResult<(String, usize)> {
     #[cfg(feature = "gpu")]
     {
         if let Some(spec_engine_arc) = speculative_engine {
@@ -64,7 +64,7 @@ pub(crate) fn run_stream_inference(
     temperature: f32,
     top_p: f32,
     tx: tokio::sync::mpsc::UnboundedSender<String>,
-) -> Result<(), String> {
+) -> crate::error::RocmForgeResult<()> {
     #[cfg(feature = "gpu")]
     {
         if speculative_engine.is_some() {
@@ -107,7 +107,7 @@ pub(crate) fn run_cpu_sync_inference(
     max_tokens: usize,
     temperature: f32,
     top_p: f32,
-) -> Result<(String, usize), String> {
+) -> crate::error::RocmForgeResult<(String, usize)> {
     use crate::cpu::cache::{CpuForwardScratch, CpuKvCache};
     use crate::cpu::forward::{cpu_embed_token, cpu_full_forward, cpu_prefill};
     use crate::cpu::sampler::{cpu_sample_greedy, cpu_sample_top_p};
@@ -144,7 +144,7 @@ pub(crate) fn run_cpu_sync_inference(
         output_tokens.push(next_token);
         cpu_embed_token(next_token, weights, &mut hidden, config);
         cpu_full_forward(&mut hidden, weights, &mut kv, &mut scratch, pos, config)
-            .map_err(|e| format!("decode: {}", e))?;
+            ?;
 
         next_token = if use_greedy {
             cpu_sample_greedy(&scratch.logits)
@@ -168,7 +168,7 @@ pub(crate) fn run_cpu_stream_inference(
     temperature: f32,
     top_p: f32,
     tx: tokio::sync::mpsc::UnboundedSender<String>,
-) -> Result<(), String> {
+) -> crate::error::RocmForgeResult<()> {
     use crate::cpu::cache::{CpuForwardScratch, CpuKvCache};
     use crate::cpu::forward::{cpu_embed_token, cpu_full_forward, cpu_prefill};
     use crate::cpu::sampler::{cpu_sample_greedy, cpu_sample_top_p};
@@ -215,7 +215,7 @@ pub(crate) fn run_cpu_stream_inference(
 
         cpu_embed_token(next_token, weights, &mut hidden, config);
         cpu_full_forward(&mut hidden, weights, &mut kv, &mut scratch, pos, config)
-            .map_err(|e| format!("decode: {}", e))?;
+            ?;
 
         next_token = if use_greedy {
             cpu_sample_greedy(&scratch.logits)

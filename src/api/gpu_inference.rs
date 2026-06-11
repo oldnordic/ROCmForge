@@ -29,13 +29,13 @@ pub fn run_gpu_sync_inference(
     max_tokens: usize,
     temperature: f32,
     top_p: f32,
-) -> Result<(String, usize), String> {
+) -> crate::error::RocmForgeResult<(String, usize)> {
     // ── 1. GPU detection ────────────────────────────────────────────────────────
     let gpu_caps = gpu::detect().ok_or("GPU requested but no AMD GPU detected")?;
 
     // ── 2. VRAM pre-flight ──────────────────────────────────────────────────────
     let vram_session = gpu::VramSession::new(gpu_caps.device_id)
-        .map_err(|e| format!("VRAM query failed: {}", e))?;
+        ?;
 
     let max_seq_estimate = config.max_seq_len.min(max_tokens + 2048);
     let kv_estimate = gpu::GpuKvCache::estimate_bytes(config, max_seq_estimate);
@@ -43,19 +43,19 @@ pub fn run_gpu_sync_inference(
 
     vram_session
         .check_fits(0, kv_estimate, scratch_estimate)
-        .map_err(|e| format!("Insufficient VRAM: {}", e))?;
+        ?;
 
     // ── 3. Device init ─────────────────────────────────────────────────────────
     let device =
-        gpu::GpuDevice::get_or_init(gpu_caps.device_id).map_err(|e| format!("gpu init: {}", e))?;
+        gpu::GpuDevice::get_or_init(gpu_caps.device_id)?;
 
     let gpu_weights = gpu_weights_arc.as_ref();
 
     // ── 4. Allocate KV cache and scratch ─────────────────────────────────────────
     let max_seq = (prompt_tokens.len() + max_tokens).min(config.max_seq_len);
-    let mut kv = gpu::GpuKvCache::new(config, max_seq).map_err(|e| format!("gpu kv: {}", e))?;
+    let mut kv = gpu::GpuKvCache::new(config, max_seq)?;
     let mut gpu_scratch =
-        gpu::GpuForwardScratch::new(config).map_err(|e| format!("gpu scratch: {}", e))?;
+        gpu::GpuForwardScratch::new(config)?;
 
     // Expert scratch sized for the largest gate/up/down expert dims.
     'expert_scratch: for layer in &gpu_weights.layers {
@@ -90,7 +90,7 @@ pub fn run_gpu_sync_inference(
                 .unwrap_or(1);
             gpu_scratch
                 .init_expert_scratch(k as u32, max_rows, max_cols, max_nnz)
-                .map_err(|e| format!("expert scratch init: {}", e))?;
+                ?;
             break 'expert_scratch;
         }
     }
@@ -144,7 +144,7 @@ pub fn run_gpu_sync_inference(
                                     &mut host_scratch,
                                     config,
                                 )
-                                .map_err(|e| format!("gpu embed: {}", e))?;
+                                ?;
                                 let logits_mode = if pos + 1 == prompt_tokens.len() {
                                     final_prompt_logits_mode
                                 } else {
@@ -161,7 +161,7 @@ pub fn run_gpu_sync_inference(
                                     config,
                                     logits_mode,
                                 )
-                                .map_err(|e| format!("gpu prefill/decode: {}", e))?;
+                                ?;
                             }
                             prompt_next_token
                         }
@@ -180,7 +180,7 @@ pub fn run_gpu_sync_inference(
                             &mut host_scratch,
                             config,
                         )
-                        .map_err(|e| format!("gpu embed: {}", e))?;
+                        ?;
                         let logits_mode = if pos + 1 == prompt_tokens.len() {
                             final_prompt_logits_mode
                         } else {
@@ -197,7 +197,7 @@ pub fn run_gpu_sync_inference(
                             config,
                             logits_mode,
                         )
-                        .map_err(|e| format!("gpu prefill/decode: {}", e))?;
+                        ?;
                     }
                     prompt_next_token
                 }
@@ -215,7 +215,7 @@ pub fn run_gpu_sync_inference(
                     &mut host_scratch,
                     config,
                 )
-                .map_err(|e| format!("gpu embed: {}", e))?;
+                ?;
                 let logits_mode = if pos + 1 == prompt_tokens.len() {
                     final_prompt_logits_mode
                 } else {
@@ -232,7 +232,7 @@ pub fn run_gpu_sync_inference(
                     config,
                     logits_mode,
                 )
-                .map_err(|e| format!("gpu prefill/decode: {}", e))?;
+                ?;
             }
             prompt_next_token
         }
@@ -248,7 +248,7 @@ pub fn run_gpu_sync_inference(
                     &mut host_scratch,
                     config,
                 )
-                .map_err(|e| format!("gpu embed: {}", e))?;
+                ?;
                 let logits_mode = if pos + 1 == prompt_tokens.len() {
                     final_prompt_logits_mode
                 } else {
@@ -265,7 +265,7 @@ pub fn run_gpu_sync_inference(
                     config,
                     logits_mode,
                 )
-                .map_err(|e| format!("gpu prefill/decode: {}", e))?;
+                ?;
             }
             prompt_next_token
         }
@@ -305,7 +305,7 @@ pub fn run_gpu_sync_inference(
             &mut host_scratch,
             config,
         )
-        .map_err(|e| format!("gpu embed: {}", e))?;
+        ?;
         let logits_mode = if use_gpu_greedy_fastpath {
             gpu::GpuLogitsMode::GreedyArgmax
         } else {
@@ -322,7 +322,7 @@ pub fn run_gpu_sync_inference(
             config,
             logits_mode,
         )
-        .map_err(|e| format!("gpu decode: {}", e))?;
+        ?;
         pos += 1;
 
         next_token = if let Some(token) = decode_next_token {
@@ -331,7 +331,7 @@ pub fn run_gpu_sync_inference(
             // SYNC POINT: wait for GPU forward + argmax download (non-graph path)
             device
                 .synchronize()
-                .map_err(|e| format!("gpu sync: {}", e))?;
+                ?;
 
             if use_greedy {
                 if use_gpu_greedy_fastpath {
@@ -365,11 +365,11 @@ pub fn run_gpu_stream_inference(
     temperature: f32,
     top_p: f32,
     tx: tokio::sync::mpsc::UnboundedSender<String>,
-) -> Result<(), String> {
+) -> crate::error::RocmForgeResult<()> {
     // ── 1. GPU detection & VRAM pre-flight ──────────────────────────────────────
     let gpu_caps = gpu::detect().ok_or("GPU requested but no AMD GPU detected")?;
     let vram_session = gpu::VramSession::new(gpu_caps.device_id)
-        .map_err(|e| format!("VRAM query failed: {}", e))?;
+        ?;
 
     let max_seq_estimate = config.max_seq_len.min(max_tokens + 2048);
     let kv_estimate = gpu::GpuKvCache::estimate_bytes(config, max_seq_estimate);
@@ -377,18 +377,18 @@ pub fn run_gpu_stream_inference(
 
     vram_session
         .check_fits(0, kv_estimate, scratch_estimate)
-        .map_err(|e| format!("Insufficient VRAM: {}", e))?;
+        ?;
 
     // ── 2. Device init ─────────────────────────────────────────────────────────
     let device =
-        gpu::GpuDevice::get_or_init(gpu_caps.device_id).map_err(|e| format!("gpu init: {}", e))?;
+        gpu::GpuDevice::get_or_init(gpu_caps.device_id)?;
     let gpu_weights = gpu_weights_arc.as_ref();
 
     // ── 3. Allocate KV cache and scratch ─────────────────────────────────────────
     let max_seq = (prompt_tokens.len() + max_tokens).min(config.max_seq_len);
-    let mut kv = gpu::GpuKvCache::new(config, max_seq).map_err(|e| format!("gpu kv: {}", e))?;
+    let mut kv = gpu::GpuKvCache::new(config, max_seq)?;
     let mut gpu_scratch =
-        gpu::GpuForwardScratch::new(config).map_err(|e| format!("gpu scratch: {}", e))?;
+        gpu::GpuForwardScratch::new(config)?;
 
     // Expert scratch sized for the largest gate/up/down expert dims.
     'expert_scratch: for layer in &gpu_weights.layers {
@@ -423,7 +423,7 @@ pub fn run_gpu_stream_inference(
                 .unwrap_or(1);
             gpu_scratch
                 .init_expert_scratch(k as u32, max_rows, max_cols, max_nnz)
-                .map_err(|e| format!("expert scratch init: {}", e))?;
+                ?;
             break 'expert_scratch;
         }
     }
@@ -477,7 +477,7 @@ pub fn run_gpu_stream_inference(
                                     &mut host_scratch,
                                     config,
                                 )
-                                .map_err(|e| format!("gpu embed: {}", e))?;
+                                ?;
                                 let logits_mode = if pos + 1 == prompt_tokens.len() {
                                     final_prompt_logits_mode
                                 } else {
@@ -494,7 +494,7 @@ pub fn run_gpu_stream_inference(
                                     config,
                                     logits_mode,
                                 )
-                                .map_err(|e| format!("gpu prefill/decode: {}", e))?;
+                                ?;
                             }
                             prompt_next_token
                         }
@@ -513,7 +513,7 @@ pub fn run_gpu_stream_inference(
                             &mut host_scratch,
                             config,
                         )
-                        .map_err(|e| format!("gpu embed: {}", e))?;
+                        ?;
                         let logits_mode = if pos + 1 == prompt_tokens.len() {
                             final_prompt_logits_mode
                         } else {
@@ -530,7 +530,7 @@ pub fn run_gpu_stream_inference(
                             config,
                             logits_mode,
                         )
-                        .map_err(|e| format!("gpu prefill/decode: {}", e))?;
+                        ?;
                     }
                     prompt_next_token
                 }
@@ -548,7 +548,7 @@ pub fn run_gpu_stream_inference(
                     &mut host_scratch,
                     config,
                 )
-                .map_err(|e| format!("gpu embed: {}", e))?;
+                ?;
                 let logits_mode = if pos + 1 == prompt_tokens.len() {
                     final_prompt_logits_mode
                 } else {
@@ -565,7 +565,7 @@ pub fn run_gpu_stream_inference(
                     config,
                     logits_mode,
                 )
-                .map_err(|e| format!("gpu prefill/decode: {}", e))?;
+                ?;
             }
             prompt_next_token
         }
@@ -581,7 +581,7 @@ pub fn run_gpu_stream_inference(
                     &mut host_scratch,
                     config,
                 )
-                .map_err(|e| format!("gpu embed: {}", e))?;
+                ?;
                 let logits_mode = if pos + 1 == prompt_tokens.len() {
                     final_prompt_logits_mode
                 } else {
@@ -598,7 +598,7 @@ pub fn run_gpu_stream_inference(
                     config,
                     logits_mode,
                 )
-                .map_err(|e| format!("gpu prefill/decode: {}", e))?;
+                ?;
             }
             prompt_next_token
         }
@@ -647,7 +647,7 @@ pub fn run_gpu_stream_inference(
             &mut host_scratch,
             config,
         )
-        .map_err(|e| format!("gpu embed: {}", e))?;
+        ?;
         let logits_mode = if use_gpu_greedy_fastpath {
             gpu::GpuLogitsMode::GreedyArgmax
         } else {
@@ -664,7 +664,7 @@ pub fn run_gpu_stream_inference(
             config,
             logits_mode,
         )
-        .map_err(|e| format!("gpu decode: {}", e))?;
+        ?;
         pos += 1;
 
         next_token = if let Some(token) = decode_next_token {
@@ -673,7 +673,7 @@ pub fn run_gpu_stream_inference(
             // SYNC POINT: wait for GPU forward + argmax download (non-graph path)
             device
                 .synchronize()
-                .map_err(|e| format!("gpu sync: {}", e))?;
+                ?;
 
             if use_greedy {
                 if use_gpu_greedy_fastpath {

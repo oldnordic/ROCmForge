@@ -489,7 +489,7 @@ impl GpuLock {
 
 /// Run staged GPU preflight checks.
 /// Returns Ok(()) if all checks pass, Err(description) otherwise.
-pub fn gpu_safety_preflight() -> Result<(), String> {
+pub fn gpu_safety_preflight() -> crate::error::RocmForgeResult<()> {
     // 1. Render node detection
     let mut render_node_found = false;
     if std::path::Path::new("/dev/dri").exists() {
@@ -506,11 +506,11 @@ pub fn gpu_safety_preflight() -> Result<(), String> {
         }
     }
     if !render_node_found {
-        return Err("No render node found in /dev/dri".to_string());
+        return Err("No render node found in /dev/dri".into());
     }
 
     // 2. HIP runtime device visibility
-    let _caps = detect().ok_or_else(|| "No AMD GPU detected via HIP/ROCm runtime".to_string())?;
+    let _caps = detect().ok_or_else(|| crate::error::RocmForgeError::Generic("No AMD GPU detected via HIP/ROCm runtime".to_string()))?;
 
     // 3. Memory round-trip
     let size = 1024;
@@ -545,7 +545,7 @@ pub fn gpu_safety_preflight() -> Result<(), String> {
 
     for i in 0..size {
         if h_verify[i] != h_in1[i] {
-            return Err("Memory roundtrip verification failed".to_string());
+            return Err("Memory roundtrip verification failed".into());
         }
     }
 
@@ -573,7 +573,7 @@ pub fn gpu_safety_preflight() -> Result<(), String> {
             return Err(format!(
                 "Kernel execution verification failed: got {}, expected 3.0",
                 h_out[i]
-            ));
+            ).into());
         }
     }
 
