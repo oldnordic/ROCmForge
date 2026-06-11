@@ -17,11 +17,6 @@ pub mod rope;
 pub mod sparse_csr;
 pub mod ssm;
 
-/// Check if a pointer is aligned to a given boundary.
-pub(crate) fn is_aligned<T>(ptr: *const T, alignment: usize) -> bool {
-    (ptr as usize).is_multiple_of(alignment)
-}
-
 pub use attention::{
     flash_attn_decode, flash_attn_decode_strided, flash_attn_decode_strided_multi_head,
     flash_attn_decode_strided_multi_head_from_state_on_stream,

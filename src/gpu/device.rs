@@ -280,13 +280,7 @@ impl std::fmt::Debug for GpuDevice {
             .field("stream", &self.stream)
             .field("warp_size", &self.warp_size)
             .field("max_shared_mem_per_block", &self.max_shared_mem_per_block)
-            .field(
-                "q8_workspace_bytes",
-                &self
-                    .q8_workspace
-                    .lock()
-                    .size,
-            )
+            .field("q8_workspace_bytes", &self.q8_workspace.lock().size)
             .finish()
     }
 }

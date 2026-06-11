@@ -8,6 +8,7 @@
     clippy::all
 )]
 
+pub mod aligned;
 pub mod bench;
 pub mod config;
 pub mod cpu;
