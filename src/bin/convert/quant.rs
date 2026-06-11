@@ -1,25 +1,10 @@
 pub fn dequantize_q4_0_to_f32(data: &[u8], num_elements: usize) -> Vec<f32> {
-    let num_blocks = num_elements / 32;
     let mut out = vec![0.0f32; num_elements];
+    let num_blocks = num_elements / 32;
     for i in 0..num_blocks {
-        let block_offset = i * 18;
-        let scale = half::f16::from_bits(u16::from_le_bytes([
-            data[block_offset],
-            data[block_offset + 1],
-        ]))
-        .to_f32();
-        for j in 0..32 {
-            let byte_idx = j / 2;
-            let nibble_idx = j % 2;
-            let val_byte = data[block_offset + 2 + byte_idx];
-            let val_nibble = if nibble_idx == 0 {
-                val_byte & 0x0F
-            } else {
-                (val_byte >> 4) & 0x0F
-            };
-            let qval = (val_nibble as i8) - 8;
-            out[i * 32 + j] = qval as f32 * scale;
-        }
+        let block_data = &data[i * 18..(i + 1) * 18];
+        let block_out = &mut out[i * 32..(i + 1) * 32];
+        rocmforge::cpu::quant::dequant_q4_0_block(block_data, block_out);
     }
     out
 }

@@ -79,6 +79,10 @@
   - `turboquant.rs` — compressed turboquant attention variants.
   - `prefix_sum.rs` — KV cache reconstruction helpers.
 - **Error Standardization** — Replaced fragmented string-based error returns in `api/server/` and `gpu/speculative.rs` with a new unified `RocmForgeError` hierarchy in `src/error.rs`. This encapsulates `GpuError`, `CpuError`, `WeightError`, and `LoadError` behind standard `From` traits, allowing for clean `?` propagation without boilerplate `.map_err` formatting.
+- **Architectural Consistency Pass** — Standardized module structures and initialization naming across the codebase:
+  - Replaced the unidiomatic flat `#[path = "..."]` module declarations in `src/main.rs` with a proper `src/app/mod.rs` nested module tree, matching the standard library layout used in `api/` and `gpu/`.
+  - Resolved setup function naming drift by renaming `prepare_cpu_run` to `prepare_cpu_inference_state` to conceptually align with its GPU counterpart `prepare_gpu_inference_state`.
+  - Eradicated duplicated `Q4_0` / `Q6_K` / `Q8_0` manual dequantization loops in `src/bin/convert/quant.rs` and `src/bin/mpo_analyze.rs` by routing them through the core `rocmforge::cpu::quant::dequant_*_block` library helpers.
 
 ### Added
 - **Native Q2_K/Q3_K GPU Kernels**: Implemented native AMD HIP GEMV kernels for Q2_K and Q3_K formats (`q2_k_gemv.hip` and `q3_k_gemv.hip`). Integrated these into the static library linkage and dispatch routing (`src/gpu/ops/gemv.rs`), allowing full GPU execution of Q2_K/Q3_K models without CPU fallback.

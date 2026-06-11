@@ -459,11 +459,9 @@ fn deq_q8_0(data: &[u8], n: usize) -> Vec<f32> {
     let nb = n / 32;
     let mut out = vec![0.0f32; n];
     for i in 0..nb {
-        let off = i * 34;
-        let s = half::f16::from_bits(u16::from_le_bytes([data[off], data[off + 1]])).to_f32();
-        for j in 0..32 {
-            out[i * 32 + j] = data[off + 2 + j] as i8 as f32 * s;
-        }
+        let block_data = &data[i * 34..(i + 1) * 34];
+        let block_out = &mut out[i * 32..(i + 1) * 32];
+        rocmforge::cpu::quant::dequant_q8_0_block(block_data, block_out);
     }
     out
 }

@@ -2,46 +2,12 @@
 //!
 //! Supports Qwen2.5 family models via GGUF format.
 //! CPU execution path (GPU via HIP coming later).
+mod app;
 
-#[path = "main/cli.rs"]
-mod cli;
-#[path = "main/cpu_debug.rs"]
-mod cpu_debug;
-#[path = "main/cpu_decode.rs"]
-mod cpu_decode;
-#[path = "main/cpu_inference.rs"]
-mod cpu_inference;
-#[path = "main/cpu_prefill.rs"]
-mod cpu_prefill;
-#[path = "main/cpu_runtime.rs"]
-mod cpu_runtime;
-#[path = "main/cpu_setup.rs"]
-mod cpu_setup;
-#[path = "main/debug.rs"]
-mod debug;
-#[path = "main/dispatch.rs"]
-mod dispatch;
-#[path = "main/gpu_inference.rs"]
-mod gpu_inference;
-#[path = "main/gpu_inference_setup.rs"]
-mod gpu_inference_setup;
-#[path = "main/gpu_prompt_decode.rs"]
-mod gpu_prompt_decode;
-#[path = "main/gpu_runtime.rs"]
-mod gpu_runtime;
-#[path = "main/gpu_setup.rs"]
-mod gpu_setup;
-#[path = "main/inspect.rs"]
-mod inspect;
-#[path = "main/server_entry.rs"]
-mod server_entry;
-
-use self::cli::parse_args;
-use self::cpu_inference::run_cpu_inference;
-use self::dispatch::handle_non_server_cli;
-#[cfg(feature = "gpu")]
-use self::gpu_inference::{run_gpu_inference, run_gpu_speculative_inference};
-use self::server_entry::handle_server_cli;
+use app::cli::parse_args;
+use app::cpu_inference::run_cpu_inference;
+use app::dispatch::handle_non_server_cli;
+use app::server_entry::handle_server_cli;
 use rocmforge::loader::GgufFile;
 
 // ── CPU Inference ────────────────────────────────────────────────────────────────
@@ -69,7 +35,7 @@ fn main() {
 
 #[cfg(test)]
 mod main_tests {
-    use super::cli::Args;
+    use super::app::cli::Args;
 
     #[test]
     fn test_args_fields_present_for_linter() {
