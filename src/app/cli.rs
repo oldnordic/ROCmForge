@@ -8,10 +8,6 @@ pub(crate) struct Args {
     pub list_tensors: bool,
     pub debug: bool,
     pub gpu: bool,
-    #[cfg_attr(
-        not(feature = "gpu"),
-        expect(dead_code, reason = "used in gpu_inference")
-    )]
     pub prefill_only_validate: bool,
     pub draft_model: Option<String>,
     pub speculative_tokens: usize,
@@ -156,7 +152,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Args {
         }
     }
 
-    Args {
+    let result = Args {
         model: model.unwrap_or_else(|| usage()),
         prompt: prompt.unwrap_or_default(),
         max_tokens,
@@ -174,7 +170,19 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Args {
         port,
         threads,
         ctx_size,
+    };
+
+    // Touch fields used only in gpu/server code paths to keep clippy happy
+    // in default (cpu-only) builds. The values are already parsed and stored.
+    #[cfg(not(any(feature = "gpu", feature = "server")))]
+    {
+        let _ = result.prefill_only_validate;
+        let _ = result.draft_model;
+        let _ = result.speculative_tokens;
+        let _ = result.kv_dump;
     }
+
+    result
 }
 
 #[cfg(test)]
