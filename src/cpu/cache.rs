@@ -3,6 +3,7 @@
 //! The KV cache stores key/value vectors for all positions seen so far.
 //! Scratch buffers are reusable allocations for intermediate computations.
 
+use crate::aligned::{AlignedVec, ALIGN_AVX512, ALIGN_GPU_STAGING};
 use crate::config::ModelConfig;
 
 // ── KV Cache ─────────────────────────────────────────────────────────────────────
@@ -13,9 +14,9 @@ use crate::config::ModelConfig;
 /// Layout: `k[layer][pos * kv_size + offset]` for position-based indexing.
 pub struct CpuKvCache {
     /// Key cache: [num_layers][max_seq_len * kv_size]
-    pub k: Vec<Vec<f32>>,
+    pub k: Vec<AlignedVec<f32>>,
     /// Value cache: [num_layers][max_seq_len * kv_size]
-    pub v: Vec<Vec<f32>>,
+    pub v: Vec<AlignedVec<f32>>,
     /// Maximum sequence length this cache can hold
     pub max_seq_len: usize,
     /// Size of K/V per position: num_kv_heads * head_dim
@@ -34,10 +35,10 @@ impl CpuKvCache {
         let kv_size = config.num_kv_heads * config.head_dim;
         let buf_elems = max_seq_len * kv_size;
         let k = (0..config.num_layers)
-            .map(|_| vec![0.0f32; buf_elems])
+            .map(|_| AlignedVec::new_zeroed(buf_elems, ALIGN_AVX512))
             .collect();
         let v = (0..config.num_layers)
-            .map(|_| vec![0.0f32; buf_elems])
+            .map(|_| AlignedVec::new_zeroed(buf_elems, ALIGN_AVX512))
             .collect();
         Self {
             k,
@@ -116,26 +117,26 @@ impl CpuKvCache {
 /// Allocated once and reused across all layers to avoid repeated allocations.
 pub struct CpuForwardScratch {
     /// Normalized hidden state [hidden_size]
-    pub normed: Vec<f32>,
+    pub normed: AlignedVec<f32>,
     /// Query vector [num_heads * head_dim]
-    pub q: Vec<f32>,
+    pub q: AlignedVec<f32>,
     /// Key vector [num_kv_heads * head_dim]
-    pub k: Vec<f32>,
+    pub k: AlignedVec<f32>,
     /// Value vector [num_kv_heads * head_dim]
-    pub v: Vec<f32>,
+    pub v: AlignedVec<f32>,
     /// Attention output [num_heads * head_dim]
-    pub attn_out: Vec<f32>,
+    pub attn_out: AlignedVec<f32>,
     /// Layer output (residual stream) [hidden_size]
-    pub layer_out: Vec<f32>,
+    pub layer_out: AlignedVec<f32>,
     /// FFN gate projection [intermediate_size]
-    pub gate: Vec<f32>,
+    pub gate: AlignedVec<f32>,
     /// FFN SwiGLU output [intermediate_size]
-    pub swiglu: Vec<f32>,
+    pub swiglu: AlignedVec<f32>,
     /// Final logits [vocab_size]
-    pub logits: Vec<f32>,
+    pub logits: AlignedVec<f32>,
     /// Q8_0 scratch buffer for GEMV quantization [hidden_size / 32 * 34 bytes]
     /// Reused across all GEMV calls to avoid repeated heap allocations.
-    pub q8_scratch: Vec<u8>,
+    pub q8_scratch: AlignedVec<u8>,
 }
 
 impl CpuForwardScratch {
@@ -154,18 +155,18 @@ impl CpuForwardScratch {
         // Size for the largest GEMV in_dim: hidden_size or intermediate_size
         let max_in_dim = h.max(ff);
         let num_blocks = max_in_dim / Q8_BLOCK_ELEMS;
-        let q8_scratch = vec![0u8; num_blocks * Q8_BLOCK_BYTES];
+        let q8_scratch = AlignedVec::new_zeroed(num_blocks * Q8_BLOCK_BYTES, ALIGN_GPU_STAGING);
 
         Self {
-            normed: vec![0.0; h],
-            q: vec![0.0; q],
-            k: vec![0.0; kv],
-            v: vec![0.0; kv],
-            attn_out: vec![0.0; q],
-            layer_out: vec![0.0; h],
-            gate: vec![0.0; ff],
-            swiglu: vec![0.0; ff],
-            logits: vec![0.0; v],
+            normed: AlignedVec::new_zeroed(h, ALIGN_AVX512),
+            q: AlignedVec::new_zeroed(q, ALIGN_AVX512),
+            k: AlignedVec::new_zeroed(kv, ALIGN_AVX512),
+            v: AlignedVec::new_zeroed(kv, ALIGN_AVX512),
+            attn_out: AlignedVec::new_zeroed(q, ALIGN_AVX512),
+            layer_out: AlignedVec::new_zeroed(h, ALIGN_AVX512),
+            gate: AlignedVec::new_zeroed(ff, ALIGN_AVX512),
+            swiglu: AlignedVec::new_zeroed(ff, ALIGN_AVX512),
+            logits: AlignedVec::new_zeroed(v, ALIGN_AVX512),
             q8_scratch,
         }
     }

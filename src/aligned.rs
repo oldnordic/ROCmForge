@@ -65,6 +65,30 @@ impl<T: Copy> AlignedVec<T> {
     pub fn as_mut_ptr(&mut self) -> *mut T {
         self.ptr
     }
+
+    /// Resize the buffer to `new_len` elements, filling new elements with `value`.
+    ///
+    /// If `new_len` <= current length, truncates (does not shrink allocation).
+    /// If `new_len` > current length, reallocate with the same alignment.
+    pub fn resize(&mut self, new_len: usize, value: T) {
+        if new_len <= self.len {
+            self.len = new_len;
+            return;
+        }
+        let old_ptr = self.ptr;
+        let old_len = self.len;
+        let old_layout = self.layout;
+        let align = old_layout.align();
+        let new = Self::new_zeroed(new_len, align);
+        unsafe {
+            std::ptr::copy_nonoverlapping(old_ptr, new.ptr, old_len);
+            for i in old_len..new_len {
+                *new.ptr.add(i) = value;
+            }
+        }
+        // Move new into self; old self is dropped here, deallocating old_ptr once
+        *self = new;
+    }
 }
 
 impl<T> Deref for AlignedVec<T> {
@@ -130,5 +154,24 @@ mod tests {
             *x = i as f32;
         }
         assert_eq!(v[3], 3.0);
+    }
+
+    #[test]
+    fn aligned_vec_resize() {
+        let mut v = AlignedVec::<f32>::new_zeroed(4, ALIGN_AVX2);
+        for (i, x) in v.iter_mut().enumerate() {
+            *x = i as f32;
+        }
+        // Grow
+        v.resize(8, 42.0);
+        assert_eq!(v.len(), 8);
+        assert_eq!(v[3], 3.0);   // old data preserved
+        assert_eq!(v[4], 42.0);  // new elements filled
+        assert_eq!(v[7], 42.0);
+        assert!(v.as_ptr() as usize % ALIGN_AVX2 == 0);
+        // Shrink
+        v.resize(2, 99.0);
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[1], 1.0);   // old data preserved
     }
 }

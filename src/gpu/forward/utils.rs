@@ -1,3 +1,4 @@
+use crate::aligned::AlignedVec;
 use crate::config::ModelConfig;
 use crate::cpu::ops::dispatch_gemv as cpu_dispatch_gemv;
 use crate::cpu::quant::load_f16_scale;
@@ -124,7 +125,7 @@ pub(super) fn cpu_fallback_gemv(
     output_host: &mut [f32],
     out_dim: usize,
     in_dim: usize,
-    q8_scratch: &mut Vec<u8>,
+    q8_scratch: &mut [u8],
 ) -> GpuResult<()> {
     download_f32(input_gpu, &mut input_host[..in_dim])?;
     cpu_dispatch_gemv(
@@ -146,12 +147,12 @@ pub(super) fn cpu_fallback_gemv_and_upload(
     weights: &[u8],
     meta: &crate::cpu::weights::WeightMeta,
     input_gpu: &GpuBuffer,
-    input_host: &mut Vec<f32>,
-    output_host: &mut Vec<f32>,
+    input_host: &mut AlignedVec<f32>,
+    output_host: &mut AlignedVec<f32>,
     output_gpu: &mut GpuBuffer,
     out_dim: usize,
     in_dim: usize,
-    q8_scratch: &mut Vec<u8>,
+    q8_scratch: &mut [u8],
 ) -> GpuResult<()> {
     ensure_size(input_host, in_dim);
     ensure_size(output_host, out_dim);
@@ -170,7 +171,7 @@ pub(super) fn cpu_fallback_gemv_and_upload(
     Ok(())
 }
 
-pub(super) fn ensure_size(v: &mut Vec<f32>, size: usize) {
+pub(super) fn ensure_size(v: &mut AlignedVec<f32>, size: usize) {
     if v.len() < size {
         v.resize(size, 0.0);
     }
