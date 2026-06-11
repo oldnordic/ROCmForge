@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  validate:
+    name: Documentation & License
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check license is GPL-3.0 only
+        run: |
+          echo "🔍 Checking license..."
+          if grep -q "GPL-3.0-or-later" Cargo.toml; then
+            echo "❌ FAIL: License must be GPL-3.0 only, not GPL-3.0-or-later"
+            exit 1
+          fi
+          echo "✅ License is GPL-3.0"
+
+  cpu-tests:
+    name: CPU Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+        
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+        
+      - name: Run CPU tests
+        run: cargo test
+
+  gpu-build:
+    name: GPU (ROCm) Build Check
+    runs-on: ubuntu-latest
+    container:
+      image: rocm/dev-ubuntu-22.04:6.1.2
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y curl build-essential cmake
+          
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          
+      - name: Check GPU compilation
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          # Only check compilation since GitHub runners don't have AMD GPUs
+          cargo check --features gpu --all-targets
+
+  security:
+    name: Security Scans
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo installations
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin
+          key: ${{ runner.os }}-cargo-security-tools
+
+      - name: Install audit & deny
+        run: |
+          if ! command -v cargo-audit &> /dev/null; then cargo install cargo-audit --locked; fi
+          if ! command -v cargo-deny &> /dev/null; then cargo install cargo-deny --locked; fi
+
+      - name: Cargo Audit
+        run: cargo audit
+
+      - name: Cargo Deny
+        run: |
+          if [ -f deny.toml ] || [ -f .cargo/deny.toml ]; then
+            cargo deny check
+          else
+            echo "Skipping cargo deny (no config found)"
+          fi
+
+      - name: Install and run Gitleaks
+        run: |
+          curl -sL https://github.com/zricethezav/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz | tar -xz -C /usr/local/bin gitleaks
+          if [ -f .gitleaks.toml ]; then
+            gitleaks detect --verbose --config .gitleaks.toml
+          else
+            gitleaks detect --verbose
+          fi
+
+  semgrep:
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep:latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Semgrep OSS scan
+        run: |
+          if [ -d .semgrep/rules/ ]; then
+            semgrep ci --oss-only --config .semgrep/rules/
+          else
+            semgrep ci --oss-only --config auto
+          fi
