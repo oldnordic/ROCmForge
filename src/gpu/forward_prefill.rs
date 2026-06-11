@@ -28,7 +28,6 @@ use crate::cpu::cache::CpuForwardScratch;
 use crate::cpu::weights::CpuModelWeights;
 use crate::loader::GgmlType;
 
-
 /// Full batched prefill forward pass for Q4_0 models.
 ///
 /// This function processes an entire prompt through all transformer layers in parallel,

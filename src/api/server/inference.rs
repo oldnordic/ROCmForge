@@ -1,8 +1,8 @@
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use crate::config::ModelConfig;
 use crate::cpu::weights::CpuModelWeights;
 use crate::tokenizer::BpeTokenizer;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 pub(crate) fn run_sync_inference(
     cpu_weights: &Arc<CpuModelWeights>,
@@ -23,7 +23,8 @@ pub(crate) fn run_sync_inference(
             let device = crate::gpu::GpuDevice::get_or_init(gpu_caps.device_id)
                 .map_err(|e| format!("gpu init: {}", e))?;
             let mut engine = spec_engine_arc.blocking_lock();
-            let orchestrator = crate::gpu::SpeculativeOrchestrator::new(4).map_err(|e| format!("{:?}", e))?;
+            let orchestrator =
+                crate::gpu::SpeculativeOrchestrator::new(4).map_err(|e| format!("{:?}", e))?;
             return orchestrator.generate(&device, &mut engine, tok, prompt_tokens, max_tokens);
         }
         if let Some(gw) = gpu_weights {
@@ -143,8 +144,7 @@ pub(crate) fn run_cpu_sync_inference(
 
         output_tokens.push(next_token);
         cpu_embed_token(next_token, weights, &mut hidden, config);
-        cpu_full_forward(&mut hidden, weights, &mut kv, &mut scratch, pos, config)
-            ?;
+        cpu_full_forward(&mut hidden, weights, &mut kv, &mut scratch, pos, config)?;
 
         next_token = if use_greedy {
             cpu_sample_greedy(&scratch.logits)
@@ -214,8 +214,7 @@ pub(crate) fn run_cpu_stream_inference(
         previous_text = text;
 
         cpu_embed_token(next_token, weights, &mut hidden, config);
-        cpu_full_forward(&mut hidden, weights, &mut kv, &mut scratch, pos, config)
-            ?;
+        cpu_full_forward(&mut hidden, weights, &mut kv, &mut scratch, pos, config)?;
 
         next_token = if use_greedy {
             cpu_sample_greedy(&scratch.logits)

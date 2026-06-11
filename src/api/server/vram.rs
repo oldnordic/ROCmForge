@@ -4,9 +4,9 @@ use axum::response::{IntoResponse, Json, Response};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::api::types::*;
 use super::state::ModelManager;
-use super::utils::{error_response, bytes_to_gb};
+use super::utils::{bytes_to_gb, error_response};
+use crate::api::types::*;
 
 pub(crate) async fn estimate_vram(
     State(state): State<Arc<ModelManager>>,

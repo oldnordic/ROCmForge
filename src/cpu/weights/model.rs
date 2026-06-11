@@ -1,8 +1,8 @@
-use crate::config::{ModelConfig, TensorName};
-use crate::loader::{GgufFile, RfmFile};
-use super::meta::{WeightError, WeightMeta};
 use super::helpers::{copy_f32, copy_tensor, copy_tensor_with_meta, rfm_type_to_ggml};
 use super::layer::CpuLayerWeights;
+use super::meta::{WeightError, WeightMeta};
+use crate::config::{ModelConfig, TensorName};
+use crate::loader::{GgufFile, RfmFile};
 
 #[derive(Clone, Debug)]
 pub struct CpuModelWeights {
@@ -30,15 +30,22 @@ impl CpuModelWeights {
             &config.tensor_registry.resolve(TensorName::TokenEmb, 0),
             false,
         )?;
-        
-        let output_norm = copy_f32(file, &config.tensor_registry.resolve(TensorName::OutputNorm, 0))?;
+
+        let output_norm = copy_f32(
+            file,
+            &config.tensor_registry.resolve(TensorName::OutputNorm, 0),
+        )?;
 
         // lm_head
         let (lm_head, lm_head_meta, lm_head_tied) = if let Some(view) = file
             .tensor(&config.tensor_registry.resolve(TensorName::LmHead, 0))
             .map_err(WeightError::Load)?
         {
-            (view.data.to_vec(), WeightMeta::from_view(&view, false), false)
+            (
+                view.data.to_vec(),
+                WeightMeta::from_view(&view, false),
+                false,
+            )
         } else {
             (token_emb.clone(), token_emb_meta.clone(), true)
         };
@@ -97,8 +104,9 @@ impl CpuModelWeights {
             Ok((t.data.to_vec(), meta))
         };
 
-        let (token_emb, token_emb_meta) = load_rfm_u8_meta(&config.tensor_registry.resolve(TensorName::TokenEmb, 0))?;
-        
+        let (token_emb, token_emb_meta) =
+            load_rfm_u8_meta(&config.tensor_registry.resolve(TensorName::TokenEmb, 0))?;
+
         let (lm_head, lm_head_meta, lm_head_tied) = if let Some(t) = file
             .tensor(&config.tensor_registry.resolve(TensorName::LmHead, 0))
             .map_err(WeightError::Load)?

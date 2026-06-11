@@ -1,14 +1,17 @@
 use std::fmt;
 
-use crate::cpu::CpuError;
-use crate::gpu::error::GpuError;
-use crate::loader::LoadError;
 use crate::cpu::weights::WeightError;
+use crate::cpu::CpuError;
+use crate::loader::LoadError;
+
+#[cfg(feature = "gpu")]
+use crate::gpu::error::GpuError;
 
 /// The unified error type for the rocmforge inference engine.
 #[derive(Debug)]
 pub enum RocmForgeError {
     /// An error occurred during GPU operations (kernels, VRAM, HIP API).
+    #[cfg(feature = "gpu")]
     Gpu(GpuError),
     /// An error occurred during CPU operations (kernels, threading, memory).
     Cpu(CpuError),
@@ -24,6 +27,7 @@ pub enum RocmForgeError {
 impl fmt::Display for RocmForgeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            #[cfg(feature = "gpu")]
             RocmForgeError::Gpu(e) => write!(f, "GPU error: {}", e),
             RocmForgeError::Cpu(e) => write!(f, "CPU error: {}", e),
             RocmForgeError::Weight(e) => write!(f, "Weight error: {}", e),
@@ -36,6 +40,7 @@ impl fmt::Display for RocmForgeError {
 impl std::error::Error for RocmForgeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            #[cfg(feature = "gpu")]
             RocmForgeError::Gpu(e) => Some(e),
             RocmForgeError::Cpu(e) => Some(e),
             RocmForgeError::Weight(e) => Some(e),
@@ -47,6 +52,7 @@ impl std::error::Error for RocmForgeError {
 
 // ── Conversions ───────────────────────────────────────────────────────────────
 
+#[cfg(feature = "gpu")]
 impl From<GpuError> for RocmForgeError {
     fn from(err: GpuError) -> Self {
         RocmForgeError::Gpu(err)

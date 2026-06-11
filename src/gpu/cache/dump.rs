@@ -226,22 +226,10 @@ mod tests {
         std::fs::File::open(&path)?.read_to_end(&mut buf)?;
 
         assert_eq!(&buf[..8], KV_DUMP_MAGIC, "magic mismatch");
-        assert_eq!(
-            u32::from_le_bytes(buf[8..12].try_into()?),
-            num_layers
-        );
-        assert_eq!(
-            u32::from_le_bytes(buf[12..16].try_into()?),
-            num_kv_heads
-        );
-        assert_eq!(
-            u32::from_le_bytes(buf[16..20].try_into()?),
-            head_dim
-        );
-        assert_eq!(
-            u32::from_le_bytes(buf[20..24].try_into()?),
-            num_tokens
-        );
+        assert_eq!(u32::from_le_bytes(buf[8..12].try_into()?), num_layers);
+        assert_eq!(u32::from_le_bytes(buf[12..16].try_into()?), num_kv_heads);
+        assert_eq!(u32::from_le_bytes(buf[16..20].try_into()?), head_dim);
+        assert_eq!(u32::from_le_bytes(buf[20..24].try_into()?), num_tokens);
 
         // Total size: 32 header + 2 * num_layers * floats_per_layer * 4
         let expected_len = 32 + 2 * num_layers as usize * floats_per_layer * 4;

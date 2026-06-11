@@ -1,3 +1,7 @@
+use super::super::utils::{cpu_fallback_gemv_and_upload, ensure_size, residual_add_inplace};
+use super::attention::gpu_attention_decode_from_state;
+use super::gpu_dispatch_moe_ffn_on_stream;
+use super::gpu_layer_forward_ssm_on_stream;
 use crate::config::ModelConfig;
 use crate::cpu::cache::CpuForwardScratch;
 use crate::cpu::weights::CpuLayerWeights;
@@ -18,10 +22,6 @@ use crate::gpu::ops::{
     gpu_dispatch_gemv_with_fallback_on_stream, gpu_dispatch_rms_norm, supports_gemv_type,
 };
 use crate::gpu::weights::GpuLayerWeights;
-use super::attention::gpu_attention_decode_from_state;
-use super::gpu_dispatch_moe_ffn_on_stream;
-use super::gpu_layer_forward_ssm_on_stream;
-use super::super::utils::{cpu_fallback_gemv_and_upload, ensure_size, residual_add_inplace};
 
 /// Hybrid single-layer decode step used by the CLI path and GPU integration tests.
 pub fn gpu_layer_forward_hybrid(

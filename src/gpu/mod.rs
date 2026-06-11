@@ -29,14 +29,14 @@ pub mod ffi;
 pub mod forward;
 pub mod forward_prefill;
 pub mod graph;
-mod prefill_debug;
-pub mod prefill_helpers;
-pub mod prefill_layer;
 pub mod kernel_dispatch_profile;
 pub mod kernels;
 pub mod launch_autotune;
 pub mod ops;
 pub mod ops_batched;
+mod prefill_debug;
+pub mod prefill_helpers;
+pub mod prefill_layer;
 pub mod profile;
 pub mod quant;
 pub mod quant_wrapper;
@@ -61,8 +61,6 @@ pub use forward::{
     gpu_embed_token_hybrid, gpu_full_forward_hybrid, gpu_layer_forward_hybrid, GpuLogitsMode,
 };
 pub use forward_prefill::gpu_batched_prefill_forward_q4_0;
-pub use prefill_helpers::gpu_batched_qkv_projection;
-pub use prefill_layer::gpu_prefill_layer_forward_q4_0;
 pub use graph::{CapturedDecodeGraph, DecodeGraphKey, HipGraph, HipGraphExec};
 pub use kernel_dispatch_profile::{
     record_gemm_dispatch, record_gemv_dispatch, DispatchRecord, KernelDispatchProfiler,
@@ -147,6 +145,8 @@ pub use ops::{
 pub use ops_batched::{
     gpu_dispatch_batched_fused_gate_up_on_stream, gpu_dispatch_batched_gemv_batched,
 };
+pub use prefill_helpers::gpu_batched_qkv_projection;
+pub use prefill_layer::gpu_prefill_layer_forward_q4_0;
 pub use profile::{KernelTimer, KernelTiming, Profiler};
 pub use quant::{
     Q4KBlock, Q4_0Block, Q4_1Block, Q5KBlock, Q6KBlock, Q8_0Block, K_SCALE_SIZE, Q4_0_BLOCK_SIZE,

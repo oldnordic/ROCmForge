@@ -36,17 +36,14 @@ impl ModelEntry {
         let config = file.config()?;
         let tokenizer = file.tokenizer();
         let chat_template = file.chat_template(&config, false); // enable template by default
-        let cpu_weights = Arc::new(
-            file.load_cpu_weights(&config)?
-        );
+        let cpu_weights = Arc::new(file.load_cpu_weights(&config)?);
 
         #[cfg(feature = "gpu")]
         let gpu_weights = {
             let gpu_caps = crate::gpu::detect();
             if let Some(caps) = gpu_caps {
                 crate::gpu::GpuDevice::get_or_init(caps.device_id)?;
-                let w = file
-                    .load_gpu_weights(&config, caps.device_id)?;
+                let w = file.load_gpu_weights(&config, caps.device_id)?;
                 Some(Arc::new(w))
             } else {
                 None
@@ -103,30 +100,21 @@ impl ModelManager {
         }
     }
 
-    pub async fn try_load(&self, model_path: &str, draft_path: Option<&str>) -> Result<Arc<ModelEntry>, String> {
+    pub async fn try_load(
+        &self,
+        model_path: &str,
+        draft_path: Option<&str>,
+    ) -> Result<Arc<ModelEntry>, String> {
         let entry = Arc::new(ModelEntry::load(model_path, draft_path)?);
         self.try_load_entry(entry.clone()).await?;
         Ok(entry)
     }
 
     pub async fn try_load_entry(&self, entry: Arc<ModelEntry>) -> Result<(), String> {
-        self.active_models.lock().await.insert(entry.model_path.clone(), entry);
-        Ok(())
-    }
-
-    pub async fn unload(&self, model_path: &str) {
-        self.active_models.lock().await.remove(model_path);
-    }
-
-    pub async fn get(&self, model_path: &str) -> Option<Arc<ModelEntry>> {
-        self.active_models.lock().await.get(model_path).cloned()
-    }
-
-    pub async fn keys(&self) -> Vec<String> {
-        self.active_models.lock().await.keys().cloned().collect()
-    }
-}
-path.clone(), entry);
+        self.active_models
+            .lock()
+            .await
+            .insert(entry.model_path.clone(), entry);
         Ok(())
     }
 

@@ -1,7 +1,7 @@
-use std::os::raw::c_int;
+use super::ffi::*;
 use crate::gpu::error::{GpuError, GpuResult};
 use crate::gpu::ffi::{hipError_t, hipStream_t};
-use super::ffi::*;
+use std::os::raw::c_int;
 
 pub fn reconstruct_kv_cache_prefix_sum(
     k_cache: *mut f32,

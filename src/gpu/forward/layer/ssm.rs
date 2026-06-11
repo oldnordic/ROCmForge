@@ -1,3 +1,5 @@
+use super::super::utils::{cpu_fallback_gemv_and_upload, ensure_size, residual_add_inplace};
+use super::gpu_dispatch_moe_ffn_on_stream;
 use crate::config::ModelConfig;
 use crate::cpu::cache::CpuForwardScratch;
 use crate::cpu::weights::CpuLayerWeights;
@@ -10,8 +12,6 @@ use crate::gpu::ops::{
     gpu_dispatch_gemv_svd_on_stream, gpu_dispatch_rms_norm, supports_gemv_type,
 };
 use crate::gpu::weights::GpuLayerWeights;
-use super::gpu_dispatch_moe_ffn_on_stream;
-use super::super::utils::{cpu_fallback_gemv_and_upload, ensure_size, residual_add_inplace};
 
 pub(super) fn gpu_layer_forward_ssm_on_stream(
     device: &GpuDevice,

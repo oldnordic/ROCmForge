@@ -1,7 +1,7 @@
 use rocmforge::cpu::SimdKernels;
 #[cfg(feature = "gpu")]
 use rocmforge::gpu;
-use rocmforge::hardware::{CpuCapabilities, detect};
+use rocmforge::hardware::{detect, CpuCapabilities};
 
 use super::cli::Args;
 use super::cpu_debug::print_cpu_hardware_summary;

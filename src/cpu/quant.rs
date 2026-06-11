@@ -91,7 +91,11 @@ pub const Q8_0_MAX: f32 = 127.0;
 
 /// Validate that dimensions are compatible with block size.
 /// Returns Ok(()) if valid, or error with details if not.
-pub fn validate_block_size(dim: usize, block_elems: usize, name: &str) -> crate::error::RocmForgeResult<()> {
+pub fn validate_block_size(
+    dim: usize,
+    block_elems: usize,
+    name: &str,
+) -> crate::error::RocmForgeResult<()> {
     if !dim.is_multiple_of(block_elems) {
         Err(format!(
             "{} dimension {} is not a multiple of block size {} (remainder: {})",
@@ -99,7 +103,8 @@ pub fn validate_block_size(dim: usize, block_elems: usize, name: &str) -> crate:
             dim,
             block_elems,
             dim % block_elems
-        ).into())
+        )
+        .into())
     } else {
         Ok(())
     }

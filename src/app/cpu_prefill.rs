@@ -2,11 +2,11 @@ use std::time::Instant;
 
 use rocmforge::config::ModelConfig;
 use rocmforge::cpu::{
-    CpuError,
     cache::{CpuForwardScratch, CpuKvCache},
     forward::cpu_embed_token,
     prefill::cpu_prefill_forward_parallel,
     weights::CpuModelWeights,
+    CpuError,
 };
 use rocmforge::hardware::BatchConfig;
 use rocmforge::tokenizer::BpeTokenizer;

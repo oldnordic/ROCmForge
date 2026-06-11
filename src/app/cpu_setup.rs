@@ -3,7 +3,7 @@ use rocmforge::cpu::{
     cache::{CpuForwardScratch, CpuKvCache},
     weights::CpuModelWeights,
 };
-use rocmforge::hardware::{BatchConfig, CpuCapabilities, derive_batch_config};
+use rocmforge::hardware::{derive_batch_config, BatchConfig, CpuCapabilities};
 use rocmforge::loader::ModelFile;
 use rocmforge::tokenizer::BpeTokenizer;
 

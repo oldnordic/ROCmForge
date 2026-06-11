@@ -7,10 +7,15 @@ pub mod cpu_runtime;
 pub mod cpu_setup;
 pub mod debug;
 pub mod dispatch;
+#[cfg(feature = "gpu")]
 pub mod gpu_inference;
+#[cfg(feature = "gpu")]
 pub mod gpu_inference_setup;
+#[cfg(feature = "gpu")]
 pub mod gpu_prompt_decode;
+#[cfg(feature = "gpu")]
 pub mod gpu_runtime;
+#[cfg(feature = "gpu")]
 pub mod gpu_setup;
 pub mod inspect;
 pub mod server_entry;

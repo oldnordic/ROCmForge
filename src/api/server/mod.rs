@@ -1,8 +1,8 @@
-use std::sync::Arc;
 use axum::{
     routing::{get, post},
     Router,
 };
+use std::sync::Arc;
 
 pub mod handlers;
 pub mod inference;
@@ -20,7 +20,10 @@ pub fn create_router(state: Arc<ModelManager>) -> Router {
         .route("/v1/models/vram", post(vram::estimate_vram))
         .route("/v1/vram", get(vram::list_vram))
         .route("/v1/completions", post(handlers::create_completion))
-        .route("/v1/chat/completions", post(handlers::create_chat_completion))
+        .route(
+            "/v1/chat/completions",
+            post(handlers::create_chat_completion),
+        )
         .route("/v1/messages", post(handlers::create_messages))
         .route("/health", get(handlers::health))
         .route("/ready", get(handlers::ready))

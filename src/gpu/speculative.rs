@@ -608,9 +608,7 @@ impl SpeculativeOrchestrator {
         }
 
         // 1. Prefill
-        let target_token = engine
-            .prefill(device, prompt_tokens)
-            ?;
+        let target_token = engine.prefill(device, prompt_tokens)?;
 
         let mut output_tokens = Vec::with_capacity(max_tokens);
         let mut last_verified_token = target_token;
@@ -634,14 +632,12 @@ impl SpeculativeOrchestrator {
             }
 
             // Draft speculative tokens
-            let draft_tokens = engine
-                .draft_tokens(device, current_pos, draft_limit, last_verified_token)
-                ?;
+            let draft_tokens =
+                engine.draft_tokens(device, current_pos, draft_limit, last_verified_token)?;
 
             // Verify drafted tokens
-            let (accepted, num_accepted) = engine
-                .verify_tokens(device, current_pos, &draft_tokens, last_verified_token)
-                ?;
+            let (accepted, num_accepted) =
+                engine.verify_tokens(device, current_pos, &draft_tokens, last_verified_token)?;
 
             // Add accepted tokens (excluding the last next target token)
             for &t in &accepted[..num_accepted] {
@@ -690,9 +686,7 @@ impl SpeculativeOrchestrator {
         }
 
         // 1. Prefill
-        let target_token = engine
-            .prefill(device, prompt_tokens)
-            ?;
+        let target_token = engine.prefill(device, prompt_tokens)?;
 
         let mut output_tokens = Vec::new();
         let mut last_verified_token = target_token;
@@ -718,14 +712,12 @@ impl SpeculativeOrchestrator {
             }
 
             // Draft speculative tokens
-            let draft_tokens = engine
-                .draft_tokens(device, current_pos, draft_limit, last_verified_token)
-                ?;
+            let draft_tokens =
+                engine.draft_tokens(device, current_pos, draft_limit, last_verified_token)?;
 
             // Verify drafted tokens
-            let (accepted, num_accepted) = engine
-                .verify_tokens(device, current_pos, &draft_tokens, last_verified_token)
-                ?;
+            let (accepted, num_accepted) =
+                engine.verify_tokens(device, current_pos, &draft_tokens, last_verified_token)?;
 
             // Send each accepted token
             let mut hit_eos = false;

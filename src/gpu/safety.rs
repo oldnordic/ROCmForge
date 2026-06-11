@@ -510,7 +510,11 @@ pub fn gpu_safety_preflight() -> crate::error::RocmForgeResult<()> {
     }
 
     // 2. HIP runtime device visibility
-    let _caps = detect().ok_or_else(|| crate::error::RocmForgeError::Generic("No AMD GPU detected via HIP/ROCm runtime".to_string()))?;
+    let _caps = detect().ok_or_else(|| {
+        crate::error::RocmForgeError::Generic(
+            "No AMD GPU detected via HIP/ROCm runtime".to_string(),
+        )
+    })?;
 
     // 3. Memory round-trip
     let size = 1024;
@@ -573,7 +577,8 @@ pub fn gpu_safety_preflight() -> crate::error::RocmForgeResult<()> {
             return Err(format!(
                 "Kernel execution verification failed: got {}, expected 3.0",
                 h_out[i]
-            ).into());
+            )
+            .into());
         }
     }
 

@@ -1,7 +1,7 @@
 use super::cli::Args;
-use super::inspect::list_tensors;
 #[cfg(feature = "gpu")]
 use super::gpu_inference::{run_gpu_inference, run_gpu_speculative_inference};
+use super::inspect::list_tensors;
 
 fn should_handle_non_server_cli(args: &Args) -> bool {
     args.list_tensors || args.gpu
@@ -69,7 +69,7 @@ pub(crate) fn handle_non_server_cli(args: &Args) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Args, should_handle_non_server_cli};
+    use super::{should_handle_non_server_cli, Args};
 
     fn args() -> Args {
         Args {

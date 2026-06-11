@@ -828,8 +828,7 @@ pub(super) fn convert_all_tensors(
             .ok_or_else(|| format!("tensor disappeared during conversion: {}", tensor_name))?;
         align_to_256(out_file, current_offset)?;
 
-        if tensor.dims.len() == 3
-            && should_svd_tensor(&tensor_name, &tensor, options.svd_attn_only)
+        if tensor.dims.len() == 3 && should_svd_tensor(&tensor_name, &tensor, options.svd_attn_only)
         {
             if let Some(k_val) = options.svd_k {
                 let used_sparse = convert_moe_expert_svd_sparse(

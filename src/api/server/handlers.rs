@@ -1,18 +1,18 @@
-use std::sync::Arc;
 use axum::{
     extract::State,
     http::StatusCode,
     response::{sse::Event, sse::Sse, IntoResponse, Json, Response},
 };
-use serde_json::json;
-use tokio::sync::Mutex;
 use futures::stream::Stream;
+use serde_json::json;
 use std::convert::Infallible;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
-use crate::api::types::*;
+use super::inference::{run_stream_inference, run_sync_inference};
 use super::state::ModelManager;
 use super::utils::{error_response, format_chat_messages};
-use super::inference::{run_sync_inference, run_stream_inference};
+use crate::api::types::*;
 
 pub(crate) async fn list_models(State(state): State<Arc<ModelManager>>) -> impl IntoResponse {
     let now = chrono::Utc::now().timestamp();
@@ -69,7 +69,13 @@ pub(crate) async fn create_completion(
 ) -> Response {
     let entry = match state.get(&req.model).await {
         Some(e) => e,
-        None => return error_response(StatusCode::BAD_REQUEST, "Model not loaded", "model_not_found"),
+        None => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "Model not loaded",
+                "model_not_found",
+            )
+        }
     };
 
     let prompt = req.prompt.clone();
@@ -82,12 +88,18 @@ pub(crate) async fn create_completion(
         let req_clone = req.clone();
 
         tokio::spawn(async move {
-            let _permit = entry_clone.inference_sem.acquire().await.expect("semaphore closed");
+            let _permit = entry_clone
+                .inference_sem
+                .acquire()
+                .await
+                .expect("semaphore closed");
             let res = tokio::task::spawn_blocking(move || {
                 run_stream_inference(
                     &entry_clone.cpu_weights,
-                    #[cfg(feature = "gpu")] &entry_clone.gpu_weights,
-                    #[cfg(feature = "gpu")] &entry_clone.speculative_engine,
+                    #[cfg(feature = "gpu")]
+                    &entry_clone.gpu_weights,
+                    #[cfg(feature = "gpu")]
+                    &entry_clone.speculative_engine,
                     &entry_clone.model_path,
                     &entry_clone.config,
                     &entry_clone.tokenizer,
@@ -97,7 +109,8 @@ pub(crate) async fn create_completion(
                     req_clone.top_p.unwrap_or(0.9),
                     tx,
                 )
-            }).await;
+            })
+            .await;
 
             if let Err(e) = res {
                 eprintln!("Inference task panicked: {:?}", e);
@@ -123,13 +136,19 @@ pub(crate) async fn create_completion(
 
         Sse::new(stream).into_response()
     } else {
-        let _permit = entry.inference_sem.acquire().await.expect("semaphore closed");
+        let _permit = entry
+            .inference_sem
+            .acquire()
+            .await
+            .expect("semaphore closed");
         let entry_clone = entry.clone();
         let res = tokio::task::spawn_blocking(move || {
             run_sync_inference(
                 &entry_clone.cpu_weights,
-                #[cfg(feature = "gpu")] &entry_clone.gpu_weights,
-                #[cfg(feature = "gpu")] &entry_clone.speculative_engine,
+                #[cfg(feature = "gpu")]
+                &entry_clone.gpu_weights,
+                #[cfg(feature = "gpu")]
+                &entry_clone.speculative_engine,
                 &entry_clone.model_path,
                 &entry_clone.config,
                 &entry_clone.tokenizer,
@@ -138,7 +157,9 @@ pub(crate) async fn create_completion(
                 req.temperature.unwrap_or(0.7),
                 req.top_p.unwrap_or(0.9),
             )
-        }).await.expect("semaphore closed");
+        })
+        .await
+        .expect("semaphore closed");
 
         match res {
             Ok((generated, completion_tokens)) => {
@@ -171,10 +192,19 @@ pub(crate) async fn create_chat_completion(
 ) -> Response {
     let entry = match state.get(&req.model).await {
         Some(e) => e,
-        None => return error_response(StatusCode::BAD_REQUEST, "Model not loaded", "model_not_found"),
+        None => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "Model not loaded",
+                "model_not_found",
+            )
+        }
     };
 
-    let prompt = entry.chat_template.apply(&req.messages).unwrap_or_else(|_| format_chat_messages(&req.messages));
+    let prompt = entry
+        .chat_template
+        .apply(&req.messages)
+        .unwrap_or_else(|_| format_chat_messages(&req.messages));
     let prompt_tokens = entry.tokenizer.encode(&prompt, true, false);
     let prompt_tokens_len = prompt_tokens.len();
 
@@ -184,12 +214,18 @@ pub(crate) async fn create_chat_completion(
         let req_clone = req.clone();
 
         tokio::spawn(async move {
-            let _permit = entry_clone.inference_sem.acquire().await.expect("semaphore closed");
+            let _permit = entry_clone
+                .inference_sem
+                .acquire()
+                .await
+                .expect("semaphore closed");
             let res = tokio::task::spawn_blocking(move || {
                 run_stream_inference(
                     &entry_clone.cpu_weights,
-                    #[cfg(feature = "gpu")] &entry_clone.gpu_weights,
-                    #[cfg(feature = "gpu")] &entry_clone.speculative_engine,
+                    #[cfg(feature = "gpu")]
+                    &entry_clone.gpu_weights,
+                    #[cfg(feature = "gpu")]
+                    &entry_clone.speculative_engine,
                     &entry_clone.model_path,
                     &entry_clone.config,
                     &entry_clone.tokenizer,
@@ -199,7 +235,8 @@ pub(crate) async fn create_chat_completion(
                     req_clone.top_p.unwrap_or(0.9),
                     tx,
                 )
-            }).await;
+            })
+            .await;
 
             if let Err(e) = res {
                 eprintln!("Inference task panicked: {:?}", e);
@@ -225,13 +262,19 @@ pub(crate) async fn create_chat_completion(
 
         Sse::new(stream).into_response()
     } else {
-        let _permit = entry.inference_sem.acquire().await.expect("semaphore closed");
+        let _permit = entry
+            .inference_sem
+            .acquire()
+            .await
+            .expect("semaphore closed");
         let entry_clone = entry.clone();
         let res = tokio::task::spawn_blocking(move || {
             run_sync_inference(
                 &entry_clone.cpu_weights,
-                #[cfg(feature = "gpu")] &entry_clone.gpu_weights,
-                #[cfg(feature = "gpu")] &entry_clone.speculative_engine,
+                #[cfg(feature = "gpu")]
+                &entry_clone.gpu_weights,
+                #[cfg(feature = "gpu")]
+                &entry_clone.speculative_engine,
                 &entry_clone.model_path,
                 &entry_clone.config,
                 &entry_clone.tokenizer,
@@ -240,7 +283,9 @@ pub(crate) async fn create_chat_completion(
                 req.temperature.unwrap_or(0.7),
                 req.top_p.unwrap_or(0.9),
             )
-        }).await.expect("semaphore closed");
+        })
+        .await
+        .expect("semaphore closed");
 
         match res {
             Ok((generated, completion_tokens)) => {
@@ -276,20 +321,35 @@ pub(crate) async fn create_messages(
 ) -> Response {
     let entry = match state.get(&req.model).await {
         Some(e) => e,
-        None => return error_response(StatusCode::BAD_REQUEST, "Model not loaded", "model_not_found"),
+        None => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "Model not loaded",
+                "model_not_found",
+            )
+        }
     };
 
-    let prompt = entry.chat_template.apply(&req.messages).unwrap_or_else(|_| format_chat_messages(&req.messages));
+    let prompt = entry
+        .chat_template
+        .apply(&req.messages)
+        .unwrap_or_else(|_| format_chat_messages(&req.messages));
     let prompt_tokens = entry.tokenizer.encode(&prompt, true, false);
     let prompt_tokens_len = prompt_tokens.len();
 
-    let _permit = entry.inference_sem.acquire().await.expect("semaphore closed");
+    let _permit = entry
+        .inference_sem
+        .acquire()
+        .await
+        .expect("semaphore closed");
     let entry_clone = entry.clone();
     let res = tokio::task::spawn_blocking(move || {
         run_sync_inference(
             &entry_clone.cpu_weights,
-            #[cfg(feature = "gpu")] &entry_clone.gpu_weights,
-            #[cfg(feature = "gpu")] &entry_clone.speculative_engine,
+            #[cfg(feature = "gpu")]
+            &entry_clone.gpu_weights,
+            #[cfg(feature = "gpu")]
+            &entry_clone.speculative_engine,
             &entry_clone.model_path,
             &entry_clone.config,
             &entry_clone.tokenizer,
@@ -298,7 +358,9 @@ pub(crate) async fn create_messages(
             req.temperature.unwrap_or(0.7),
             req.top_p.unwrap_or(0.9),
         )
-    }).await.expect("semaphore closed");
+    })
+    .await
+    .expect("semaphore closed");
 
     match res {
         Ok((generated, completion_tokens)) => {

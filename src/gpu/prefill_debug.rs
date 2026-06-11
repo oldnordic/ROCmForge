@@ -100,9 +100,7 @@ pub(crate) fn compute_layer0_cpu_reference(
             h,
             Some(&mut q8_scratch),
         )
-        .expect(
-            "M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path",
-        );
+        .expect("M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path");
         cpu_dispatch_gemv(
             &layer_weights.attn_k,
             &layer_weights.attn_k_meta,
@@ -112,9 +110,7 @@ pub(crate) fn compute_layer0_cpu_reference(
             h,
             Some(&mut q8_scratch),
         )
-        .expect(
-            "M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path",
-        );
+        .expect("M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path");
         cpu_dispatch_gemv(
             &layer_weights.attn_v,
             &layer_weights.attn_v_meta,
@@ -124,9 +120,7 @@ pub(crate) fn compute_layer0_cpu_reference(
             h,
             Some(&mut q8_scratch),
         )
-        .expect(
-            "M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path",
-        );
+        .expect("M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path");
 
         if let Some(bq) = &layer_weights.attn_q_bias {
             crate::cpu::ops::add_bias(&mut t_q, bq);
@@ -192,9 +186,7 @@ pub(crate) fn compute_layer0_cpu_reference(
             q_size,
             Some(&mut q8_scratch),
         )
-        .expect(
-            "M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path",
-        );
+        .expect("M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path");
         layer_out_attn[pos * h..(pos + 1) * h].copy_from_slice(&t_layer_out_attn);
 
         // 6. Attn Residual
@@ -224,9 +216,7 @@ pub(crate) fn compute_layer0_cpu_reference(
             h,
             Some(&mut q8_scratch),
         )
-        .expect(
-            "M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path",
-        );
+        .expect("M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path");
         cpu_dispatch_gemv(
             &layer_weights.ffn_up,
             &layer_weights.ffn_up_meta,
@@ -236,9 +226,7 @@ pub(crate) fn compute_layer0_cpu_reference(
             h,
             Some(&mut q8_scratch),
         )
-        .expect(
-            "M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path",
-        );
+        .expect("M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path");
         gate[pos * ff_size..(pos + 1) * ff_size].copy_from_slice(&t_gate);
 
         crate::cpu::ops::silu_fuse(&t_gate, &mut t_swiglu);
@@ -255,9 +243,7 @@ pub(crate) fn compute_layer0_cpu_reference(
             ff_size,
             Some(&mut q8_scratch),
         )
-        .expect(
-            "M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path",
-        );
+        .expect("M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path");
         layer_out_ffn[pos * h..(pos + 1) * h].copy_from_slice(&t_layer_out_ffn);
 
         // 10. FFN Residual

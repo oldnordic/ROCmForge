@@ -13,7 +13,7 @@ pub(crate) fn handle_server_cli(args: &Args) -> bool {
 
     #[cfg(feature = "server")]
     {
-        use rocmforge::api::server::{ModelEntry, ModelManager, create_router};
+        use rocmforge::api::server::{create_router, ModelEntry, ModelManager};
 
         let entry =
             ModelEntry::load(&args.model, args.draft_model.as_deref()).unwrap_or_else(|e| {
@@ -47,7 +47,7 @@ pub(crate) fn handle_server_cli(args: &Args) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Args, should_handle_server_cli};
+    use super::{should_handle_server_cli, Args};
 
     fn args() -> Args {
         Args {

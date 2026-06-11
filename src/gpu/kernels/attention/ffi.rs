@@ -1,5 +1,5 @@
-use std::os::raw::{c_float, c_int};
 use crate::gpu::ffi::{hipError_t, hipStream_t};
+use std::os::raw::{c_float, c_int};
 
 unsafe extern "C" {
     pub fn gpu_kv_write(

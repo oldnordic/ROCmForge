@@ -1,0 +1,31 @@
+title = "ROCmForge Gitleaks Config"
+
+[extend]
+# Use default gitleaks rules as base
+useDefault = true
+
+[allowlist]
+# Paths to ignore (build artifacts, not secrets)
+paths = [
+  '''target\/''',
+  '''\.git\/''',
+  '''\.cargo\/''',
+  '''Cargo\.lock$''',
+  '''\.cargo_vcs_info\.json$''',
+  '''\.mem$''',
+  '''\.gguf$''',
+]
+
+# Regexes for false-positive values to ignore
+# - Model config parameter names (e.g., qwen2.rope.dimension_count)
+# - Plain English technical terms (e.g., vertical/horizontal operations)
+regexes = [
+  '''qwen\d+\.rope\.dimension_count''',
+  '''vertical/horizontal''',
+  '''YOUR_''',
+  '''example''',
+  '''placeholder''',
+  '''dummy''',
+  '''test_key''',
+  '''fake_token''',
+]

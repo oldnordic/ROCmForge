@@ -1,3 +1,7 @@
+use super::super::utils::residual_add_inplace;
+use super::attention::gpu_attention_decode_from_state;
+use super::gpu_dispatch_moe_ffn_on_stream;
+use super::gpu_layer_forward_ssm_on_stream;
 use crate::config::ModelConfig;
 use crate::gpu::cache::{GpuForwardScratch, GpuKvCache};
 use crate::gpu::device::GpuDevice;
@@ -16,10 +20,6 @@ use crate::gpu::ops::{
     gpu_dispatch_gemv_with_fallback_on_stream, gpu_dispatch_rms_norm,
 };
 use crate::gpu::weights::GpuLayerWeights;
-use super::attention::gpu_attention_decode_from_state;
-use super::gpu_dispatch_moe_ffn_on_stream;
-use super::gpu_layer_forward_ssm_on_stream;
-use super::super::utils::residual_add_inplace;
 
 pub(in crate::gpu::forward) fn gpu_layer_forward_from_state_on_stream(
     device: &GpuDevice,

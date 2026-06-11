@@ -4,9 +4,7 @@ use super::cache::GpuPrefillScratch;
 use super::device::GpuDevice;
 use super::error::{GpuError, GpuResult};
 use super::kernels::{add_on_stream, mul_on_stream, rms_norm_batched, silu_on_stream};
-use super::ops::{
-    gpu_dispatch_fused_gate_up_on_stream, gpu_dispatch_gemv_with_fallback_on_stream,
-};
+use super::ops::{gpu_dispatch_fused_gate_up_on_stream, gpu_dispatch_gemv_with_fallback_on_stream};
 use super::ops_batched::{
     gpu_dispatch_batched_fused_gate_up_on_stream, gpu_dispatch_batched_gemv_batched,
 };

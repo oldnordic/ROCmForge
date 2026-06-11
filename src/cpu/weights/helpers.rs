@@ -1,5 +1,5 @@
-use crate::loader::{GgmlType, GgufFile, RfmType, TensorView};
 use super::meta::{WeightError, WeightMeta};
+use crate::loader::{GgmlType, GgufFile, RfmType, TensorView};
 
 /// Copy tensor bytes from the mmap into a Vec<u8>.
 pub(crate) fn copy_tensor(file: &GgufFile, name: &str) -> Result<Vec<u8>, WeightError> {
@@ -10,7 +10,10 @@ pub(crate) fn copy_tensor(file: &GgufFile, name: &str) -> Result<Vec<u8>, Weight
     Ok(t.data.to_vec())
 }
 
-pub(crate) fn copy_tensor_optional(file: &GgufFile, name: &str) -> Result<Option<Vec<u8>>, WeightError> {
+pub(crate) fn copy_tensor_optional(
+    file: &GgufFile,
+    name: &str,
+) -> Result<Option<Vec<u8>>, WeightError> {
     match file.tensor(name).map_err(WeightError::Load)? {
         None => Ok(None),
         Some(t) => Ok(Some(t.data.to_vec())),
@@ -65,12 +68,17 @@ pub(crate) fn rfm_type_to_ggml(rfm: &RfmType) -> GgmlType {
         RfmType::Q4Split => GgmlType::Q4_0,
         RfmType::Q4SvdQuant { .. } => GgmlType::Q4_0,
         RfmType::GgufPassthrough(t) => GgmlType::from_u32(*t).unwrap_or(GgmlType::F32),
-        RfmType::MoeExpertSvdSparse { .. } | RfmType::MoeExpertSvdFwhtSparse { .. } => GgmlType::F32,
+        RfmType::MoeExpertSvdSparse { .. } | RfmType::MoeExpertSvdFwhtSparse { .. } => {
+            GgmlType::F32
+        }
         _ => GgmlType::F32,
     }
 }
 
-pub(crate) fn rfm_weight_meta(t: &crate::loader::RfmTensorView<'_>, needs_transpose: bool) -> WeightMeta {
+pub(crate) fn rfm_weight_meta(
+    t: &crate::loader::RfmTensorView<'_>,
+    needs_transpose: bool,
+) -> WeightMeta {
     let mut meta = WeightMeta {
         wtype: rfm_type_to_ggml(&t.wtype),
         dims: t.dims.to_vec(),
@@ -96,16 +104,8 @@ pub(crate) fn unpack_q4_split(data: &[u8], element_count: usize) -> Vec<u8> {
         let block_out = unsafe { out.as_mut_ptr().add(i * 18) };
 
         unsafe {
-            std::ptr::copy_nonoverlapping(
-                &scale_f16 as *const u16 as *const u8,
-                block_out,
-                2,
-            );
-            std::ptr::copy_nonoverlapping(
-                rfm_quants_ptr.add(i * 16),
-                block_out.add(2),
-                16,
-            );
+            std::ptr::copy_nonoverlapping(&scale_f16 as *const u16 as *const u8, block_out, 2);
+            std::ptr::copy_nonoverlapping(rfm_quants_ptr.add(i * 16), block_out.add(2), 16);
         }
     }
     out
@@ -129,11 +129,7 @@ pub(crate) fn sparse_csr_to_dense_f32_bytes(
     }
     let mut bytes = vec![0u8; dense.len() * 4];
     unsafe {
-        std::ptr::copy_nonoverlapping(
-            dense.as_ptr() as *const u8,
-            bytes.as_mut_ptr(),
-            bytes.len(),
-        );
+        std::ptr::copy_nonoverlapping(dense.as_ptr() as *const u8, bytes.as_mut_ptr(), bytes.len());
     }
     bytes
 }

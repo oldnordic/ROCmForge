@@ -1,14 +1,14 @@
-use crate::config::{AttentionLayout, ModelConfig, TensorName};
-use crate::loader::{GgmlType, GgufFile, RfmFile, RfmType, TensorView};
-use super::meta::{WeightError, WeightMeta};
 use super::helpers::{
     copy_f32, copy_tensor, copy_tensor_optional, copy_tensor_with_meta, rfm_type_to_ggml,
     rfm_weight_meta, unpack_q4_split,
 };
+use super::meta::{WeightError, WeightMeta};
 use super::ssm::{
     load_qwen35_ssm_gguf, load_qwen35_ssm_rfm, qwen35_post_attention_norm_name, CpuSsmWeights,
 };
+use crate::config::{AttentionLayout, ModelConfig, TensorName};
 use crate::cpu::transpose::compute_transpose_flag;
+use crate::loader::{GgmlType, GgufFile, RfmFile, RfmType, TensorView};
 
 #[derive(Clone, Debug)]
 pub struct CpuLayerWeights {
@@ -43,22 +43,26 @@ pub struct CpuLayerWeights {
 
 impl CpuLayerWeights {
     /// Load layer weights from an open GGUF model file.
-    pub fn load(
-        file: &GgufFile,
-        layer: usize,
-        config: &ModelConfig,
-    ) -> Result<Self, WeightError> {
+    pub fn load(file: &GgufFile, layer: usize, config: &ModelConfig) -> Result<Self, WeightError> {
         let load_weight = |name_enum: TensorName| -> Result<(Vec<u8>, WeightMeta), WeightError> {
             let name = config.tensor_registry.resolve(name_enum, layer);
-            let t = file.tensor(&name).map_err(WeightError::Load)?.ok_or_else(|| WeightError::TensorNotFound(name.to_string()))?;
-            let needs_transpose = compute_transpose_flag(&name, t.dims, t.ggml_type, config, false, false);
+            let t = file
+                .tensor(&name)
+                .map_err(WeightError::Load)?
+                .ok_or_else(|| WeightError::TensorNotFound(name.to_string()))?;
+            let needs_transpose =
+                compute_transpose_flag(&name, t.dims, t.ggml_type, config, false, false);
             Ok((t.data.to_vec(), WeightMeta::from_view(&t, needs_transpose)))
         };
 
         let load_opt = |name: &str| -> Result<Option<(Vec<u8>, WeightMeta)>, WeightError> {
             if let Some(t) = file.tensor(name).map_err(WeightError::Load)? {
-                let needs_transpose = compute_transpose_flag(name, t.dims, t.ggml_type, config, false, false);
-                Ok(Some((t.data.to_vec(), WeightMeta::from_view(&t, needs_transpose))))
+                let needs_transpose =
+                    compute_transpose_flag(name, t.dims, t.ggml_type, config, false, false);
+                Ok(Some((
+                    t.data.to_vec(),
+                    WeightMeta::from_view(&t, needs_transpose),
+                )))
             } else {
                 Ok(None)
             }
@@ -141,30 +145,40 @@ impl CpuLayerWeights {
         layer: usize,
         config: &ModelConfig,
     ) -> Result<Self, WeightError> {
-        let load_rfm_weight =
-            |name: &str| -> Result<(Vec<u8>, WeightMeta), WeightError> {
-                let t = file
-                    .tensor(name)
-                    .map_err(WeightError::Load)?
-                    .ok_or_else(|| WeightError::TensorNotFound(name.to_string()))?;
+        let load_rfm_weight = |name: &str| -> Result<(Vec<u8>, WeightMeta), WeightError> {
+            let t = file
+                .tensor(name)
+                .map_err(WeightError::Load)?
+                .ok_or_else(|| WeightError::TensorNotFound(name.to_string()))?;
 
-                let data = match t.wtype {
-                    RfmType::F32 | RfmType::Mq4 | RfmType::Mq6 => t.data.to_vec(),
-                    RfmType::Q4Split | RfmType::Q4SvdQuant { .. } => {
-                        unpack_q4_split(t.data, t.element_count())
-                    }
-                    RfmType::GgufPassthrough(_) => t.data.to_vec(),
-                    RfmType::MoeExpertSvdSparse { rows, cols, .. }
-                    | RfmType::MoeExpertSvdFwhtSparse { rows, cols, .. } => {
-                        vec![0u8; (rows * cols) as usize * 4]
-                    }
-                    _ => return Err(WeightError::Load(crate::loader::LoadError::UnknownTensorType(999))),
-                };
-
-                let needs_transpose = compute_transpose_flag(t.name, t.dims, rfm_type_to_ggml(&t.wtype), config, false, false);
-                let meta = rfm_weight_meta(&t, needs_transpose);
-                Ok((data, meta))
+            let data = match t.wtype {
+                RfmType::F32 | RfmType::Mq4 | RfmType::Mq6 => t.data.to_vec(),
+                RfmType::Q4Split | RfmType::Q4SvdQuant { .. } => {
+                    unpack_q4_split(t.data, t.element_count())
+                }
+                RfmType::GgufPassthrough(_) => t.data.to_vec(),
+                RfmType::MoeExpertSvdSparse { rows, cols, .. }
+                | RfmType::MoeExpertSvdFwhtSparse { rows, cols, .. } => {
+                    vec![0u8; (rows * cols) as usize * 4]
+                }
+                _ => {
+                    return Err(WeightError::Load(
+                        crate::loader::LoadError::UnknownTensorType(999),
+                    ))
+                }
             };
+
+            let needs_transpose = compute_transpose_flag(
+                t.name,
+                t.dims,
+                rfm_type_to_ggml(&t.wtype),
+                config,
+                false,
+                false,
+            );
+            let meta = rfm_weight_meta(&t, needs_transpose);
+            Ok((data, meta))
+        };
 
         let load_rfm_opt = |name: &str| -> Result<Option<(Vec<u8>, WeightMeta)>, WeightError> {
             if file.tensor(name).map_err(WeightError::Load)?.is_some() {
@@ -184,11 +198,17 @@ impl CpuLayerWeights {
                     let n = t.data.len() / 4;
                     let mut out = vec![0.0f32; n];
                     unsafe {
-                        std::ptr::copy_nonoverlapping(t.data.as_ptr() as *const f32, out.as_mut_ptr(), n);
+                        std::ptr::copy_nonoverlapping(
+                            t.data.as_ptr() as *const f32,
+                            out.as_mut_ptr(),
+                            n,
+                        );
                     }
                     Ok(out)
                 }
-                _ => Err(WeightError::Load(crate::loader::LoadError::UnknownTensorType(0))),
+                _ => Err(WeightError::Load(
+                    crate::loader::LoadError::UnknownTensorType(0),
+                )),
             }
         };
 
@@ -201,14 +221,24 @@ impl CpuLayerWeights {
             }
         };
 
-        let (attn_q, attn_q_meta) = load_rfm_weight(&config.tensor_registry.resolve(TensorName::AttnQ, layer))?;
-        let (attn_k, attn_k_meta) = load_rfm_weight(&config.tensor_registry.resolve(TensorName::AttnK, layer))?;
-        let (attn_v, attn_v_meta) = load_rfm_weight(&config.tensor_registry.resolve(TensorName::AttnV, layer))?;
-        let (attn_o, attn_o_meta) = load_rfm_weight(&config.tensor_registry.resolve(TensorName::AttnOutput, layer))?;
+        let (attn_q, attn_q_meta) =
+            load_rfm_weight(&config.tensor_registry.resolve(TensorName::AttnQ, layer))?;
+        let (attn_k, attn_k_meta) =
+            load_rfm_weight(&config.tensor_registry.resolve(TensorName::AttnK, layer))?;
+        let (attn_v, attn_v_meta) =
+            load_rfm_weight(&config.tensor_registry.resolve(TensorName::AttnV, layer))?;
+        let (attn_o, attn_o_meta) = load_rfm_weight(
+            &config
+                .tensor_registry
+                .resolve(TensorName::AttnOutput, layer),
+        )?;
 
-        let (ffn_gate, ffn_gate_meta) = load_rfm_weight(&config.tensor_registry.resolve(TensorName::FfnGate, layer))?;
-        let (ffn_up, ffn_up_meta) = load_rfm_weight(&config.tensor_registry.resolve(TensorName::FfnUp, layer))?;
-        let (ffn_down, ffn_down_meta) = load_rfm_weight(&config.tensor_registry.resolve(TensorName::FfnDown, layer))?;
+        let (ffn_gate, ffn_gate_meta) =
+            load_rfm_weight(&config.tensor_registry.resolve(TensorName::FfnGate, layer))?;
+        let (ffn_up, ffn_up_meta) =
+            load_rfm_weight(&config.tensor_registry.resolve(TensorName::FfnUp, layer))?;
+        let (ffn_down, ffn_down_meta) =
+            load_rfm_weight(&config.tensor_registry.resolve(TensorName::FfnDown, layer))?;
 
         let weight_type = attn_q_meta.wtype;
 

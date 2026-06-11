@@ -1,7 +1,7 @@
-use std::os::raw::c_int;
+use super::ffi::*;
 use crate::gpu::error::{GpuError, GpuResult};
 use crate::gpu::ffi::{hipError_t, hipStream_t};
-use super::ffi::*;
+use std::os::raw::c_int;
 
 pub fn flash_attn_decode_strided_multi_head(
     d_out: *mut f32,
@@ -135,7 +135,9 @@ pub fn flash_attn_decode(
     head_dim: usize,
     scale: f32,
 ) -> GpuResult<()> {
-    flash_attn_decode_strided(d_out, d_q, d_k_cache, d_v_cache, seq_len, head_dim, head_dim, head_dim, scale)
+    flash_attn_decode_strided(
+        d_out, d_q, d_k_cache, d_v_cache, seq_len, head_dim, head_dim, head_dim, scale,
+    )
 }
 
 pub fn flash_attn_decode_strided(

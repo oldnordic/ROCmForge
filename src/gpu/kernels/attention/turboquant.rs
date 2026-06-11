@@ -1,7 +1,7 @@
-use std::os::raw::c_int;
+use super::ffi::*;
 use crate::gpu::error::{GpuError, GpuResult};
 use crate::gpu::ffi::{hipError_t, hipStream_t};
-use super::ffi::*;
+use std::os::raw::c_int;
 
 pub fn kv_write_compressed(
     k_cache: *mut f32,
