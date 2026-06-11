@@ -7,7 +7,6 @@ use crate::config::{detect_chat_template, ChatTemplate, ModelConfig};
 use crate::cpu::weights::CpuModelWeights;
 use crate::loader::{GgufFile, RfmFile};
 use crate::tokenizer::BpeTokenizer;
-use std::path::Path;
 
 pub enum ModelFile {
     Gguf(GgufFile),

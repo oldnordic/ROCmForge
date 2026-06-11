@@ -77,7 +77,7 @@ pub fn flash_attn_prefill(
     k: &[f32],
     v: &[f32],
     out: &mut [f32],
-    seq_len: usize,
+    _seq_len: usize,
     num_heads: usize,
     num_kv_heads: usize,
     head_dim: usize,

@@ -11,7 +11,7 @@ use super::ops::{
     add_bias_batched, dispatch_gemm, dispatch_gemv, flash_attn_prefill, rms_norm, silu_fuse,
 };
 use super::quant::{
-    embed_f32_batch, embed_q2_k_batch, embed_q3_k_batch, embed_q4_0_batch, embed_q4_1_batch,
+    embed_f32_batch, embed_q2_k_batch, embed_q3_k_batch, embed_q4_0_batch,
     embed_q4_k_batch, embed_q5_0_batch, embed_q5_k_batch, embed_q6_k_batch, embed_q8_0_batch,
 };
 use super::weights::{CpuLayerWeights, CpuModelWeights};
@@ -56,8 +56,6 @@ struct CpuPrefillScratch {
     gate: Vec<f32>,
     /// FFN SwiGLU [batch_len * intermediate_size]
     swiglu: Vec<f32>,
-    /// Q8_0 scratch buffer for GEMV quantization
-    q8_scratch: Vec<u8>,
 }
 
 impl CpuPrefillScratch {
@@ -67,12 +65,6 @@ impl CpuPrefillScratch {
         let q = config.num_heads * config.head_dim;
         let kv = config.num_kv_heads * config.head_dim;
         let ff = config.intermediate_size;
-
-        // Q8_0 scratch buffer sized for largest GEMV in_dim
-        use super::quant::Q8_BLOCK_BYTES;
-        use super::quant::Q8_BLOCK_ELEMS;
-        let num_blocks = h.max(ff) / Q8_BLOCK_ELEMS;
-        let q8_scratch = vec![0u8; num_blocks * Q8_BLOCK_BYTES];
 
         Self {
             hidden: vec![0.0; n * h],
@@ -84,106 +76,6 @@ impl CpuPrefillScratch {
             layer_out: vec![0.0; n * h],
             gate: vec![0.0; n * ff],
             swiglu: vec![0.0; n * ff],
-            q8_scratch,
-        }
-    }
-}
-
-// ── CpuParallelPrefillScratch ───────────────────────────────────────────────
-
-/// Scratch buffers for parallel batched prefill.
-///
-/// Each thread gets its own set of buffers to avoid contention.
-/// All buffers are sized for [sub_batch_len, dim] layout where
-/// sub_batch_len = batch_len / num_cores.
-struct CpuParallelPrefillScratch {
-    /// Per-thread hidden states [num_threads][sub_batch_len * hidden_size]
-    per_thread_hidden: Vec<Vec<f32>>,
-    /// Per-thread normalized hidden [num_threads][sub_batch_len * hidden_size]
-    per_thread_normed: Vec<Vec<f32>>,
-    /// Per-thread query [num_threads][sub_batch_len * q_size]
-    per_thread_q: Vec<Vec<f32>>,
-    /// Per-thread key [num_threads][sub_batch_len * kv_size]
-    per_thread_k: Vec<Vec<f32>>,
-    /// Per-thread value [num_threads][sub_batch_len * kv_size]
-    per_thread_v: Vec<Vec<f32>>,
-    /// Per-thread attention output [num_threads][sub_batch_len * q_size]
-    per_thread_attn_out: Vec<Vec<f32>>,
-    /// Per-thread layer output [num_threads][sub_batch_len * hidden_size]
-    per_thread_layer_out: Vec<Vec<f32>>,
-    /// Per-thread FFN gate [num_threads][sub_batch_len * intermediate_size]
-    per_thread_gate: Vec<Vec<f32>>,
-    /// Per-thread FFN SwiGLU [num_threads][sub_batch_len * intermediate_size]
-    per_thread_swiglu: Vec<Vec<f32>>,
-    /// Per-thread Q8_0 scratch buffers for GEMV quantization
-    per_thread_q8_scratch: Vec<Vec<u8>>,
-    /// Number of threads (should be num_cores)
-    num_threads: usize,
-}
-
-impl CpuParallelPrefillScratch {
-    fn new(config: &ModelConfig, num_threads: usize) -> Self {
-        let h = config.hidden_size;
-        let q = config.num_heads * config.head_dim;
-        let kv = config.num_kv_heads * config.head_dim;
-        let ff = config.intermediate_size;
-
-        // All threads get same sub-batch size
-        let sub_batch_len = 1; // Will be set dynamically per batch
-        let n = sub_batch_len;
-
-        // Q8_0 scratch buffer size for largest GEMV in_dim
-        use super::quant::Q8_BLOCK_BYTES;
-        use super::quant::Q8_BLOCK_ELEMS;
-        let num_blocks = h.max(ff) / Q8_BLOCK_ELEMS;
-        let q8_scratch_size = num_blocks * Q8_BLOCK_BYTES;
-
-        Self {
-            per_thread_hidden: (0..num_threads).map(|_| vec![0.0; n * h]).collect(),
-            per_thread_normed: (0..num_threads).map(|_| vec![0.0; n * h]).collect(),
-            per_thread_q: (0..num_threads).map(|_| vec![0.0; n * q]).collect(),
-            per_thread_k: (0..num_threads).map(|_| vec![0.0; n * kv]).collect(),
-            per_thread_v: (0..num_threads).map(|_| vec![0.0; n * kv]).collect(),
-            per_thread_attn_out: (0..num_threads).map(|_| vec![0.0; n * q]).collect(),
-            per_thread_layer_out: (0..num_threads).map(|_| vec![0.0; n * h]).collect(),
-            per_thread_gate: (0..num_threads).map(|_| vec![0.0; n * ff]).collect(),
-            per_thread_swiglu: (0..num_threads).map(|_| vec![0.0; n * ff]).collect(),
-            per_thread_q8_scratch: (0..num_threads)
-                .map(|_| vec![0u8; q8_scratch_size])
-                .collect(),
-            num_threads,
-        }
-    }
-
-    /// Resize all per-thread buffers for a specific sub-batch length.
-    fn resize_for_batch(&mut self, sub_batch_len: usize, config: &ModelConfig) {
-        let h = config.hidden_size;
-        let q = config.num_heads * config.head_dim;
-        let kv = config.num_kv_heads * config.head_dim;
-        let ff = config.intermediate_size;
-
-        // Q8_0 scratch buffer size for largest GEMV in_dim
-        use super::quant::Q8_BLOCK_BYTES;
-        use super::quant::Q8_BLOCK_ELEMS;
-        let num_blocks = h.max(ff) / Q8_BLOCK_ELEMS;
-        let q8_scratch_size = num_blocks * Q8_BLOCK_BYTES;
-
-        for i in 0..self.num_threads {
-            if self.per_thread_hidden[i].len() != sub_batch_len * h {
-                self.per_thread_hidden[i] = vec![0.0; sub_batch_len * h];
-                self.per_thread_normed[i] = vec![0.0; sub_batch_len * h];
-                self.per_thread_q[i] = vec![0.0; sub_batch_len * q];
-                self.per_thread_k[i] = vec![0.0; sub_batch_len * kv];
-                self.per_thread_v[i] = vec![0.0; sub_batch_len * kv];
-                self.per_thread_attn_out[i] = vec![0.0; sub_batch_len * q];
-                self.per_thread_layer_out[i] = vec![0.0; sub_batch_len * h];
-                self.per_thread_gate[i] = vec![0.0; sub_batch_len * ff];
-                self.per_thread_swiglu[i] = vec![0.0; sub_batch_len * ff];
-                // Q8_0 scratch buffer size is fixed, only need to ensure it exists
-                if self.per_thread_q8_scratch[i].len() != q8_scratch_size {
-                    self.per_thread_q8_scratch[i] = vec![0u8; q8_scratch_size];
-                }
-            }
         }
     }
 }
@@ -553,7 +445,7 @@ pub fn cpu_prefill_forward_parallel(
 
     let h = config.hidden_size;
     let batch_size = batch_config.max_tokens_per_batch;
-    let num_cores = batch_config.num_cores;
+    let _num_cores = batch_config.num_cores;
 
     // Calculate batch start positions
     let batch_starts: Vec<usize> = (0..seq_len).step_by(batch_size).collect();

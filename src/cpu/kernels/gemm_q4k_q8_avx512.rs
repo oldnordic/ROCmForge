@@ -162,13 +162,13 @@ pub unsafe fn dot_q4_k_q8_k_block_avx512(q4_block: &BlockQ4K, q8_block: &BlockQ8
 
         // AVX-512 VNNI: multiply-accumulate bytes to 32-bit directly
         // dpbusd_epi32 produces 8 results, each = sum of 4 consecutive products
-        let p32l = _mm256_dpbusd_epi32(_mm256_setzero_si256(), q4l, q8l);
+        let _p32l = _mm256_dpbusd_epi32(_mm256_setzero_si256(), q4l, q8l);
 
         // Load Q8_K values for high nibbles (32 bytes)
         let q8h = _mm256_loadu_si256(q8_ptr as *const __m256i);
         q8_ptr = q8_ptr.add(32);
 
-        let p32h = _mm256_dpbusd_epi32(_mm256_setzero_si256(), q4h, q8h);
+        let _p32h = _mm256_dpbusd_epi32(_mm256_setzero_si256(), q4h, q8h);
 
         // Get scale vectors for this group
         let scale_l = _mm256_shuffle_epi8(scales, super::gemm_q4k_q8::get_scale_shuffle_k4(2 * j));
@@ -224,7 +224,7 @@ pub unsafe fn dot_q4_k_q8_k_block_avx512(q4_block: &BlockQ4K, q8_block: &BlockQ8
 /// Caller must ensure AVX-512 VNNI is available.
 #[cfg(target_arch = "x86_64")]
 pub fn gemv_q4_k_q8_k_avx512(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
-    let seq_len = x.len() / in_dim;
+    let _seq_len = x.len() / in_dim;
 
     y.par_chunks_mut(out_dim)
         .enumerate()

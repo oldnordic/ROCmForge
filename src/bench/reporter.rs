@@ -3,7 +3,6 @@
 //! Aggregates Criterion benchmark results and real model benchmarks
 //! into publication-ready markdown reports.
 
-use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
@@ -80,8 +79,8 @@ struct CriterionData {
 }
 
 fn parse_criterion_json(
-    criterion_dir: &Path,
-    benchmark_name: &str,
+    _criterion_dir: &Path,
+    _benchmark_name: &str,
 ) -> Result<Vec<CriterionData>, String> {
     // NOTE: This is a simplified implementation that returns placeholder data.
     // A complete implementation would parse target/criterion/<benchmark_name>/<variant>/estimates.json
@@ -94,7 +93,7 @@ fn parse_criterion_json(
     }])
 }
 
-fn render_kernel_comparison(markdown: &mut String, data: &[CriterionData], include_graphs: bool) {
+fn render_kernel_comparison(markdown: &mut String, data: &[CriterionData], _include_graphs: bool) {
     for entry in data {
         markdown.push_str(&format!(
             "| AVX2 | {:.3} ms | {:.2}x speedup |\n",
@@ -116,7 +115,7 @@ struct RealModelResult {
     tok_per_sec: f64,
 }
 
-fn parse_real_model_results(dir: &Path) -> Result<Vec<RealModelResult>, String> {
+fn parse_real_model_results(_dir: &Path) -> Result<Vec<RealModelResult>, String> {
     // Parse markdown files for key-value pairs
     // This is a simplified version
     Ok(vec![RealModelResult {
@@ -144,7 +143,7 @@ fn get_git_commit() -> String {
 ///
 /// NOTE: Initial implementation uses hardcoded data. Full implementation would
 /// parse Criterion JSON results and aggregate real measurements.
-pub fn export_csv(criterion_dir: &Path, output_path: &Path) -> Result<(), String> {
+pub fn export_csv(_criterion_dir: &Path, output_path: &Path) -> Result<(), String> {
     let mut csv = String::new();
     csv.push_str("timestamp,benchmark_name,kernel_type,quantization,operation,dimension,throughput_ms,speedup_vs_baseline,git_commit\n");
 

@@ -66,7 +66,7 @@ pub fn needs_transposition(
 pub fn compute_transpose_flag(
     weight_name: &str,
     actual_dims: &[u64],
-    wtype: crate::loader::GgmlType,
+    _wtype: crate::loader::GgmlType,
     config: &ModelConfig,
     is_lm_head: bool,
     is_tied: bool,

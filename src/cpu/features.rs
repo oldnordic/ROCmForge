@@ -122,7 +122,7 @@ impl CpuFeatures {
 
     #[cfg(target_arch = "x86_64")]
     fn detect_x86_64() -> Self {
-        let cpuid = unsafe { __cpuid(0x00000001) };
+        let cpuid = __cpuid(0x00000001);
 
         let has_sse2 = cpuid.edx & (1 << 26) != 0;
         let has_sse3 = cpuid.ecx & (1 << 0) != 0;
@@ -131,7 +131,7 @@ impl CpuFeatures {
 
         // Get CPU vendor using CPUID 0x0
         // Returns vendor string in EBX, EDX, ECX (note the order!)
-        let vendor_info = unsafe { __cpuid(0x00000000) };
+        let vendor_info = __cpuid(0x00000000);
         let is_intel = vendor_info.ebx == 0x756e6547 // "Genu"
             && vendor_info.edx == 0x49656e69 // "ineI"
             && vendor_info.ecx == 0x6c65746e; // "ntel"
@@ -140,7 +140,7 @@ impl CpuFeatures {
         let has_avx = cpuid.ecx & (1 << 28) != 0 && Self::is_xgetbv_enabled();
 
         // AVX2 detection (CPUID 0x00000007, subleaf 0)
-        let cpuid_avx2 = unsafe { __cpuid_count(0x00000007, 0) };
+        let cpuid_avx2 = __cpuid_count(0x00000007, 0);
         let has_avx2 = has_avx && (cpuid_avx2.ebx & (1 << 5) != 0);
 
         // AVX-VNNI variants detection (CPUID 0x00000007, subleaf 0, ECX bits)

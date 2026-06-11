@@ -9,7 +9,7 @@ use std::arch::x86_64::*;
 use half::f16;
 use rayon::prelude::*;
 
-use crate::cpu::quant::{Q5_0_BLOCK_BYTES, Q5_0_BLOCK_ELEMS, Q8_BLOCK_BYTES, Q8_BLOCK_ELEMS};
+use crate::cpu::quant::Q8_BLOCK_BYTES;
 
 /// Q5_0 block structure (22 bytes for 32 weights).
 #[repr(C, align(16))]
@@ -26,38 +26,6 @@ pub struct BlockQ5_0 {
 impl BlockQ5_0 {
     pub const SIZE: usize = 2 + 4 + 16; // 22 bytes
     pub const N_WEIGHTS: usize = 32;
-}
-
-#[cfg(target_arch = "x86_64")]
-#[inline(always)]
-unsafe fn bytes_from_nibbles_32(nibbles: &[u8; 16]) -> __m256i {
-    // Convert 16 nibble bytes to 32 int8 bytes by expanding each nibble to a byte
-    // Each nibble is stored with offset 8 (to make it signed)
-    let mut result = [0i8; 32];
-
-    for i in 0..16 {
-        result[i * 2] = ((nibbles[i] & 0x0F) as i8).wrapping_sub(8);
-        result[i * 2 + 1] = (((nibbles[i] >> 4) & 0x0F) as i8).wrapping_sub(8);
-    }
-
-    _mm256_loadu_si256(result.as_ptr() as *const __m256i)
-}
-
-#[cfg(target_arch = "x86_64")]
-#[inline(always)]
-unsafe fn bytes_from_bits_32(bits: &[u8; 4]) -> __m256i {
-    // Expand 4 bytes to 32 bytes: each bit becomes a byte with value 0 or 16
-    let mut result = [0i8; 32];
-
-    for byte_idx in 0..4 {
-        let byte = bits[byte_idx];
-        for bit_idx in 0..8 {
-            let val = if (byte >> bit_idx) & 1 == 1 { 16_i8 } else { 0 };
-            result[byte_idx * 8 + bit_idx] = val;
-        }
-    }
-
-    _mm256_loadu_si256(result.as_ptr() as *const __m256i)
 }
 
 /// Multiply and sum pairs of int8 values, returning f32.
@@ -133,7 +101,7 @@ pub unsafe fn dot_q5_0_q8_0_block_avx2(
 /// # Safety
 /// Caller must ensure AVX2 and FMA are available.
 #[cfg(target_arch = "x86_64")]
-pub fn gemv_q5_0_q8_0_avx2(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+pub fn gemv_q5_0_q8_0_avx2(w: &[u8], x: &[f32], y: &mut [f32], _out_dim: usize, in_dim: usize) {
     assert!(
         in_dim.is_multiple_of(32),
         "in_dim must be multiple of 32 for Q5_0"

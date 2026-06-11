@@ -1,6 +1,6 @@
 use crate::loader::{GgufFile, LoadError};
 
-use super::tensor_names::{TensorNameRegistry, TensorNamingScheme};
+use super::tensor_names::TensorNameRegistry;
 use super::traits::{AttentionLayout, ModelTraits, RopeStyle};
 
 /// All hyperparameters needed to run inference.
@@ -234,6 +234,7 @@ impl From<LoadError> for ConfigError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::tensor_names::TensorNamingScheme;
 
     #[test]
     fn validation_rejects_zero_layers() {

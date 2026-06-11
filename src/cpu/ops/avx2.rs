@@ -1,7 +1,6 @@
 //! AVX2 intrinsics and scalar dot-product helpers.
 
-use crate::cpu::features::CpuFeatures;
-use crate::cpu::quant::{Q4_BLOCK_ELEMS, Q8_BLOCK_ELEMS};
+use crate::cpu::quant::Q8_BLOCK_ELEMS;
 
 // ── AVX2 kernels ─────────────────────────────────────────────────────────────
 

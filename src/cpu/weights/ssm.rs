@@ -1,9 +1,9 @@
 use super::helpers::{
-    copy_f32, copy_f32_from_bytes, copy_tensor_with_meta, rfm_type_to_ggml, rfm_weight_meta,
+    copy_f32, copy_f32_from_bytes, rfm_weight_meta,
 };
 use super::meta::{WeightError, WeightMeta};
-use crate::config::{ModelConfig, TensorNamingScheme};
-use crate::loader::{GgmlType, GgufFile, LoadError, RfmFile, RfmType};
+use crate::config::ModelConfig;
+use crate::loader::{GgufFile, LoadError, RfmFile, RfmType};
 
 #[derive(Clone, Debug)]
 pub struct CpuSsmWeights {

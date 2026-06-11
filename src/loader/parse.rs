@@ -7,7 +7,7 @@ use crate::loader::error::LoadError;
 use crate::loader::ggml_type::GgmlType;
 use crate::loader::metadata::GgufMetadata;
 use std::collections::HashMap;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek};
 
 // GGUF constants
 const MAGIC: &[u8; 4] = b"GGUF";

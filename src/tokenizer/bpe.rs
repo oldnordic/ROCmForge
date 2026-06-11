@@ -72,7 +72,6 @@ pub struct BpeTokenizer {
     token_to_id: HashMap<BytesKey, u32>,
     merges: HashMap<(BytesKey, BytesKey), BpeRank>,
     special_tokens: HashSet<u32>,
-    pre_type: PreTokenizerType,
     bos_id: Option<u32>,
     eos_id: Option<u32>,
     unk_id: Option<u32>,
@@ -85,12 +84,6 @@ pub struct BpeTokenizer {
 impl BpeTokenizer {
     /// Build from GGUF tokenizer arrays.
     pub fn from_gguf(data: &crate::loader::TokenizerData) -> Self {
-        // Determine pre-tokenizer type
-        let pre_type = match data.pre.as_deref() {
-            Some("qwen2") => PreTokenizerType::Qwen2,
-            _ => PreTokenizerType::Qwen2, // Default to Qwen2 for rocmforge
-        };
-
         Self::new(
             data.tokens.clone(),
             data.merges.clone(),
@@ -99,18 +92,11 @@ impl BpeTokenizer {
             data.unk_token_id,
             data.add_bos,
             data.add_eos,
-            pre_type,
         )
     }
 
     /// Build from RFM metadata.
     pub fn from_rfm(data: &crate::loader::RfmMetadata) -> Self {
-        // Determine pre-tokenizer type
-        let pre_type = match data.tokenizer_pre.as_deref() {
-            Some("qwen2") => PreTokenizerType::Qwen2,
-            _ => PreTokenizerType::Qwen2, // Default to Qwen2 for rocmforge
-        };
-
         Self::new(
             data.tokens.clone(),
             data.merges.clone(),
@@ -119,7 +105,6 @@ impl BpeTokenizer {
             data.unk_token_id,
             data.add_bos,
             data.add_eos,
-            pre_type,
         )
     }
 
@@ -131,7 +116,6 @@ impl BpeTokenizer {
         unk: Option<u32>,
         add_bos: bool,
         add_eos: bool,
-        pre_type: PreTokenizerType,
     ) -> Self {
         let mut token_to_id = HashMap::with_capacity(vocab.len());
         let mut special_tokens = HashSet::new();
@@ -161,7 +145,6 @@ impl BpeTokenizer {
             token_to_id,
             merges: merge_map,
             special_tokens,
-            pre_type,
             bos_id: bos,
             eos_id: eos,
             unk_id: unk,
@@ -583,7 +566,6 @@ mod tests {
             None,
             false,
             false,
-            PreTokenizerType::Qwen2,
         )
     }
 

@@ -68,7 +68,7 @@ pub fn dot_q4_k_q8_k_block_scalar(q4_block: &BlockQ4K, q8_block: &BlockQ8K) -> f
     let mut aux_ptr = 0;
     let mut scale_idx = 0;
 
-    for j in 0..8 {
+    for _j in 0..8 {
         let mut aux32 = [0i32; 8];
 
         // Get scale for this sub-block
@@ -175,7 +175,7 @@ pub fn gemv_q4_k_q8_k(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim
 /// * `m` - Batch size
 /// * `n` - Output dimension (out_dim)
 /// * `k` - Inner dimension (in_dim)
-pub fn gemm_q4_k_q8_k(w: &[u8], x: &[f32], y: &mut [f32], m: usize, n: usize, k: usize) {
+pub fn gemm_q4_k_q8_k(w: &[u8], x: &[f32], y: &mut [f32], _m: usize, n: usize, k: usize) {
     assert!(k.is_multiple_of(256), "k must be multiple of QK_K=256");
 
     let num_blocks_k = k / 256;

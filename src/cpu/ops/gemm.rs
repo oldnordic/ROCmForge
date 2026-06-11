@@ -667,7 +667,7 @@ pub fn gemm_q4_0_transposed_gemm(
 ) {
     let num_blocks_per_col = in_dim / Q4_BLOCK_ELEMS;
     let col_bytes = num_blocks_per_col * Q4_BLOCK_BYTES;
-    let seq_len = x.len() / in_dim;
+    let _seq_len = x.len() / in_dim;
 
     // For each output dimension (column in original matrix)
     for o in 0..out_dim {
@@ -710,7 +710,7 @@ pub fn gemm_q4_1_transposed_gemm(
 ) {
     let num_blocks_per_col = in_dim / Q4_1_BLOCK_ELEMS;
     let col_bytes = num_blocks_per_col * Q4_1_BLOCK_BYTES;
-    let seq_len = x.len() / in_dim;
+    let _seq_len = x.len() / in_dim;
 
     // For each output dimension (column in original matrix)
     for o in 0..out_dim {
@@ -835,7 +835,7 @@ pub fn gemm_q8_0_transposed_gemm(
 
 /// F32 GEMM transposed.
 fn gemm_f32_transposed(w: &[f32], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
-    let seq_len = x.len() / in_dim;
+    let _seq_len = x.len() / in_dim;
 
     // For each output dimension (column in original matrix)
     for o in 0..out_dim {
@@ -896,7 +896,7 @@ fn gemm_f16_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_di
 ///
 /// For transposed access, computes Y = W^T * X where W is stored as [in_dim, out_dim].
 /// Uses dequantization-on-the-fly for simplicity (slower but correct).
-fn gemm_q4_k_transposed_fallback(w: &[u8], x: &[f32], y: &mut [f32], m: usize, n: usize, k: usize) {
+fn gemm_q4_k_transposed_fallback(w: &[u8], x: &[f32], y: &mut [f32], _m: usize, n: usize, k: usize) {
     use crate::cpu::kernels::q4::BlockQ4K;
 
     let num_blocks_k = k / 256;

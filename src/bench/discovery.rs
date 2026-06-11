@@ -4,7 +4,7 @@
 //! environment variables and command-line overrides.
 
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Default model search locations in priority order.
 const DEFAULT_MODEL_PATHS: &[&str] = &["/home/feanor/Projects/Memoria/models", "./models"];

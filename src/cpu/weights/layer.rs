@@ -1,14 +1,14 @@
 use super::helpers::{
-    copy_f32, copy_tensor, copy_tensor_optional, copy_tensor_with_meta, rfm_type_to_ggml,
+    copy_f32, rfm_type_to_ggml,
     rfm_weight_meta, unpack_q4_split,
 };
 use super::meta::{WeightError, WeightMeta};
 use super::ssm::{
     load_qwen35_ssm_gguf, load_qwen35_ssm_rfm, qwen35_post_attention_norm_name, CpuSsmWeights,
 };
-use crate::config::{AttentionLayout, ModelConfig, TensorName};
+use crate::config::{ModelConfig, TensorName};
 use crate::cpu::transpose::compute_transpose_flag;
-use crate::loader::{GgmlType, GgufFile, RfmFile, RfmType, TensorView};
+use crate::loader::{GgmlType, GgufFile, RfmFile, RfmType};
 
 #[derive(Clone, Debug)]
 pub struct CpuLayerWeights {

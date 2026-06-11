@@ -243,7 +243,7 @@ pub fn gemv_q4_k_q8_k_avx2(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, i
 /// # Safety
 /// Caller must ensure AVX2 and FMA are available.
 #[cfg(target_arch = "x86_64")]
-pub fn gemm_q4_k_q8_k_avx2(w: &[u8], x: &[f32], y: &mut [f32], m: usize, n: usize, k: usize) {
+pub fn gemm_q4_k_q8_k_avx2(w: &[u8], x: &[f32], y: &mut [f32], _m: usize, n: usize, k: usize) {
     assert!(k.is_multiple_of(256), "k must be multiple of QK_K=256");
 
     let num_blocks_k = k / 256;

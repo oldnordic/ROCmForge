@@ -24,7 +24,7 @@ impl SimdFeatures {
         #[cfg(target_arch = "x86_64")]
         {
             use std::arch::x86_64::*;
-            let cpuid_avx2 = unsafe { __cpuid_count(0x00000007, 0) };
+            let cpuid_avx2 = __cpuid_count(0x00000007, 0);
             let has_avx = unsafe { _xgetbv(0) } & 0x6 == 0x6;
             let has_avx2 = has_avx && (cpuid_avx2.ebx & (1 << 5) != 0);
             let has_avx512 = has_avx2 && (cpuid_avx2.ebx & (1 << 16) != 0);

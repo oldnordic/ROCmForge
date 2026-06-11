@@ -131,7 +131,7 @@ pub fn gemv_q4_0_q8_0(
     w: &[u8],
     x: &[f32],
     y: &mut [f32],
-    out_dim: usize,
+    _out_dim: usize,
     in_dim: usize,
     scratch: Option<&mut [u8]>,
 ) {
@@ -399,7 +399,7 @@ pub fn gemv_q5_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
 }
 
 /// Q8_0 GEMV: dequant on-the-fly.
-pub fn gemv_q8_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+pub fn gemv_q8_0(w: &[u8], x: &[f32], y: &mut [f32], _out_dim: usize, in_dim: usize) {
     let num_blocks = in_dim / Q8_BLOCK_ELEMS;
     let row_bytes = num_blocks * Q8_BLOCK_BYTES;
 
@@ -556,7 +556,7 @@ fn gemv_q4_k_transposed_fallback(
     w: &[u8],
     x: &[f32],
     y: &mut [f32],
-    out_dim: usize,
+    _out_dim: usize,
     in_dim: usize,
 ) {
     use crate::cpu::kernels::q4::BlockQ4K;
@@ -582,8 +582,8 @@ fn gemv_q4_k_transposed_fallback(
                 if block_start + i < in_dim {
                     // Dequantize single Q4_K value
                     let sub_block_idx = i / 32;
-                    let scale_idx = sub_block_idx / 2;
-                    let sign = (i % 32) / 16;
+                    let _scale_idx = sub_block_idx / 2;
+                    let _sign = (i % 32) / 16;
 
                     // Get the scale (simplified - actual Q4_K scale unpacking is complex)
                     // For now, use a simple dequantization
