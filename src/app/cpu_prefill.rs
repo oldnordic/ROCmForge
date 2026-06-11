@@ -18,6 +18,10 @@ fn first_prompt_token(prompt_tokens: &[u32]) -> Option<u32> {
     prompt_tokens.first().copied()
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "CLI orchestration passes through many params"
+)]
 pub(crate) fn run_cpu_prefill(
     args: &Args,
     config: &ModelConfig,

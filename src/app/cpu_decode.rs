@@ -32,6 +32,10 @@ fn sample_next_token(
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "CLI orchestration passes through many params"
+)]
 pub(crate) fn run_cpu_decode_loop(
     args: &Args,
     config: &ModelConfig,

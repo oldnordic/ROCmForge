@@ -8,6 +8,10 @@ pub(crate) struct Args {
     pub list_tensors: bool,
     pub debug: bool,
     pub gpu: bool,
+    #[cfg_attr(
+        not(feature = "gpu"),
+        expect(dead_code, reason = "used in gpu_inference")
+    )]
     pub prefill_only_validate: bool,
     pub draft_model: Option<String>,
     pub speculative_tokens: usize,
