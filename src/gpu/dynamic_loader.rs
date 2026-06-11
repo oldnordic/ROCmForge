@@ -402,8 +402,9 @@ pub struct KernelRegistry {
 
 impl KernelRegistry {
     /// Get or create the global kernel registry.
-    pub fn get() -> GpuResult<&'static std::sync::Mutex<Self>> {
-        use std::sync::{Mutex, OnceLock};
+    pub fn get() -> GpuResult<&'static parking_lot::Mutex<Self>> {
+        use parking_lot::Mutex;
+        use std::sync::OnceLock;
 
         static REGISTRY: OnceLock<Mutex<KernelRegistry>> = OnceLock::new();
 
@@ -482,10 +483,7 @@ where
     F: Fn(&KernelRegistry) -> GpuResult<T>,
 {
     let registry = KernelRegistry::get()?;
-    let registry = registry.lock().map_err(|_| GpuError::HipApiError {
-        code: -1,
-        description: "Kernel registry mutex poisoned".to_string(),
-    })?;
+    let registry = registry.lock();
 
     kernel_getter(&registry)
 }
@@ -495,7 +493,7 @@ where
 /// Returns None if library not yet loaded.
 pub fn library_info() -> Option<LibraryInfo> {
     let registry = KernelRegistry::get().ok()?;
-    let registry = registry.lock().ok()?;
+    let registry = registry.lock();
 
     let library = registry.library.as_ref()?;
 

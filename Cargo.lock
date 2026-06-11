@@ -1056,6 +1056,7 @@ version = "0.1.0"
 dependencies = [
  "approx",
  "axum",
+ "bytes",
  "cc",
  "chrono",
  "clap",
@@ -1066,6 +1067,7 @@ dependencies = [
  "libc",
  "memmap2",
  "once_cell",
+ "parking_lot",
  "rayon",
  "regex",
  "serde",

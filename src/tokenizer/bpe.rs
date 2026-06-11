@@ -3,6 +3,7 @@
 //! Supports GPT-2 style BPE (Qwen2.5) with byte-level encoding.
 //! Build with `BpeTokenizer::from_gguf(tokenizer_data)`.
 
+use bytes::Bytes;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
@@ -19,11 +20,11 @@ static REGEX_QWEN2: Lazy<Regex> = Lazy::new(|| {
 // ── Internal types ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct BytesKey(Vec<u8>);
+struct BytesKey(Bytes);
 
 impl Hash for BytesKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.hash(state);
+        self.0.as_ref().hash(state);
     }
 }
 
@@ -135,14 +136,20 @@ impl BpeTokenizer {
         let mut token_to_id = HashMap::with_capacity(vocab.len());
         let mut special_tokens = HashSet::new();
         for (id, token) in vocab.iter().enumerate() {
-            token_to_id.insert(BytesKey(token.clone()), id as u32);
+            token_to_id.insert(BytesKey(Bytes::copy_from_slice(token)), id as u32);
             if token.starts_with(b"<") && token.ends_with(b">") {
                 special_tokens.insert(id as u32);
             }
         }
         let mut merge_map = HashMap::with_capacity(merges.len());
         for (rank, (a, b)) in merges.iter().enumerate() {
-            merge_map.insert((BytesKey(a.clone()), BytesKey(b.clone())), rank as BpeRank);
+            merge_map.insert(
+                (
+                    BytesKey(Bytes::copy_from_slice(a)),
+                    BytesKey(Bytes::copy_from_slice(b)),
+                ),
+                rank as BpeRank,
+            );
         }
         let byte_encoder = Self::build_byte_encoder();
         let byte_decoder = byte_encoder
@@ -316,8 +323,8 @@ impl BpeTokenizer {
                 let next = symbols[i as usize].next;
                 if next >= 0 && !symbols[next as usize].text.is_empty() {
                     if let Some(&rank) = self.merges.get(&(
-                        BytesKey(symbols[i as usize].text.clone()),
-                        BytesKey(symbols[next as usize].text.clone()),
+                        BytesKey(Bytes::copy_from_slice(&symbols[i as usize].text)),
+                        BytesKey(Bytes::copy_from_slice(&symbols[next as usize].text)),
                     )) {
                         if rank < best_rank {
                             best_rank = rank;
@@ -349,14 +356,14 @@ impl BpeTokenizer {
         let mut idx = 0i32;
         while idx >= 0 && (idx as usize) < symbols.len() {
             if !symbols[idx as usize].text.is_empty() {
-                let key = BytesKey(symbols[idx as usize].text.clone());
+                let key = BytesKey(Bytes::copy_from_slice(&symbols[idx as usize].text));
                 if let Some(&id) = self.token_to_id.get(&key) {
                     tokens.push(id);
                 } else {
                     // Byte fallback
                     for &b in &symbols[idx as usize].text {
                         if let Some(s) = self.byte_encoder.get(&b) {
-                            let k = BytesKey(s.as_bytes().to_vec());
+                            let k = BytesKey(Bytes::copy_from_slice(s.as_bytes()));
                             tokens.push(
                                 *self
                                     .token_to_id

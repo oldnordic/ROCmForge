@@ -7,7 +7,7 @@ use super::error::GpuResult;
 use super::ffi;
 use super::vram_budget::DESKTOP_VRAM_RESERVATION_BYTES;
 use super::weights::GpuBuffer;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use std::sync::OnceLock;
 
 const DEFAULT_Q8_WORKSPACE_BYTES: usize = 64 * 1024;
@@ -195,10 +195,7 @@ impl GpuDevice {
             return Ok(std::ptr::null_mut());
         }
 
-        let mut workspace = self
-            .q8_workspace
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
+        let mut workspace = self.q8_workspace.lock();
 
         if workspace.size < min_bytes {
             if workspace.size != 0 {
@@ -288,7 +285,6 @@ impl std::fmt::Debug for GpuDevice {
                 &self
                     .q8_workspace
                     .lock()
-                    .unwrap_or_else(|poison| poison.into_inner())
                     .size,
             )
             .finish()
