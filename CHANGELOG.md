@@ -78,6 +78,7 @@
   - `flash_attn.rs` — flash attention prefill/decode wrappers.
   - `turboquant.rs` — compressed turboquant attention variants.
   - `prefix_sum.rs` — KV cache reconstruction helpers.
+- **Error Standardization** — Replaced fragmented string-based error returns in `api/server/` and `gpu/speculative.rs` with a new unified `RocmForgeError` hierarchy in `src/error.rs`. This encapsulates `GpuError`, `CpuError`, `WeightError`, and `LoadError` behind standard `From` traits, allowing for clean `?` propagation without boilerplate `.map_err` formatting.
 
 ### Added
 - **Native Q2_K/Q3_K GPU Kernels**: Implemented native AMD HIP GEMV kernels for Q2_K and Q3_K formats (`q2_k_gemv.hip` and `q3_k_gemv.hip`). Integrated these into the static library linkage and dispatch routing (`src/gpu/ops/gemv.rs`), allowing full GPU execution of Q2_K/Q3_K models without CPU fallback.
