@@ -172,149 +172,32 @@ impl SimdActivations {
 
     #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
     fn gelu_avx2(&self, x: &[f32], y: &mut [f32]) {
-        use std::arch::x86_64::*;
-
-        const SQRT_2_OVER_PI: f32 = 0.7978845608;
-        const GELU_COEFF: f32 = 0.044715;
-
-        let sqrt_2_pi = _mm256_set1_ps(SQRT_2_OVER_PI);
-        let gelu_coeff = _mm256_set1_ps(GELU_COEFF);
-        let half = _mm256_set1_ps(0.5);
-        let one = _mm256_set1_ps(1.0);
-
-        let chunks = x.chunks_exact(8);
-        let remainder = chunks.remainder();
-
-        for chunk in chunks {
-            let xi = _mm256_loadu_ps(chunk.as_ptr());
-            let xi_sq = _mm256_mul_ps(xi, xi);
-            let xi_cube = _mm256_mul_ps(xi_sq, xi);
-
-            let tanh_arg = _mm256_add_ps(
-                _mm256_mul_ps(sqrt_2_pi, xi),
-                _mm256_mul_ps(gelu_coeff, xi_cube),
-            );
-
-            // tanh(x) = (exp(2x) - 1) / (exp(2x) + 1)
-            let two_x = _mm256_mul_ps(tanh_arg, _mm256_set1_ps(2.0));
-            let exp_2x = _mm256_exp_ps(two_x);
-            let tanh_val = _mm256_div_ps(_mm256_sub_ps(exp_2x, one), _mm256_add_ps(exp_2x, one));
-
-            let result = _mm256_mul_ps(half, _mm256_mul_ps(xi, _mm256_add_ps(one, tanh_val)));
-            _mm256_storeu_ps(y.as_mut_ptr().add(chunk.len_offset()), result);
-        }
-
-        // Handle remainder
-        for (xi, yi) in remainder
-            .iter()
-            .zip(y.iter_mut().skip(x.len() - remainder.len()))
-        {
-            let x_cube = xi * xi * xi;
-            let tanh_arg = SQRT_2_OVER_PI * (xi + GELU_COEFF * x_cube);
-            let tanh_val = tanh_arg.tanh();
-            *yi = 0.5 * xi * (1.0 + tanh_val);
-        }
+        // AVX2 does not provide transcendental intrinsics (exp, tanh).
+        // Fall back to scalar — vectorized approximations can be added later.
+        self.gelu_scalar(x, y);
     }
 
     #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
     fn silu_avx2(&self, x: &[f32], y: &mut [f32]) {
-        use std::arch::x86_64::*;
-
-        let one = _mm256_set1_ps(1.0);
-
-        let chunks = x.chunks_exact(8);
-        let remainder = chunks.remainder();
-
-        for chunk in chunks {
-            let xi = _mm256_loadu_ps(chunk.as_ptr());
-            let neg_xi = _mm256_xor_ps(xi, _mm256_set1_ps(-0.0)); // negate
-            let exp_neg_x = _mm256_exp_ps(neg_xi);
-            let denom = _mm256_add_ps(one, exp_neg_x);
-            let result = _mm256_div_ps(xi, denom);
-            _mm256_storeu_ps(y.as_mut_ptr().add(chunk.len_offset()), result);
-        }
-
-        // Handle remainder
-        for (xi, yi) in remainder
-            .iter()
-            .zip(y.iter_mut().skip(x.len() - remainder.len()))
-        {
-            let sigmoid = (-xi).exp();
-            let denom = 1.0 + sigmoid;
-            *yi = xi / denom;
-        }
+        // AVX2 does not provide transcendental intrinsics (exp).
+        // Fall back to scalar — vectorized approximations can be added later.
+        self.silu_scalar(x, y);
     }
 
     // NEON implementations
 
     #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
     fn gelu_neon(&self, x: &[f32], y: &mut [f32]) {
-        use std::arch::aarch64::*;
-
-        const SQRT_2_OVER_PI: f32 = 0.7978845608;
-        const GELU_COEFF: f32 = 0.044715;
-
-        let sqrt_2_pi = vdupq_n_f32(SQRT_2_OVER_PI);
-        let gelu_coeff = vdupq_n_f32(GELU_COEFF);
-        let half = vdupq_n_f32(0.5);
-        let one = vdupq_n_f32(1.0);
-
-        let chunks = x.chunks_exact(4);
-        let remainder = chunks.remainder();
-
-        for chunk in chunks {
-            let xi = vld1q_f32(chunk.as_ptr());
-            let xi_sq = vmulq_f32(xi, xi);
-            let xi_cube = vmulq_f32(xi_sq, xi);
-
-            let tanh_arg = vaddq_f32(vmulq_f32(sqrt_2_pi, xi), vmulq_f32(gelu_coeff, xi_cube));
-
-            // tanh approximation or compute
-            let tanh_val = vtanhq_f32(tanh_arg);
-
-            let result = vmulq_f32(half, vmulq_f32(xi, vaddq_f32(one, tanh_val)));
-            vst1q_f32(y.as_mut_ptr().add(chunk.len_offset()), result);
-        }
-
-        // Handle remainder
-        for (xi, yi) in remainder
-            .iter()
-            .zip(y.iter_mut().skip(x.len() - remainder.len()))
-        {
-            let x_cube = xi * xi * xi;
-            let tanh_arg = SQRT_2_OVER_PI * (xi + GELU_COEFF * x_cube);
-            let tanh_val = tanh_arg.tanh();
-            *yi = 0.5 * xi * (1.0 + tanh_val);
-        }
+        // NEON does not provide built-in transcendental intrinsics (exp, tanh).
+        // Fall back to scalar — vectorized approximations can be added later.
+        self.gelu_scalar(x, y);
     }
 
     #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
     fn silu_neon(&self, x: &[f32], y: &mut [f32]) {
-        use std::arch::aarch64::*;
-
-        let one = vdupq_n_f32(1.0);
-
-        let chunks = x.chunks_exact(4);
-        let remainder = chunks.remainder();
-
-        for chunk in chunks {
-            let xi = vld1q_f32(chunk.as_ptr());
-            let neg_xi = vnegq_f32(xi);
-            let exp_neg_x = vexpq_f32(neg_xi);
-            let denom = vaddq_f32(one, exp_neg_x);
-            let result = vdivq_f32(xi, denom);
-            vst1q_f32(y.as_mut_ptr().add(chunk.len_offset()), result);
-        }
-
-        // Handle remainder
-        for (xi, yi) in remainder
-            .iter()
-            .zip(y.iter_mut().skip(x.len() - remainder.len()))
-        {
-            let sigmoid = (-xi).exp();
-            let denom = 1.0 + sigmoid;
-            *yi = xi / denom;
-        }
+        // NEON does not provide built-in transcendental intrinsics (exp).
+        // Fall back to scalar — vectorized approximations can be added later.
+        self.silu_scalar(x, y);
     }
 }
 

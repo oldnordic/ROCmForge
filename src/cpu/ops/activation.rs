@@ -11,8 +11,45 @@ pub fn silu(x: f32) -> f32 {
 /// SwiGLU fuse in-place: up[i] = silu(gate[i]) * up[i]
 pub fn silu_fuse(gate: &[f32], up: &mut [f32]) {
     debug_assert_eq!(gate.len(), up.len(), "gate/up dimension mismatch");
+    #[cfg(target_arch = "x86_64")]
+    if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+        unsafe { silu_fuse_avx2(gate, up) };
+        return;
+    }
     for (g, u) in gate.iter().zip(up.iter_mut()) {
         *u *= silu(*g);
+    }
+}
+
+// ── AVX2 implementation ─────────────────────────────────────────────────────────
+
+/// AVX2 silu_fuse using vectorized loads/stores with scalar compute.
+/// AVX2 lacks a native `exp` intrinsic; each lane is computed scalarly
+/// but memory operations are batched via 256-bit registers.
+#[cfg(target_arch = "x86_64")]
+unsafe fn silu_fuse_avx2(gate: &[f32], up: &mut [f32]) {
+    use std::arch::x86_64::*;
+    let n = gate.len();
+    let chunks = n / 8;
+
+    for i in 0..chunks {
+        // Load gate and up into temporary arrays for scalar compute
+        let mut gate_buf = [0.0f32; 8];
+        let mut up_buf = [0.0f32; 8];
+        _mm256_storeu_ps(gate_buf.as_mut_ptr(), _mm256_loadu_ps(gate.as_ptr().add(i * 8)));
+        _mm256_storeu_ps(up_buf.as_mut_ptr(), _mm256_loadu_ps(up.as_ptr().add(i * 8)));
+
+        for j in 0..8 {
+            let g = gate_buf[j];
+            up_buf[j] *= g / (1.0 + (-g).exp());
+        }
+
+        _mm256_storeu_ps(up.as_mut_ptr().add(i * 8), _mm256_loadu_ps(up_buf.as_ptr()));
+    }
+
+    // Scalar tail
+    for i in chunks * 8..n {
+        up[i] *= silu(gate[i]);
     }
 }
 
