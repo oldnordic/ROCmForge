@@ -75,11 +75,12 @@ pub(crate) fn rfm_weight_meta(
 pub(crate) fn unpack_q4_split(data: &[u8], element_count: usize) -> Vec<u8> {
     let n_blocks = element_count / 32;
     let mut out = vec![0u8; n_blocks * 18];
-    let rfm_scales_ptr = data.as_ptr() as *const f32;
     let rfm_quants_ptr = unsafe { data.as_ptr().add(n_blocks * 4) };
 
     for i in 0..n_blocks {
-        let scale_f32 = unsafe { *rfm_scales_ptr.add(i) };
+        let scale_f32 = unsafe {
+            std::ptr::read_unaligned(data.as_ptr().add(i * 4) as *const f32)
+        };
         let scale_f16 = half::f16::from_f32(scale_f32).to_bits();
         let block_out = unsafe { out.as_mut_ptr().add(i * 18) };
 
