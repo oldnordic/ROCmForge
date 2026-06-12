@@ -81,15 +81,21 @@ pub fn cpu_sample_top_k(logits: &[f32], temperature: f32, top_k: usize, seed: u6
         return 0;
     }
 
-    // Find top-k indices (store as (index, logit) then sort)
+    // Find top-k indices using select_nth_unstable (O(n) vs O(n log n) for sort)
     let mut indexed: Vec<(usize, f32)> = logits.iter().copied().enumerate().collect();
-    indexed.sort_unstable_by(|a, b| {
+    let k = top_k.min(indexed.len());
+    if k > 0 && k < indexed.len() {
+        indexed.select_nth_unstable_by(k - 1, |a, b| {
+            b.1.partial_cmp(&a.1)
+                .expect("invariant: partial_cmp failed (NaN in sampling)")
+        });
+    }
+
+    let mut top_k_pairs: Vec<(usize, f32)> = indexed.into_iter().take(k).collect();
+    top_k_pairs.sort_unstable_by(|a, b| {
         b.1.partial_cmp(&a.1)
             .expect("invariant: partial_cmp failed (NaN in sampling)")
     });
-
-    let k = top_k.min(indexed.len());
-    let top_k_pairs: Vec<(usize, f32)> = indexed[..k].to_vec();
 
     // Apply temperature and softmax to top-k
     let t = temperature.max(1e-6);
@@ -129,15 +135,21 @@ pub fn cpu_sample_top_k_top_p(
         return 0;
     }
 
-    // Find top-k indices
+    // Find top-k indices using select_nth_unstable (O(n) vs O(n log n) for sort)
     let mut indexed: Vec<(usize, f32)> = logits.iter().copied().enumerate().collect();
-    indexed.sort_unstable_by(|a, b| {
+    let k = top_k.min(indexed.len());
+    if k > 0 && k < indexed.len() {
+        indexed.select_nth_unstable_by(k - 1, |a, b| {
+            b.1.partial_cmp(&a.1)
+                .expect("invariant: partial_cmp failed (NaN in sampling)")
+        });
+    }
+
+    let mut top_k_pairs: Vec<(usize, f32)> = indexed.into_iter().take(k).collect();
+    top_k_pairs.sort_unstable_by(|a, b| {
         b.1.partial_cmp(&a.1)
             .expect("invariant: partial_cmp failed (NaN in sampling)")
     });
-
-    let k = top_k.min(indexed.len());
-    let top_k_pairs: Vec<(usize, f32)> = indexed[..k].to_vec();
 
     // Apply temperature and softmax
     let t = temperature.max(1e-6);
