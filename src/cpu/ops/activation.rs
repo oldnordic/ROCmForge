@@ -53,6 +53,17 @@ unsafe fn silu_fuse_avx2(gate: &[f32], up: &mut [f32]) {
     }
 }
 
+/// Horizontal max reduction of an AVX2 `__m256` register.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+unsafe fn hmax256_ps(v: std::arch::x86_64::__m256) -> f32 {
+    use std::arch::x86_64::*;
+    let x128 = _mm_max_ps(_mm256_extractf128_ps(v, 1), _mm256_castps256_ps128(v));
+    let x64 = _mm_max_ps(x128, _mm_movehl_ps(x128, x128));
+    let x32 = _mm_max_ss(x64, _mm_shuffle_ps(x64, x64, 0x55));
+    _mm_cvtss_f32(x32)
+}
+
 // ── Softmax ─────────────────────────────────────────────────────────────────────
 
 /// Softmax in-place: x[i] = exp(x[i] - max) / sum
@@ -91,15 +102,6 @@ unsafe fn softmax_avx2(x: &mut [f32]) {
     use std::arch::x86_64::*;
     let n = x.len();
     let chunks = n / 8;
-
-    // Horizontal max of __m256
-    #[inline]
-    unsafe fn hmax256_ps(v: __m256) -> f32 {
-        let x128 = _mm_max_ps(_mm256_extractf128_ps(v, 1), _mm256_castps256_ps128(v));
-        let x64 = _mm_max_ps(x128, _mm_movehl_ps(x128, x128));
-        let x32 = _mm_max_ss(x64, _mm_shuffle_ps(x64, x64, 0x55));
-        _mm_cvtss_f32(x32)
-    }
 
     // Find max
     let mut max_vec = _mm256_set1_ps(f32::NEG_INFINITY);
@@ -161,6 +163,16 @@ pub fn online_softmax_update(
 
 /// Find index of maximum value.
 pub fn argmax(x: &[f32]) -> usize {
+    if x.is_empty() {
+        return 0;
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    if is_x86_feature_detected!("avx2") {
+        let max_val = unsafe { argmax_find_max_avx2(x) };
+        return x.iter().position(|&v| v == max_val).unwrap_or(0);
+    }
+
     x.iter()
         .enumerate()
         .max_by(|a, b| {
@@ -169,4 +181,27 @@ pub fn argmax(x: &[f32]) -> usize {
         })
         .map(|(i, _)| i)
         .unwrap_or(0)
+}
+
+/// AVX2 helper: find the maximum value in a f32 slice.
+#[cfg(target_arch = "x86_64")]
+unsafe fn argmax_find_max_avx2(x: &[f32]) -> f32 {
+    use std::arch::x86_64::*;
+    let n = x.len();
+    let chunks = n / 8;
+    let mut max_val = x[0];
+    if chunks > 0 {
+        let mut max_vec = _mm256_loadu_ps(x.as_ptr());
+        for i in 1..chunks {
+            let val = _mm256_loadu_ps(x.as_ptr().add(i * 8));
+            max_vec = _mm256_max_ps(max_vec, val);
+        }
+        max_val = hmax256_ps(max_vec).max(max_val);
+    }
+    for i in chunks * 8..n {
+        if x[i] > max_val {
+            max_val = x[i];
+        }
+    }
+    max_val
 }
