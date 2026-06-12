@@ -2,7 +2,7 @@
 //!
 //! Operates directly on a logits slice (no GPU download needed).
 
-use super::ops::argmax;
+use super::ops::{argmax, softmax};
 
 /// Greedy sampling: return argmax of logits.
 pub fn cpu_sample_greedy(logits: &[f32]) -> u32 {
@@ -27,16 +27,8 @@ pub fn cpu_sample_top_p(logits: &[f32], temperature: f32, top_p: f32, seed: u64)
     let t = temperature.max(1e-6);
     let mut scaled: Vec<f32> = logits.iter().map(|v| v / t).collect();
 
-    // Softmax
-    let max_val = scaled.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-    let mut sum = 0.0f32;
-    for v in &mut scaled {
-        *v = (*v - max_val).exp();
-        sum += *v;
-    }
-    for v in &mut scaled {
-        *v /= sum;
-    }
+    // Softmax (uses AVX2 when available)
+    softmax(&mut scaled);
 
     // Sort descending by probability (store as (prob, index))
     let mut pairs: Vec<(f32, u32)> = scaled

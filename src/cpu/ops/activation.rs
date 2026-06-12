@@ -61,6 +61,12 @@ pub fn softmax(x: &mut [f32]) {
         return;
     }
 
+    #[cfg(target_arch = "x86_64")]
+    if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+        unsafe { softmax_avx2(x) };
+        return;
+    }
+
     // Find max for numerical stability
     let max = x.iter().fold(f32::NEG_INFINITY, |m, &v| m.max(v));
 
@@ -75,6 +81,54 @@ pub fn softmax(x: &mut [f32]) {
     if sum > 0.0 {
         for xi in x.iter_mut() {
             *xi /= sum;
+        }
+    }
+}
+
+/// AVX2 softmax: vectorized max-find + normalize; scalar exp.
+#[cfg(target_arch = "x86_64")]
+unsafe fn softmax_avx2(x: &mut [f32]) {
+    use std::arch::x86_64::*;
+    let n = x.len();
+    let chunks = n / 8;
+
+    // Horizontal max of __m256
+    #[inline]
+    unsafe fn hmax256_ps(v: __m256) -> f32 {
+        let x128 = _mm_max_ps(_mm256_extractf128_ps(v, 1), _mm256_castps256_ps128(v));
+        let x64 = _mm_max_ps(x128, _mm_movehl_ps(x128, x128));
+        let x32 = _mm_max_ss(x64, _mm_shuffle_ps(x64, x64, 0x55));
+        _mm_cvtss_f32(x32)
+    }
+
+    // Find max
+    let mut max_vec = _mm256_set1_ps(f32::NEG_INFINITY);
+    for i in 0..chunks {
+        let xv = _mm256_loadu_ps(x.as_ptr().add(i * 8));
+        max_vec = _mm256_max_ps(max_vec, xv);
+    }
+    let mut max = hmax256_ps(max_vec);
+    for i in chunks * 8..n {
+        max = max.max(x[i]);
+    }
+
+    // Exp and sum (scalar — AVX2 lacks native exp)
+    let mut sum = 0.0f32;
+    for i in 0..n {
+        x[i] = (x[i] - max).exp();
+        sum += x[i];
+    }
+
+    // Normalize
+    if sum > 0.0 {
+        let inv_sum = _mm256_set1_ps(1.0 / sum);
+        for i in 0..chunks {
+            let xv = _mm256_loadu_ps(x.as_ptr().add(i * 8));
+            let result = _mm256_mul_ps(xv, inv_sum);
+            _mm256_storeu_ps(x.as_mut_ptr().add(i * 8), result);
+        }
+        for i in chunks * 8..n {
+            x[i] /= sum;
         }
     }
 }
