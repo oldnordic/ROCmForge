@@ -109,11 +109,17 @@ pub fn svd_batch_experts(
         }
     }
     let _ = name;
+    let results: Vec<_> = (0..n_experts)
+        .into_par_iter()
+        .map(|e| {
+            let slice = &matrices[e * rows * cols..(e + 1) * rows * cols];
+            top_k_svd_quant(slice, rows, cols, k)
+        })
+        .collect();
+
     let mut all_u = Vec::<f32>::with_capacity(n_experts * rows * k);
     let mut all_v = Vec::<f32>::with_capacity(n_experts * k * cols);
-    for e in 0..n_experts {
-        let slice = &matrices[e * rows * cols..(e + 1) * rows * cols];
-        let (u, v) = top_k_svd_quant(slice, rows, cols, k);
+    for (u, v) in results {
         all_u.extend_from_slice(&u);
         all_v.extend_from_slice(&v);
     }

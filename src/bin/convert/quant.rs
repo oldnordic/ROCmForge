@@ -1,11 +1,11 @@
 pub fn dequantize_q4_0_to_f32(data: &[u8], num_elements: usize) -> Vec<f32> {
     let mut out = vec![0.0f32; num_elements];
     let num_blocks = num_elements / 32;
-    for i in 0..num_blocks {
+    use rayon::prelude::*;
+    out.par_chunks_mut(32).enumerate().for_each(|(i, block_out)| {
         let block_data = &data[i * 18..(i + 1) * 18];
-        let block_out = &mut out[i * 32..(i + 1) * 32];
         rocmforge::cpu::quant::dequant_q4_0_block(block_data, block_out);
-    }
+    });
     out
 }
 
@@ -81,12 +81,13 @@ fn quantize_q4_0_block(block: &[f32]) -> [u8; 18] {
 
 pub fn quantize_matrix_q4_0(data: &[f32]) -> Vec<u8> {
     let num_blocks = data.len() / 32;
-    let mut out = Vec::with_capacity(num_blocks * 18);
-    for i in 0..num_blocks {
+    let mut out = vec![0u8; num_blocks * 18];
+    use rayon::prelude::*;
+    out.par_chunks_mut(18).enumerate().for_each(|(i, chunk)| {
         let block = &data[i * 32..(i + 1) * 32];
         let q_block = quantize_q4_0_block(block);
-        out.extend_from_slice(&q_block);
-    }
+        chunk.copy_from_slice(&q_block);
+    });
     out
 }
 
