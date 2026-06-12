@@ -4,7 +4,7 @@ use crate::cpu::quant::{
     load_f16_scale, Q4_1_BLOCK_BYTES, Q4_1_BLOCK_ELEMS, Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS,
     Q5_0_BLOCK_BYTES, Q5_0_BLOCK_ELEMS, Q8_BLOCK_BYTES, Q8_BLOCK_ELEMS,
 };
-use crate::cpu::weights::WeightMeta;
+use crate::cpu::weights::{try_as_f32_slice, WeightMeta};
 use crate::loader::GgmlType;
 use rayon::prelude::*;
 
@@ -514,12 +514,18 @@ pub fn dispatch_gemm(
 
     match meta.wtype {
         GgmlType::F32 => {
-            let wf: &[f32] =
-                unsafe { std::slice::from_raw_parts(w.as_ptr() as *const f32, w.len() / 4) };
-            if meta.needs_transpose {
-                gemm_f32_transposed(wf, x, y, out_dim, in_dim);
+            if let Some(wf) = try_as_f32_slice(w) {
+                if meta.needs_transpose {
+                    gemm_f32_transposed(wf, x, y, out_dim, in_dim);
+                } else {
+                    gemm_f32(wf, x, y, out_dim, in_dim);
+                }
             } else {
-                gemm_f32(wf, x, y, out_dim, in_dim);
+                if meta.needs_transpose {
+                    gemm_f32_transposed_bytes(w, x, y, out_dim, in_dim);
+                } else {
+                    gemm_f32_bytes(w, x, y, out_dim, in_dim);
+                }
             }
         }
         GgmlType::F16 => {
@@ -607,12 +613,18 @@ pub fn dispatch_gemm_transposed(
 ) -> Result<(), super::super::CpuError> {
     match wtype {
         GgmlType::F32 => {
-            let wf: &[f32] =
-                unsafe { std::slice::from_raw_parts(w.as_ptr() as *const f32, w.len() / 4) };
-            if transposed {
-                gemm_f32_transposed(wf, x, y, out_dim, in_dim);
+            if let Some(wf) = try_as_f32_slice(w) {
+                if transposed {
+                    gemm_f32_transposed(wf, x, y, out_dim, in_dim);
+                } else {
+                    gemm_f32(wf, x, y, out_dim, in_dim);
+                }
             } else {
-                gemm_f32(wf, x, y, out_dim, in_dim);
+                if transposed {
+                    gemm_f32_transposed_bytes(w, x, y, out_dim, in_dim);
+                } else {
+                    gemm_f32_bytes(w, x, y, out_dim, in_dim);
+                }
             }
         }
         GgmlType::F16 => {
@@ -851,6 +863,41 @@ fn gemm_f32_transposed(w: &[f32], x: &[f32], y: &mut [f32], out_dim: usize, in_d
                     acc += x_row[i] * w[i * out_dim + o];
                 }
 
+                y_row[o] = acc;
+            });
+    }
+}
+
+/// F32 GEMM fallback for unaligned byte slices.
+fn gemm_f32_bytes(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    y.par_chunks_mut(out_dim)
+        .enumerate()
+        .for_each(|(s, y_row)| {
+            let x_row = &x[s * in_dim..(s + 1) * in_dim];
+            for o in 0..out_dim {
+                let row_start = o * in_dim * 4;
+                let mut acc = 0.0f32;
+                for i in 0..in_dim {
+                    let b = &w[row_start + i * 4..row_start + i * 4 + 4];
+                    acc += x_row[i] * f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+                }
+                y_row[o] = acc;
+            }
+        });
+}
+
+/// F32 GEMM transposed fallback for unaligned byte slices.
+fn gemm_f32_transposed_bytes(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    for o in 0..out_dim {
+        y.par_chunks_mut(out_dim)
+            .enumerate()
+            .for_each(|(s, y_row)| {
+                let x_row = &x[s * in_dim..(s + 1) * in_dim];
+                let mut acc = 0.0f32;
+                for i in 0..in_dim {
+                    let b = &w[(i * out_dim + o) * 4..(i * out_dim + o + 1) * 4];
+                    acc += x_row[i] * f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+                }
                 y_row[o] = acc;
             });
     }

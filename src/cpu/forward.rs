@@ -559,13 +559,20 @@ pub fn cpu_embed_token(
     let h = config.hidden_size;
     match weights.token_emb_meta.wtype {
         GgmlType::F32 => {
-            let emb: &[f32] = unsafe {
-                std::slice::from_raw_parts(
-                    weights.token_emb.as_ptr() as *const f32,
-                    weights.token_emb.len() / 4,
-                )
-            };
-            super::quant::embed_f32(token_id as usize, emb, &mut hidden[..h]);
+            if let Some(emb) = super::weights::try_as_f32_slice(&weights.token_emb) {
+                super::quant::embed_f32(token_id as usize, emb, &mut hidden[..h]);
+            } else {
+                let start = token_id as usize * h * 4;
+                let bytes = &weights.token_emb[start..start + h * 4];
+                for i in 0..h {
+                    hidden[i] = f32::from_le_bytes([
+                        bytes[i * 4],
+                        bytes[i * 4 + 1],
+                        bytes[i * 4 + 2],
+                        bytes[i * 4 + 3],
+                    ]);
+                }
+            }
         }
         GgmlType::F16 => {
             let start_idx = token_id as usize * h;

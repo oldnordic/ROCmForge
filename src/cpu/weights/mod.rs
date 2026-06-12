@@ -9,4 +9,6 @@ pub use meta::{WeightError, WeightMeta};
 pub use model::CpuModelWeights;
 pub use ssm::CpuSsmWeights;
 
+pub(crate) use helpers::try_as_f32_slice;
+
 // Private crate-internal re-imports

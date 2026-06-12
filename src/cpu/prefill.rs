@@ -307,13 +307,23 @@ pub fn cpu_prefill_forward(
         // 1. Gather embeddings for this batch
         match weights.token_emb_meta.wtype {
             GgmlType::F32 => {
-                let wf: &[f32] = unsafe {
-                    std::slice::from_raw_parts(
-                        weights.token_emb.as_ptr() as *const f32,
-                        weights.token_emb.len() / 4,
-                    )
-                };
-                embed_f32_batch(batch_tokens, wf, &mut ps.hidden, h);
+                if let Some(wf) = crate::cpu::weights::try_as_f32_slice(&weights.token_emb) {
+                    embed_f32_batch(batch_tokens, wf, &mut ps.hidden, h);
+                } else {
+                    for (s, &id) in batch_tokens.iter().enumerate() {
+                        let start = id as usize * h * 4;
+                        let bytes = &weights.token_emb[start..start + h * 4];
+                        let out = &mut ps.hidden[s * h..(s + 1) * h];
+                        for i in 0..h {
+                            out[i] = f32::from_le_bytes([
+                                bytes[i * 4],
+                                bytes[i * 4 + 1],
+                                bytes[i * 4 + 2],
+                                bytes[i * 4 + 3],
+                            ]);
+                        }
+                    }
+                }
             }
             GgmlType::Q4_0 => {
                 embed_q4_0_batch(batch_tokens, &weights.token_emb, &mut ps.hidden, h);
@@ -497,13 +507,23 @@ pub fn cpu_prefill_forward_parallel(
                 // 1. Gather embeddings for this batch
                 match weights_shared.token_emb_meta.wtype {
                     GgmlType::F32 => {
-                        let wf: &[f32] = unsafe {
-                            std::slice::from_raw_parts(
-                                weights_shared.token_emb.as_ptr() as *const f32,
-                                weights_shared.token_emb.len() / 4,
-                            )
-                        };
-                        embed_f32_batch(batch_tokens, wf, &mut ps.hidden, h);
+                        if let Some(wf) = crate::cpu::weights::try_as_f32_slice(&weights_shared.token_emb) {
+                            embed_f32_batch(batch_tokens, wf, &mut ps.hidden, h);
+                        } else {
+                            for (s, &id) in batch_tokens.iter().enumerate() {
+                                let start = id as usize * h * 4;
+                                let bytes = &weights_shared.token_emb[start..start + h * 4];
+                                let out = &mut ps.hidden[s * h..(s + 1) * h];
+                                for i in 0..h {
+                                    out[i] = f32::from_le_bytes([
+                                        bytes[i * 4],
+                                        bytes[i * 4 + 1],
+                                        bytes[i * 4 + 2],
+                                        bytes[i * 4 + 3],
+                                    ]);
+                                }
+                            }
+                        }
                     }
                     GgmlType::Q4_0 => {
                         embed_q4_0_batch(
@@ -627,13 +647,23 @@ pub fn cpu_prefill_forward_parallel(
     // Embed last batch
     match weights.token_emb_meta.wtype {
         GgmlType::F32 => {
-            let wf: &[f32] = unsafe {
-                std::slice::from_raw_parts(
-                    weights.token_emb.as_ptr() as *const f32,
-                    weights.token_emb.len() / 4,
-                )
-            };
-            embed_f32_batch(batch_tokens, wf, &mut ps_last.hidden, h);
+            if let Some(wf) = crate::cpu::weights::try_as_f32_slice(&weights.token_emb) {
+                embed_f32_batch(batch_tokens, wf, &mut ps_last.hidden, h);
+            } else {
+                for (s, &id) in batch_tokens.iter().enumerate() {
+                    let start = id as usize * h * 4;
+                    let bytes = &weights.token_emb[start..start + h * 4];
+                    let out = &mut ps_last.hidden[s * h..(s + 1) * h];
+                    for i in 0..h {
+                        out[i] = f32::from_le_bytes([
+                            bytes[i * 4],
+                            bytes[i * 4 + 1],
+                            bytes[i * 4 + 2],
+                            bytes[i * 4 + 3],
+                        ]);
+                    }
+                }
+            }
         }
         GgmlType::Q4_0 => {
             embed_q4_0_batch(batch_tokens, &weights.token_emb, &mut ps_last.hidden, h);

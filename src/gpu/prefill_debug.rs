@@ -25,7 +25,16 @@ pub(crate) struct CpuLayer0Activations {
 pub(crate) fn download_gpu_buffer(buf: &crate::gpu::GpuBuffer, len: usize) -> Vec<f32> {
     let mut bytes = vec![0u8; len * std::mem::size_of::<f32>()];
     buf.copy_to_host(&mut bytes).expect("copy_to_host failed");
-    unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const f32, len).to_vec() }
+    let mut out = vec![0.0f32; len];
+    for i in 0..len {
+        out[i] = f32::from_le_bytes([
+            bytes[i * 4],
+            bytes[i * 4 + 1],
+            bytes[i * 4 + 2],
+            bytes[i * 4 + 3],
+        ]);
+    }
+    out
 }
 
 pub(crate) fn max_abs_error_slice(a: &[f32], b: &[f32]) -> f32 {

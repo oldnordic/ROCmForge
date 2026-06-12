@@ -28,6 +28,25 @@ pub(crate) fn copy_f32_from_bytes(bytes: &[u8]) -> Vec<f32> {
     out
 }
 
+/// Attempt to safely view a `&[u8]` as `&[f32]`.
+///
+/// Returns `Some` only if the byte slice pointer is 4-byte aligned and the length
+/// is a multiple of 4. On x86_64 Linux, `Vec<u8>` heap allocations are typically
+/// 16-byte aligned, so this succeeds in practice.
+///
+/// # Safety
+/// When this returns `Some`, the underlying bytes are reinterpreted as `f32`
+/// in native endianness (GGUF/RFM are little-endian, and this code only runs
+/// on little-endian platforms).
+pub(crate) fn try_as_f32_slice(bytes: &[u8]) -> Option<&[f32]> {
+    let ptr = bytes.as_ptr() as *const f32;
+    if ptr.align_offset(std::mem::align_of::<f32>()) == 0 && bytes.len() % 4 == 0 {
+        Some(unsafe { std::slice::from_raw_parts(ptr, bytes.len() / 4) })
+    } else {
+        None
+    }
+}
+
 pub(crate) fn copy_tensor_with_meta(
     file: &GgufFile,
     name: &str,
