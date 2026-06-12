@@ -7,6 +7,7 @@ use super::cache::{GpuForwardScratch, GpuKvCache, GpuPrefillScratch};
 use super::device::GpuDevice;
 use super::error::{GpuError, GpuResult};
 use super::weights::{GpuBuffer, GpuModelWeights};
+use bytes::Bytes;
 use crate::config::ModelConfig;
 use crate::cpu::cache::CpuForwardScratch;
 use crate::cpu::weights::CpuModelWeights;
@@ -679,7 +680,7 @@ impl SpeculativeOrchestrator {
         tok: &crate::tokenizer::BpeTokenizer,
         prompt_tokens: &[u32],
         max_tokens: usize,
-        tx: tokio::sync::mpsc::UnboundedSender<String>,
+        tx: tokio::sync::mpsc::UnboundedSender<Bytes>,
     ) -> crate::error::RocmForgeResult<()> {
         if prompt_tokens.is_empty() {
             return Err("Prompt tokens cannot be empty".into());
@@ -701,7 +702,7 @@ impl SpeculativeOrchestrator {
             }
             output_tokens.push(last_verified_token);
             let text = tok.decode(&[last_verified_token], false);
-            let _ = tx.send(text);
+            let _ = tx.send(Bytes::from(text));
 
             let draft_limit = self
                 .draft_count
@@ -728,7 +729,7 @@ impl SpeculativeOrchestrator {
                 }
                 output_tokens.push(t);
                 let text = tok.decode(&[t], false);
-                let _ = tx.send(text);
+                let _ = tx.send(Bytes::from(text));
             }
             if hit_eos {
                 break;

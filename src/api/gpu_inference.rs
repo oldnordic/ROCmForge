@@ -5,6 +5,8 @@
 //! pre-flight (critical on a display-attached GPU).
 
 #[cfg(feature = "gpu")]
+use bytes::Bytes;
+#[cfg(feature = "gpu")]
 use crate::config::ModelConfig;
 #[cfg(feature = "gpu")]
 use crate::cpu::cache::CpuForwardScratch;
@@ -345,7 +347,7 @@ pub fn run_gpu_stream_inference(
     max_tokens: usize,
     temperature: f32,
     top_p: f32,
-    tx: tokio::sync::mpsc::UnboundedSender<String>,
+    tx: tokio::sync::mpsc::UnboundedSender<Bytes>,
 ) -> crate::error::RocmForgeResult<()> {
     // ── 1. GPU detection & VRAM pre-flight ──────────────────────────────────────
     let gpu_caps = gpu::detect().ok_or("GPU requested but no AMD GPU detected")?;
@@ -600,7 +602,7 @@ pub fn run_gpu_stream_inference(
         let text = tok.decode(&output_tokens, false);
         let new_chars = &text[previous_text.len().min(text.len())..];
         if !new_chars.is_empty() {
-            let _ = tx.send(new_chars.to_string());
+            let _ = tx.send(Bytes::from(new_chars.to_string()));
         }
         previous_text = text;
 

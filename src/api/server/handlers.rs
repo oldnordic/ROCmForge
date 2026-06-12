@@ -5,6 +5,7 @@ use axum::{
 };
 use futures::stream::Stream;
 use serde_json::json;
+use bytes::Bytes;
 use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -83,7 +84,7 @@ pub(crate) async fn create_completion(
     let prompt_tokens_len = prompt_tokens.len();
 
     if req.stream.unwrap_or(false) {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
         let entry_clone = entry.clone();
         let req_clone = req.clone();
 
@@ -119,6 +120,10 @@ pub(crate) async fn create_completion(
 
         let stream = async_stream::stream! {
             while let Some(text) = rx.recv().await {
+                let text = match std::str::from_utf8(&text) {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
                 yield Ok::<Event, Infallible>(Event::default().data(json!({
                     "id": "cmpl-",
                     "object": "text_completion.chunk",
@@ -209,7 +214,7 @@ pub(crate) async fn create_chat_completion(
     let prompt_tokens_len = prompt_tokens.len();
 
     if req.stream.unwrap_or(false) {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
         let entry_clone = entry.clone();
         let req_clone = req.clone();
 
@@ -245,6 +250,10 @@ pub(crate) async fn create_chat_completion(
 
         let stream = async_stream::stream! {
             while let Some(text) = rx.recv().await {
+                let text = match std::str::from_utf8(&text) {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
                 yield Ok::<Event, Infallible>(Event::default().data(json!({
                     "id": "chatcmpl-",
                     "object": "chat.completion.chunk",

@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use crate::config::ModelConfig;
 use crate::cpu::weights::CpuModelWeights;
 use crate::tokenizer::BpeTokenizer;
@@ -64,7 +65,7 @@ pub(crate) fn run_stream_inference(
     max_tokens: usize,
     temperature: f32,
     top_p: f32,
-    tx: tokio::sync::mpsc::UnboundedSender<String>,
+    tx: tokio::sync::mpsc::UnboundedSender<Bytes>,
 ) -> crate::error::RocmForgeResult<()> {
     #[cfg(feature = "gpu")]
     {
@@ -167,7 +168,7 @@ pub(crate) fn run_cpu_stream_inference(
     max_tokens: usize,
     temperature: f32,
     top_p: f32,
-    tx: tokio::sync::mpsc::UnboundedSender<String>,
+    tx: tokio::sync::mpsc::UnboundedSender<Bytes>,
 ) -> crate::error::RocmForgeResult<()> {
     use crate::cpu::cache::{CpuForwardScratch, CpuKvCache};
     use crate::cpu::forward::{cpu_embed_token, cpu_full_forward, cpu_prefill};
@@ -209,7 +210,7 @@ pub(crate) fn run_cpu_stream_inference(
         let text = tok.decode(&output_tokens, false);
         let new_chars = &text[previous_text.len().min(text.len())..];
         if !new_chars.is_empty() {
-            let _ = tx.send(new_chars.to_string());
+            let _ = tx.send(Bytes::from(new_chars.to_string()));
         }
         previous_text = text;
 
