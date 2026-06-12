@@ -137,6 +137,10 @@ pub struct CpuForwardScratch {
     /// Q8_0 scratch buffer for GEMV quantization [hidden_size / 32 * 34 bytes]
     /// Reused across all GEMV calls to avoid repeated heap allocations.
     pub q8_scratch: AlignedVec<u8>,
+    /// Precomputed RoPE sin values for current position [head_dim / 2]
+    pub rope_sin: AlignedVec<f32>,
+    /// Precomputed RoPE cos values for current position [head_dim / 2]
+    pub rope_cos: AlignedVec<f32>,
 }
 
 impl CpuForwardScratch {
@@ -156,6 +160,7 @@ impl CpuForwardScratch {
         let max_in_dim = h.max(ff);
         let num_blocks = max_in_dim / Q8_BLOCK_ELEMS;
         let q8_scratch = AlignedVec::new_zeroed(num_blocks * Q8_BLOCK_BYTES, ALIGN_GPU_STAGING);
+        let half = config.head_dim / 2;
 
         Self {
             normed: AlignedVec::new_zeroed(h, ALIGN_AVX512),
@@ -168,6 +173,8 @@ impl CpuForwardScratch {
             swiglu: AlignedVec::new_zeroed(ff, ALIGN_AVX512),
             logits: AlignedVec::new_zeroed(v, ALIGN_AVX512),
             q8_scratch,
+            rope_sin: AlignedVec::new_zeroed(half, ALIGN_AVX512),
+            rope_cos: AlignedVec::new_zeroed(half, ALIGN_AVX512),
         }
     }
 
@@ -181,7 +188,9 @@ impl CpuForwardScratch {
             + self.layer_out.len()
             + self.gate.len()
             + self.swiglu.len()
-            + self.logits.len())
+            + self.logits.len()
+            + self.rope_sin.len()
+            + self.rope_cos.len())
             * std::mem::size_of::<f32>()
             + self.q8_scratch.len() * std::mem::size_of::<u8>()
     }
@@ -270,5 +279,7 @@ mod tests {
         assert_eq!(scratch.gate.len(), 512);
         assert_eq!(scratch.swiglu.len(), 512);
         assert_eq!(scratch.logits.len(), 1000);
+        assert_eq!(scratch.rope_sin.len(), 16); // head_dim / 2 = 32 / 2
+        assert_eq!(scratch.rope_cos.len(), 16);
     }
 }

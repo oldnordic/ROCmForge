@@ -145,7 +145,7 @@ fn prefill_layer_forward(
     let row_len = config.num_heads * config.head_dim;
     for s in 0..batch_len {
         let qr = &mut ps.q[s * row_len..(s + 1) * row_len];
-        super::ops::rope(
+        super::ops::rope_with_pos(
             qr,
             config.num_heads,
             config.head_dim,
@@ -157,7 +157,7 @@ fn prefill_layer_forward(
     let kv_row_len = config.num_kv_heads * config.head_dim;
     for s in 0..batch_len {
         let kr = &mut ps.k[s * kv_row_len..(s + 1) * kv_row_len];
-        super::ops::rope(
+        super::ops::rope_with_pos(
             kr,
             config.num_kv_heads,
             config.head_dim,

@@ -22,6 +22,8 @@ pub fn cpu_layer_forward(
     scratch: &mut CpuForwardScratch,
     layer: usize,
     pos: usize,
+    rope_sin: &[f32],
+    rope_cos: &[f32],
     config: &ModelConfig,
     debug: bool,
 ) -> Result<(), CpuError> {
@@ -125,21 +127,21 @@ pub fn cpu_layer_forward(
         );
     }
 
-    // 3. RoPE on Q and K
+    // 3. RoPE on Q and K (uses precomputed sin/cos)
     rope(
         &mut scratch.q,
         config.num_heads,
         config.head_dim,
-        pos,
-        &config.rope_freq,
+        rope_sin,
+        rope_cos,
         config.rope_neox,
     );
     rope(
         &mut scratch.k,
         config.num_kv_heads,
         config.head_dim,
-        pos,
-        &config.rope_freq,
+        rope_sin,
+        rope_cos,
         config.rope_neox,
     );
 
@@ -399,6 +401,22 @@ pub fn cpu_full_forward(
         );
     }
 
+    // Precompute RoPE sin/cos for this position once, reuse across all layers
+    let half = config.head_dim / 2;
+    for i in 0..half {
+        let angle = pos as f32 * config.rope_freq[i];
+        let (s, c) = angle.sin_cos();
+        scratch.rope_sin[i] = s;
+        scratch.rope_cos[i] = c;
+    }
+
+    // SAFETY: rope_sin/rope_cos are only read in cpu_layer_forward and are never
+    // mutated by it. We use raw-pointer slices to avoid a borrow-checker conflict
+    // between the immutable borrows into scratch.rope_sin/rope_cos and the mutable
+    // borrow of scratch passed to cpu_layer_forward.
+    let rope_sin = unsafe { std::slice::from_raw_parts(scratch.rope_sin.as_ptr(), half) };
+    let rope_cos = unsafe { std::slice::from_raw_parts(scratch.rope_cos.as_ptr(), half) };
+
     // Process all transformer layers
     for layer_idx in 0..config.num_layers {
         cpu_layer_forward(
@@ -408,6 +426,8 @@ pub fn cpu_full_forward(
             scratch,
             layer_idx,
             pos,
+            rope_sin,
+            rope_cos,
             config,
             debug,
         )?;

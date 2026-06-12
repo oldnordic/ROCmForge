@@ -142,7 +142,7 @@ pub(crate) fn compute_layer0_cpu_reference(
             .collect();
         let mut t_q_rope = t_q.clone();
         let mut t_k_rope = t_k.clone();
-        crate::cpu::ops::rope(
+        crate::cpu::ops::rope_with_pos(
             &mut t_q_rope,
             config.num_heads,
             config.head_dim,
@@ -150,7 +150,7 @@ pub(crate) fn compute_layer0_cpu_reference(
             &freq,
             config.rope_neox,
         );
-        crate::cpu::ops::rope(
+        crate::cpu::ops::rope_with_pos(
             &mut t_k_rope,
             config.num_kv_heads,
             config.head_dim,
