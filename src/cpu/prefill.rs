@@ -150,7 +150,7 @@ fn prefill_layer_forward(
             config.num_heads,
             config.head_dim,
             start_pos + s,
-            config.rope_theta,
+            &config.rope_freq,
             config.rope_neox,
         );
     }
@@ -162,7 +162,7 @@ fn prefill_layer_forward(
             config.num_kv_heads,
             config.head_dim,
             start_pos + s,
-            config.rope_theta,
+            &config.rope_freq,
             config.rope_neox,
         );
     }
@@ -723,6 +723,7 @@ mod tests {
             max_seq_len: 32,
             rms_norm_eps: 1e-6,
             rope_theta: 10000.0,
+            rope_freq: vec![1.0, 0.5],
             rope_neox: true,
             use_attention_bias: false,
             attention_layout: crate::config::AttentionLayout::SplitQkv,

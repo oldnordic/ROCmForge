@@ -25,6 +25,9 @@ pub struct ModelConfig {
     // Numerical parameters
     pub rms_norm_eps: f32,
     pub rope_theta: f32,
+    /// Precomputed RoPE frequencies: freq[i] = 1/theta^(2i/head_dim).
+    /// Length = head_dim/2. Eliminates powf per pair at inference time.
+    pub rope_freq: Vec<f32>,
 
     // Behavioral flags (from ModelTraits)
     pub rope_neox: bool,
@@ -68,6 +71,12 @@ impl ModelConfig {
         let rope_theta = meta.rope_freq_base(traits.default_rope_theta);
         let max_seq_len = meta.context_length();
 
+        // Precompute RoPE frequencies to eliminate powf at inference time
+        let half = head_dim / 2;
+        let rope_freq: Vec<f32> = (0..half)
+            .map(|i| 1.0 / rope_theta.powf((2 * i) as f32 / head_dim as f32))
+            .collect();
+
         // intermediate_size: try metadata first, then tensor shape inference (per D-04, CONF-04)
         let intermediate_size = {
             let from_meta = meta.feed_forward_length();
@@ -90,6 +99,7 @@ impl ModelConfig {
             max_seq_len,
             rms_norm_eps,
             rope_theta,
+            rope_freq,
             rope_neox: traits.rope_style == RopeStyle::NeoX,
             use_attention_bias: traits.use_attention_bias,
             attention_layout: traits.attention_layout,
@@ -111,6 +121,11 @@ impl ModelConfig {
     pub fn from_rfm(meta: &crate::loader::RfmMetadata) -> Result<Self, ConfigError> {
         let traits = ModelTraits::for_arch(&meta.architecture);
 
+        let half = meta.head_dim / 2;
+        let rope_freq: Vec<f32> = (0..half)
+            .map(|i| 1.0 / meta.rope_theta.powf((2 * i) as f32 / meta.head_dim as f32))
+            .collect();
+
         let config = Self {
             num_layers: meta.num_layers,
             hidden_size: meta.hidden_size,
@@ -122,6 +137,7 @@ impl ModelConfig {
             max_seq_len: meta.max_seq_len,
             rms_norm_eps: meta.rms_norm_eps,
             rope_theta: meta.rope_theta,
+            rope_freq,
             rope_neox: meta.rope_neox,
             use_attention_bias: meta.use_attention_bias,
             attention_layout: traits.attention_layout,
@@ -254,6 +270,7 @@ mod tests {
             attention_layout: AttentionLayout::SplitQkv,
             architecture: "qwen2".to_string(),
             tensor_registry: TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf),
+            rope_freq: vec![1.0, 0.5],
             kv_lora_dim: None,
             kv_frame_codec_enabled: None,
             adastate_anchors_enabled: None,
@@ -283,6 +300,7 @@ mod tests {
             attention_layout: AttentionLayout::SplitQkv,
             architecture: "qwen2".to_string(),
             tensor_registry: TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf),
+            rope_freq: vec![1.0, 0.5],
             kv_lora_dim: None,
             kv_frame_codec_enabled: None,
             adastate_anchors_enabled: None,

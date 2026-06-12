@@ -136,6 +136,10 @@ pub(crate) fn compute_layer0_cpu_reference(
         v[pos * kv_size..(pos + 1) * kv_size].copy_from_slice(&t_v);
 
         // 3. RoPE
+        let half = config.head_dim / 2;
+        let freq: Vec<f32> = (0..half)
+            .map(|i| 1.0 / config.rope_theta.powf((2 * i) as f32 / config.head_dim as f32))
+            .collect();
         let mut t_q_rope = t_q.clone();
         let mut t_k_rope = t_k.clone();
         crate::cpu::ops::rope(
@@ -143,7 +147,7 @@ pub(crate) fn compute_layer0_cpu_reference(
             config.num_heads,
             config.head_dim,
             pos,
-            config.rope_theta,
+            &freq,
             config.rope_neox,
         );
         crate::cpu::ops::rope(
@@ -151,7 +155,7 @@ pub(crate) fn compute_layer0_cpu_reference(
             config.num_kv_heads,
             config.head_dim,
             pos,
-            config.rope_theta,
+            &freq,
             config.rope_neox,
         );
         q_rope[pos * q_size..(pos + 1) * q_size].copy_from_slice(&t_q_rope);

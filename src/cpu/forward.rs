@@ -131,7 +131,7 @@ pub fn cpu_layer_forward(
         config.num_heads,
         config.head_dim,
         pos,
-        config.rope_theta,
+        &config.rope_freq,
         config.rope_neox,
     );
     rope(
@@ -139,7 +139,7 @@ pub fn cpu_layer_forward(
         config.num_kv_heads,
         config.head_dim,
         pos,
-        config.rope_theta,
+        &config.rope_freq,
         config.rope_neox,
     );
 

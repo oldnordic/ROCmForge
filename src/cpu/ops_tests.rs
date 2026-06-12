@@ -55,8 +55,9 @@ mod tests {
     fn rope_neox_correct() {
         // Single head, head_dim=4, position 0, theta=10000
         let mut x = vec![1.0, 2.0, 3.0, 4.0];
+        let freq = vec![1.0, 0.01]; // 1/10000^(0/4), 1/10000^(2/4)
 
-        rope(&mut x, 1, 4, 0, 10000.0, true);
+        rope(&mut x, 1, 4, 0, &freq, true);
 
         // Position 0: angle = 0, sin=0, cos=1, so x should be unchanged
         assert!((x[0] - 1.0).abs() < 1e-5);
@@ -67,8 +68,9 @@ mod tests {
     fn rope_classic_correct() {
         // Single head, head_dim=4, position 0, theta=10000
         let mut x = vec![1.0, 2.0, 3.0, 4.0];
+        let freq = vec![1.0, 0.01]; // 1/10000^(0/4), 1/10000^(2/4)
 
-        rope(&mut x, 1, 4, 0, 10000.0, false);
+        rope(&mut x, 1, 4, 0, &freq, false);
 
         // Position 0: angle = 0, sin=0, cos=1
         assert!((x[0] - 1.0).abs() < 1e-5);
