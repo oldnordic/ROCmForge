@@ -569,18 +569,25 @@ pub fn cpu_embed_token(
         }
         GgmlType::F16 => {
             let start_idx = token_id as usize * h;
-            for i in 0..h {
-                let offset = (start_idx + i) * 2;
-                let bits =
-                    u16::from_le_bytes([weights.token_emb[offset], weights.token_emb[offset + 1]]);
-                let val = half::f16::from_bits(bits).to_f32();
-                if val.is_nan() {
-                    panic!(
-                        "NaN detected in cpu_embed_token for token_id {} at index {}",
-                        token_id, i
-                    );
+            let emb = &weights.token_emb[start_idx * 2..(start_idx + h) * 2];
+
+            #[cfg(target_arch = "x86_64")]
+            if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("f16c") {
+                unsafe {
+                    embed_f16_avx2_f16c(emb, &mut hidden[..h]);
                 }
-                hidden[i] = val;
+            } else {
+                for i in 0..h {
+                    let bits = u16::from_le_bytes([emb[i * 2], emb[i * 2 + 1]]);
+                    let val = half::f16::from_bits(bits).to_f32();
+                    if val.is_nan() {
+                        panic!(
+                            "NaN detected in cpu_embed_token for token_id {} at index {}",
+                            token_id, i
+                        );
+                    }
+                    hidden[i] = val;
+                }
             }
         }
         GgmlType::Q4_0 => {
@@ -614,5 +621,26 @@ pub fn cpu_embed_token(
             );
             std::panic::panic_any(msg);
         }
+    }
+}
+
+/// AVX2+F16C vectorized F16->F32 embedding copy.
+/// Processes 8 f16 values (16 bytes) per iteration.
+#[cfg(target_arch = "x86_64")]
+unsafe fn embed_f16_avx2_f16c(emb: &[u8], hidden: &mut [f32]) {
+    use std::arch::x86_64::*;
+    let n = hidden.len();
+    let chunks = n / 8;
+    for i in 0..chunks {
+        let offset = i * 16;
+        let v16 = _mm_loadu_si128(emb.as_ptr().add(offset) as *const __m128i);
+        let v32 = _mm256_cvtph_ps(v16);
+        _mm256_storeu_ps(hidden.as_mut_ptr().add(i * 8), v32);
+    }
+    // Scalar tail
+    for i in chunks * 8..n {
+        let offset = i * 2;
+        let bits = u16::from_le_bytes([emb[offset], emb[offset + 1]]);
+        hidden[i] = half::f16::from_bits(bits).to_f32();
     }
 }
