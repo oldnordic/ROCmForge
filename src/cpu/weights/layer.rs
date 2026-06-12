@@ -90,9 +90,13 @@ impl CpuLayerWeights {
         };
 
         let copy_f32_opt = |name_enum: TensorName| -> Result<Option<Vec<f32>>, WeightError> {
-            let name = config.tensor_registry.resolve(name_enum, layer);
-            if file.tensor(&name).map_err(WeightError::Load)?.is_some() {
-                copy_f32(file, &name).map(Some)
+            let name_opt = config.tensor_registry.resolve_optional(name_enum, layer);
+            if let Some(name) = name_opt {
+                if file.tensor(&name).map_err(WeightError::Load)?.is_some() {
+                    copy_f32(file, &name).map(Some)
+                } else {
+                    Ok(None)
+                }
             } else {
                 Ok(None)
             }
@@ -194,18 +198,7 @@ impl CpuLayerWeights {
                 .map_err(WeightError::Load)?
                 .ok_or_else(|| WeightError::TensorNotFound(name.to_string()))?;
             match t.wtype {
-                RfmType::F32 => {
-                    let n = t.data.len() / 4;
-                    let mut out = vec![0.0f32; n];
-                    unsafe {
-                        std::ptr::copy_nonoverlapping(
-                            t.data.as_ptr() as *const f32,
-                            out.as_mut_ptr(),
-                            n,
-                        );
-                    }
-                    Ok(out)
-                }
+                RfmType::F32 => Ok(super::helpers::copy_f32_from_bytes(t.data)),
                 _ => Err(WeightError::Load(
                     crate::loader::LoadError::UnknownTensorType(0),
                 )),
@@ -213,9 +206,13 @@ impl CpuLayerWeights {
         };
 
         let load_rfm_f32_opt = |name_enum: TensorName| -> Result<Option<Vec<f32>>, WeightError> {
-            let name = config.tensor_registry.resolve(name_enum, layer);
-            if file.tensor(&name).map_err(WeightError::Load)?.is_some() {
-                load_rfm_f32(&name).map(Some)
+            let name_opt = config.tensor_registry.resolve_optional(name_enum, layer);
+            if let Some(name) = name_opt {
+                if file.tensor(&name).map_err(WeightError::Load)?.is_some() {
+                    load_rfm_f32(&name).map(Some)
+                } else {
+                    Ok(None)
+                }
             } else {
                 Ok(None)
             }

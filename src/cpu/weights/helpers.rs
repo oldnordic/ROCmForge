@@ -11,21 +11,19 @@ pub(crate) fn copy_tensor(file: &GgufFile, name: &str) -> Result<Vec<u8>, Weight
 }
 
 /// Copy an always-F32 tensor as Vec<f32>.
+/// Uses byte-wise copy to avoid alignment requirements on the source buffer.
 pub(crate) fn copy_f32(file: &GgufFile, name: &str) -> Result<Vec<f32>, WeightError> {
     let bytes = copy_tensor(file, name)?;
-    let n = bytes.len() / 4;
-    let mut out = vec![0.0f32; n];
-    unsafe {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const f32, out.as_mut_ptr(), n);
-    }
-    Ok(out)
+    Ok(copy_f32_from_bytes(&bytes))
 }
 
+/// Convert a little-endian byte slice to Vec<f32> without alignment assumptions.
 pub(crate) fn copy_f32_from_bytes(bytes: &[u8]) -> Vec<f32> {
     let n = bytes.len() / 4;
     let mut out = vec![0.0f32; n];
-    unsafe {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const f32, out.as_mut_ptr(), n);
+    for i in 0..n {
+        let b = &bytes[i * 4..i * 4 + 4];
+        out[i] = f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
     }
     out
 }

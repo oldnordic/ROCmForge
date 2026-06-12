@@ -79,12 +79,7 @@ impl CpuModelWeights {
                 .tensor(name)
                 .map_err(WeightError::Load)?
                 .ok_or_else(|| WeightError::TensorNotFound(name.to_string()))?;
-            let n = t.data.len() / 4;
-            let mut out = vec![0.0f32; n];
-            unsafe {
-                std::ptr::copy_nonoverlapping(t.data.as_ptr() as *const f32, out.as_mut_ptr(), n);
-            }
-            Ok(out)
+            Ok(crate::cpu::weights::helpers::copy_f32_from_bytes(t.data))
         };
 
         let load_rfm_u8_meta = |name: &str| -> Result<(Vec<u8>, WeightMeta), WeightError> {
