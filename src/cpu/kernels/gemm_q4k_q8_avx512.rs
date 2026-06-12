@@ -100,6 +100,7 @@ pub unsafe fn dot_q4_k_q8_k_block_avx512(q4_block: &BlockQ4K, q8_block: &BlockQ8
     // Apply -32 bias only to scales (first 8 bytes), not mins (last 8 bytes)
     // Q4_K scales are stored as 6-bit values with +32 bias
     let mut biased_bytes = [0i8; 16];
+    #[allow(clippy::needless_range_loop, reason = "raw pointer arithmetic loop is clearer as indices")]
     for i in 0..16 {
         let raw_byte: i8 = unsafe { *(&utmp as *const [u32; 4] as *const i8).add(i) };
         // Only bias the first 8 bytes (scales), not the last 8 (mins)
@@ -112,7 +113,7 @@ pub unsafe fn dot_q4_k_q8_k_block_avx512(q4_block: &BlockQ4K, q8_block: &BlockQ8
 
     // Convert biased scales to 16-bit integers using SIGN-extension
     // This treats 224 (0xE0) as -32, which is what we want
-    let biased_ptr = biased_bytes.as_ptr() as *const i8;
+    let biased_ptr = biased_bytes.as_ptr();
     let mins_and_scales =
         unsafe { _mm256_cvtepi8_epi16(_mm_loadu_si128(biased_ptr as *const __m128i)) };
 
@@ -122,6 +123,7 @@ pub unsafe fn dot_q4_k_q8_k_block_avx512(q4_block: &BlockQ4K, q8_block: &BlockQ8
 
     // Copy bsums to local array
     let mut bsums_local = [0i16; 16];
+    #[allow(clippy::manual_memcpy, reason = "packed struct field copy requires loop to avoid unaligned reference")]
     for i in 0..16 {
         bsums_local[i] = q8_block.bsums[i];
     }
@@ -231,7 +233,7 @@ pub fn gemv_q4_k_q8_k_avx512(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize,
         .for_each(|(row, y_row)| {
             let x_row = &x[row * in_dim..(row + 1) * in_dim];
 
-            for col in 0..out_dim {
+            for (col, y_out) in y_row.iter_mut().enumerate().take(out_dim) {
                 let mut acc = 0.0f32;
 
                 for block in 0..(in_dim / 256) {
@@ -250,7 +252,7 @@ pub fn gemv_q4_k_q8_k_avx512(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize,
                     }
                 }
 
-                y_row[col] = acc;
+                *y_out = acc;
             }
         });
 }
@@ -263,8 +265,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     fn avx512_detection_returns_bool() {
         // Just verify detection doesn't panic
-        if !is_x86_feature_detected!("avx512f") {
-            return; // Skip if AVX-512F not available
+        if !is_x86_feature_detected!("avx512f") {// Skip if AVX-512F not available
         }
         // If AVX-512F is available, we can at least verify the struct compiles
     }
@@ -303,7 +304,7 @@ mod tests {
 
         // Scalar result
         let scalar_result =
-            unsafe { gemm_q4k_q8_scalar::dot_q4_k_q8_k_block_scalar(&q4_block, &q8_block) };
+            gemm_q4k_q8_scalar::dot_q4_k_q8_k_block_scalar(&q4_block, &q8_block);
         eprintln!("Scalar result: {}", scalar_result);
 
         // Now trace through manually

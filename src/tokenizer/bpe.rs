@@ -283,7 +283,7 @@ impl BpeTokenizer {
             let clen = utf8_char_len(bytes[offset]);
             let end = (offset + clen).min(bytes.len());
             symbols.push(Symbol {
-                text: encoded[offset..end].as_bytes().to_vec(),
+                text: encoded.as_bytes()[offset..end].to_vec(),
                 prev: symbols.len() as i32 - 1,
                 next: -1,
             });

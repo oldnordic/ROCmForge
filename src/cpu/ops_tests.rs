@@ -45,10 +45,10 @@ mod tests {
         assert!((silu(0.0) - 0.0).abs() < 1e-6);
 
         // silu(1) ≈ 0.731
-        assert!((silu(1.0) - 0.7310585786300049).abs() < 1e-5);
+        assert!((silu(1.0) - 0.731_058_6).abs() < 1e-5);
 
         // silu(-1) ≈ -0.2689
-        assert!((silu(-1.0) - (-0.2689414213699951)).abs() < 1e-5);
+        assert!((silu(-1.0) - (-0.268_941_43)).abs() < 1e-5);
     }
 
     #[test]
@@ -145,14 +145,12 @@ mod tests {
         // 2x3 matrix times 3-vector
         // Row 0: 1.0, 2.0, 3.0
         // Row 1: 4.0, 5.0, 6.0
-        let w_f16 = vec![
-            f16::from_f32(1.0),
+        let w_f16 = [f16::from_f32(1.0),
             f16::from_f32(2.0),
             f16::from_f32(3.0),
             f16::from_f32(4.0),
             f16::from_f32(5.0),
-            f16::from_f32(6.0),
-        ];
+            f16::from_f32(6.0)];
         let mut w_bytes = vec![0u8; 12];
         for (i, val) in w_f16.iter().enumerate() {
             let bytes = val.to_bits().to_le_bytes();
@@ -216,7 +214,7 @@ mod tests {
     fn gemv_q4_0_matches_f32() {
         // Create a simple Q4_0 weight matrix: 2 rows, 32 cols (1 block per row)
         // Scale = 1.0 for both blocks
-        let mut w_q4 = vec![
+        let w_q4 = vec![
             // Block 0 (row 0): scale=1.0 (f16 0x3C00), then 16 bytes of nibbles
             0x00, 0x3C, // f16 1.0
             // nibbles: each byte packs lo+hi nibbles, value = nibble - 8
@@ -240,7 +238,7 @@ mod tests {
         // Now test with non-zero values
         // Weights: nibbles 9,9 → value = 9-8 = 1, scale=1.0 → dequant=1.0
         // But nibbles are packed: byte 0x99 means lo=9, hi=9
-        let mut w_q4_ones = vec![
+        let w_q4_ones = vec![
             // Block 0: scale=1.0
             0x00, 0x3C, // All nibbles = 9 → dequant = 1.0
             0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99,
@@ -316,9 +314,7 @@ mod tests {
         let mut qs = [0u8; 16];
         qs[0] = 0x00;
         qs[1] = 0x3C; // f16 1.0
-        for i in 2..16 {
-            qs[i] = 0x99; // nibble 9 for both lo and hi
-        }
+        qs[2..16].fill(0x99); // nibble 9 for both lo and hi
 
         // Input: all 1.0
         let xb: Vec<f32> = (0..32).map(|_| 1.0).collect();
@@ -326,9 +322,9 @@ mod tests {
 
         // Scalar reference
         let mut scalar_acc = 0.0f32;
-        for i in 0..16 {
-            let lo = (((qs[i] & 0x0F) as i32) - 8) as f32 * scale;
-            let hi = (((qs[i] >> 4) as i32) - 8) as f32 * scale;
+        for (i, q) in qs.iter().enumerate().take(16) {
+            let lo = (((q & 0x0F) as i32) - 8) as f32 * scale;
+            let hi = (((q >> 4) as i32) - 8) as f32 * scale;
             scalar_acc += lo * xb[i] + hi * xb[i + 16];
         }
 
@@ -354,17 +350,13 @@ mod tests {
         let mut qs = [0u8; 16];
         qs[0] = 0x00;
         qs[1] = 0x3C; // f16 1.0
-        for i in 2..16 {
-            qs[i] = 0x99;
-        }
+        qs[2..16].fill(0x99);
 
         // Q8_0: all bytes = 1 (→ value = 1 * scale), scale=1.0
         let mut q8 = [0u8; 32];
         q8[0] = 0x00;
         q8[1] = 0x3C; // f16 1.0
-        for i in 2..32 {
-            q8[i] = 1u8;
-        }
+        q8[2..32].fill(1);
 
         let scale = 1.0;
 
@@ -482,6 +474,6 @@ mod tests {
         // Integer q can only be 16 or 17, so we'll use q=17 giving dequant = 2.0
         // Let's just test that it runs and produces some output
         assert!(y[0] > 0.0, "Output should be positive");
-        assert!(y[1] < y[0] || y[1] > y[0], "Outputs should differ");
+        assert!(y[1] != y[0], "Outputs should differ");
     }
 }

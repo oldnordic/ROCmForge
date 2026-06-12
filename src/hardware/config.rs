@@ -40,7 +40,7 @@ impl BatchConfig {
         };
 
         // Clamp to sensible range: at least 1, at most 256
-        let max_tokens_per_batch = max_batch.max(1).min(256);
+        let max_tokens_per_batch = max_batch.clamp(1, 256);
 
         // Use physical cores only for compute
         let num_cores = caps.compute_cores();
@@ -197,7 +197,7 @@ mod tests {
         let batch = BatchConfig::from_capabilities(&caps, &config);
 
         // Should be based on 80% of L3, clamped to 256
-        let clamped_expected = expected_max.min(256).max(1);
+        let clamped_expected = expected_max.clamp(1, 256);
         assert_eq!(batch.max_tokens_per_batch, clamped_expected);
     }
 

@@ -65,8 +65,8 @@ unsafe fn rms_norm_avx2(x: &[f32], w: &[f32], out: &mut [f32], eps: f32) {
         sum_vec = _mm256_fmadd_ps(xv, xv, sum_vec);
     }
     let mut sum_sq = hsum256_ps_avx(sum_vec);
-    for i in chunks * 8..n {
-        sum_sq += x[i] * x[i];
+    for item in x.iter().take(n).skip(chunks * 8) {
+        sum_sq += item * item;
     }
 
     let rms = (sum_sq / n as f32 + eps).sqrt();

@@ -148,6 +148,7 @@ fn read_byte_array<R: Read>(r: &mut R) -> Result<Vec<Vec<u8>>, LoadError> {
 
 /// Read an array of merge rules (for tokenizer.ggml.merges).
 /// Each element is a GGUF string with format "first second"; split on first space.
+#[allow(clippy::type_complexity, reason = "GGUF loader returns complex type by spec")]
 fn read_merge_array<R: Read>(r: &mut R) -> Result<Vec<(Vec<u8>, Vec<u8>)>, LoadError> {
     let _elem_type = read_u32(r)?;
     let count = read_u64(r)? as usize;
@@ -158,8 +159,9 @@ fn read_merge_array<R: Read>(r: &mut R) -> Result<Vec<(Vec<u8>, Vec<u8>)>, LoadE
     for _ in 0..count {
         let s = read_string(r)?;
         if let Some(pos) = s.find(' ') {
-            let first = s[..pos].as_bytes().to_vec();
-            let second = s[pos + 1..].as_bytes().to_vec();
+            let bytes = s.as_bytes();
+            let first = bytes[..pos].to_vec();
+            let second = bytes[pos + 1..].to_vec();
             result.push((first, second));
         }
         // Silently skip any merge that does not have the expected format

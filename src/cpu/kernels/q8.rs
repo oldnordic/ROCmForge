@@ -80,8 +80,8 @@ impl BlockQ8K {
     pub fn dequantize(&self, output: &mut [f32]) {
         assert_eq!(output.len(), 256);
 
-        for i in 0..256 {
-            output[i] = self.qs[i] as f32 * self.d;
+        for (i, out) in output.iter_mut().enumerate().take(256) {
+            *out = self.qs[i] as f32 * self.d;
         }
     }
 }

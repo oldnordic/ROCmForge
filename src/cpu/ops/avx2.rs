@@ -102,6 +102,7 @@ unsafe fn mul_sum_q4_0_q8_0_block_avx2_unscaled(
 
 /// AVX2+FMA dot product: sum(a[i] * b[i]) for f32 slices.
 ///
+/// # Safety
 /// `a` and `b` must have the same length, which must be a multiple of 8.
 /// Caller must ensure AVX2+FMA are available (checked via is_x86_feature_detected!).
 #[cfg(target_arch = "x86_64")]
@@ -129,10 +130,10 @@ pub unsafe fn dot_f32_avx2(a: &[f32], b: &[f32]) -> f32 {
 
 /// AVX2 Q4_0 block dot product — processes one 32-element block in 4 FMA ops.
 ///
+/// # Safety
+/// `qs` must be exactly 16 bytes. `xb` must be at least 32 floats.
 /// Layout: qs[i] contains lo nibble (→ x[i]) and hi nibble (→ x[i+16])
 /// Dequant: (nibble - 8) * scale
-///
-/// `qs` must be exactly 16 bytes. `xb` must be at least 32 floats.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
 pub unsafe fn dot_q4_0_block_avx2(qs: &[u8], xb: &[f32], scale: f32) -> f32 {
@@ -183,6 +184,7 @@ pub unsafe fn dot_q4_0_block_avx2(qs: &[u8], xb: &[f32], scale: f32) -> f32 {
 
 /// AVX2 Q4_0 × Q8_0 block dot product — one 32-element block.
 ///
+/// # Safety
 /// Uses FMA accumulation for better performance.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
@@ -260,6 +262,9 @@ unsafe fn mul_sum_q4_1_q8_0_block_avx2_unscaled(
 }
 
 /// AVX2 Q4_1 × Q8_0 block dot product — one 32-element block.
+///
+/// # Safety
+/// Caller must ensure AVX2+FMA are available.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
 pub unsafe fn dot_q4_1_q8_0_block_avx2(qs: &[u8], q8: &[u8], scale: f32, min_offset: f32) -> f32 {

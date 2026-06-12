@@ -23,6 +23,7 @@ pub const Q4_K_BLOCK_BYTES: usize = 144;
 /// - d: f16 scale (2 bytes)
 /// - qh: 4 bytes of high bits (1 bit per value)
 /// - qs: 16 bytes of low 4 bits (2 values per byte)
+///
 /// Total: 22 bytes for 32 values (5.5 bits per weight)
 pub const Q5_0_BLOCK_ELEMS: usize = 32;
 pub const Q5_0_BLOCK_BYTES: usize = 22;
@@ -33,6 +34,7 @@ pub const Q5_0_BLOCK_BYTES: usize = 22;
 /// - m: f16 min offset (2 bytes)
 /// - qh: 4 bytes of high bits (1 bit per value)
 /// - qs: 16 bytes of low 4 bits (2 values per byte)
+///
 /// Total: 24 bytes for 32 values (5.5 bits per weight)
 pub const Q5_1_BLOCK_ELEMS: usize = 32;
 pub const Q5_1_BLOCK_BYTES: usize = 24;
@@ -591,6 +593,7 @@ pub fn embed_q3_k_batch(ids: &[u32], emb: &[u8], out: &mut [f32], hidden_size: u
 /// - scales[12]: scales and mins packed as 6-bit values
 /// - qh[32]: high bit of 5-bit quantization (1 bit per element)
 /// - ql[128]: low 4-bit quantized weights (2 elements per byte)
+///
 /// Total: 176 bytes for 256 values
 pub fn embed_q5_k(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usize) {
     let num_blocks = hidden_size / Q5_K_BLOCK_ELEMS;

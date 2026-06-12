@@ -40,7 +40,7 @@ pub(crate) fn copy_f32_from_bytes(bytes: &[u8]) -> Vec<f32> {
 /// on little-endian platforms).
 pub(crate) fn try_as_f32_slice(bytes: &[u8]) -> Option<&[f32]> {
     let ptr = bytes.as_ptr() as *const f32;
-    if ptr.align_offset(std::mem::align_of::<f32>()) == 0 && bytes.len() % 4 == 0 {
+    if ptr.align_offset(std::mem::align_of::<f32>()) == 0 && bytes.len().is_multiple_of(4) {
         Some(unsafe { std::slice::from_raw_parts(ptr, bytes.len() / 4) })
     } else {
         None

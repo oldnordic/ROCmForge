@@ -36,15 +36,16 @@ pub fn dot_q4_k_q8_k_block_scalar(q4_block: &BlockQ4K, q8_block: &BlockQ8K) -> f
 
     // Copy bsums to local array to avoid packed struct reference issues
     let mut bsums_local = [0i16; 16];
+    #[allow(clippy::manual_memcpy, reason = "packed struct field copy requires loop to avoid unaligned reference")]
     for i in 0..16 {
         bsums_local[i] = q8_block.bsums[i];
     }
 
     // Compute min contribution
     let mut sumi = 0i32;
-    for j in 0..16 {
+    for (j, bsum) in bsums_local.iter().enumerate() {
         let min_val = get_scaled_min(mins, j);
-        sumi += bsums_local[j] as i32 * min_val;
+        sumi += *bsum as i32 * min_val;
     }
 
     // Extract Q4_K nibbles into aux array (256 signed 8-bit values)
@@ -66,14 +67,12 @@ pub fn dot_q4_k_q8_k_block_scalar(q4_block: &BlockQ4K, q8_block: &BlockQ8K) -> f
     let mut sums = [0.0f32; 8];
     let mut q8_ptr = 0;
     let mut aux_ptr = 0;
-    let mut scale_idx = 0;
 
-    for _j in 0..8 {
+    for (scale_idx, _j) in (0..8).enumerate() {
         let mut aux32 = [0i32; 8];
 
         // Get scale for this sub-block
         let scale = get_scale(scales, scale_idx);
-        scale_idx += 1;
 
         // Process 4 groups of 8 elements
         for _ in 0..4 {
@@ -90,8 +89,8 @@ pub fn dot_q4_k_q8_k_block_scalar(q4_block: &BlockQ4K, q8_block: &BlockQ8K) -> f
     }
 
     let mut result = dmin * (sumi as f32);
-    for l in 0..8 {
-        result += sums[l];
+    for sum in &sums {
+        result += sum;
     }
 
     result
@@ -143,10 +142,10 @@ pub fn gemv_q4_k_q8_k(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim
 
     // Quantize input to Q8_K (once per column of blocks)
     let mut x_q8 = vec![BlockQ8K::zero(); num_blocks_per_row];
-    for b in 0..num_blocks_per_row {
+    for (b, block) in x_q8.iter_mut().enumerate() {
         let start = b * 256;
         let end = start + 256;
-        x_q8[b] = crate::cpu::kernels::q8::quantize_q8_k(&x[start..end]);
+        *block = crate::cpu::kernels::q8::quantize_q8_k(&x[start..end]);
     }
 
     // Process each output row
@@ -154,10 +153,9 @@ pub fn gemv_q4_k_q8_k(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim
         let row_start = row * bytes_per_row;
         let mut acc = 0.0f32;
 
-        for b in 0..num_blocks_per_row {
+        for (b, q8_block) in x_q8.iter().enumerate() {
             let block_offset = row_start + b * BlockQ4K::SIZE;
             let q4_block = unsafe { &*(w.as_ptr().add(block_offset) as *const BlockQ4K) };
-            let q8_block = &x_q8[b];
 
             acc += dot_q4_k_q8_k_block_scalar(q4_block, q8_block);
         }
@@ -188,23 +186,24 @@ pub fn gemm_q4_k_q8_k(w: &[u8], x: &[f32], y: &mut [f32], _m: usize, n: usize, k
 
             // Quantize this row to Q8_K blocks
             let mut x_q8 = vec![BlockQ8K::zero(); num_blocks_k];
-            for b in 0..num_blocks_k {
-                x_q8[b] = crate::cpu::kernels::q8::quantize_q8_k(&x_row[b * 256..(b + 1) * 256]);
+            for (b, block) in x_q8.iter_mut().enumerate() {
+                *block = crate::cpu::kernels::q8::quantize_q8_k(
+                    &x_row[b * 256..(b + 1) * 256],
+                );
             }
 
             // Compute dot products for each output column
-            for out_col in 0..n {
+            for (out_col, y_out) in y_row.iter_mut().enumerate().take(n) {
                 let mut acc = 0.0f32;
 
-                for b in 0..num_blocks_k {
+                for (b, q8_block) in x_q8.iter().enumerate() {
                     let w_offset = out_col * num_blocks_k * BlockQ4K::SIZE + b * BlockQ4K::SIZE;
                     let q4_block = unsafe { &*(w.as_ptr().add(w_offset) as *const BlockQ4K) };
-                    let q8_block = &x_q8[b];
 
                     acc += dot_q4_k_q8_k_block_scalar(q4_block, q8_block);
                 }
 
-                y_row[out_col] = acc;
+                *y_out = acc;
             }
         });
 }

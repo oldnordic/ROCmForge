@@ -12,6 +12,7 @@ use crate::loader::GgmlType;
 
 // ── Layer forward ────────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments, reason = "function has many parameters by design")]
 /// Forward pass through a single transformer layer.
 ///
 /// Architecture: RMSNorm → Attention → Residual → RMSNorm → FFN → Residual
@@ -533,7 +534,7 @@ pub fn cpu_prefill(
     let batch_config = match crate::hardware::detect() {
         Ok(caps) => crate::hardware::derive_batch_config(&caps, config),
         Err(_) => crate::hardware::BatchConfig {
-            max_tokens_per_batch: prompt_tokens.len().max(1).min(256),
+            max_tokens_per_batch: prompt_tokens.len().clamp(1, 256),
             num_cores: rayon::current_num_threads(),
         },
     };
@@ -649,9 +650,9 @@ unsafe fn embed_f16_avx2_f16c(emb: &[u8], hidden: &mut [f32]) {
         _mm256_storeu_ps(hidden.as_mut_ptr().add(i * 8), v32);
     }
     // Scalar tail
-    for i in chunks * 8..n {
+    for (i, h) in hidden.iter_mut().enumerate().take(n).skip(chunks * 8) {
         let offset = i * 2;
         let bits = u16::from_le_bytes([emb[offset], emb[offset + 1]]);
-        hidden[i] = half::f16::from_bits(bits).to_f32();
+        *h = half::f16::from_bits(bits).to_f32();
     }
 }

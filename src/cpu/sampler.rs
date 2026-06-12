@@ -56,10 +56,10 @@ pub fn cpu_sample_top_p(logits: &[f32], temperature: f32, top_p: f32, seed: u64)
     // Sample uniformly from nucleus using LCG
     let rand_val = lcg_unit(seed) * cumsum;
     let mut running = 0.0f32;
-    for i in 0..nucleus_end {
-        running += pairs[i].0;
+    for pair in pairs.iter().take(nucleus_end) {
+        running += pair.0;
         if running >= rand_val {
-            return pairs[i].1;
+            return pair.1;
         }
     }
     pairs[0].1
@@ -183,10 +183,10 @@ pub fn cpu_sample_top_k_top_p(
     // Sample
     let rand_val = lcg_unit(seed) * cumsum;
     let mut running = 0.0f32;
-    for i in 0..nucleus_end {
-        running += pairs[i].0;
+    for pair in pairs.iter().take(nucleus_end) {
+        running += pair.0;
         if running >= rand_val {
-            return pairs[i].1;
+            return pair.1;
         }
     }
     pairs[0].1
@@ -271,7 +271,7 @@ mod tests {
     fn lcg_produces_values_in_unit_interval() {
         for seed in 0..100 {
             let v = lcg_unit(seed);
-            assert!(v >= 0.0 && v < 1.0, "value {} not in [0, 1)", v);
+            assert!((0.0..1.0).contains(&v), "value {} not in [0, 1)", v);
         }
     }
 }

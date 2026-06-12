@@ -118,6 +118,7 @@ pub unsafe fn dot_q4_k_q8_k_block_avx2(q4_block: &BlockQ4K, q8_block: &BlockQ8K)
 
     // Copy bsums to local array to avoid packed struct reference issues
     let mut bsums_local = [0i16; 16];
+    #[allow(clippy::manual_memcpy, reason = "packed struct field copy requires loop to avoid unaligned reference")]
     for i in 0..16 {
         bsums_local[i] = q8_block.bsums[i];
     }
@@ -207,10 +208,10 @@ pub fn gemv_q4_k_q8_k_avx2(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, i
 
     // Quantize input to Q8_K
     let mut x_q8 = vec![BlockQ8K::zero(); num_blocks_per_row];
-    for b in 0..num_blocks_per_row {
+    for (b, block) in x_q8.iter_mut().enumerate() {
         let start = b * 256;
         let end = start + 256;
-        x_q8[b] = crate::cpu::kernels::q8::quantize_q8_k(&x[start..end]);
+        *block = crate::cpu::kernels::q8::quantize_q8_k(&x[start..end]);
     }
 
     // Process each output row
@@ -218,10 +219,9 @@ pub fn gemv_q4_k_q8_k_avx2(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, i
         let row_start = row * bytes_per_row;
         let mut acc = 0.0f32;
 
-        for b in 0..num_blocks_per_row {
+        for (b, q8_block) in x_q8.iter().enumerate() {
             let block_offset = row_start + b * BlockQ4K::SIZE;
             let q4_block = unsafe { &*(w.as_ptr().add(block_offset) as *const BlockQ4K) };
-            let q8_block = &x_q8[b];
 
             acc += unsafe { dot_q4_k_q8_k_block_avx2(q4_block, q8_block) };
         }
@@ -261,18 +261,17 @@ pub fn gemm_q4_k_q8_k_avx2(w: &[u8], x: &[f32], y: &mut [f32], _m: usize, n: usi
             }
 
             // Compute dot products for each output column
-            for out_col in 0..n {
+            for (out_col, y_out) in y_row.iter_mut().enumerate().take(n) {
                 let mut acc = 0.0f32;
 
-                for b in 0..num_blocks_k {
+                for (b, q8_block) in x_q8.iter().enumerate() {
                     let w_offset = out_col * num_blocks_k * BlockQ4K::SIZE + b * BlockQ4K::SIZE;
                     let q4_block = unsafe { &*(w.as_ptr().add(w_offset) as *const BlockQ4K) };
-                    let q8_block = &x_q8[b];
 
                     acc += unsafe { dot_q4_k_q8_k_block_avx2(q4_block, q8_block) };
                 }
 
-                y_row[out_col] = acc;
+                *y_out = acc;
             }
         });
 }
@@ -316,7 +315,7 @@ mod tests {
 
     #[test]
     fn module_exists() {
-        assert!(true);
+        // Module compiles and loads successfully
     }
 
     #[cfg(target_arch = "x86_64")]

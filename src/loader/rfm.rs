@@ -564,8 +564,8 @@ mod tests {
         // Prepare mock payload data
         let mut payload = vec![0u8; 256 + 16384];
         // fill with some unique values
-        for i in 0..payload.len() {
-            payload[i] = (i % 251) as u8;
+        for (i, p) in payload.iter_mut().enumerate() {
+            *p = (i % 251) as u8;
         }
 
         // Write the RFM file

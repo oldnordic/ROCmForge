@@ -373,18 +373,18 @@ impl Half16 {
         let bits = val.to_bits();
         let sign = ((bits >> 31) & 1) as u16;
         let exponent = ((bits >> 23) & 0xFF) as i32;
-        let mantissa = (bits & 0x7FFFFF) as u32;
+        let mantissa = bits & 0x7FFFFF;
 
         if exponent == 0 {
             if mantissa == 0 {
-                return Self((sign as u16) << 15); // +/-0
+                return Self(sign << 15); // +/-0
             }
             // Subnormal - not handling in simplified version
-            Self((sign as u16) << 15)
+            Self(sign << 15)
         } else if exponent == 255 {
             if mantissa == 0 {
                 // Infinity
-                Self(((sign as u16) << 15) | 0x7C00)
+                Self((sign << 15) | 0x7C00)
             } else {
                 // NaN
                 Self(0x7E00)
@@ -393,7 +393,7 @@ impl Half16 {
             // Normal
             let new_exp = (exponent - 127 + 15).clamp(0, 31) as u16;
             let new_mant = (mantissa >> 13) as u16;
-            Self(((sign as u16) << 15) | (new_exp << 10) | new_mant)
+            Self((sign << 15) | (new_exp << 10) | new_mant)
         }
     }
 }
@@ -473,7 +473,7 @@ mod tests {
 
     #[test]
     fn f16_roundtrip() {
-        let test_values = [0.0, 1.0, -1.0, 0.5, -0.5, 3.14, -2.71];
+        let test_values = [0.0, 1.0, -1.0, 0.5, -0.5, std::f32::consts::PI, -2.71];
 
         for &val in &test_values {
             let f16_val = Half16::from_f32(val);

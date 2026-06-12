@@ -6,7 +6,6 @@
 mod tests {
     #[test]
     fn module_exists() {
-        // Placeholder test
-        assert!(true);
+        // Placeholder test — module compiles and loads
     }
 }

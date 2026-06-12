@@ -874,14 +874,14 @@ fn gemm_f32_bytes(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: us
         .enumerate()
         .for_each(|(s, y_row)| {
             let x_row = &x[s * in_dim..(s + 1) * in_dim];
-            for o in 0..out_dim {
+            for (o, y_out) in y_row.iter_mut().enumerate() {
                 let row_start = o * in_dim * 4;
                 let mut acc = 0.0f32;
-                for i in 0..in_dim {
+                for (i, x_val) in x_row.iter().enumerate() {
                     let b = &w[row_start + i * 4..row_start + i * 4 + 4];
-                    acc += x_row[i] * f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+                    acc += x_val * f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
                 }
-                y_row[o] = acc;
+                *y_out = acc;
             }
         });
 }
@@ -909,33 +909,31 @@ fn gemm_f16(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
         .enumerate()
         .for_each(|(s, y_row)| {
             let x_row = &x[s * in_dim..(s + 1) * in_dim];
-            for o in 0..out_dim {
+            for (o, y_out) in y_row.iter_mut().enumerate() {
                 let w_row_offset = o * in_dim * 2;
                 let mut acc = 0.0f32;
-                for i in 0..in_dim {
+                for (i, x_val) in x_row.iter().enumerate() {
                     let val = load_f16_as_f32(&w[w_row_offset + i * 2..w_row_offset + i * 2 + 2]);
-                    acc += val * x_row[i];
+                    acc += val * x_val;
                 }
-                y_row[o] = acc;
+                *y_out = acc;
             }
         });
 }
 
 /// F16 GEMM transposed.
 fn gemm_f16_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
-    for o in 0..out_dim {
-        y.par_chunks_mut(out_dim)
-            .enumerate()
-            .for_each(|(s, y_row)| {
-                let x_row = &x[s * in_dim..(s + 1) * in_dim];
-                let mut acc = 0.0f32;
-                for i in 0..in_dim {
-                    let offset = (i * out_dim + o) * 2;
-                    let val = load_f16_as_f32(&w[offset..offset + 2]);
-                    acc += x_row[i] * val;
-                }
-                y_row[o] = acc;
-            });
+    for (o, y_rows) in y.chunks_exact_mut(out_dim).enumerate() {
+        y_rows.par_iter_mut().enumerate().for_each(|(s, y_out)| {
+            let x_row = &x[s * in_dim..(s + 1) * in_dim];
+            let mut acc = 0.0f32;
+            for (i, x_val) in x_row.iter().enumerate() {
+                let offset = (i * out_dim + o) * 2;
+                let val = load_f16_as_f32(&w[offset..offset + 2]);
+                acc += x_val * val;
+            }
+            *y_out = acc;
+        });
     }
 }
 
@@ -963,7 +961,7 @@ fn gemm_q4_k_transposed_fallback(
         .for_each(|(batch_idx, y_row)| {
             let x_row = &x[batch_idx * k..(batch_idx + 1) * k];
 
-            for out_col in 0..n {
+            for (out_col, y_out) in y_row.iter_mut().enumerate() {
                 let mut acc = 0.0f32;
 
                 for block_idx in 0..num_blocks_k {
@@ -992,7 +990,7 @@ fn gemm_q4_k_transposed_fallback(
                     }
                 }
 
-                y_row[out_col] = acc;
+                *y_out = acc;
             }
         });
 }

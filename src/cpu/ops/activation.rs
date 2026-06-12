@@ -51,8 +51,9 @@ unsafe fn silu_fuse_avx2(gate: &[f32], up: &mut [f32]) {
     }
 
     // Scalar tail
-    for i in chunks * 8..n {
-        up[i] *= silu(gate[i]);
+    let tail_start = chunks * 8;
+    for (u, g) in up[tail_start..].iter_mut().zip(&gate[tail_start..]) {
+        *u *= silu(*g);
     }
 }
 
@@ -113,15 +114,15 @@ unsafe fn softmax_avx2(x: &mut [f32]) {
         max_vec = _mm256_max_ps(max_vec, xv);
     }
     let mut max = hmax256_ps(max_vec);
-    for i in chunks * 8..n {
-        max = max.max(x[i]);
+    for item in x.chunks_exact(8).remainder() {
+        max = max.max(*item);
     }
 
     // Exp and sum (scalar — AVX2 lacks native exp)
     let mut sum = 0.0f32;
-    for i in 0..n {
-        x[i] = (x[i] - max).exp();
-        sum += x[i];
+    for item in x.iter_mut() {
+        *item = (*item - max).exp();
+        sum += *item;
     }
 
     // Normalize
@@ -132,8 +133,9 @@ unsafe fn softmax_avx2(x: &mut [f32]) {
             let result = _mm256_mul_ps(xv, inv_sum);
             _mm256_storeu_ps(x.as_mut_ptr().add(i * 8), result);
         }
-        for i in chunks * 8..n {
-            x[i] /= sum;
+        let tail_start = chunks * 8;
+        for item in &mut x[tail_start..] {
+            *item /= sum;
         }
     }
 }
@@ -201,9 +203,9 @@ unsafe fn argmax_find_max_avx2(x: &[f32]) -> f32 {
         }
         max_val = hmax256_ps(max_vec).max(max_val);
     }
-    for i in chunks * 8..n {
-        if x[i] > max_val {
-            max_val = x[i];
+    for item in x.chunks_exact(8).remainder() {
+        if *item > max_val {
+            max_val = *item;
         }
     }
     max_val

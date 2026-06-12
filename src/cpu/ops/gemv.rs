@@ -897,6 +897,7 @@ pub fn gemv_q4_1_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, 
 /// * `out_dim` - Output dimension
 /// * `in_dim` - Input dimension
 /// * `transposed` - Whether to compute W^T * x instead of W * x
+#[allow(clippy::too_many_arguments, reason = "function has many parameters by design")]
 /// * `scratch` - Optional scratch buffer for Q8_0 quantization (avoids heap allocation)
 pub fn dispatch_gemv_transposed(
     w: &[u8],
@@ -982,24 +983,24 @@ fn gemv_f16(w: &[u8], x: &[f32], y: &mut [f32]) {
     y.par_iter_mut().enumerate().for_each(|(row, out)| {
         let row_offset = row * in_dim * 2;
         let mut acc = 0.0f32;
-        for i in 0..in_dim {
+        for (i, x_val) in x.iter().enumerate() {
             let offset = row_offset + i * 2;
             let val = load_f16_scale(&w[offset..offset + 2]);
-            acc += val * x[i];
+            acc += val * x_val;
         }
         *out = acc;
     });
 }
 
 /// F16 GEMV transposed for tied embeddings.
-fn gemv_f16_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+fn gemv_f16_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, _in_dim: usize) {
     debug_assert_eq!(y.len(), out_dim, "output dimension mismatch");
     y.par_iter_mut().enumerate().for_each(|(v, out)| {
         let mut acc = 0.0f32;
-        for i in 0..in_dim {
+        for (i, x_val) in x.iter().enumerate() {
             let offset = (i * out_dim + v) * 2;
             let val = load_f16_scale(&w[offset..offset + 2]);
-            acc += x[i] * val;
+            acc += x_val * val;
         }
         *out = acc;
     });

@@ -130,7 +130,7 @@ mod tests {
         let v = AlignedVec::<f32>::new_zeroed(100, ALIGN_AVX512);
         assert_eq!(v.len(), 100);
         assert!(!v.is_empty());
-        assert!(v.as_ptr() as usize % ALIGN_AVX512 == 0);
+        assert!((v.as_ptr() as usize).is_multiple_of(ALIGN_AVX512));
         // All zeroed
         assert!(v.iter().all(|&x| x == 0.0));
     }
@@ -139,7 +139,7 @@ mod tests {
     fn aligned_vec_u8_512byte() {
         let v = AlignedVec::<u8>::new_zeroed(4096, ALIGN_ODIRECT);
         assert_eq!(v.len(), 4096);
-        assert!(v.as_ptr() as usize % ALIGN_ODIRECT == 0);
+        assert!((v.as_ptr() as usize).is_multiple_of(ALIGN_ODIRECT));
     }
 
     #[test]
@@ -169,7 +169,7 @@ mod tests {
         assert_eq!(v[3], 3.0); // old data preserved
         assert_eq!(v[4], 42.0); // new elements filled
         assert_eq!(v[7], 42.0);
-        assert!(v.as_ptr() as usize % ALIGN_AVX2 == 0);
+        assert!((v.as_ptr() as usize).is_multiple_of(ALIGN_AVX2));
         // Shrink
         v.resize(2, 99.0);
         assert_eq!(v.len(), 2);
