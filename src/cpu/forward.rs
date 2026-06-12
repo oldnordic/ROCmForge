@@ -226,24 +226,28 @@ pub fn cpu_layer_forward(
     let gate = &mut *scratch.gate;
     let swiglu = &mut *scratch.swiglu;
     let (gate_res, up_res) = rayon::join(
-        || dispatch_gemv(
-            &weights.ffn_gate,
-            &weights.ffn_gate_meta,
-            normed,
-            gate,
-            ff_size,
-            h,
-            None,
-        ),
-        || dispatch_gemv(
-            &weights.ffn_up,
-            &weights.ffn_up_meta,
-            normed,
-            swiglu,
-            ff_size,
-            h,
-            None,
-        ),
+        || {
+            dispatch_gemv(
+                &weights.ffn_gate,
+                &weights.ffn_gate_meta,
+                normed,
+                gate,
+                ff_size,
+                h,
+                None,
+            )
+        },
+        || {
+            dispatch_gemv(
+                &weights.ffn_up,
+                &weights.ffn_up_meta,
+                normed,
+                swiglu,
+                ff_size,
+                h,
+                None,
+            )
+        },
     );
     gate_res?;
     up_res?;

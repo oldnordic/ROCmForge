@@ -70,6 +70,9 @@ impl GpuKvCache {
             let w_down_v = optional_layer_weights(self.w_down_v.as_ref(), layer);
             let centroids = self.centroids_ptr()?;
 
+            let bits = self.kv_quant_bits.unwrap_or(3);
+            let num_centroids = 1 << bits;
+
             kv_write_turboquant(
                 k_cache as *mut u8,
                 v_cache as *mut u8,
@@ -81,6 +84,8 @@ impl GpuKvCache {
                 theta_base,
                 neox,
                 dc,
+                bits as i32,
+                num_centroids as i32,
                 centroids,
                 self.qjl_scale,
                 w_down_k,

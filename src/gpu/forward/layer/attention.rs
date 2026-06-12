@@ -36,8 +36,9 @@ pub(in crate::gpu::forward) fn gpu_attention_decode(
         .map(|w| w[layer_idx].as_ptr() as *const f32)
         .unwrap_or(std::ptr::null());
 
-    if kv.kv_quant_bits.is_some() {
+    if let Some(bits) = kv.kv_quant_bits {
         let centroids = kv.centroids_ptr()?;
+        let num_centroids = 1 << bits;
         flash_attn_decode_turboquant(
             out_base,
             q_base,
@@ -49,6 +50,8 @@ pub(in crate::gpu::forward) fn gpu_attention_decode(
             head_dim,
             scale,
             kv_lora_dim,
+            bits as i32,
+            num_centroids as i32,
             centroids,
             kv.qjl_scale,
             w_up_k,
@@ -106,6 +109,8 @@ pub(in crate::gpu::forward) fn gpu_attention_decode_from_state(
     if kv.kv_quant_bits.is_some() {
         let seq_len = scratch.decode_state_next_pos().unwrap_or(0) + 1;
         let centroids = kv.centroids_ptr()?;
+        let bits = kv.kv_quant_bits.unwrap_or(3);
+        let num_centroids = 1 << bits;
         flash_attn_decode_turboquant(
             out_base,
             q_base,
@@ -117,6 +122,8 @@ pub(in crate::gpu::forward) fn gpu_attention_decode_from_state(
             head_dim,
             scale,
             kv_lora_dim,
+            bits as i32,
+            num_centroids as i32,
             centroids,
             kv.qjl_scale,
             w_up_k,

@@ -24,6 +24,9 @@ fn make_test_config() -> ModelConfig {
         tensor_registry: rocmforge::config::TensorNameRegistry::from_scheme(
             &rocmforge::config::TensorNamingScheme::Gguf,
         ),
+        rope_freq: (0..64)
+            .map(|i| 1.0 / 10000.0f32.powf((2 * i) as f32 / 128.0f32))
+            .collect(),
         kv_lora_dim: None,
         kv_frame_codec_enabled: None,
         adastate_anchors_enabled: None,

@@ -135,8 +135,20 @@ pub fn flash_attn_decode(
     head_dim: usize,
     scale: f32,
 ) -> GpuResult<()> {
-    flash_attn_decode_strided(
-        d_out, d_q, d_k_cache, d_v_cache, seq_len, head_dim, head_dim, head_dim, scale,
+    flash_attn_decode_strided_multi_head(
+        d_out,
+        d_q,
+        d_k_cache,
+        d_v_cache,
+        seq_len,
+        1,
+        1,
+        head_dim,
+        scale,
+        0,
+        false,
+        std::ptr::null(),
+        std::ptr::null(),
     )
 }
 
@@ -147,18 +159,21 @@ pub fn flash_attn_decode_strided(
     d_v_cache: *const f32,
     seq_len: usize,
     head_dim: usize,
-    _kv_size: usize,
-    num_heads: usize,
+    kv_size: usize,
+    head_offset: usize,
     scale: f32,
 ) -> GpuResult<()> {
+    let d_k_offset = unsafe { d_k_cache.add(head_offset) };
+    let d_v_offset = unsafe { d_v_cache.add(head_offset) };
+    let num_kv_heads = kv_size / head_dim;
     flash_attn_decode_strided_multi_head(
         d_out,
         d_q,
-        d_k_cache,
-        d_v_cache,
+        d_k_offset,
+        d_v_offset,
         seq_len,
-        num_heads,
-        num_heads,
+        1,
+        num_kv_heads,
         head_dim,
         scale,
         0,

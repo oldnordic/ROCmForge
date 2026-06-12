@@ -7,7 +7,8 @@ use super::super::upload::{
 };
 use super::support::{load_qwen35_ssm_gguf, qwen35_post_attention_norm_name};
 use super::{
-    CpuCompressedExperts, GpuLayerWeights, GpuMoeWeights, GpuMpoWeights, GpuSparseCsrWeights,
+    CpuCompressedExperts, CpuMpoExperts, GpuLayerWeights, GpuMoeWeights, GpuMpoWeights,
+    GpuSparseCsrWeights,
 };
 use crate::config::{AttentionLayout, ModelConfig, TensorName, TensorNamingScheme};
 use crate::loader::GgufFile;
@@ -355,6 +356,9 @@ pub(super) fn load_for_device(
         ffn_gate_mpo: None::<GpuMpoWeights>,
         ffn_up_mpo: None::<GpuMpoWeights>,
         ffn_down_mpo: None::<GpuMpoWeights>,
+        ffn_gate_mpo_experts: None::<CpuMpoExperts>,
+        ffn_up_mpo_experts: None::<CpuMpoExperts>,
+        ffn_down_mpo_experts: None::<CpuMpoExperts>,
         ffn_gate_compressed: None::<CpuCompressedExperts>,
         ffn_up_compressed: None::<CpuCompressedExperts>,
         ffn_down_compressed: None::<CpuCompressedExperts>,

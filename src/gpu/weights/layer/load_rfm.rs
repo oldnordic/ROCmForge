@@ -8,6 +8,7 @@ use super::super::upload::{
 };
 use super::support::{
     load_qwen35_ssm_rfm, qwen35_post_attention_norm_name, try_load_compressed_experts,
+    try_load_moe_expert_mpo,
 };
 use super::{
     try_load_mpo, try_load_sparse_csr, CpuCompressedExperts, GpuLayerWeights, GpuMoeWeights,
@@ -701,6 +702,9 @@ pub(super) fn load_for_device(
     let ffn_gate_mpo = try_load_mpo(file, &ffn_gate_name, device_id)?;
     let ffn_up_mpo = try_load_mpo(file, &ffn_up_name, device_id)?;
     let ffn_down_mpo = try_load_mpo(file, &ffn_down_name, device_id)?;
+    let ffn_gate_mpo_experts = try_load_moe_expert_mpo(file, &ffn_gate_name)?;
+    let ffn_up_mpo_experts = try_load_moe_expert_mpo(file, &ffn_up_name)?;
+    let ffn_down_mpo_experts = try_load_moe_expert_mpo(file, &ffn_down_name)?;
     let ffn_gate_compressed = try_load_compressed_experts(file, &ffn_gate_name)?;
     let ffn_up_compressed = try_load_compressed_experts(file, &ffn_up_name)?;
     let ffn_down_compressed = try_load_compressed_experts(file, &ffn_down_name)?;
@@ -750,6 +754,9 @@ pub(super) fn load_for_device(
         ffn_gate_mpo,
         ffn_up_mpo,
         ffn_down_mpo,
+        ffn_gate_mpo_experts,
+        ffn_up_mpo_experts,
+        ffn_down_mpo_experts,
         ffn_gate_compressed,
         ffn_up_compressed,
         ffn_down_compressed,

@@ -125,6 +125,71 @@
 - **Q4_0 / Q4_1 Imports Fix**: Restored missing unchecked wave32/residual kernel imports inside `src/gpu/ops/gemv.rs` to fix compilation issues under `feature = "gpu"`.
 - **Unwrap Audit (`INF-8`)** — Replaced all production `.unwrap()` calls in `src/` (across `activation.rs`, `sampler.rs`, `dynamic_loader.rs`, `logits.rs`, `cache.rs`, `rfm.rs`, `bpe.rs`, and `main.rs`) with detailed `.expect("invariant: ...")` messages describing the specific runtime assumptions.
 - **Clippy Warning Fixes (`INF-10`)** — Fixed all needless range loops and needless mutable borrow warnings under the `gpu,server` features in `tests/gpu_svd_correctness.rs` and `tests/gpu_turboquant_parity.rs` to allow warning-clean `-D warnings` target compilation.
+- **CPU Decode-Path Alignment UB (`INF-11`)** — Eliminated undefined behavior from `std::slice::from_raw_parts` casts on potentially unaligned `&[u8]` buffers in the CPU decode path. Added `try_as_f32_slice` in `src/cpu/weights/helpers.rs`, which checks `ptr.align_offset(align_of::<f32>()) == 0` before using the fast aligned cast path, and falls back to scalar `f32::from_le_bytes` byte-wise reconstruction when misaligned. Applied this two-tier pattern to:
+  - `src/cpu/forward.rs` (`cpu_embed_token` F32 embedding lookup)
+  - `src/cpu/prefill.rs` (3 batch embedding locations)
+  - `src/cpu/ops/gemv.rs` (`gemv_f32_bytes` / `gemv_f32_transposed_bytes` scalar fallbacks in `dispatch_gemv`)
+  - `src/cpu/ops/gemm.rs` (`gemm_f32_bytes` / `gemm_f32_transposed_bytes` scalar fallbacks in `dispatch_gemm`)
+  - `src/gpu/prefill_debug.rs` (`download_gpu_buffer` host copy)
+- **TurboQuant Host/Kernel Layout Parity & RMS Scale Safety (`INF-12`)** — Fixed a latent mismatch between host-side KV cache stride calculation and kernel-side stride calculation, and eliminated magic-number alignment constants.
+  - **Root cause:** The kernel used `max(pack_bytes + qjl_bytes, 8)` while the host used `pack_bytes + max(qjl_bytes, 8)`. These diverge when `pack_bytes > 0` and `qjl_bytes < 8`, causing the kernel to under-index relative to the host allocation.
+  - **Layout invariant:** The V cache stores RMS scales (2×`f32` = 8 bytes) at `pos_v_base + pack_bytes` instead of QJL signs. The per-position stride must therefore accommodate the larger of:
+    - K: `pack_bytes + qjl_bytes` (centroid indices + 1-bit signs)
+    - V: `pack_bytes + TURBOQUANT_RMS_SCALE_BYTES` (centroid indices + RMS scales)
+    Giving `content_bytes = pack_bytes + max(qjl_bytes, TURBOQUANT_RMS_SCALE_BYTES)`.
+  - **Constants added:**
+    - `hip_kernels/common.hip` — `TURBOQUANT_POS_ALIGN` (32), `TURBOQUANT_POS_ALIGN_MASK` (31), `TURBOQUANT_RMS_SCALE_BYTES` (8).
+    - `src/gpu/cache.rs` — `TURBOQUANT_POS_ALIGN` (32), `TURBOQUANT_POS_ALIGN_MASK` (31), `TURBOQUANT_RMS_SCALE_BYTES` (8).
+  - **All sites updated:** `src/gpu/cache/init.rs` (`compute_layout`), `src/gpu/cache.rs` (`estimate_bytes`), and both TurboQuant kernels in `hip_kernels/attention.hip` now use the shared constants and identical formulas. The alignment can be changed in one place (`common.hip` + `cache.rs`) and rebuilds cleanly.
+
+### Added
+- **Configurable Bit-Width TurboQuant KV Cache (`INF-13`)** — Extended the TurboQuant GPU kernel pipeline from hardcoded 3-bit to explicit support for 1-bit, 2-bit, 3-bit, and 4-bit quantization. This enables density targets below the previous 6.25% floor (achievable with 2-bit + `kv_lora_dim=64`).
+  - **HIP kernels (`hip_kernels/attention.hip`):**
+    - Added `pack_1bit`, `pack_4bit`, `get_unpacked_4bit` device-inline functions.
+    - `pack_nbit` / `get_unpacked_nbit` now dispatch explicitly on `bits == 1/2/4`, falling back to the legacy 3-bit path for `bits == 3` (and any unsupported value).
+    - All pack loops use defensive bounds (`i + granularity - 1 < d`) so incomplete trailing groups are skipped even if `kv_lora_dim` is not a perfect multiple of the packing granularity.
+    - `kv_write_turboquant_kernel` and `flash_attn_decode_turboquant_kernel` signatures extended with `const int bits` and `const int num_centroids`.
+  - **Host Rust wrappers (`src/gpu/kernels/attention/turboquant.rs`):**
+    - Added `validate_turboquant_bits` gate that returns `GpuError::UnsupportedOperation` if `bits` is outside `{1,2,3,4}`.
+    - Both `kv_write_turboquant` and `flash_attn_decode_turboquant` validate before FFI call.
+  - **Cache init validation (`src/gpu/cache/init.rs`):**
+    - `GpuKvCache::build_from_config` now rejects `kv_quant_bits` outside `{1,2,3,4}` at allocation time, failing fast before any GPU memory is committed.
+  - **Call-site updates:**
+    - `src/gpu/cache/write.rs` — computes `num_centroids = 1 << bits` and passes both parameters.
+    - `src/gpu/forward/layer/attention.rs` — both `gpu_attention_decode` and `gpu_attention_decode_from_state` pass `bits` and `num_centroids`.
+    - `src/gpu/kernels/attention/ffi.rs` — updated FFI declarations for `gpu_kv_write_turboquant` and `gpu_flash_attn_decode_turboquant`.
+    - `hip_kernels/attention.hip` — updated C launchers `gpu_kv_write_turboquant` and `gpu_flash_attn_decode_turboquant` to accept and forward the new parameters, with `kv_lora_dim <= 0 || bits <= 0 || num_centroids <= 0` early rejection.
+- **MPO (Matrix Product Operator) Compression for MoE Experts** — Implemented end-to-end MPO support for 3D MoE expert tensors as a fallback when SVD+sparse CSR residuals are too dense (> 6.25%), enabling Qwen3.6 256K context fitting in 20GB VRAM.
+  - **RFM Loader (`src/loader/rfm.rs`):**
+    - Added `RfmType::MoeExpertMpo` variant and `RfmMoeExpertMpoView` with `as_moe_expert_mpo()` parsing.
+    - Payload layout: 8 u32 `site_dims` followed by concatenated per-expert site data.
+  - **GPU Weight Layer (`src/gpu/weights/layer/`):**
+    - Added `CpuMpoExperts` struct (`support.rs`) storing `n_experts`, `chi_max`, `rows`, `cols`, and flattened `site_data`.
+    - Extended `GpuLayerWeights` with `ffn_gate_mpo_experts`, `ffn_up_mpo_experts`, `ffn_down_mpo_experts`.
+    - Wired MPO loading in `load_rfm.rs` and initialized fields to `None` in `load_gguf.rs`.
+    - Re-exported `CpuMpoExperts` from `weights/mod.rs`.
+  - **GPU Expert Scratch (`src/gpu/cache/scratch.rs`):**
+    - Extended `GpuExpertScratch` with `mpo_site_data` and `mpo_site_dims` buffers for per-expert upload during decode.
+  - **GPU MoE Dispatch (`src/gpu/forward/layer/moe.rs`):**
+    - Implemented `dispatch_mpo_expert()` uploading site data and dims to scratch, then calling `gpu_dispatch_mpo_apply_on_stream`.
+    - Integrated MPO path into `gpu_dispatch_moe_ffn_on_stream`: dispatched when all three `*_mpo_experts` fields are present and experimental kernels are enabled.
+  - **Converter Pipeline (`src/bin/convert/pipeline.rs`):**
+    - Added `convert_moe_expert_mpo()` with smart fallback: if existing SVD `chi_max <= k`, truncates U/V in place; otherwise recomputes SVD with target `chi_max`.
+    - Added `--mpo-chi-max <N>` CLI flag (`src/bin/convert/cli.rs`).
+  - **Inference Setup (`src/api/gpu_inference.rs`, `src/app/gpu_inference_setup.rs`, `src/main/gpu_inference_setup.rs`):**
+    - Added MPO expert scratch initialization branches.
+  - **Upload & CPU Paths (`src/gpu/weights/upload.rs`, `src/cpu/weights/`):**
+    - Mapped `MoeExpertMpo` to `GgmlType::F32` in `rfm_type_to_ggml`.
+    - Added zero-allocation CPU fallback in `load_rfm_weight` for CPU decode paths.
+  - **Verification:**
+    - `cargo check` and `cargo check --features gpu`: clean.
+    - `cargo test` and `cargo test --features gpu`: all passed (58/59; pre-existing `test_gpu_buffer_drop_frees_memory` unchanged).
+
+### Changed
+- **Converter Centroid Generation (`INF-14`)** — `src/bin/convert.rs` no longer hardcodes 8 Lloyd-Max centroids for every `--kv-quant-bits` value. It now generates the correct count (`1 << bits`) dynamically:
+  - `bits == 3` preserves the empirically tuned 8 centroids (`[-2.152, -1.344, -0.756, -0.245, 0.245, 0.756, 1.344, 2.152]`).
+  - All other values use a uniform symmetric grid: `step = 5.0 / n`, values at `(2i - (n-1)) * step * 0.5` for `i in 0..n`.
+- **Converter CLI Validation (`INF-14`)** — `src/bin/convert/cli.rs` now enforces `--kv-quant-bits` must be `1`, `2`, `3`, or `4`. Any other value prints an error and exits with code `1` before conversion begins.
 
 ### [Server — Inference API]
 

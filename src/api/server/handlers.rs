@@ -3,8 +3,8 @@ use axum::{
     http::StatusCode,
     response::{sse::Event, sse::Sse, IntoResponse, Json, Response},
 };
-use serde_json::json;
 use bytes::Bytes;
+use serde_json::json;
 use std::convert::Infallible;
 use std::sync::Arc;
 
@@ -82,7 +82,11 @@ pub(crate) async fn load_model(
 
     match state.try_load(&path, req.draft_model.as_deref()).await {
         Ok(_) => (StatusCode::OK, Json(json!({ "status": "loaded" }))).into_response(),
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string(), "load_failed"),
+        Err(e) => error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &e.to_string(),
+            "load_failed",
+        ),
     }
 }
 
@@ -205,7 +209,11 @@ pub(crate) async fn create_completion(
                 };
                 (StatusCode::OK, Json(response)).into_response()
             }
-            Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string(), "inference_failed"),
+            Err(e) => error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &e.to_string(),
+                "inference_failed",
+            ),
         }
     }
 }
@@ -328,7 +336,11 @@ pub(crate) async fn create_chat_completion(
                 };
                 (StatusCode::OK, Json(response)).into_response()
             }
-            Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string(), "inference_failed"),
+            Err(e) => error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &e.to_string(),
+                "inference_failed",
+            ),
         }
     }
 }
@@ -400,7 +412,11 @@ pub(crate) async fn create_messages(
             };
             (StatusCode::OK, Json(response)).into_response()
         }
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string(), "inference_failed"),
+        Err(e) => error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &e.to_string(),
+            "inference_failed",
+        ),
     }
 }
 

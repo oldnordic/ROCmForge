@@ -14,8 +14,8 @@ mod load_rfm;
 #[path = "layer/support.rs"]
 mod support;
 pub use self::support::{
-    CpuCompressedExperts, GpuMoeWeights, GpuMpoWeights, GpuSparseCsrWeights, GpuSsmWeights,
-    SvdCorrection,
+    CpuCompressedExperts, CpuMpoExperts, GpuMoeWeights, GpuMpoWeights, GpuSparseCsrWeights,
+    GpuSsmWeights, SvdCorrection,
 };
 
 // ── GPU Layer Weights ─────────────────────────────────────────────────────────────
@@ -91,6 +91,11 @@ pub struct GpuLayerWeights {
     pub ffn_gate_mpo: Option<GpuMpoWeights>,
     pub ffn_up_mpo: Option<GpuMpoWeights>,
     pub ffn_down_mpo: Option<GpuMpoWeights>,
+    /// CPU-resident per-expert MPO-compressed weights (None for non-MoE or uncompressed models).
+    /// Uploaded one expert at a time to GpuExpertScratch during decode dispatch.
+    pub ffn_gate_mpo_experts: Option<CpuMpoExperts>,
+    pub ffn_up_mpo_experts: Option<CpuMpoExperts>,
+    pub ffn_down_mpo_experts: Option<CpuMpoExperts>,
     /// CPU-resident per-expert SVD+sparse weights (None for non-MoE or uncompressed models).
     /// Uploaded one expert at a time to GpuExpertScratch during decode dispatch.
     pub ffn_gate_compressed: Option<CpuCompressedExperts>,

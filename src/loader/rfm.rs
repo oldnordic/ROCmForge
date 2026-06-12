@@ -90,6 +90,20 @@ pub enum RfmType {
         index_bits: u8,
         value_type: u32,
     },
+    /// Per-expert Matrix Product Operator (MPO) compressed weights.
+    ///
+    /// Stores a 2-site MPO for each expert via SVD low-rank factorisation
+    /// (U·Σ and Vᵀ) with no sparse residual.  Each expert is a matrix of
+    /// shape `[rows, cols]`; the MPO approximates it with bond dimension
+    /// `chi_max`.
+    MoeExpertMpo {
+        n_experts: u32,
+        n_sites: u32,
+        chi_max: u32,
+        rows: u64,
+        cols: u64,
+        value_type: u32,
+    },
     /// MagnumQuant FWHT-rotated 4-bit quantization with group size 256.
     Mq4,
     /// MagnumQuant FWHT-rotated 6-bit quantization with group size 256.
@@ -185,6 +199,19 @@ pub struct RfmMpoView<'a> {
     pub data: &'a [u8],
 }
 
+/// Zero-copy MoE expert MPO tensor view.
+#[derive(Debug, Clone, Copy)]
+pub struct RfmMoeExpertMpoView<'a> {
+    pub name: &'a str,
+    pub n_experts: usize,
+    pub n_sites: usize,
+    pub chi_max: usize,
+    pub rows: usize,
+    pub cols: usize,
+    pub value_type: u32,
+    pub site_data: &'a [u8],
+}
+
 impl<'a> RfmTensorView<'a> {
     /// Returns the total number of elements in this tensor.
     pub fn element_count(&self) -> usize {
@@ -270,6 +297,52 @@ impl<'a> RfmTensorView<'a> {
             value_type,
             site_dims: self.dims,
             data: self.data,
+        })
+    }
+
+    /// Interpret this tensor as a MoE expert MPO when its RFM type is `MoeExpertMpo`.
+    pub fn as_moe_expert_mpo(&self) -> Option<RfmMoeExpertMpoView<'a>> {
+        let RfmType::MoeExpertMpo {
+            n_experts,
+            n_sites,
+            chi_max,
+            rows,
+            cols,
+            value_type,
+        } = self.wtype
+        else {
+            return None;
+        };
+
+        let n_experts = n_experts as usize;
+        let n_sites = n_sites as usize;
+        let chi_max = chi_max as usize;
+        let rows = rows as usize;
+        let cols = cols as usize;
+        let value_bytes = GgmlValueType(value_type).bytes_per_value()?;
+
+        // Payload: site_dims (8 u32s) followed by all expert site data.
+        let site_dims_bytes = 8usize.checked_mul(4)?;
+        let expert_elements = rows
+            .checked_mul(chi_max)?
+            .checked_add(chi_max.checked_mul(cols)?)?;
+        let total_data_bytes = n_experts
+            .checked_mul(expert_elements)?
+            .checked_mul(value_bytes)?;
+        let expected = site_dims_bytes.checked_add(total_data_bytes)?;
+        if self.data.len() != expected {
+            return None;
+        }
+
+        Some(RfmMoeExpertMpoView {
+            name: self.name,
+            n_experts,
+            n_sites,
+            chi_max,
+            rows,
+            cols,
+            value_type,
+            site_data: &self.data[site_dims_bytes..],
         })
     }
 }

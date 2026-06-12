@@ -78,7 +78,9 @@ mod tests {
             max_seq_len: 32768,
             rms_norm_eps: 1e-6,
             rope_theta: 1_000_000.0,
-            rope_freq: vec![1.0, 0.5],
+            rope_freq: (0..32)
+                .map(|i| 1.0 / 1_000_000.0f32.powf((2 * i) as f32 / 64.0f32))
+                .collect(),
             rope_neox: true,
             use_attention_bias: true,
             attention_layout: crate::config::AttentionLayout::SplitQkv,

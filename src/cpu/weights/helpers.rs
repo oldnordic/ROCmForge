@@ -67,9 +67,9 @@ pub(crate) fn rfm_type_to_ggml(rfm: &RfmType) -> GgmlType {
         RfmType::Q4Split => GgmlType::Q4_0,
         RfmType::Q4SvdQuant { .. } => GgmlType::Q4_0,
         RfmType::GgufPassthrough(t) => GgmlType::from_u32(*t).unwrap_or(GgmlType::F32),
-        RfmType::MoeExpertSvdSparse { .. } | RfmType::MoeExpertSvdFwhtSparse { .. } => {
-            GgmlType::F32
-        }
+        RfmType::MoeExpertSvdSparse { .. }
+        | RfmType::MoeExpertSvdFwhtSparse { .. }
+        | RfmType::MoeExpertMpo { .. } => GgmlType::F32,
         _ => GgmlType::F32,
     }
 }
@@ -97,9 +97,7 @@ pub(crate) fn unpack_q4_split(data: &[u8], element_count: usize) -> Vec<u8> {
     let rfm_quants_ptr = unsafe { data.as_ptr().add(n_blocks * 4) };
 
     for i in 0..n_blocks {
-        let scale_f32 = unsafe {
-            std::ptr::read_unaligned(data.as_ptr().add(i * 4) as *const f32)
-        };
+        let scale_f32 = unsafe { std::ptr::read_unaligned(data.as_ptr().add(i * 4) as *const f32) };
         let scale_f16 = half::f16::from_f32(scale_f32).to_bits();
         let block_out = unsafe { out.as_mut_ptr().add(i * 18) };
 
@@ -110,4 +108,3 @@ pub(crate) fn unpack_q4_split(data: &[u8], element_count: usize) -> Vec<u8> {
     }
     out
 }
-

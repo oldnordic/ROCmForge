@@ -91,6 +91,16 @@ pub fn kv_write_batched_compressed(
     Ok(())
 }
 
+fn validate_turboquant_bits(bits: i32) -> GpuResult<()> {
+    if bits < 1 || bits > 4 {
+        return Err(GpuError::UnsupportedOperation {
+            operation: "TurboQuant".to_string(),
+            reason: format!("bits must be in {{1,2,3,4}}, got {}", bits),
+        });
+    }
+    Ok(())
+}
+
 pub fn kv_write_turboquant(
     k_cache: *mut u8,
     v_cache: *mut u8,
@@ -102,12 +112,15 @@ pub fn kv_write_turboquant(
     theta_base: f32,
     neox: bool,
     kv_lora_dim: usize,
+    bits: i32,
+    num_centroids: i32,
     centroids: *const f32,
     qjl_scale: f32,
     w_down_k: *const f32,
     w_down_v: *const f32,
     stream: hipStream_t,
 ) -> GpuResult<()> {
+    validate_turboquant_bits(bits)?;
     let result = unsafe {
         gpu_kv_write_turboquant(
             k_cache,
@@ -120,6 +133,8 @@ pub fn kv_write_turboquant(
             theta_base,
             if neox { 1 } else { 0 },
             kv_lora_dim as c_int,
+            bits,
+            num_centroids,
             centroids,
             qjl_scale,
             w_down_k,
@@ -149,12 +164,15 @@ pub fn flash_attn_decode_turboquant(
     head_dim: usize,
     scale: f32,
     kv_lora_dim: usize,
+    bits: i32,
+    num_centroids: i32,
     centroids: *const f32,
     qjl_scale: f32,
     w_up_k: *const f32,
     w_up_v: *const f32,
     stream: hipStream_t,
 ) -> GpuResult<()> {
+    validate_turboquant_bits(bits)?;
     let result = unsafe {
         gpu_flash_attn_decode_turboquant(
             out,
@@ -167,6 +185,8 @@ pub fn flash_attn_decode_turboquant(
             head_dim as c_int,
             scale,
             kv_lora_dim as c_int,
+            bits,
+            num_centroids,
             centroids,
             qjl_scale,
             w_up_k,

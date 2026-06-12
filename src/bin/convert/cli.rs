@@ -137,12 +137,16 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> ConvertOptions {
                 idx += 2;
             }
             "--kv-quant-bits" => {
-                options.kv_quant_bits = Some(parse_value(
-                    &args,
-                    idx,
-                    "--kv-quant-bits",
-                    "Invalid KV quant bits",
-                ));
+                let bits: usize =
+                    parse_value(&args, idx, "--kv-quant-bits", "Invalid KV quant bits");
+                if bits < 1 || bits > 4 {
+                    eprintln!(
+                        "Error: --kv-quant-bits must be 1, 2, 3, or 4 (got {})",
+                        bits
+                    );
+                    std::process::exit(1);
+                }
+                options.kv_quant_bits = Some(bits);
                 idx += 2;
             }
             "--qjl-scale" => {

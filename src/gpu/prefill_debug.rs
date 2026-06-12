@@ -147,7 +147,11 @@ pub(crate) fn compute_layer0_cpu_reference(
         // 3. RoPE
         let half = config.head_dim / 2;
         let freq: Vec<f32> = (0..half)
-            .map(|i| 1.0 / config.rope_theta.powf((2 * i) as f32 / config.head_dim as f32))
+            .map(|i| {
+                1.0 / config
+                    .rope_theta
+                    .powf((2 * i) as f32 / config.head_dim as f32)
+            })
             .collect();
         let mut t_q_rope = t_q.clone();
         let mut t_k_rope = t_k.clone();

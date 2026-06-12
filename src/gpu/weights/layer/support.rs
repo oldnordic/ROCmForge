@@ -37,6 +37,29 @@ pub struct GpuMpoWeights {
     pub n_sites: u32,
 }
 
+/// CPU-resident MPO-compressed expert weights for one expert tensor type (gate, up, or down).
+///
+/// Loaded from `MoeExpertMpo` RFM tensors. Stays in CPU RAM;
+/// uploaded one expert at a time to `GpuExpertScratch` during decode.
+#[derive(Debug)]
+pub struct CpuMpoExperts {
+    pub n_experts: usize,
+    pub chi_max: usize,
+    pub rows: usize,
+    pub cols: usize,
+    /// Packed site data: `[n_experts, rows*chi_max + chi_max*cols]` F32
+    pub site_data: Vec<f32>,
+}
+
+impl CpuMpoExperts {
+    /// Byte-slice of site data for expert `i`.
+    pub fn site_bytes(&self, i: usize) -> &[u8] {
+        let stride = self.rows * self.chi_max + self.chi_max * self.cols;
+        let slice = &self.site_data[i * stride..(i + 1) * stride];
+        unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, stride * 4) }
+    }
+}
+
 /// CPU-resident compressed expert weights for one expert tensor type (gate, up, or down).
 ///
 /// Loaded from `MoeExpertSvdSparse` RFM tensors. Stays in CPU RAM;
@@ -365,6 +388,55 @@ pub(super) fn try_load_mpo(
         site_data,
         site_dims,
         n_sites: mpo.n_sites as u32,
+    }))
+}
+
+/// Parse a `MoeExpertMpo` RFM tensor into CPU-resident `CpuMpoExperts`.
+/// Returns `Ok(None)` if the tensor is absent or not the right type.
+pub(super) fn try_load_moe_expert_mpo(
+    file: &RfmFile,
+    name: &str,
+) -> GpuResult<Option<CpuMpoExperts>> {
+    let t = match file.tensor(name) {
+        Ok(Some(t)) => t,
+        _ => return Ok(None),
+    };
+    let mpo = match t.as_moe_expert_mpo() {
+        Some(mpo) => mpo,
+        None => return Ok(None),
+    };
+
+    let n_experts = mpo.n_experts;
+    let chi_max = mpo.chi_max;
+    let rows = mpo.rows;
+    let cols = mpo.cols;
+    let expert_elements = rows * chi_max + chi_max * cols;
+    let total_elements = n_experts * expert_elements;
+
+    if mpo.site_data.len() != total_elements * 4 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!(
+                "MoeExpertMpo '{}': site_data size {} bytes != expected {}",
+                name,
+                mpo.site_data.len(),
+                total_elements * 4
+            ),
+        });
+    }
+
+    let site_data: Vec<f32> = mpo
+        .site_data
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect();
+
+    Ok(Some(CpuMpoExperts {
+        n_experts,
+        chi_max,
+        rows,
+        cols,
+        site_data,
     }))
 }
 

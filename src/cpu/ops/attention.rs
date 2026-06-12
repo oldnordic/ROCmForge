@@ -54,7 +54,11 @@ pub fn flash_attn_decode(
             let score = if has_avx2 {
                 unsafe { dot_f32_avx2(q_h, k_t) * scale }
             } else {
-                q_h.iter().zip(k_t.iter()).map(|(qi, ki)| qi * ki).sum::<f32>() * scale
+                q_h.iter()
+                    .zip(k_t.iter())
+                    .map(|(qi, ki)| qi * ki)
+                    .sum::<f32>()
+                    * scale
             };
 
             // Online softmax update
@@ -207,7 +211,11 @@ pub fn flash_attn_prefill(
                     let score = if has_avx2 {
                         unsafe { dot_f32_avx2(q_sh, k_th) * scale }
                     } else {
-                        q_sh.iter().zip(k_th.iter()).map(|(qi, ki)| qi * ki).sum::<f32>() * scale
+                        q_sh.iter()
+                            .zip(k_th.iter())
+                            .map(|(qi, ki)| qi * ki)
+                            .sum::<f32>()
+                            * scale
                     };
 
                     (m, l) = if has_avx2 {

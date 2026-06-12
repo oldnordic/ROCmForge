@@ -112,6 +112,17 @@ fn test_ffn_down_individual_vs_layer_forward() {
         })
         .expect("Failed to upload hidden state");
 
+    // Precompute RoPE sin/cos tables for CPU reference
+    let half = config.head_dim / 2;
+    for i in 0..half {
+        let angle = 0.0f32 * config.rope_freq[i];
+        let (s, c) = angle.sin_cos();
+        cpu_scratch.rope_sin[i] = s;
+        cpu_scratch.rope_cos[i] = c;
+    }
+    let rope_sin = unsafe { std::slice::from_raw_parts(cpu_scratch.rope_sin.as_ptr(), half) };
+    let rope_cos = unsafe { std::slice::from_raw_parts(cpu_scratch.rope_cos.as_ptr(), half) };
+
     // CPU reference
     cpu_layer_forward(
         &mut cpu_hidden,
@@ -120,6 +131,8 @@ fn test_ffn_down_individual_vs_layer_forward() {
         &mut cpu_scratch,
         0,
         0,
+        rope_sin,
+        rope_cos,
         &config,
         false,
     )

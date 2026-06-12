@@ -5,8 +5,6 @@
 //! pre-flight (critical on a display-attached GPU).
 
 #[cfg(feature = "gpu")]
-use bytes::Bytes;
-#[cfg(feature = "gpu")]
 use crate::config::ModelConfig;
 #[cfg(feature = "gpu")]
 use crate::cpu::cache::CpuForwardScratch;
@@ -18,6 +16,8 @@ use crate::cpu::weights::CpuModelWeights;
 use crate::gpu;
 #[cfg(feature = "gpu")]
 use crate::tokenizer::BpeTokenizer;
+#[cfg(feature = "gpu")]
+use bytes::Bytes;
 #[cfg(feature = "gpu")]
 use std::sync::Arc;
 
@@ -86,6 +86,33 @@ pub fn run_gpu_sync_inference(
                 .max()
                 .unwrap_or(1);
             gpu_scratch.init_expert_scratch(k as u32, max_rows, max_cols, max_nnz)?;
+            break 'expert_scratch;
+        }
+
+        let all_mpo = [
+            layer.ffn_gate_mpo_experts.as_ref(),
+            layer.ffn_up_mpo_experts.as_ref(),
+            layer.ffn_down_mpo_experts.as_ref(),
+        ];
+        if all_mpo.iter().all(|x| x.is_some()) {
+            let k = layer
+                .ffn_gate_mpo_experts
+                .as_ref()
+                .map(|c| c.chi_max)
+                .unwrap_or(32);
+            let max_rows = all_mpo
+                .iter()
+                .filter_map(|x| *x)
+                .map(|c| c.rows)
+                .max()
+                .unwrap_or(1);
+            let max_cols = all_mpo
+                .iter()
+                .filter_map(|x| *x)
+                .map(|c| c.cols)
+                .max()
+                .unwrap_or(1);
+            gpu_scratch.init_expert_scratch(k as u32, max_rows, max_cols, 0)?;
             break 'expert_scratch;
         }
     }
@@ -400,6 +427,33 @@ pub fn run_gpu_stream_inference(
                 .max()
                 .unwrap_or(1);
             gpu_scratch.init_expert_scratch(k as u32, max_rows, max_cols, max_nnz)?;
+            break 'expert_scratch;
+        }
+
+        let all_mpo = [
+            layer.ffn_gate_mpo_experts.as_ref(),
+            layer.ffn_up_mpo_experts.as_ref(),
+            layer.ffn_down_mpo_experts.as_ref(),
+        ];
+        if all_mpo.iter().all(|x| x.is_some()) {
+            let k = layer
+                .ffn_gate_mpo_experts
+                .as_ref()
+                .map(|c| c.chi_max)
+                .unwrap_or(32);
+            let max_rows = all_mpo
+                .iter()
+                .filter_map(|x| *x)
+                .map(|c| c.rows)
+                .max()
+                .unwrap_or(1);
+            let max_cols = all_mpo
+                .iter()
+                .filter_map(|x| *x)
+                .map(|c| c.cols)
+                .max()
+                .unwrap_or(1);
+            gpu_scratch.init_expert_scratch(k as u32, max_rows, max_cols, 0)?;
             break 'expert_scratch;
         }
     }

@@ -3,11 +3,11 @@ use crate::gpu::device::GpuDevice;
 use crate::gpu::error::{GpuError, GpuResult};
 use crate::gpu::ffi;
 use crate::gpu::kernels::{
-    dispatch_sparse_csr_gemv_f32, dot_f16_f32_on_stream, elementwise::dispatch_svd_correction,
-    mul_on_stream, silu_on_stream, weighted_add_on_stream,
+    dispatch_mpo_apply_f32, dispatch_sparse_csr_gemv_f32, dot_f16_f32_on_stream,
+    elementwise::dispatch_svd_correction, mul_on_stream, silu_on_stream, weighted_add_on_stream,
 };
 use crate::gpu::ops::{gpu_dispatch_gemv_ptr_on_stream, gpu_dispatch_gemv_svd_on_stream};
-use crate::gpu::weights::{CpuCompressedExperts, GpuLayerWeights, WeightMeta};
+use crate::gpu::weights::{CpuCompressedExperts, CpuMpoExperts, GpuLayerWeights, WeightMeta};
 use crate::loader::GgmlType;
 
 const QWEN_MOE_TOP_K: usize = 8;
@@ -195,6 +195,70 @@ fn dispatch_compressed_expert(
     Ok(())
 }
 
+/// Dispatch one MPO-compressed expert: output = MPO * input.
+///
+/// Uploads the expert's site data from CPU-resident `CpuMpoExperts` into
+/// `GpuExpertScratch`, then dispatches the MPO apply kernel.
+fn dispatch_mpo_expert(
+    mpo: &CpuMpoExperts,
+    scratch: &mut GpuExpertScratch,
+    expert_idx: usize,
+    input: *const f32,
+    output: *mut f32,
+    accum: *mut f32,
+    weight: f32,
+    rows: usize,
+    cols: usize,
+    accumulate: bool,
+    stream: crate::gpu::ffi::hipStream_t,
+) -> GpuResult<()> {
+    let site_bytes = mpo.site_bytes(expert_idx);
+    let chi = mpo.chi_max;
+
+    // Upload site data (U_sigma + V^T concatenated)
+    ffi::hip_memcpy_h2d(
+        scratch.mpo_site_data.as_ptr(),
+        site_bytes.as_ptr(),
+        site_bytes.len(),
+    )?;
+
+    // Build and upload site_dims: [1, rows, chi, 1, chi, cols, 1, 1]
+    let site_dims_host: Vec<u32> =
+        vec![1, rows as u32, chi as u32, 1, chi as u32, cols as u32, 1, 1];
+    let site_dims_bytes = unsafe {
+        std::slice::from_raw_parts(
+            site_dims_host.as_ptr() as *const u8,
+            site_dims_host.len() * std::mem::size_of::<u32>(),
+        )
+    };
+    ffi::hip_memcpy_h2d(
+        scratch.mpo_site_dims.as_ptr(),
+        site_dims_bytes.as_ptr(),
+        site_dims_bytes.len(),
+    )?;
+
+    // Zero output (MPO kernel does direct write, not atomicAdd, but zeroing keeps parity)
+    ffi::hip_memset(output as *mut u8, 0u8, rows * 4)?;
+
+    // Dispatch MPO apply: y = MPO * x
+    dispatch_mpo_apply_f32(
+        scratch.mpo_site_data.as_ptr() as *const f32,
+        scratch.mpo_site_dims.as_ptr() as *const u32,
+        2, // n_sites
+        rows,
+        cols,
+        input,
+        output,
+        stream,
+    )?;
+
+    if accumulate {
+        weighted_add_on_stream(output as *const f32, accum, weight, rows, stream)?;
+    }
+
+    Ok(())
+}
+
 pub(super) fn gpu_dispatch_moe_ffn_on_stream(
     device: &GpuDevice,
     gpu_layer: &GpuLayerWeights,
@@ -261,8 +325,94 @@ pub(super) fn gpu_dispatch_moe_ffn_on_stream(
         && gpu_layer.ffn_down_compressed.is_some()
         && crate::gpu::safety::experimental_gpu_kernels_enabled();
 
+    // Check if this layer has MPO-compressed expert weights.
+    let use_mpo = gpu_layer.ffn_gate_mpo_experts.is_some()
+        && gpu_layer.ffn_up_mpo_experts.is_some()
+        && gpu_layer.ffn_down_mpo_experts.is_some()
+        && crate::gpu::safety::experimental_gpu_kernels_enabled();
+
     for (expert_idx, weight) in selected {
-        if use_compressed {
+        if use_mpo {
+            let (Some(gate_mpo), Some(up_mpo), Some(down_mpo)) = (
+                gpu_layer.ffn_gate_mpo_experts.as_ref(),
+                gpu_layer.ffn_up_mpo_experts.as_ref(),
+                gpu_layer.ffn_down_mpo_experts.as_ref(),
+            ) else {
+                return Err(GpuError::HipApiError {
+                    code: -1,
+                    description: "MPO expert fields inconsistent".to_string(),
+                });
+            };
+            let escratch =
+                scratch
+                    .expert_scratch
+                    .as_mut()
+                    .ok_or_else(|| {
+                        GpuError::HipApiError {
+                code: -1,
+                description:
+                    "expert_scratch not initialised — call init_expert_scratch before decode"
+                        .to_string(),
+            }
+                    })?;
+
+            // gate: output = MPO * normed  [ff_size, h]
+            dispatch_mpo_expert(
+                gate_mpo,
+                escratch,
+                expert_idx,
+                scratch.normed.as_ptr() as *const f32,
+                scratch.gate.as_ptr() as *mut f32,
+                std::ptr::null_mut(),
+                1.0,
+                ff_size,
+                h,
+                false,
+                stream,
+            )?;
+            // up: output = MPO * normed  [ff_size, h]
+            dispatch_mpo_expert(
+                up_mpo,
+                escratch,
+                expert_idx,
+                scratch.normed.as_ptr() as *const f32,
+                scratch.swiglu.as_ptr() as *mut f32,
+                std::ptr::null_mut(),
+                1.0,
+                ff_size,
+                h,
+                false,
+                stream,
+            )?;
+            // SwiGLU: gate = silu(gate) * up
+            silu_on_stream(
+                scratch.gate.as_ptr() as *const f32,
+                scratch.gate.as_ptr() as *mut f32,
+                ff_size,
+                stream,
+            )?;
+            mul_on_stream(
+                scratch.gate.as_ptr() as *const f32,
+                scratch.swiglu.as_ptr() as *const f32,
+                scratch.swiglu.as_ptr() as *mut f32,
+                ff_size,
+                stream,
+            )?;
+            // down: hidden += weight * (MPO * swiglu)  [h, ff_size]
+            dispatch_mpo_expert(
+                down_mpo,
+                escratch,
+                expert_idx,
+                scratch.swiglu.as_ptr() as *const f32,
+                scratch.layer_out.as_ptr() as *mut f32,
+                scratch.hidden.as_ptr() as *mut f32,
+                weight,
+                h,
+                ff_size,
+                true,
+                stream,
+            )?;
+        } else if use_compressed {
             // Compressed path: H2D upload + CSR GEMV + SVD correction.
             // use_compressed is only true when all three are Some, so these are always inhabited.
             let (Some(gate_c), Some(up_c), Some(down_c)) = (

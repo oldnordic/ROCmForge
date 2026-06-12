@@ -2,10 +2,12 @@ pub fn dequantize_q4_0_to_f32(data: &[u8], num_elements: usize) -> Vec<f32> {
     let mut out = vec![0.0f32; num_elements];
     let num_blocks = num_elements / 32;
     use rayon::prelude::*;
-    out.par_chunks_mut(32).enumerate().for_each(|(i, block_out)| {
-        let block_data = &data[i * 18..(i + 1) * 18];
-        rocmforge::cpu::quant::dequant_q4_0_block(block_data, block_out);
-    });
+    out.par_chunks_mut(32)
+        .enumerate()
+        .for_each(|(i, block_out)| {
+            let block_data = &data[i * 18..(i + 1) * 18];
+            rocmforge::cpu::quant::dequant_q4_0_block(block_data, block_out);
+        });
     out
 }
 

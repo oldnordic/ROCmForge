@@ -11,7 +11,14 @@
 /// # Modes
 /// - `neox = true`: GPT-NeoX style (pairs within same half) — Qwen2, GPT-NeoX
 /// - `neox = false`: Classic RoPE (consecutive pairs) — LLaMA, Mistral
-pub fn rope(x: &mut [f32], num_heads: usize, head_dim: usize, sin: &[f32], cos: &[f32], neox: bool) {
+pub fn rope(
+    x: &mut [f32],
+    num_heads: usize,
+    head_dim: usize,
+    sin: &[f32],
+    cos: &[f32],
+    neox: bool,
+) {
     let total_len = num_heads * head_dim;
     let half = head_dim / 2;
     debug_assert_eq!(x.len(), total_len, "rope input dimension mismatch");

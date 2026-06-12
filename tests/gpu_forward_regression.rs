@@ -84,6 +84,17 @@ fn test_ffn_down_dimensions_correct_in_hybrid_forward() {
     let mut cpu_kv = CpuKvCache::new(&config, 1);
     let mut cpu_scratch = CpuForwardScratch::new(&config);
 
+    // Precompute RoPE sin/cos tables for CPU reference
+    let half = config.head_dim / 2;
+    for i in 0..half {
+        let angle = 0.0f32 * config.rope_freq[i];
+        let (s, c) = angle.sin_cos();
+        cpu_scratch.rope_sin[i] = s;
+        cpu_scratch.rope_cos[i] = c;
+    }
+    let rope_sin = unsafe { std::slice::from_raw_parts(cpu_scratch.rope_sin.as_ptr(), half) };
+    let rope_cos = unsafe { std::slice::from_raw_parts(cpu_scratch.rope_cos.as_ptr(), half) };
+
     cpu_layer_forward(
         &mut cpu_hidden,
         cpu_weights.layer(layer_idx),
@@ -91,6 +102,8 @@ fn test_ffn_down_dimensions_correct_in_hybrid_forward() {
         &mut cpu_scratch,
         layer_idx,
         0, // pos
+        rope_sin,
+        rope_cos,
         &config,
         false, // debug
     )

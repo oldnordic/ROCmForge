@@ -94,6 +94,17 @@ fn test_gpu_state_accumulation_across_layers() {
             })
             .expect("Failed to upload hidden state");
 
+        // Precompute RoPE sin/cos tables for CPU reference
+        let half = config.head_dim / 2;
+        for i in 0..half {
+            let angle = 0.0f32 * config.rope_freq[i];
+            let (s, c) = angle.sin_cos();
+            cpu_scratch.rope_sin[i] = s;
+            cpu_scratch.rope_cos[i] = c;
+        }
+        let rope_sin = unsafe { std::slice::from_raw_parts(cpu_scratch.rope_sin.as_ptr(), half) };
+        let rope_cos = unsafe { std::slice::from_raw_parts(cpu_scratch.rope_cos.as_ptr(), half) };
+
         // CPU reference
         cpu_layer_forward(
             &mut cpu_hidden,
@@ -102,6 +113,8 @@ fn test_gpu_state_accumulation_across_layers() {
             &mut cpu_scratch,
             0,
             0,
+            rope_sin,
+            rope_cos,
             &config,
             false,
         )
@@ -166,6 +179,20 @@ fn test_gpu_state_accumulation_across_layers() {
     for layer_idx in 0..test_layers {
         // CPU accumulated computation
         let cpu_input = cpu_hidden_accum.clone();
+
+        // Precompute RoPE sin/cos tables for this position
+        let half = config.head_dim / 2;
+        for i in 0..half {
+            let angle = layer_idx as f32 * config.rope_freq[i];
+            let (s, c) = angle.sin_cos();
+            cpu_scratch_accum.rope_sin[i] = s;
+            cpu_scratch_accum.rope_cos[i] = c;
+        }
+        let rope_sin =
+            unsafe { std::slice::from_raw_parts(cpu_scratch_accum.rope_sin.as_ptr(), half) };
+        let rope_cos =
+            unsafe { std::slice::from_raw_parts(cpu_scratch_accum.rope_cos.as_ptr(), half) };
+
         cpu_layer_forward(
             &mut cpu_hidden_accum,
             cpu_weights.layer(layer_idx),
@@ -173,6 +200,8 @@ fn test_gpu_state_accumulation_across_layers() {
             &mut cpu_scratch_accum,
             layer_idx,
             layer_idx, // position equals layer_idx for decode
+            rope_sin,
+            rope_cos,
             &config,
             false,
         )

@@ -29,6 +29,17 @@ pub use self::dump::{KvDump, KV_DUMP_MAGIC};
 pub use self::prefix::PrefixCache;
 pub use self::scratch::{GpuExpertScratch, GpuForwardScratch, GpuPrefillScratch};
 
+// ── TurboQuant Layout Constants ────────────────────────────────────────────────────
+// Per-position byte alignment for TurboQuant packed KV entries.
+// Must be a power of two and >= sizeof(f32)*2 (8 bytes) so RMS scale
+// storage is naturally aligned.
+pub(crate) const TURBOQUANT_POS_ALIGN: usize = 32;
+pub(crate) const TURBOQUANT_POS_ALIGN_MASK: usize = TURBOQUANT_POS_ALIGN - 1;
+
+// Bytes reserved for per-position RMS scale storage in the V cache.
+// Two f32 values (rms_k, rms_v) written at pos_v_base + pack_bytes.
+pub(crate) const TURBOQUANT_RMS_SCALE_BYTES: usize = std::mem::size_of::<f32>() * 2;
+
 // ── Block Allocator & Block Table ──────────────────────────────────────────────────
 
 // ── KV Cache ─────────────────────────────────────────────────────────────────────
@@ -145,10 +156,12 @@ impl GpuKvCache {
     pub fn estimate_bytes(config: &ModelConfig, max_seq_len: usize) -> usize {
         let kv_size = config.num_kv_heads * config.head_dim;
         let d = config.kv_lora_dim.unwrap_or(kv_size);
-        let layer_bytes = if let Some(_bits) = config.kv_quant_bits {
-            let pack_bytes = (d * 3 + 7) / 8;
+        let layer_bytes = if let Some(bits) = config.kv_quant_bits {
+            let pack_bytes = (d * bits + 7) / 8;
             let qjl_bytes = (d + 7) / 8;
-            let aligned_pos_bytes = (pack_bytes + qjl_bytes + 31) & !31;
+            let content_bytes = pack_bytes + qjl_bytes.max(TURBOQUANT_RMS_SCALE_BYTES);
+            let aligned_pos_bytes =
+                (content_bytes + TURBOQUANT_POS_ALIGN_MASK) & !TURBOQUANT_POS_ALIGN_MASK;
             max_seq_len * aligned_pos_bytes
         } else {
             max_seq_len * d * std::mem::size_of::<f32>()
@@ -255,6 +268,9 @@ mod tests {
             vocab_size: 32000,
             rms_norm_eps: 1e-5,
             rope_theta: 10000.0,
+            rope_freq: (0..64)
+                .map(|i| 1.0 / 10000.0f32.powf((2 * i) as f32 / 128.0f32))
+                .collect(),
             rope_neox: false,
             use_attention_bias: false,
             attention_layout: crate::config::AttentionLayout::SplitQkv,

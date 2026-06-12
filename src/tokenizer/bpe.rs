@@ -558,15 +558,7 @@ mod tests {
             (b"he".to_vec(), b"ll".to_vec()),
             (b"hel".to_vec(), b"lo".to_vec()),
         ];
-        BpeTokenizer::new(
-            vocab,
-            merges,
-            None,
-            Some(9),
-            None,
-            false,
-            false,
-        )
+        BpeTokenizer::new(vocab, merges, None, Some(9), None, false, false)
     }
 
     #[test]

@@ -339,6 +339,9 @@ mod tests {
             vocab_size: 151936,
             rms_norm_eps: 1e-5,
             rope_theta: 10000.0,
+            rope_freq: (0..32)
+                .map(|i| 1.0 / 10000.0f32.powf((2 * i) as f32 / 64.0f32))
+                .collect(),
             rope_neox: false,
             use_attention_bias: true,
             attention_layout: AttentionLayout::SplitQkv,

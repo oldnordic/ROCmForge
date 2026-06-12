@@ -180,7 +180,8 @@ pub(super) fn rfm_type_to_ggml(t: &RfmType) -> GgmlType {
         | RfmType::Mpo { value_type, .. }
         | RfmType::SvdSparseCsr { value_type, .. }
         | RfmType::MoeExpertSvdSparse { value_type, .. }
-        | RfmType::MoeExpertSvdFwhtSparse { value_type, .. } => {
+        | RfmType::MoeExpertSvdFwhtSparse { value_type, .. }
+        | RfmType::MoeExpertMpo { value_type, .. } => {
             GgmlType::from_u32(*value_type).unwrap_or(GgmlType::F32)
         }
     }
@@ -272,7 +273,9 @@ pub(super) fn estimate_rfm_layer_vram(file: &RfmFile, layer: usize) -> GpuResult
                         total += (in_dim + out_dim) * (*k as usize) * 4;
                     }
                 }
-                RfmType::MoeExpertSvdSparse { .. } | RfmType::MoeExpertSvdFwhtSparse { .. } => {
+                RfmType::MoeExpertSvdSparse { .. }
+                | RfmType::MoeExpertSvdFwhtSparse { .. }
+                | RfmType::MoeExpertMpo { .. } => {
                     // Experts are CPU-resident; they contribute 0 bytes to GPU VRAM.
                 }
             }
@@ -298,6 +301,9 @@ mod matrix_meta_tests {
             vocab_size: 32000,
             rms_norm_eps: 1e-5,
             rope_theta: 10000.0,
+            rope_freq: (0..64)
+                .map(|i| 1.0 / 10000.0f32.powf((2 * i) as f32 / 128.0f32))
+                .collect(),
             rope_neox: false,
             use_attention_bias: false,
             attention_layout: AttentionLayout::SplitQkv,

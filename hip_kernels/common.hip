@@ -46,6 +46,17 @@
 constexpr int BLOCK_SIZE = 256;
 constexpr int MAX_BLOCK_SIZE = 1024;
 
+// ── TurboQuant KV Cache Layout Constants ────────────────────────────────────────────
+// Per-position byte alignment for TurboQuant packed KV entries.
+// Must be a power of two and >= sizeof(float2) (8 bytes) so RMS scale
+// storage is naturally aligned.
+constexpr int TURBOQUANT_POS_ALIGN = 32;
+constexpr int TURBOQUANT_POS_ALIGN_MASK = TURBOQUANT_POS_ALIGN - 1;
+
+// Bytes reserved for per-position RMS scale storage in the V cache.
+// Two f32 values (rms_k, rms_v) written at pos_v_base + pack_bytes.
+constexpr int TURBOQUANT_RMS_SCALE_BYTES = static_cast<int>(sizeof(float) * 2);
+
 // ── AMD GPU Architecture Wavefront Sizes ─────────────────────────────────────────────
 // Wavefront size is the SIMD unit size (similar to CUDA warp size)
 // - RDNA1/2/3/4: 32 threads per wavefront (gfx1010+, gfx1030+, gfx1100+, gfx1201+)

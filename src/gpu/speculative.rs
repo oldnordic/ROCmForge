@@ -7,10 +7,10 @@ use super::cache::{GpuForwardScratch, GpuKvCache, GpuPrefillScratch};
 use super::device::GpuDevice;
 use super::error::{GpuError, GpuResult};
 use super::weights::{GpuBuffer, GpuModelWeights};
-use bytes::Bytes;
 use crate::config::ModelConfig;
 use crate::cpu::cache::CpuForwardScratch;
 use crate::cpu::weights::CpuModelWeights;
+use bytes::Bytes;
 
 /// Safe matrix/buffer-non-overlapping address isolation helper.
 fn verify_cache_isolation(target_kv: &GpuKvCache, draft_kv: &GpuKvCache) -> GpuResult<()> {

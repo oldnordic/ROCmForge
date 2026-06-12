@@ -7,6 +7,9 @@
 
 #[path = "convert/cli.rs"]
 mod cli;
+#[cfg(target_os = "linux")]
+#[path = "convert/direct_io.rs"]
+mod direct_io;
 #[path = "convert/layout.rs"]
 mod layout;
 #[path = "convert/math.rs"]
@@ -15,9 +18,6 @@ mod math;
 mod pipeline;
 #[path = "convert/quant.rs"]
 mod quant;
-#[cfg(target_os = "linux")]
-#[path = "convert/direct_io.rs"]
-mod direct_io;
 
 use std::fs::File;
 use std::io::{Seek, SeekFrom, Write};
@@ -123,9 +123,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         kv_frame_codec_enabled: Some(options.kv_frame_codec),
         adastate_anchors_enabled: Some(options.adastate_anchors),
         kv_quant_bits: options.kv_quant_bits,
-        turboquant_centroids: options
-            .kv_quant_bits
-            .map(|_| vec![-2.152, -1.344, -0.756, -0.245, 0.245, 0.756, 1.344, 2.152]),
+        turboquant_centroids: options.kv_quant_bits.map(|bits| {
+            let n = 1usize << bits;
+            if bits == 3 {
+                vec![
+                    -2.152f32, -1.344, -0.756, -0.245, 0.245, 0.756, 1.344, 2.152,
+                ]
+            } else {
+                let step = 5.0f32 / n as f32;
+                (0..n)
+                    .map(|i| (2.0f32 * i as f32 - (n as f32 - 1.0f32)) * step * 0.5f32)
+                    .collect()
+            }
+        }),
         qjl_scale: options
             .kv_quant_bits
             .map(|_| options.qjl_scale.unwrap_or(0.25f32)),

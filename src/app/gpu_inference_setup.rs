@@ -71,6 +71,39 @@ fn prepare_expert_scratch(
             );
             break 'expert_scratch;
         }
+
+        let all_mpo = [
+            layer.ffn_gate_mpo_experts.as_ref(),
+            layer.ffn_up_mpo_experts.as_ref(),
+            layer.ffn_down_mpo_experts.as_ref(),
+        ];
+        if all_mpo.iter().all(|x| x.is_some()) {
+            let k = layer
+                .ffn_gate_mpo_experts
+                .as_ref()
+                .map(|c| c.chi_max)
+                .unwrap_or(32);
+            let max_rows = all_mpo
+                .iter()
+                .filter_map(|x| *x)
+                .map(|c| c.rows)
+                .max()
+                .unwrap_or(1);
+            let max_cols = all_mpo
+                .iter()
+                .filter_map(|x| *x)
+                .map(|c| c.cols)
+                .max()
+                .unwrap_or(1);
+            gpu_scratch
+                .init_expert_scratch(k as u32, max_rows, max_cols, 0)
+                .map_err(|e| format!("expert scratch init: {}", e))?;
+            eprintln!(
+                "  Expert scratch (MPO): k={}, max_rows={}, max_cols={}",
+                k, max_rows, max_cols
+            );
+            break 'expert_scratch;
+        }
     }
     Ok(())
 }

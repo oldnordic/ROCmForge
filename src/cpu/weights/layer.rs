@@ -1,7 +1,4 @@
-use super::helpers::{
-    copy_f32, rfm_type_to_ggml,
-    rfm_weight_meta, unpack_q4_split,
-};
+use super::helpers::{copy_f32, rfm_type_to_ggml, rfm_weight_meta, unpack_q4_split};
 use super::meta::{WeightError, WeightMeta};
 use super::ssm::{
     load_qwen35_ssm_gguf, load_qwen35_ssm_rfm, qwen35_post_attention_norm_name, CpuSsmWeights,
@@ -162,7 +159,8 @@ impl CpuLayerWeights {
                 }
                 RfmType::GgufPassthrough(_) => t.data.to_vec(),
                 RfmType::MoeExpertSvdSparse { rows, cols, .. }
-                | RfmType::MoeExpertSvdFwhtSparse { rows, cols, .. } => {
+                | RfmType::MoeExpertSvdFwhtSparse { rows, cols, .. }
+                | RfmType::MoeExpertMpo { rows, cols, .. } => {
                     vec![0u8; (rows * cols) as usize * 4]
                 }
                 _ => {

@@ -38,7 +38,7 @@ fn run_cpu_prompt_reference(
             .expect("CPU decode should succeed");
     }
 
-    scratch.logits
+    scratch.logits.to_vec()
 }
 
 #[allow(dead_code)]
@@ -221,6 +221,17 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
         cpu_embed_token(first_token, &cpu_weights, &mut cpu_hidden_l0, &config);
         let mut cpu_kv_l0 = CpuKvCache::new(&config, 1);
         let mut cpu_scratch_l0 = CpuForwardScratch::new(&config);
+        let half = config.head_dim / 2;
+        for i in 0..half {
+            let angle = 0.0f32 * config.rope_freq[i];
+            let (s, c) = angle.sin_cos();
+            cpu_scratch_l0.rope_sin[i] = s;
+            cpu_scratch_l0.rope_cos[i] = c;
+        }
+        let rope_sin_l0 =
+            unsafe { std::slice::from_raw_parts(cpu_scratch_l0.rope_sin.as_ptr(), half) };
+        let rope_cos_l0 =
+            unsafe { std::slice::from_raw_parts(cpu_scratch_l0.rope_cos.as_ptr(), half) };
         cpu_layer_forward(
             &mut cpu_hidden_l0,
             cpu_weights.layer(0),
@@ -228,6 +239,8 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
             &mut cpu_scratch_l0,
             0,
             0,
+            rope_sin_l0,
+            rope_cos_l0,
             &config,
             false,
         )
@@ -310,8 +323,19 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
         let mut worst_ffn_down_layer = 0usize;
         let mut worst_ffn_down_pos = 0usize;
 
+        let half = config.head_dim / 2;
         for (diag_pos, &diag_token_id) in prompt_tokens.iter().enumerate() {
             cpu_embed_token(diag_token_id, &cpu_weights, &mut cpu_hidden_diag, &config);
+            for i in 0..half {
+                let angle = diag_pos as f32 * config.rope_freq[i];
+                let (s, c) = angle.sin_cos();
+                cpu_scratch_diag.rope_sin[i] = s;
+                cpu_scratch_diag.rope_cos[i] = c;
+            }
+            let rope_sin_diag =
+                unsafe { std::slice::from_raw_parts(cpu_scratch_diag.rope_sin.as_ptr(), half) };
+            let rope_cos_diag =
+                unsafe { std::slice::from_raw_parts(cpu_scratch_diag.rope_cos.as_ptr(), half) };
             gpu::gpu_embed_token_hybrid(
                 &device,
                 diag_token_id,
@@ -331,6 +355,8 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
                     &mut cpu_scratch_diag,
                     layer_idx,
                     diag_pos,
+                    rope_sin_diag,
+                    rope_cos_diag,
                     &config,
                     false,
                 )
@@ -916,6 +942,15 @@ fn test_gpu_ffn_down_real_model_matches_cpu_layer0_projection() {
 
     let mut cpu_kv = CpuKvCache::new(&config, 1);
     let mut cpu_scratch = CpuForwardScratch::new(&config);
+    let half = config.head_dim / 2;
+    for i in 0..half {
+        let angle = 0.0f32 * config.rope_freq[i];
+        let (s, c) = angle.sin_cos();
+        cpu_scratch.rope_sin[i] = s;
+        cpu_scratch.rope_cos[i] = c;
+    }
+    let rope_sin = unsafe { std::slice::from_raw_parts(cpu_scratch.rope_sin.as_ptr(), half) };
+    let rope_cos = unsafe { std::slice::from_raw_parts(cpu_scratch.rope_cos.as_ptr(), half) };
     cpu_layer_forward(
         &mut cpu_hidden,
         cpu_weights.layer(0),
@@ -923,6 +958,8 @@ fn test_gpu_ffn_down_real_model_matches_cpu_layer0_projection() {
         &mut cpu_scratch,
         0,
         0,
+        rope_sin,
+        rope_cos,
         &config,
         false,
     )

@@ -380,6 +380,100 @@ pub(super) fn convert_svd_sparse_tensor(
     Ok(true)
 }
 
+/// Convert a 3D MoE expert tensor to per-expert MPO (2-site tensor network) format.
+///
+/// Each expert is approximated by SVD rank-`chi_max` factors stored as MPO sites.
+/// No sparse residual is retained; the approximation error is pure truncation loss.
+pub(super) fn convert_moe_expert_mpo(
+    tensor: &TensorView,
+    chi_max: u32,
+    use_gpu: bool,
+    base_name: &str,
+    writer: &mut dyn Write,
+    current_offset: &mut u64,
+    entries: &mut Vec<RfmTensorEntry>,
+    align_offset: &impl Fn(&mut dyn Write, &mut u64) -> Result<(), std::io::Error>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_eq!(
+        tensor.dims.len(),
+        3,
+        "convert_moe_expert_mpo requires 3D tensor"
+    );
+    let cols = tensor.dims[0] as usize;
+    let rows = tensor.dims[1] as usize;
+    let n_experts = tensor.dims[2] as usize;
+    let chi = (chi_max as usize).min(rows.min(cols));
+    let total_elements = cols * rows * n_experts;
+
+    let w_f32 = match tensor.ggml_type {
+        GgmlType::Q4_0 => dequantize_q4_0_to_f32(tensor.data, total_elements),
+        GgmlType::Q4_K => {
+            let mut out = vec![0.0f32; total_elements];
+            rocmforge::cpu::quant::embed_q4_k(0, tensor.data, &mut out, total_elements);
+            out
+        }
+        GgmlType::Q6_K => dequantize_q6_k_to_f32(tensor.data, total_elements),
+        GgmlType::F32 => bytes_to_f32(tensor.data),
+        other => return Err(format!("unsupported type for MoE MPO: {:?}", other).into()),
+    };
+
+    println!(
+        "    {} experts, rows={}, cols={}, chi_max={}",
+        n_experts, rows, cols, chi
+    );
+
+    let (all_u, all_v) = svd_batch_experts(&w_f32, rows, cols, chi, n_experts, base_name, use_gpu)?;
+
+    // Site dims for 2-site MPO: [1, rows, chi, 1, chi, cols, 1, 1]
+    let site_dims: Vec<u32> = vec![1, rows as u32, chi as u32, 1, chi as u32, cols as u32, 1, 1];
+
+    align_offset(writer, current_offset)?;
+    let base_offset = *current_offset;
+
+    // Write site_dims first (8 u32s)
+    for &d in &site_dims {
+        writer.write_all(&d.to_le_bytes())?;
+    }
+
+    // Write all expert site data: U_sigma followed by V^T for each expert
+    for e in 0..n_experts {
+        let u_offset = e * rows * chi;
+        let v_offset = e * chi * cols;
+        for &val in &all_u[u_offset..u_offset + rows * chi] {
+            writer.write_all(&val.to_le_bytes())?;
+        }
+        for &val in &all_v[v_offset..v_offset + chi * cols] {
+            writer.write_all(&val.to_le_bytes())?;
+        }
+    }
+
+    let site_data_size = n_experts * (rows * chi + chi * cols);
+    let payload_size = site_dims.len() * 4 + site_data_size * 4;
+    *current_offset += payload_size as u64;
+
+    entries.push(RfmTensorEntry {
+        name: base_name.to_string(),
+        dims: tensor.dims.to_vec(),
+        wtype: RfmType::MoeExpertMpo {
+            n_experts: n_experts as u32,
+            n_sites: 2,
+            chi_max: chi as u32,
+            rows: rows as u64,
+            cols: cols as u64,
+            value_type: 0,
+        },
+        offset: base_offset,
+        size: payload_size as u64,
+    });
+
+    println!(
+        "    MoE expert MPO: {} experts, chi_max={}, payload={} bytes",
+        n_experts, chi, payload_size
+    );
+
+    Ok(())
+}
+
 pub(super) fn convert_moe_expert_svd_sparse(
     tensor: &TensorView,
     k_rank: u32,
@@ -387,6 +481,7 @@ pub(super) fn convert_moe_expert_svd_sparse(
     sparse_threshold: Option<f32>,
     residual_prune_threshold: Option<f32>,
     use_fwht: bool,
+    mpo_chi_max: Option<u32>,
     base_name: &str,
     writer: &mut dyn Write,
     current_offset: &mut u64,
@@ -487,6 +582,83 @@ pub(super) fn convert_moe_expert_svd_sparse(
     let avg_density = total_nnz as f64 / (rows * cols * n_experts).max(1) as f64;
 
     if sparse_threshold.map_or(false, |t| avg_density > t as f64) {
+        if let Some(chi) = mpo_chi_max {
+            let chi_usize = (chi as usize).min(rows.min(cols));
+            println!(
+                "    residual {:.1}% dense > threshold → MPO fallback (chi_max={})",
+                avg_density * 100.0,
+                chi_usize
+            );
+
+            // Site dims for 2-site MPO: [1, rows, chi, 1, chi, cols, 1, 1]
+            let site_dims: Vec<u32> = vec![
+                1,
+                rows as u32,
+                chi_usize as u32,
+                1,
+                chi_usize as u32,
+                cols as u32,
+                1,
+                1,
+            ];
+
+            align_offset(writer, current_offset)?;
+            let base_offset = *current_offset;
+
+            // Write site_dims first (8 u32s)
+            for &d in &site_dims {
+                writer.write_all(&d.to_le_bytes())?;
+            }
+
+            // If chi_max <= k, truncate existing U/V. Otherwise recompute SVD.
+            let (all_u_mpo, all_v_mpo) = if chi_usize <= k {
+                let mut u_trunc = Vec::with_capacity(n_experts * rows * chi_usize);
+                let mut v_trunc = Vec::with_capacity(n_experts * chi_usize * cols);
+                for e in 0..n_experts {
+                    let u_off = e * rows * k;
+                    let v_off = e * k * cols;
+                    u_trunc.extend_from_slice(&all_u[u_off..u_off + rows * chi_usize]);
+                    v_trunc.extend_from_slice(&all_v[v_off..v_off + chi_usize * cols]);
+                }
+                (u_trunc, v_trunc)
+            } else {
+                svd_batch_experts(&w_f32, rows, cols, chi_usize, n_experts, base_name, use_gpu)?
+            };
+
+            // Write all expert site data: U_sigma followed by V^T for each expert
+            for e in 0..n_experts {
+                let u_offset = e * rows * chi_usize;
+                let v_offset = e * chi_usize * cols;
+                for &val in &all_u_mpo[u_offset..u_offset + rows * chi_usize] {
+                    writer.write_all(&val.to_le_bytes())?;
+                }
+                for &val in &all_v_mpo[v_offset..v_offset + chi_usize * cols] {
+                    writer.write_all(&val.to_le_bytes())?;
+                }
+            }
+
+            let site_data_size = n_experts * (rows * chi_usize + chi_usize * cols);
+            let payload_size = site_dims.len() * 4 + site_data_size * 4;
+            *current_offset += payload_size as u64;
+
+            entries.push(RfmTensorEntry {
+                name: base_name.to_string(),
+                dims: tensor.dims.to_vec(),
+                wtype: RfmType::MoeExpertMpo {
+                    n_experts: n_experts as u32,
+                    n_sites: 2,
+                    chi_max: chi_usize as u32,
+                    rows: rows as u64,
+                    cols: cols as u64,
+                    value_type: 0,
+                },
+                offset: base_offset,
+                size: payload_size as u64,
+            });
+
+            return Ok(true);
+        }
+
         println!(
             "    residual {:.1}% dense > threshold → passthrough original",
             avg_density * 100.0
@@ -838,6 +1010,7 @@ pub(super) fn convert_all_tensors(
                     options.sparse_threshold,
                     options.residual_prune_threshold,
                     options.use_fwht,
+                    options.mpo_chi_max,
                     &tensor_name,
                     out_file,
                     current_offset,
@@ -848,6 +1021,11 @@ pub(super) fn convert_all_tensors(
                     println!(
                         "  MoE expert SVD+sparse (FWHT={}): {} ({} experts, k={})",
                         options.use_fwht, tensor_name, tensor.dims[2], k_val
+                    );
+                } else if let Some(chi_max) = options.mpo_chi_max {
+                    println!(
+                        "  MoE expert MPO fallback: {} ({} experts, chi_max={})",
+                        tensor_name, tensor.dims[2], chi_max
                     );
                 } else {
                     println!("  MoE passthrough: {} (residual too dense)", tensor_name);

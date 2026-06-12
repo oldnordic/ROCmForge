@@ -42,8 +42,7 @@ impl DirectIoWriter {
                 .custom_flags(O_DIRECT)
                 .open(path)?;
 
-            let buf =
-                rocmforge::aligned::AlignedVec::new_zeroed(Self::BUF_CAP, Self::ALIGN);
+            let buf = rocmforge::aligned::AlignedVec::new_zeroed(Self::BUF_CAP, Self::ALIGN);
 
             Ok(Self {
                 file,
@@ -88,8 +87,7 @@ impl Write for DirectIoWriter {
                     continue;
                 }
                 let n = remaining.len().min(space);
-                self.buf[self.buf_filled..self.buf_filled + n]
-                    .copy_from_slice(&remaining[..n]);
+                self.buf[self.buf_filled..self.buf_filled + n].copy_from_slice(&remaining[..n]);
                 self.buf_filled += n;
                 remaining = &remaining[n..];
             }
@@ -107,8 +105,7 @@ impl Write for DirectIoWriter {
         {
             self.flush_aligned()?;
             if self.buf_filled > 0 {
-                let padded =
-                    ((self.buf_filled + Self::ALIGN - 1) / Self::ALIGN) * Self::ALIGN;
+                let padded = ((self.buf_filled + Self::ALIGN - 1) / Self::ALIGN) * Self::ALIGN;
                 for i in self.buf_filled..padded {
                     self.buf[i] = 0;
                 }

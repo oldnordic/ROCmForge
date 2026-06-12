@@ -166,13 +166,13 @@ mod tests {
         // Grow
         v.resize(8, 42.0);
         assert_eq!(v.len(), 8);
-        assert_eq!(v[3], 3.0);   // old data preserved
-        assert_eq!(v[4], 42.0);  // new elements filled
+        assert_eq!(v[3], 3.0); // old data preserved
+        assert_eq!(v[4], 42.0); // new elements filled
         assert_eq!(v[7], 42.0);
         assert!(v.as_ptr() as usize % ALIGN_AVX2 == 0);
         // Shrink
         v.resize(2, 99.0);
         assert_eq!(v.len(), 2);
-        assert_eq!(v[1], 1.0);   // old data preserved
+        assert_eq!(v[1], 1.0); // old data preserved
     }
 }

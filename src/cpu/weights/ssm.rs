@@ -1,6 +1,4 @@
-use super::helpers::{
-    copy_f32, copy_f32_from_bytes, rfm_weight_meta,
-};
+use super::helpers::{copy_f32, copy_f32_from_bytes, rfm_weight_meta};
 use super::meta::{WeightError, WeightMeta};
 use crate::config::ModelConfig;
 use crate::loader::{GgufFile, LoadError, RfmFile, RfmType};

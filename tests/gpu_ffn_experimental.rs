@@ -128,20 +128,29 @@ fn prepare_layer0_ffn_inputs(
     if let Some(bv) = &layer.attn_v_bias {
         add_bias(&mut scratch.v, bv);
     }
+    let half = config.head_dim / 2;
+    let mut rope_sin = vec![0.0f32; half];
+    let mut rope_cos = vec![0.0f32; half];
+    for i in 0..half {
+        let angle = 0.0f32 * config.rope_freq[i];
+        let (s, c) = angle.sin_cos();
+        rope_sin[i] = s;
+        rope_cos[i] = c;
+    }
     rope(
         &mut scratch.q,
         config.num_heads,
         config.head_dim,
-        0,
-        config.rope_theta,
+        &rope_sin,
+        &rope_cos,
         config.rope_neox,
     );
     rope(
         &mut scratch.k,
         config.num_kv_heads,
         config.head_dim,
-        0,
-        config.rope_theta,
+        &rope_sin,
+        &rope_cos,
         config.rope_neox,
     );
     kv.write_k(0, 0, &scratch.k);
@@ -195,9 +204,9 @@ fn prepare_layer0_ffn_inputs(
     )
     .expect("CPU up projection");
 
-    let normed = scratch.normed.clone();
-    let gate = scratch.gate.clone();
-    let up = scratch.swiglu.clone();
+    let normed = scratch.normed.to_vec();
+    let gate = scratch.gate.to_vec();
+    let up = scratch.swiglu.to_vec();
     silu_fuse(&scratch.gate, &mut scratch.swiglu);
 
     let mut reference = vec![0.0f32; h];
@@ -212,7 +221,7 @@ fn prepare_layer0_ffn_inputs(
     )
     .expect("CPU ffn_down projection");
 
-    (normed, gate, up, scratch.swiglu, reference)
+    (normed, gate, up, scratch.swiglu.to_vec(), reference)
 }
 
 #[test]
@@ -538,6 +547,16 @@ fn test_gpu_experimental_full_ffn_block_prompt_tail_matches_cpu_across_eligible_
         &config,
     );
 
+    let half = config.head_dim / 2;
+    for i in 0..half {
+        let angle = target_pos as f32 * config.rope_freq[i];
+        let (s, c) = angle.sin_cos();
+        cpu_scratch.rope_sin[i] = s;
+        cpu_scratch.rope_cos[i] = c;
+    }
+    let rope_sin = unsafe { std::slice::from_raw_parts(cpu_scratch.rope_sin.as_ptr(), half) };
+    let rope_cos = unsafe { std::slice::from_raw_parts(cpu_scratch.rope_cos.as_ptr(), half) };
+
     let mut checked_layers = 0usize;
     for layer_idx in 0..config.num_layers {
         cpu_layer_forward(
@@ -547,6 +566,8 @@ fn test_gpu_experimental_full_ffn_block_prompt_tail_matches_cpu_across_eligible_
             &mut cpu_scratch,
             layer_idx,
             target_pos,
+            rope_sin,
+            rope_cos,
             &config,
             false,
         )

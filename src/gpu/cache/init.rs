@@ -1,6 +1,6 @@
 use super::{
     binding::compute_kv_binding_tag, BlockAllocator, BlockTable, GpuBuffer, GpuError, GpuKvCache,
-    GpuResult,
+    GpuResult, TURBOQUANT_POS_ALIGN, TURBOQUANT_POS_ALIGN_MASK, TURBOQUANT_RMS_SCALE_BYTES,
 };
 use crate::config::ModelConfig;
 
@@ -55,10 +55,16 @@ fn layer_allocation_error(kind: &str, layer: usize, err: impl std::fmt::Display)
 pub(super) fn compute_layout(config: &ModelConfig, max_seq_len: usize) -> CacheLayout {
     let kv_size = config.num_kv_heads * config.head_dim;
     let effective_kv = config.kv_lora_dim.unwrap_or(kv_size);
-    let layer_bytes = if let Some(_bits) = config.kv_quant_bits {
-        let pack_bytes = (effective_kv * 3 + 7) / 8;
+    let layer_bytes = if let Some(bits) = config.kv_quant_bits {
+        let pack_bytes = (effective_kv * bits + 7) / 8;
         let qjl_bytes = (effective_kv + 7) / 8;
-        let aligned_pos_bytes = (pack_bytes + qjl_bytes + 31) & !31;
+        // V cache stores RMS scales (not QJL signs) at pos_v_base + pack_bytes,
+        // so the per-position stride must accommodate the larger of:
+        //   K: pack_bytes + qjl_bytes  (indices + signs)
+        //   V: pack_bytes + TURBOQUANT_RMS_SCALE_BYTES  (indices + scales)
+        let content_bytes = pack_bytes + qjl_bytes.max(TURBOQUANT_RMS_SCALE_BYTES);
+        let aligned_pos_bytes =
+            (content_bytes + TURBOQUANT_POS_ALIGN_MASK) & !TURBOQUANT_POS_ALIGN_MASK;
         max_seq_len * aligned_pos_bytes
     } else {
         max_seq_len * effective_kv * std::mem::size_of::<f32>()
@@ -263,6 +269,14 @@ pub(super) fn init_paged_state(
 
 impl GpuKvCache {
     pub(super) fn build_from_config(config: &ModelConfig, max_seq_len: usize) -> GpuResult<Self> {
+        if let Some(bits) = config.kv_quant_bits {
+            if bits < 1 || bits > 4 {
+                return Err(GpuError::UnsupportedOperation {
+                    operation: "TurboQuant cache init".to_string(),
+                    reason: format!("kv_quant_bits must be in {{1,2,3,4}}, got {}", bits),
+                });
+            }
+        }
         let layout = compute_layout(config, max_seq_len);
         enforce_vram_budget(config, layout.layer_bytes, layout.total_cache_bytes)?;
 
@@ -320,6 +334,9 @@ mod tests {
             vocab_size: 32000,
             rms_norm_eps: 1e-5,
             rope_theta: 10000.0,
+            rope_freq: (0..64)
+                .map(|i| 1.0 / 10000.0f32.powf((2 * i) as f32 / 128.0f32))
+                .collect(),
             rope_neox: false,
             use_attention_bias: false,
             attention_layout: crate::config::AttentionLayout::SplitQkv,

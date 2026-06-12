@@ -1,7 +1,7 @@
-use bytes::Bytes;
 use crate::config::ModelConfig;
 use crate::cpu::weights::CpuModelWeights;
 use crate::tokenizer::BpeTokenizer;
+use bytes::Bytes;
 use std::sync::Arc;
 
 pub(crate) fn run_sync_inference(

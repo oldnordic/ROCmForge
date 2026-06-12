@@ -943,7 +943,14 @@ fn gemm_f16_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_di
 ///
 /// For transposed access, computes Y = W^T * X where W is stored as [in_dim, out_dim].
 /// Uses dequantization-on-the-fly for simplicity (slower but correct).
-fn gemm_q4_k_transposed_fallback(w: &[u8], x: &[f32], y: &mut [f32], _m: usize, n: usize, k: usize) {
+fn gemm_q4_k_transposed_fallback(
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+    _m: usize,
+    n: usize,
+    k: usize,
+) {
     use crate::cpu::kernels::q4::BlockQ4K;
 
     let num_blocks_k = k / 256;

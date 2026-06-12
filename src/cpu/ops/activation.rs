@@ -36,7 +36,10 @@ unsafe fn silu_fuse_avx2(gate: &[f32], up: &mut [f32]) {
         // Load gate and up into temporary arrays for scalar compute
         let mut gate_buf = [0.0f32; 8];
         let mut up_buf = [0.0f32; 8];
-        _mm256_storeu_ps(gate_buf.as_mut_ptr(), _mm256_loadu_ps(gate.as_ptr().add(i * 8)));
+        _mm256_storeu_ps(
+            gate_buf.as_mut_ptr(),
+            _mm256_loadu_ps(gate.as_ptr().add(i * 8)),
+        );
         _mm256_storeu_ps(up_buf.as_mut_ptr(), _mm256_loadu_ps(up.as_ptr().add(i * 8)));
 
         for j in 0..8 {

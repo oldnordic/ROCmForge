@@ -11,8 +11,8 @@ use super::ops::{
     add_bias_batched, dispatch_gemm, dispatch_gemv, flash_attn_prefill, rms_norm, silu_fuse,
 };
 use super::quant::{
-    embed_f32_batch, embed_q2_k_batch, embed_q3_k_batch, embed_q4_0_batch,
-    embed_q4_k_batch, embed_q5_0_batch, embed_q5_k_batch, embed_q6_k_batch, embed_q8_0_batch,
+    embed_f32_batch, embed_q2_k_batch, embed_q3_k_batch, embed_q4_0_batch, embed_q4_k_batch,
+    embed_q5_0_batch, embed_q5_k_batch, embed_q6_k_batch, embed_q8_0_batch,
 };
 use super::weights::{CpuLayerWeights, CpuModelWeights};
 use super::CpuError;
@@ -507,7 +507,9 @@ pub fn cpu_prefill_forward_parallel(
                 // 1. Gather embeddings for this batch
                 match weights_shared.token_emb_meta.wtype {
                     GgmlType::F32 => {
-                        if let Some(wf) = crate::cpu::weights::try_as_f32_slice(&weights_shared.token_emb) {
+                        if let Some(wf) =
+                            crate::cpu::weights::try_as_f32_slice(&weights_shared.token_emb)
+                        {
                             embed_f32_batch(batch_tokens, wf, &mut ps.hidden, h);
                         } else {
                             for (s, &id) in batch_tokens.iter().enumerate() {
@@ -753,7 +755,9 @@ mod tests {
             max_seq_len: 32,
             rms_norm_eps: 1e-6,
             rope_theta: 10000.0,
-            rope_freq: vec![1.0, 0.5],
+            rope_freq: (0..8)
+                .map(|i| 1.0 / 10000.0f32.powf((2 * i) as f32 / 16.0f32))
+                .collect(),
             rope_neox: true,
             use_attention_bias: false,
             attention_layout: crate::config::AttentionLayout::SplitQkv,

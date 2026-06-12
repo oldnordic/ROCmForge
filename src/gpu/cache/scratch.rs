@@ -77,6 +77,10 @@ pub struct GpuExpertScratch {
     pub temp_v: GpuBuffer,
     /// Pre-allocated scratch buffer for FWHT rotated input activation: [cols] F32
     pub rotated_input: GpuBuffer,
+    /// MPO site data upload buffer: [rows * k + k * cols] F32
+    pub mpo_site_data: GpuBuffer,
+    /// MPO site dims upload buffer: [8] u32
+    pub mpo_site_dims: GpuBuffer,
     pub k: u32,
     pub rows: usize,
     pub cols: usize,
@@ -114,6 +118,8 @@ impl GpuExpertScratch {
             csr_row_ptr: GpuBuffer::alloc((rows + 1) * 4)?,
             temp_v: GpuBuffer::alloc(ku * 4)?,
             rotated_input: GpuBuffer::alloc(cols * 4)?,
+            mpo_site_data: GpuBuffer::alloc((rows * ku + ku * cols) * 4)?,
+            mpo_site_dims: GpuBuffer::alloc(8 * 4)?,
             k,
             rows,
             cols,
@@ -643,6 +649,9 @@ mod tests {
             vocab_size: 32000,
             rms_norm_eps: 1e-5,
             rope_theta: 10000.0,
+            rope_freq: (0..64)
+                .map(|i| 1.0 / 10000.0f32.powf((2 * i) as f32 / 128.0f32))
+                .collect(),
             rope_neox: false,
             use_attention_bias: false,
             attention_layout: crate::config::AttentionLayout::SplitQkv,

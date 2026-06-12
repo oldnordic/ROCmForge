@@ -33,6 +33,9 @@ fn make_test_config() -> ModelConfig {
         attention_layout: rocmforge::config::AttentionLayout::SplitQkv,
         architecture: "test".to_string(),
         tensor_registry: TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf),
+        rope_freq: (0..64)
+            .map(|i| 1.0 / 10000.0f32.powf((2 * i) as f32 / 128.0f32))
+            .collect(),
         kv_lora_dim: None,
         kv_frame_codec_enabled: None,
         adastate_anchors_enabled: None,
