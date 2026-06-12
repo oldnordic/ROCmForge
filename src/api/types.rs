@@ -20,18 +20,18 @@ pub struct ModelInfo {
 
 // ── /v1/completions ───────────────────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct CompletionRequest {
     pub model: String,
     pub prompt: String,
-    #[serde(default = "default_max_tokens")]
-    pub max_tokens: usize,
-    #[serde(default = "default_temperature")]
-    pub temperature: f32,
-    #[serde(default = "default_top_p")]
-    pub top_p: f32,
     #[serde(default)]
-    pub stream: bool,
+    pub max_tokens: Option<usize>,
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    #[serde(default)]
+    pub top_p: Option<f32>,
+    #[serde(default)]
+    pub stream: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -55,18 +55,18 @@ pub struct CompletionChoice {
 
 // ── /v1/chat/completions ────────────────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct ChatCompletionRequest {
     pub model: String,
     pub messages: Vec<ChatMessage>,
-    #[serde(default = "default_max_tokens")]
-    pub max_tokens: usize,
-    #[serde(default = "default_temperature")]
-    pub temperature: f32,
-    #[serde(default = "default_top_p")]
-    pub top_p: f32,
     #[serde(default)]
-    pub stream: bool,
+    pub max_tokens: Option<usize>,
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    #[serde(default)]
+    pub top_p: Option<f32>,
+    #[serde(default)]
+    pub stream: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -174,10 +174,14 @@ impl ApiError {
 pub struct MessagesRequest {
     pub model: String,
     pub messages: Vec<ChatMessage>,
-    #[serde(default = "default_max_tokens")]
-    pub max_tokens: usize,
     #[serde(default)]
-    pub stream: bool,
+    pub max_tokens: Option<usize>,
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    #[serde(default)]
+    pub top_p: Option<f32>,
+    #[serde(default)]
+    pub stream: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -210,6 +214,11 @@ pub struct MessagesUsage {
 pub struct LoadModelRequest {
     pub model: String,
     pub draft_model: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UnloadModelRequest {
+    pub model: String,
 }
 
 #[derive(Debug, Serialize)]

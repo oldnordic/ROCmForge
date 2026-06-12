@@ -2,8 +2,8 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use serde_json::json;
 
-pub(crate) fn error_response(code: StatusCode, message: &str) -> Response {
-    (code, Json(json!({ "error": message }))).into_response()
+pub(crate) fn error_response(code: StatusCode, message: &str, _error_type: &str) -> Response {
+    (code, Json(json!({ "error": { "message": message, "type": _error_type } }))).into_response()
 }
 
 pub(crate) fn bytes_to_gb(bytes: usize) -> f64 {

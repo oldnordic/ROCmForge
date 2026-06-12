@@ -489,6 +489,35 @@ pub fn cpu_full_forward(
     Ok(())
 }
 
+// ── Prefill wrapper ────────────────────────────────────────────────────────────────
+
+/// Convenience wrapper for prompt prefill that populates `scratch.logits` for sampling.
+///
+/// The `hidden` buffer is provided for API compatibility but is immediately overwritten
+/// by `cpu_embed_token` on the first decode step, so its contents after this call are unused.
+pub fn cpu_prefill(
+    _hidden: &mut [f32],
+    weights: &CpuModelWeights,
+    kv: &mut CpuKvCache,
+    scratch: &mut CpuForwardScratch,
+    prompt_tokens: &[u32],
+    config: &ModelConfig,
+) -> Result<(), CpuError> {
+    let batch_config = crate::hardware::BatchConfig {
+        max_tokens_per_batch: prompt_tokens.len().max(1).min(256),
+        num_cores: 1,
+    };
+    super::prefill::cpu_prefill_forward(
+        prompt_tokens,
+        weights,
+        kv,
+        scratch,
+        0,
+        config,
+        &batch_config,
+    )
+}
+
 // ── Token embedding ──────────────────────────────────────────────────────────────
 
 /// Embed a single token into hidden state.

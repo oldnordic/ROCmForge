@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::api::types::*;
 use crate::config::{ChatTemplate, ModelConfig};
 use crate::cpu::weights::CpuModelWeights;
 use crate::loader::ModelFile;
@@ -31,7 +30,7 @@ pub struct ModelEntry {
 }
 
 impl ModelEntry {
-    pub fn load(model_path: &str, draft_path: Option<&str>) -> crate::error::RocmForgeResult<Self> {
+    pub fn load(model_path: &str, _draft_path: Option<&str>) -> crate::error::RocmForgeResult<Self> {
         let file = ModelFile::open(model_path)?;
         let config = file.config()?;
         let tokenizer = file.tokenizer();
@@ -105,7 +104,7 @@ impl ModelManager {
         model_path: &str,
         draft_path: Option<&str>,
     ) -> Result<Arc<ModelEntry>, String> {
-        let entry = Arc::new(ModelEntry::load(model_path, draft_path)?);
+        let entry = Arc::new(ModelEntry::load(model_path, draft_path).map_err(|e| e.to_string())?);
         self.try_load_entry(entry.clone()).await?;
         Ok(entry)
     }

@@ -89,4 +89,10 @@ impl From<&str> for RocmForgeError {
     }
 }
 
+impl From<Box<dyn std::error::Error + 'static>> for RocmForgeError {
+    fn from(err: Box<dyn std::error::Error + 'static>) -> Self {
+        RocmForgeError::Generic(err.to_string())
+    }
+}
+
 pub type RocmForgeResult<T> = Result<T, RocmForgeError>;

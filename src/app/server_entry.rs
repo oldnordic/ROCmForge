@@ -20,14 +20,19 @@ pub(crate) fn handle_server_cli(args: &Args) -> bool {
                 eprintln!("Failed to load model: {}", e);
                 std::process::exit(1);
             });
-        let manager = ModelManager::new(entry);
-        let state = std::sync::Arc::new(tokio::sync::Mutex::new(manager));
-        let router = create_router(state);
+        let manager = ModelManager::new();
+        let state = std::sync::Arc::new(manager);
+        let entry_arc = std::sync::Arc::new(entry);
         let addr = std::net::SocketAddr::from(([0, 0, 0, 0], args.port));
         let rt = tokio::runtime::Runtime::new()
             .expect("invariant: failed to build tokio runtime in main");
         eprintln!("rocmforge server listening on http://{}/", addr);
         rt.block_on(async {
+            state
+                .try_load_entry(entry_arc)
+                .await
+                .expect("invariant: failed to load model into server state");
+            let router = create_router(state);
             let listener = tokio::net::TcpListener::bind(addr)
                 .await
                 .expect("invariant: failed to bind TCP address for server");

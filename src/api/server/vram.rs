@@ -2,7 +2,6 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 use super::state::ModelManager;
 use super::utils::{bytes_to_gb, error_response};
@@ -88,7 +87,7 @@ pub(crate) fn collect_vram_info() -> Vec<VramInfo> {
     }
 }
 
-pub(crate) fn vram_budget_check(total_bytes: u64) -> (bool, f64) {
+pub(crate) fn vram_budget_check(_total_bytes: u64) -> (bool, f64) {
     #[cfg(feature = "gpu")]
     {
         if let Some(caps) = crate::gpu::detect() {

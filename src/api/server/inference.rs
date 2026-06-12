@@ -3,7 +3,6 @@ use crate::config::ModelConfig;
 use crate::cpu::weights::CpuModelWeights;
 use crate::tokenizer::BpeTokenizer;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 pub(crate) fn run_sync_inference(
     cpu_weights: &Arc<CpuModelWeights>,

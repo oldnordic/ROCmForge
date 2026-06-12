@@ -3,17 +3,47 @@ use axum::{
     http::StatusCode,
     response::{sse::Event, sse::Sse, IntoResponse, Json, Response},
 };
-use futures::stream::Stream;
 use serde_json::json;
 use bytes::Bytes;
 use std::convert::Infallible;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 use super::inference::{run_stream_inference, run_sync_inference};
 use super::state::ModelManager;
-use super::utils::{error_response, format_chat_messages};
+use super::utils::error_response;
 use crate::api::types::*;
+
+// ── SSE chunk helpers (extracted to avoid recursion limit with async_stream::stream!) ─
+
+fn completion_chunk_json(model: &str, text: &str) -> String {
+    json!({
+        "id": "cmpl-",
+        "object": "text_completion.chunk",
+        "created": chrono::Utc::now().timestamp(),
+        "model": model,
+        "choices": [{
+            "text": text,
+            "index": 0,
+            "finish_reason": null
+        }]
+    })
+    .to_string()
+}
+
+fn chat_completion_chunk_json(model: &str, text: &str) -> String {
+    json!({
+        "id": "chatcmpl-",
+        "object": "chat.completion.chunk",
+        "created": chrono::Utc::now().timestamp(),
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "delta": { "content": text },
+            "finish_reason": null
+        }]
+    })
+    .to_string()
+}
 
 pub(crate) async fn list_models(State(state): State<Arc<ModelManager>>) -> impl IntoResponse {
     let now = chrono::Utc::now().timestamp();
@@ -52,7 +82,7 @@ pub(crate) async fn load_model(
 
     match state.try_load(&path, req.draft_model.as_deref()).await {
         Ok(_) => (StatusCode::OK, Json(json!({ "status": "loaded" }))).into_response(),
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e, "load_failed"),
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string(), "load_failed"),
     }
 }
 
@@ -80,7 +110,7 @@ pub(crate) async fn create_completion(
     };
 
     let prompt = req.prompt.clone();
-    let prompt_tokens = entry.tokenizer.encode(&prompt, true, false);
+    let prompt_tokens = entry.tokenizer.encode(&prompt, true);
     let prompt_tokens_len = prompt_tokens.len();
 
     if req.stream.unwrap_or(false) {
@@ -89,11 +119,8 @@ pub(crate) async fn create_completion(
         let req_clone = req.clone();
 
         tokio::spawn(async move {
-            let _permit = entry_clone
-                .inference_sem
-                .acquire()
-                .await
-                .expect("semaphore closed");
+            let sem = entry_clone.inference_sem.clone();
+            let _permit = sem.acquire().await.expect("semaphore closed");
             let res = tokio::task::spawn_blocking(move || {
                 run_stream_inference(
                     &entry_clone.cpu_weights,
@@ -118,23 +145,14 @@ pub(crate) async fn create_completion(
             }
         });
 
+        let model = req.model.clone();
         let stream = async_stream::stream! {
             while let Some(text) = rx.recv().await {
                 let text = match std::str::from_utf8(&text) {
                     Ok(s) => s,
                     Err(_) => continue,
                 };
-                yield Ok::<Event, Infallible>(Event::default().data(json!({
-                    "id": "cmpl-",
-                    "object": "text_completion.chunk",
-                    "created": chrono::Utc::now().timestamp(),
-                    "model": req.model,
-                    "choices": [{
-                        "text": text,
-                        "index": 0,
-                        "finish_reason": null
-                    }]
-                }).to_string()));
+                yield Ok::<Event, Infallible>(Event::default().data(completion_chunk_json(&model, text)));
             }
             yield Ok::<Event, Infallible>(Event::default().data("[DONE]"));
         };
@@ -170,15 +188,16 @@ pub(crate) async fn create_completion(
             Ok((generated, completion_tokens)) => {
                 let response = CompletionResponse {
                     id: "cmpl-".to_string(),
-                    object: "text_completion".to_string(),
+                    object: "text_completion",
                     created: chrono::Utc::now().timestamp(),
                     model: req.model.clone(),
                     choices: vec![CompletionChoice {
                         text: generated,
                         index: 0,
+                        logprobs: None,
                         finish_reason: "stop".to_string(),
                     }],
-                    usage: CompletionUsage {
+                    usage: Usage {
                         prompt_tokens: prompt_tokens_len,
                         completion_tokens,
                         total_tokens: prompt_tokens_len + completion_tokens,
@@ -186,7 +205,7 @@ pub(crate) async fn create_completion(
                 };
                 (StatusCode::OK, Json(response)).into_response()
             }
-            Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e, "inference_failed"),
+            Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string(), "inference_failed"),
         }
     }
 }
@@ -206,11 +225,13 @@ pub(crate) async fn create_chat_completion(
         }
     };
 
-    let prompt = entry
-        .chat_template
-        .apply(&req.messages)
-        .unwrap_or_else(|_| format_chat_messages(&req.messages));
-    let prompt_tokens = entry.tokenizer.encode(&prompt, true, false);
+    let messages: Vec<(String, String)> = req
+        .messages
+        .iter()
+        .map(|m| (m.role.clone(), m.content.clone()))
+        .collect();
+    let prompt = entry.chat_template.apply_messages(&messages);
+    let prompt_tokens = entry.tokenizer.encode(&prompt, true);
     let prompt_tokens_len = prompt_tokens.len();
 
     if req.stream.unwrap_or(false) {
@@ -219,11 +240,8 @@ pub(crate) async fn create_chat_completion(
         let req_clone = req.clone();
 
         tokio::spawn(async move {
-            let _permit = entry_clone
-                .inference_sem
-                .acquire()
-                .await
-                .expect("semaphore closed");
+            let sem = entry_clone.inference_sem.clone();
+            let _permit = sem.acquire().await.expect("semaphore closed");
             let res = tokio::task::spawn_blocking(move || {
                 run_stream_inference(
                     &entry_clone.cpu_weights,
@@ -248,23 +266,14 @@ pub(crate) async fn create_chat_completion(
             }
         });
 
+        let model = req.model.clone();
         let stream = async_stream::stream! {
             while let Some(text) = rx.recv().await {
                 let text = match std::str::from_utf8(&text) {
                     Ok(s) => s,
                     Err(_) => continue,
                 };
-                yield Ok::<Event, Infallible>(Event::default().data(json!({
-                    "id": "chatcmpl-",
-                    "object": "chat.completion.chunk",
-                    "created": chrono::Utc::now().timestamp(),
-                    "model": req.model,
-                    "choices": [{
-                        "index": 0,
-                        "delta": { "content": text },
-                        "finish_reason": null
-                    }]
-                }).to_string()));
+                yield Ok::<Event, Infallible>(Event::default().data(chat_completion_chunk_json(&model, text)));
             }
             yield Ok::<Event, Infallible>(Event::default().data("[DONE]"));
         };
@@ -300,7 +309,7 @@ pub(crate) async fn create_chat_completion(
             Ok((generated, completion_tokens)) => {
                 let response = ChatCompletionResponse {
                     id: "chatcmpl-".to_string(),
-                    object: "chat.completion".to_string(),
+                    object: "chat.completion",
                     created: chrono::Utc::now().timestamp(),
                     model: req.model.clone(),
                     choices: vec![ChatCompletionChoice {
@@ -311,7 +320,7 @@ pub(crate) async fn create_chat_completion(
                         },
                         finish_reason: "stop".to_string(),
                     }],
-                    usage: CompletionUsage {
+                    usage: Usage {
                         prompt_tokens: prompt_tokens_len,
                         completion_tokens,
                         total_tokens: prompt_tokens_len + completion_tokens,
@@ -319,7 +328,7 @@ pub(crate) async fn create_chat_completion(
                 };
                 (StatusCode::OK, Json(response)).into_response()
             }
-            Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e, "inference_failed"),
+            Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string(), "inference_failed"),
         }
     }
 }
@@ -339,11 +348,13 @@ pub(crate) async fn create_messages(
         }
     };
 
-    let prompt = entry
-        .chat_template
-        .apply(&req.messages)
-        .unwrap_or_else(|_| format_chat_messages(&req.messages));
-    let prompt_tokens = entry.tokenizer.encode(&prompt, true, false);
+    let messages: Vec<(String, String)> = req
+        .messages
+        .iter()
+        .map(|m| (m.role.clone(), m.content.clone()))
+        .collect();
+    let prompt = entry.chat_template.apply_messages(&messages);
+    let prompt_tokens = entry.tokenizer.encode(&prompt, true);
     let prompt_tokens_len = prompt_tokens.len();
 
     let _permit = entry
@@ -375,10 +386,11 @@ pub(crate) async fn create_messages(
         Ok((generated, completion_tokens)) => {
             let response = crate::api::types::MessagesResponse {
                 id: "msg-".to_string(),
+                msg_type: "message",
                 model: req.model.clone(),
-                role: "assistant".to_string(),
-                content: vec![crate::api::types::MessagesContent {
-                    content_type: "text".to_string(),
+                role: "assistant",
+                content: vec![crate::api::types::MessageContent {
+                    content_type: "text",
                     text: generated,
                 }],
                 usage: crate::api::types::MessagesUsage {
@@ -388,7 +400,7 @@ pub(crate) async fn create_messages(
             };
             (StatusCode::OK, Json(response)).into_response()
         }
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e, "inference_failed"),
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string(), "inference_failed"),
     }
 }
 
