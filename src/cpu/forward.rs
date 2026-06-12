@@ -489,12 +489,15 @@ pub fn cpu_full_forward(
     Ok(())
 }
 
-// ── Prefill wrapper ────────────────────────────────────────────────────────────────
+// ── Prefill wrappers ────────────────────────────────────────────────────────────────
 
 /// Convenience wrapper for prompt prefill that populates `scratch.logits` for sampling.
 ///
 /// The `hidden` buffer is provided for API compatibility but is immediately overwritten
 /// by `cpu_embed_token` on the first decode step, so its contents after this call are unused.
+///
+/// Automatically selects parallel or sequential processing based on prompt length
+/// (parallel is used when the prompt spans ≥2 batches).
 pub fn cpu_prefill(
     _hidden: &mut [f32],
     weights: &CpuModelWeights,
@@ -503,11 +506,14 @@ pub fn cpu_prefill(
     prompt_tokens: &[u32],
     config: &ModelConfig,
 ) -> Result<(), CpuError> {
-    let batch_config = crate::hardware::BatchConfig {
-        max_tokens_per_batch: prompt_tokens.len().max(1).min(256),
-        num_cores: 1,
+    let batch_config = match crate::hardware::detect() {
+        Ok(caps) => crate::hardware::derive_batch_config(&caps, config),
+        Err(_) => crate::hardware::BatchConfig {
+            max_tokens_per_batch: prompt_tokens.len().max(1).min(256),
+            num_cores: rayon::current_num_threads(),
+        },
     };
-    super::prefill::cpu_prefill_forward(
+    super::prefill::cpu_prefill_forward_parallel(
         prompt_tokens,
         weights,
         kv,
