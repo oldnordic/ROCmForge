@@ -747,34 +747,29 @@ pub fn dispatch_gemv(
 /// - Column v starts at offset: v * num_blocks * Q8_BLOCK_BYTES
 /// - Within each column, elements are stored in Q8_0 blocks of 32 elements
 pub fn gemv_q8_0_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
-    // Initialize output to zero
+    debug_assert_eq!(y.len(), out_dim, "output dimension mismatch");
     y.fill(0.0);
 
     let num_blocks = in_dim / Q8_BLOCK_ELEMS;
     let col_bytes = num_blocks * Q8_BLOCK_BYTES;
 
-    // For each output dimension (vocab token) - each is a column in the matrix
-    for v in 0..out_dim {
+    y.par_iter_mut().enumerate().for_each(|(v, out)| {
         let mut acc = 0.0f32;
-
-        // Column v starts at this offset in the weight data
         let col_offset = v * col_bytes;
 
-        // Iterate through blocks in this column
         for b in 0..num_blocks {
             let block = &w[col_offset + b * Q8_BLOCK_BYTES..col_offset + (b + 1) * Q8_BLOCK_BYTES];
             let scale = super::super::quant::load_f16_scale(&block[0..2]);
             let qs = &block[2..34];
             let xb = &x[b * Q8_BLOCK_ELEMS..];
 
-            // Compute dot product for this block
             for i in 0..Q8_BLOCK_ELEMS {
                 acc += (qs[i] as i8) as f32 * scale * xb[i];
             }
         }
 
-        y[v] = acc;
-    }
+        *out = acc;
+    });
 }
 
 /// Q4_0 GEMV transposed for transposed weight matrices.
@@ -784,27 +779,22 @@ pub fn gemv_q8_0_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, 
 ///
 /// Used for FFN down projection where weights are stored as [in_dim, out_dim].
 pub fn gemv_q4_0_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
-    // Initialize output to zero
+    debug_assert_eq!(y.len(), out_dim, "output dimension mismatch");
     y.fill(0.0);
 
     let num_blocks_per_col = in_dim / Q4_BLOCK_ELEMS;
     let col_bytes = num_blocks_per_col * Q4_BLOCK_BYTES;
 
-    // For each output dimension (column in the original matrix)
-    for v in 0..out_dim {
+    y.par_iter_mut().enumerate().for_each(|(v, out)| {
         let mut acc = 0.0f32;
-
-        // Column v starts at this offset in the weight data
         let col_offset = v * col_bytes;
 
-        // Iterate through blocks in this column
         for b in 0..num_blocks_per_col {
             let block = &w[col_offset + b * Q4_BLOCK_BYTES..col_offset + (b + 1) * Q4_BLOCK_BYTES];
             let scale = super::super::quant::load_f16_scale(&block[0..2]);
             let qs = &block[2..18];
             let xb = &x[b * Q4_BLOCK_ELEMS..];
 
-            // Dequantize and compute dot product for this block
             for i in 0..16 {
                 let q_lo = (((qs[i] & 0x0F) as i32) - 8) as f32 * scale;
                 let q_hi = (((qs[i] >> 4) as i32) - 8) as f32 * scale;
@@ -812,8 +802,8 @@ pub fn gemv_q4_0_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, 
             }
         }
 
-        y[v] = acc;
-    }
+        *out = acc;
+    });
 }
 
 /// Q4_1 GEMV transposed for transposed weight matrices.
@@ -823,20 +813,16 @@ pub fn gemv_q4_0_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, 
 ///
 /// Used for FFN down projection where weights are stored as [in_dim, out_dim].
 pub fn gemv_q4_1_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
-    // Initialize output to zero
+    debug_assert_eq!(y.len(), out_dim, "output dimension mismatch");
     y.fill(0.0);
 
     let num_blocks_per_col = in_dim / Q4_1_BLOCK_ELEMS;
     let col_bytes = num_blocks_per_col * Q4_1_BLOCK_BYTES;
 
-    // For each output dimension (column in the original matrix)
-    for v in 0..out_dim {
+    y.par_iter_mut().enumerate().for_each(|(v, out)| {
         let mut acc = 0.0f32;
-
-        // Column v starts at this offset in the weight data
         let col_offset = v * col_bytes;
 
-        // Iterate through blocks in this column
         for b in 0..num_blocks_per_col {
             let block =
                 &w[col_offset + b * Q4_1_BLOCK_BYTES..col_offset + (b + 1) * Q4_1_BLOCK_BYTES];
@@ -856,8 +842,8 @@ pub fn gemv_q4_1_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, 
             }
         }
 
-        y[v] = acc;
-    }
+        *out = acc;
+    });
 }
 
 /// Dispatch GEMV with transposed flag for tied embeddings.
@@ -938,13 +924,13 @@ pub fn dispatch_gemv_transposed(
 fn gemv_f32_transposed(w: &[f32], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
     // y = W^T * x, where W has shape [in_dim, out_dim]
     // y[v] = sum_i(x[i] * W[i, v])
-    for v in 0..out_dim {
+    y.par_iter_mut().enumerate().for_each(|(v, out)| {
         let mut acc = 0.0f32;
         for i in 0..in_dim {
             acc += x[i] * w[i * out_dim + v];
         }
-        y[v] = acc;
-    }
+        *out = acc;
+    });
 }
 
 /// F16 GEMV: y[row] = dot(W[row, :], x)
@@ -964,13 +950,14 @@ fn gemv_f16(w: &[u8], x: &[f32], y: &mut [f32]) {
 
 /// F16 GEMV transposed for tied embeddings.
 fn gemv_f16_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
-    for v in 0..out_dim {
+    debug_assert_eq!(y.len(), out_dim, "output dimension mismatch");
+    y.par_iter_mut().enumerate().for_each(|(v, out)| {
         let mut acc = 0.0f32;
         for i in 0..in_dim {
             let offset = (i * out_dim + v) * 2;
             let val = load_f16_scale(&w[offset..offset + 2]);
             acc += x[i] * val;
         }
-        y[v] = acc;
-    }
+        *out = acc;
+    });
 }
