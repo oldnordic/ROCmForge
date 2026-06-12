@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::Write;
 
+use rayon::prelude::*;
 use rocmforge::loader::{GgmlType, GgufFile, TensorView};
 use rocmforge::loader::{RfmTensorEntry, RfmType};
 
@@ -421,13 +422,12 @@ pub(super) fn convert_moe_expert_svd_sparse(
         for e in 0..n_experts {
             let offset = e * rows * cols;
             let expert_w = &mut w_f32[offset..offset + rows * cols];
-            for r in 0..rows {
-                let row_slice = &mut expert_w[r * cols..(r + 1) * cols];
+            expert_w.par_chunks_mut(cols).for_each(|row_slice| {
                 fwht_inplace(row_slice);
                 for x in row_slice.iter_mut() {
                     *x *= scale;
                 }
-            }
+            });
         }
     }
 

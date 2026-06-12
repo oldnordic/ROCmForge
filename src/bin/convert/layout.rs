@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::Write;
 
+use rayon::prelude::*;
 use rocmforge::loader::RfmType;
 use rocmforge::loader::{GgmlType, TensorView};
 
@@ -9,15 +10,14 @@ use super::quant::{
     dequantize_q8_0_to_f32, quantize_matrix_q4_0,
 };
 
-fn rotate_tensor_inplace(data: &mut [f32], rows: usize, cols: usize) {
+fn rotate_tensor_inplace(data: &mut [f32], _rows: usize, cols: usize) {
     let scale = 1.0 / (cols as f32).sqrt();
-    for r in 0..rows {
-        let row_slice = &mut data[r * cols..(r + 1) * cols];
+    data.par_chunks_mut(cols).for_each(|row_slice| {
         super::math::fwht_inplace(row_slice);
         for val in row_slice.iter_mut() {
             *val *= scale;
         }
-    }
+    });
 }
 
 fn quantize_q6_k_block(block: &[f32]) -> [u8; 210] {
