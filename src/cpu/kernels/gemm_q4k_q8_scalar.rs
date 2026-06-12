@@ -36,7 +36,10 @@ pub fn dot_q4_k_q8_k_block_scalar(q4_block: &BlockQ4K, q8_block: &BlockQ8K) -> f
 
     // Copy bsums to local array to avoid packed struct reference issues
     let mut bsums_local = [0i16; 16];
-    #[allow(clippy::manual_memcpy, reason = "packed struct field copy requires loop to avoid unaligned reference")]
+    #[allow(
+        clippy::manual_memcpy,
+        reason = "packed struct field copy requires loop to avoid unaligned reference"
+    )]
     for i in 0..16 {
         bsums_local[i] = q8_block.bsums[i];
     }
@@ -187,9 +190,7 @@ pub fn gemm_q4_k_q8_k(w: &[u8], x: &[f32], y: &mut [f32], _m: usize, n: usize, k
             // Quantize this row to Q8_K blocks
             let mut x_q8 = vec![BlockQ8K::zero(); num_blocks_k];
             for (b, block) in x_q8.iter_mut().enumerate() {
-                *block = crate::cpu::kernels::q8::quantize_q8_k(
-                    &x_row[b * 256..(b + 1) * 256],
-                );
+                *block = crate::cpu::kernels::q8::quantize_q8_k(&x_row[b * 256..(b + 1) * 256]);
             }
 
             // Compute dot products for each output column

@@ -78,8 +78,8 @@ impl BlockQ6K {
                 let sc3 = d * (self.scales[sc_base + is + 4] as f32);
                 let sc4 = d * (self.scales[sc_base + is + 6] as f32);
 
-                let q1 = ((self.ql[ql_base + l] & 0xF) | ((self.qh[qh_base + l] & 3) << 4))
-                    as i8 as f32
+                let q1 = ((self.ql[ql_base + l] & 0xF) | ((self.qh[qh_base + l] & 3) << 4)) as i8
+                    as f32
                     - 32.0;
                 let q2 = ((self.ql[ql_base + l + 32] & 0xF)
                     | (((self.qh[qh_base + l] >> 2) & 3) << 4)) as i8

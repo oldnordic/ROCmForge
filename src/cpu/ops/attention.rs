@@ -13,7 +13,10 @@ use rayon::prelude::*;
 /// out:     [num_heads, head_dim]
 /// seq_len: number of valid K/V positions (= current pos + 1)
 ///
-#[allow(clippy::too_many_arguments, reason = "function has many parameters by design")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "function has many parameters by design"
+)]
 /// For decode (single query), uses serial iteration to avoid rayon overhead.
 pub fn flash_attn_decode(
     q: &[f32],
@@ -168,7 +171,10 @@ unsafe fn normalize_f32_avx2(out: &mut [f32], acc: &[f32], l: f32) {
 /// v: [seq_len, num_kv_heads, head_dim]
 /// out: [seq_len, num_heads, head_dim]
 ///
-#[allow(clippy::too_many_arguments, reason = "function has many parameters by design")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "function has many parameters by design"
+)]
 /// Position s attends to 0..=s (causal mask).
 pub fn flash_attn_prefill(
     q: &[f32],

@@ -12,7 +12,10 @@ use crate::loader::GgmlType;
 
 // ── Layer forward ────────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_arguments, reason = "function has many parameters by design")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "function has many parameters by design"
+)]
 /// Forward pass through a single transformer layer.
 ///
 /// Architecture: RMSNorm → Attention → Residual → RMSNorm → FFN → Residual

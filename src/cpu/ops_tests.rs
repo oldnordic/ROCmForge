@@ -145,12 +145,14 @@ mod tests {
         // 2x3 matrix times 3-vector
         // Row 0: 1.0, 2.0, 3.0
         // Row 1: 4.0, 5.0, 6.0
-        let w_f16 = [f16::from_f32(1.0),
+        let w_f16 = [
+            f16::from_f32(1.0),
             f16::from_f32(2.0),
             f16::from_f32(3.0),
             f16::from_f32(4.0),
             f16::from_f32(5.0),
-            f16::from_f32(6.0)];
+            f16::from_f32(6.0),
+        ];
         let mut w_bytes = vec![0u8; 12];
         for (i, val) in w_f16.iter().enumerate() {
             let bytes = val.to_bits().to_le_bytes();

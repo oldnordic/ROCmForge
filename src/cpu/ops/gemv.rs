@@ -897,7 +897,10 @@ pub fn gemv_q4_1_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, 
 /// * `out_dim` - Output dimension
 /// * `in_dim` - Input dimension
 /// * `transposed` - Whether to compute W^T * x instead of W * x
-#[allow(clippy::too_many_arguments, reason = "function has many parameters by design")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "function has many parameters by design"
+)]
 /// * `scratch` - Optional scratch buffer for Q8_0 quantization (avoids heap allocation)
 pub fn dispatch_gemv_transposed(
     w: &[u8],

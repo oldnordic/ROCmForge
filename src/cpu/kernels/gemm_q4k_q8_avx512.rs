@@ -100,7 +100,10 @@ pub unsafe fn dot_q4_k_q8_k_block_avx512(q4_block: &BlockQ4K, q8_block: &BlockQ8
     // Apply -32 bias only to scales (first 8 bytes), not mins (last 8 bytes)
     // Q4_K scales are stored as 6-bit values with +32 bias
     let mut biased_bytes = [0i8; 16];
-    #[allow(clippy::needless_range_loop, reason = "raw pointer arithmetic loop is clearer as indices")]
+    #[allow(
+        clippy::needless_range_loop,
+        reason = "raw pointer arithmetic loop is clearer as indices"
+    )]
     for i in 0..16 {
         let raw_byte: i8 = unsafe { *(&utmp as *const [u32; 4] as *const i8).add(i) };
         // Only bias the first 8 bytes (scales), not the last 8 (mins)
@@ -123,7 +126,10 @@ pub unsafe fn dot_q4_k_q8_k_block_avx512(q4_block: &BlockQ4K, q8_block: &BlockQ8
 
     // Copy bsums to local array
     let mut bsums_local = [0i16; 16];
-    #[allow(clippy::manual_memcpy, reason = "packed struct field copy requires loop to avoid unaligned reference")]
+    #[allow(
+        clippy::manual_memcpy,
+        reason = "packed struct field copy requires loop to avoid unaligned reference"
+    )]
     for i in 0..16 {
         bsums_local[i] = q8_block.bsums[i];
     }
@@ -265,7 +271,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     fn avx512_detection_returns_bool() {
         // Just verify detection doesn't panic
-        if !is_x86_feature_detected!("avx512f") {// Skip if AVX-512F not available
+        if !is_x86_feature_detected!("avx512f") { // Skip if AVX-512F not available
         }
         // If AVX-512F is available, we can at least verify the struct compiles
     }
@@ -303,8 +309,7 @@ mod tests {
         q8_block.d = 1.0f32;
 
         // Scalar result
-        let scalar_result =
-            gemm_q4k_q8_scalar::dot_q4_k_q8_k_block_scalar(&q4_block, &q8_block);
+        let scalar_result = gemm_q4k_q8_scalar::dot_q4_k_q8_k_block_scalar(&q4_block, &q8_block);
         eprintln!("Scalar result: {}", scalar_result);
 
         // Now trace through manually

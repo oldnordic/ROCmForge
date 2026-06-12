@@ -148,7 +148,10 @@ fn read_byte_array<R: Read>(r: &mut R) -> Result<Vec<Vec<u8>>, LoadError> {
 
 /// Read an array of merge rules (for tokenizer.ggml.merges).
 /// Each element is a GGUF string with format "first second"; split on first space.
-#[allow(clippy::type_complexity, reason = "GGUF loader returns complex type by spec")]
+#[allow(
+    clippy::type_complexity,
+    reason = "GGUF loader returns complex type by spec"
+)]
 fn read_merge_array<R: Read>(r: &mut R) -> Result<Vec<(Vec<u8>, Vec<u8>)>, LoadError> {
     let _elem_type = read_u32(r)?;
     let count = read_u64(r)? as usize;
