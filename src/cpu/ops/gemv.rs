@@ -452,7 +452,8 @@ fn gemv_q2_k_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_d
     let num_blocks = in_dim / Q2_K_BLOCK_ELEMS;
     let col_bytes = num_blocks * Q2_K_BLOCK_BYTES;
 
-    for v in 0..out_dim {
+    debug_assert_eq!(y.len(), out_dim, "output dimension mismatch");
+    y.par_iter_mut().enumerate().for_each(|(v, out)| {
         let mut acc = 0.0f32;
         let col_offset = v * col_bytes;
         for b in 0..num_blocks {
@@ -463,8 +464,8 @@ fn gemv_q2_k_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_d
             let xb = &x[b * Q2_K_BLOCK_ELEMS..(b + 1) * Q2_K_BLOCK_ELEMS];
             acc += deq.iter().zip(xb.iter()).map(|(d, xi)| d * xi).sum::<f32>();
         }
-        y[v] = acc;
-    }
+        *out = acc;
+    });
 }
 
 /// Q3_K GEMV transposed for tied embeddings.
@@ -475,7 +476,8 @@ fn gemv_q3_k_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_d
     let num_blocks = in_dim / Q3_K_BLOCK_ELEMS;
     let col_bytes = num_blocks * Q3_K_BLOCK_BYTES;
 
-    for v in 0..out_dim {
+    debug_assert_eq!(y.len(), out_dim, "output dimension mismatch");
+    y.par_iter_mut().enumerate().for_each(|(v, out)| {
         let mut acc = 0.0f32;
         let col_offset = v * col_bytes;
         for b in 0..num_blocks {
@@ -486,8 +488,8 @@ fn gemv_q3_k_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_d
             let xb = &x[b * Q3_K_BLOCK_ELEMS..(b + 1) * Q3_K_BLOCK_ELEMS];
             acc += deq.iter().zip(xb.iter()).map(|(d, xi)| d * xi).sum::<f32>();
         }
-        y[v] = acc;
-    }
+        *out = acc;
+    });
 }
 
 /// Q5_K GEMV transposed for tied embeddings.
@@ -498,7 +500,8 @@ fn gemv_q5_k_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_d
     let num_blocks = in_dim / Q5_K_BLOCK_ELEMS;
     let col_bytes = num_blocks * Q5_K_BLOCK_BYTES;
 
-    for v in 0..out_dim {
+    debug_assert_eq!(y.len(), out_dim, "output dimension mismatch");
+    y.par_iter_mut().enumerate().for_each(|(v, out)| {
         let mut acc = 0.0f32;
         let col_offset = v * col_bytes;
         for b in 0..num_blocks {
@@ -509,8 +512,8 @@ fn gemv_q5_k_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_d
             let xb = &x[b * Q5_K_BLOCK_ELEMS..(b + 1) * Q5_K_BLOCK_ELEMS];
             acc += deq.iter().zip(xb.iter()).map(|(d, xi)| d * xi).sum::<f32>();
         }
-        y[v] = acc;
-    }
+        *out = acc;
+    });
 }
 
 /// Q6_K GEMV transposed for tied embeddings.
@@ -521,7 +524,8 @@ fn gemv_q6_k_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_d
     let num_blocks = in_dim / Q6_K_BLOCK_ELEMS;
     let col_bytes = num_blocks * Q6_K_BLOCK_BYTES;
 
-    for v in 0..out_dim {
+    debug_assert_eq!(y.len(), out_dim, "output dimension mismatch");
+    y.par_iter_mut().enumerate().for_each(|(v, out)| {
         let mut acc = 0.0f32;
         let col_offset = v * col_bytes;
         for b in 0..num_blocks {
@@ -532,8 +536,8 @@ fn gemv_q6_k_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_d
             let xb = &x[b * Q6_K_BLOCK_ELEMS..(b + 1) * Q6_K_BLOCK_ELEMS];
             acc += deq.iter().zip(xb.iter()).map(|(d, xi)| d * xi).sum::<f32>();
         }
-        y[v] = acc;
-    }
+        *out = acc;
+    });
 }
 
 /// Q5_K GEMV: dequantize weights on the fly during matrix-vector multiplication.
