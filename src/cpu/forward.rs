@@ -56,34 +56,53 @@ pub fn cpu_layer_forward(
         );
     }
 
-    // 2. QKV projections
-    dispatch_gemv(
-        &weights.attn_q,
-        &weights.attn_q_meta,
-        &scratch.normed,
-        &mut scratch.q,
-        q_size,
-        h,
-        Some(&mut scratch.q8_scratch),
-    )?;
-    dispatch_gemv(
-        &weights.attn_k,
-        &weights.attn_k_meta,
-        &scratch.normed,
-        &mut scratch.k,
-        kv_size,
-        h,
-        Some(&mut scratch.q8_scratch),
-    )?;
-    dispatch_gemv(
-        &weights.attn_v,
-        &weights.attn_v_meta,
-        &scratch.normed,
-        &mut scratch.v,
-        kv_size,
-        h,
-        Some(&mut scratch.q8_scratch),
-    )?;
+    // 2. QKV projections (parallel — all read normed, write disjoint outputs)
+    let normed = &*scratch.normed;
+    let q = &mut *scratch.q;
+    let k = &mut *scratch.k;
+    let v = &mut *scratch.v;
+    let (q_res, (k_res, v_res)) = rayon::join(
+        || {
+            dispatch_gemv(
+                &weights.attn_q,
+                &weights.attn_q_meta,
+                normed,
+                q,
+                q_size,
+                h,
+                None,
+            )
+        },
+        || {
+            rayon::join(
+                || {
+                    dispatch_gemv(
+                        &weights.attn_k,
+                        &weights.attn_k_meta,
+                        normed,
+                        k,
+                        kv_size,
+                        h,
+                        None,
+                    )
+                },
+                || {
+                    dispatch_gemv(
+                        &weights.attn_v,
+                        &weights.attn_v_meta,
+                        normed,
+                        v,
+                        kv_size,
+                        h,
+                        None,
+                    )
+                },
+            )
+        },
+    );
+    q_res?;
+    k_res?;
+    v_res?;
 
     // 3. Optional biases (same as prefill)
     if let Some(bq) = &weights.attn_q_bias {
@@ -200,25 +219,32 @@ pub fn cpu_layer_forward(
     // 8. FFN RMS norm
     rms_norm(hidden, &weights.ffn_norm, &mut scratch.normed, eps);
 
-    // 9. FFN: gate + up projections
-    dispatch_gemv(
-        &weights.ffn_gate,
-        &weights.ffn_gate_meta,
-        &scratch.normed,
-        &mut scratch.gate,
-        ff_size,
-        h,
-        Some(&mut scratch.q8_scratch),
-    )?;
-    dispatch_gemv(
-        &weights.ffn_up,
-        &weights.ffn_up_meta,
-        &scratch.normed,
-        &mut scratch.swiglu,
-        ff_size,
-        h,
-        Some(&mut scratch.q8_scratch),
-    )?;
+    // 9. FFN: gate + up projections (parallel — both read normed, write disjoint outputs)
+    let normed = &*scratch.normed;
+    let gate = &mut *scratch.gate;
+    let swiglu = &mut *scratch.swiglu;
+    let (gate_res, up_res) = rayon::join(
+        || dispatch_gemv(
+            &weights.ffn_gate,
+            &weights.ffn_gate_meta,
+            normed,
+            gate,
+            ff_size,
+            h,
+            None,
+        ),
+        || dispatch_gemv(
+            &weights.ffn_up,
+            &weights.ffn_up_meta,
+            normed,
+            swiglu,
+            ff_size,
+            h,
+            None,
+        ),
+    );
+    gate_res?;
+    up_res?;
 
     if debug && layer == 0 {
         let gate_mean: f32 = scratch.gate.iter().copied().sum::<f32>() / ff_size as f32;

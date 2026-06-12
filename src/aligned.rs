@@ -29,6 +29,11 @@ pub struct AlignedVec<T> {
     layout: Layout,
 }
 
+// SAFETY: AlignedVec owns its allocation exclusively (no aliasing).
+// It is semantically equivalent to Vec<T> with custom alignment.
+unsafe impl<T: Send> Send for AlignedVec<T> {}
+unsafe impl<T: Sync> Sync for AlignedVec<T> {}
+
 impl<T: Copy> AlignedVec<T> {
     /// Allocate a zeroed buffer with `len` elements and at least `align` bytes alignment.
     ///
@@ -115,10 +120,6 @@ impl<T> Drop for AlignedVec<T> {
         }
     }
 }
-
-// SAFETY: AlignedVec owns its allocation and the pointer is stable
-unsafe impl<T: Send> Send for AlignedVec<T> {}
-unsafe impl<T: Sync> Sync for AlignedVec<T> {}
 
 #[cfg(test)]
 mod tests {
