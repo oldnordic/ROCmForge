@@ -15,6 +15,9 @@ mod math;
 mod pipeline;
 #[path = "convert/quant.rs"]
 mod quant;
+#[cfg(target_os = "linux")]
+#[path = "convert/direct_io.rs"]
+mod direct_io;
 
 use std::fs::File;
 use std::io::{Seek, SeekFrom, Write};
@@ -133,24 +136,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("[3/4] Preparing tensor layout mapping...");
     let mut entries = Vec::new();
 
-    // Open target file
+    // ── Write phase ───────────────────────────────────────────────────────────────
+    // On Linux we use O_DIRECT to bypass page cache for the large payload writes.
+    // The header/table are written through the same path; after flush we reopen
+    // with normal I/O for the seek-and-patch operations.
+
+    #[cfg(target_os = "linux")]
+    let mut writer = direct_io::DirectIoWriter::create(&options.output_path)?;
+    #[cfg(not(target_os = "linux"))]
     let mut out_file = File::create(&options.output_path)?;
+
+    #[cfg(target_os = "linux")]
+    let write_target: &mut dyn Write = &mut writer;
+    #[cfg(not(target_os = "linux"))]
+    let write_target: &mut dyn Write = &mut out_file;
 
     // Write placeholder header (24 bytes):
     // Magic (4B) + Version (4B) + Metadata Size (8B) + Tensor Table Size (8B)
-    out_file.write_all(RFM_MAGIC)?;
-    out_file.write_all(&RFM_VERSION.to_le_bytes())?;
-    out_file.write_all(&0u64.to_le_bytes())?; // placeholder metadata size
-    out_file.write_all(&0u64.to_le_bytes())?; // placeholder tensor table size
+    let mut file_pos = 0u64;
+    write_target.write_all(RFM_MAGIC)?;
+    file_pos += 4;
+    write_target.write_all(&RFM_VERSION.to_le_bytes())?;
+    file_pos += 4;
+    write_target.write_all(&0u64.to_le_bytes())?; // placeholder metadata size
+    file_pos += 8;
+    write_target.write_all(&0u64.to_le_bytes())?; // placeholder tensor table size
+    file_pos += 8;
 
     // Write metadata JSON
-    out_file.write_all(&metadata_bytes)?;
+    write_target.write_all(&metadata_bytes)?;
+    file_pos += metadata_bytes.len() as u64;
     let metadata_size = metadata_bytes.len() as u64;
 
     // Write placeholder tensor table
-    let table_pos = out_file.stream_position()?;
+    let table_pos = file_pos;
     let table_placeholder = vec![b' '; 4 * 1024 * 1024]; // Large enough for full-model tensor indexes.
-    out_file.write_all(&table_placeholder)?;
+    write_target.write_all(&table_placeholder)?;
+    file_pos += table_placeholder.len() as u64;
     let tensor_table_allocated_size = table_placeholder.len() as u64;
 
     let mut current_offset = 0u64;
@@ -160,10 +182,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &gguf,
         &options,
         use_gpu,
-        &mut out_file,
+        write_target,
         &mut current_offset,
         &mut entries,
     )?;
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::io::Write;
+        writer.flush()?;
+        drop(writer); // closes the O_DIRECT file descriptor
+    }
+
+    // ── Patch phase ──────────────────────────────────────────────────────────────
+    // Reopen (or reuse) the file with normal I/O to patch header and table.
+
+    #[cfg(target_os = "linux")]
+    let mut out_file = File::options().write(true).open(&options.output_path)?;
 
     let table_bytes = serde_json::to_vec(&entries)?;
     if table_bytes.len() > tensor_table_allocated_size as usize {

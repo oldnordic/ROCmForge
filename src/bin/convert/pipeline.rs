@@ -62,10 +62,10 @@ pub(super) fn estimate_nnz_ratio(tensor: &TensorView) -> f32 {
 pub(super) fn convert_sparse_csr_tensor(
     tensor: &TensorView,
     base_name: &str,
-    writer: &mut File,
+    writer: &mut dyn Write,
     current_offset: &mut u64,
     entries: &mut Vec<RfmTensorEntry>,
-    align_offset: &impl Fn(&mut File, &mut u64) -> Result<(), std::io::Error>,
+    align_offset: &impl Fn(&mut dyn Write, &mut u64) -> Result<(), std::io::Error>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let rows = tensor.dims[0] as usize;
     let cols = tensor.dims[1] as usize;
@@ -142,10 +142,10 @@ pub(super) fn convert_mpo_tensor(
     chi_max: u32,
     use_gpu: bool,
     base_name: &str,
-    writer: &mut File,
+    writer: &mut dyn Write,
     current_offset: &mut u64,
     entries: &mut Vec<RfmTensorEntry>,
-    align_offset: &impl Fn(&mut File, &mut u64) -> Result<(), std::io::Error>,
+    align_offset: &impl Fn(&mut dyn Write, &mut u64) -> Result<(), std::io::Error>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let rows = tensor.dims[0] as usize;
     let cols = tensor.dims[1] as usize;
@@ -204,10 +204,10 @@ pub(super) fn convert_svd_sparse_tensor(
     sparse_threshold: f32,
     residual_prune_threshold: Option<f32>,
     base_name: &str,
-    writer: &mut File,
+    writer: &mut dyn Write,
     current_offset: &mut u64,
     entries: &mut Vec<RfmTensorEntry>,
-    align_offset: &impl Fn(&mut File, &mut u64) -> Result<(), std::io::Error>,
+    align_offset: &impl Fn(&mut dyn Write, &mut u64) -> Result<(), std::io::Error>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let in_dim = tensor.dims[0] as usize;
     let out_dim = tensor.dims[1] as usize;
@@ -387,10 +387,10 @@ pub(super) fn convert_moe_expert_svd_sparse(
     residual_prune_threshold: Option<f32>,
     use_fwht: bool,
     base_name: &str,
-    writer: &mut File,
+    writer: &mut dyn Write,
     current_offset: &mut u64,
     entries: &mut Vec<RfmTensorEntry>,
-    align_offset: &impl Fn(&mut File, &mut u64) -> Result<(), std::io::Error>,
+    align_offset: &impl Fn(&mut dyn Write, &mut u64) -> Result<(), std::io::Error>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     assert_eq!(
         tensor.dims.len(),
@@ -584,10 +584,10 @@ pub(super) fn convert_svd_quant_tensor(
     k_rank: u32,
     use_gpu: bool,
     base_name: &str,
-    writer: &mut File,
+    writer: &mut dyn Write,
     current_offset: &mut u64,
     entries: &mut Vec<RfmTensorEntry>,
-    align_offset: &impl Fn(&mut File, &mut u64) -> Result<(), std::io::Error>,
+    align_offset: &impl Fn(&mut dyn Write, &mut u64) -> Result<(), std::io::Error>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let in_dim = tensor.dims[0] as usize;
     let out_dim = tensor.dims[1] as usize;
@@ -788,12 +788,12 @@ pub(super) fn should_svd_tensor(name: &str, tensor: &TensorView, svd_attn_only: 
 }
 
 /// Align the file write position and tracked offset to a 256-byte boundary.
-pub(super) fn align_to_256(file: &mut File, offset: &mut u64) -> Result<(), std::io::Error> {
+pub(super) fn align_to_256(writer: &mut dyn Write, offset: &mut u64) -> Result<(), std::io::Error> {
     let remainder = *offset % 256;
     if remainder > 0 {
         let padding = 256 - remainder;
         let pad_bytes = vec![0u8; padding as usize];
-        file.write_all(&pad_bytes)?;
+        writer.write_all(&pad_bytes)?;
         *offset += padding;
     }
     Ok(())
@@ -807,7 +807,7 @@ pub(super) fn convert_all_tensors(
     gguf: &GgufFile,
     options: &ConvertOptions,
     use_gpu: bool,
-    out_file: &mut File,
+    out_file: &mut dyn Write,
     current_offset: &mut u64,
     entries: &mut Vec<RfmTensorEntry>,
 ) -> Result<(), Box<dyn std::error::Error>> {

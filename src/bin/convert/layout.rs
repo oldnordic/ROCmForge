@@ -92,7 +92,7 @@ fn quantize_matrix_q6_k(data: &[f32]) -> Vec<u8> {
 
 pub(super) fn pack_tensor(
     tensor: &TensorView,
-    writer: &mut File,
+    writer: &mut dyn Write,
     wtype: RfmType,
 ) -> Result<u64, Box<dyn std::error::Error>> {
     match wtype {
