@@ -8,7 +8,7 @@ use super::error::{GpuError, GpuResult};
 use super::ffi;
 use super::forward::GpuLogitsMode;
 use super::weights::TensorRole;
-use crate::config::ModelConfig;
+use crate::config::{FfnLayout, ModelConfig};
 use crate::loader::GgmlType;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -148,6 +148,13 @@ fn tensor_role_tag(role: TensorRole) -> u8 {
         TensorRole::Generic => 0,
         TensorRole::LmHead => 1,
         TensorRole::TiedLmHead => 2,
+        TensorRole::SsmConv1d => 3,
+        TensorRole::SsmAlpha => 4,
+        TensorRole::SsmBeta => 5,
+        TensorRole::SsmOut => 6,
+        TensorRole::ShortconvInProj => 7,
+        TensorRole::ShortconvConv => 8,
+        TensorRole::ShortconvOutProj => 9,
     }
 }
 
@@ -345,6 +352,7 @@ mod tests {
             rope_neox: false,
             use_attention_bias: true,
             attention_layout: AttentionLayout::SplitQkv,
+            ffn_layout: FfnLayout::SwiGLU,
             architecture: "test".to_string(),
             tensor_registry: TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf),
             shortconv_l_cache: None,

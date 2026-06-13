@@ -11,7 +11,7 @@ use super::ffi::hipStream_t;
 use super::graph::{CapturedDecodeGraph, DecodeGraphKey};
 use super::kernels::zero_fill;
 use super::weights::{GpuBuffer, GpuPinnedBuffer};
-use crate::config::ModelConfig;
+use crate::config::{FfnLayout, ModelConfig};
 
 mod accessors;
 mod allocator;
@@ -281,6 +281,7 @@ mod tests {
             rope_neox: false,
             use_attention_bias: false,
             attention_layout: crate::config::AttentionLayout::SplitQkv,
+            ffn_layout: FfnLayout::SwiGLU,
             architecture: "test".to_string(),
             tensor_registry: crate::config::TensorNameRegistry::from_scheme(
                 &crate::config::TensorNamingScheme::Gguf,

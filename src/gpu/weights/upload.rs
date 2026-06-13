@@ -80,6 +80,61 @@ pub(super) fn upload_tensor_bytes_for_device(data: &[u8], device_id: i32) -> Gpu
     Ok(buf)
 }
 
+/// Transpose a 2-D F32 tensor from [dim0, dim1] to [dim1, dim0].
+fn transpose_f32_2d(data: &[u8], dim0: usize, dim1: usize) -> GpuResult<Vec<u8>> {
+    let elems = dim0 * dim1;
+    let expected = elems * std::mem::size_of::<f32>();
+    if data.len() != expected {
+        return Err(GpuError::InvalidWeightLayout {
+            tensor: "transpose_f32_2d".to_string(),
+            dims: vec![dim0 as u64, dim1 as u64],
+            reason: format!("size mismatch: expected {} bytes, got {}", expected, data.len()),
+        });
+    }
+    let src = unsafe { std::slice::from_raw_parts(data.as_ptr() as *const f32, elems) };
+    let mut dst = vec![0.0f32; elems];
+    for i in 0..dim0 {
+        for j in 0..dim1 {
+            dst[j * dim0 + i] = src[i * dim1 + j];
+        }
+    }
+    let bytes = unsafe {
+        std::slice::from_raw_parts(
+            dst.as_ptr() as *const u8,
+            dst.len() * std::mem::size_of::<f32>(),
+        )
+        .to_vec()
+    };
+    Ok(bytes)
+}
+
+/// Apply role-based and `needs_transpose`-driven layout normalization
+/// for F32 weights before GPU upload.  Mutates `meta` in-place so that
+/// `dims` and `needs_transpose` reflect the post-transpose layout.
+/// Returns the (possibly transposed) bytes.
+pub(super) fn normalize_f32_for_gpu(
+    data: &[u8],
+    meta: &mut WeightMeta,
+) -> GpuResult<Vec<u8>> {
+    if meta.wtype != GgmlType::F32 || meta.dims.len() != 2 {
+        return Ok(data.to_vec());
+    }
+
+    let needs_transpose = meta.needs_transpose
+        || matches!(meta.role, TensorRole::SsmConv1d);
+
+    if needs_transpose {
+        let dim0 = meta.dims[0] as usize;
+        let dim1 = meta.dims[1] as usize;
+        let transposed = transpose_f32_2d(data, dim0, dim1)?;
+        meta.dims.swap(0, 1);
+        meta.needs_transpose = false;
+        return Ok(transposed);
+    }
+
+    Ok(data.to_vec())
+}
+
 pub(super) fn try_build_q4_0_gate_up_interleaved(
     gate_data: &[u8],
     gate_meta: &WeightMeta,
@@ -287,7 +342,7 @@ pub(super) fn estimate_rfm_layer_vram(file: &RfmFile, layer: usize) -> GpuResult
 #[cfg(test)]
 mod matrix_meta_tests {
     use super::*;
-    use crate::config::{AttentionLayout, TensorNameRegistry, TensorNamingScheme};
+    use crate::config::{AttentionLayout, FfnLayout, TensorNameRegistry, TensorNamingScheme};
 
     fn make_test_config() -> ModelConfig {
         ModelConfig {
@@ -307,6 +362,7 @@ mod matrix_meta_tests {
             rope_neox: false,
             use_attention_bias: false,
             attention_layout: AttentionLayout::SplitQkv,
+            ffn_layout: FfnLayout::SwiGLU,
             architecture: "test".to_string(),
             tensor_registry: TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf),
             shortconv_l_cache: None,

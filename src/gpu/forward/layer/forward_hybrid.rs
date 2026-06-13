@@ -22,7 +22,7 @@ use crate::gpu::ops::{
     gpu_dispatch_gemv_residual_on_stream, gpu_dispatch_gemv_svd_on_stream,
     gpu_dispatch_gemv_with_fallback_on_stream, gpu_dispatch_rms_norm, supports_gemv_type,
 };
-use crate::gpu::weights::GpuLayerWeights;
+use crate::gpu::weights::{GpuLayerType, GpuLayerWeights};
 
 /// CPU fallback for shortconv layers on GPU.
 fn gpu_shortconv_fallback(
@@ -118,39 +118,35 @@ pub fn gpu_layer_forward_hybrid(
     pos: usize,
     config: &ModelConfig,
 ) -> GpuResult<()> {
-    if gpu_layer.ssm.is_some() {
-        // Upload decode state first so pos_ptr has correct pos
-        scratch.upload_decode_state(pos, pos + 1, device.stream())?;
-        return gpu_layer_forward_ssm_on_stream(
-            device,
-            gpu_layer,
-            cpu_layer,
-            kv,
-            scratch,
-            cpu_scratch,
-            layer_idx,
-            config,
-        );
-    }
-
-    // Shortconv layer: CPU fallback for the recurrent conv path.
-    if !gpu_layer.is_attention_layer {
-        return gpu_shortconv_fallback(
-            device,
-            gpu_layer,
-            cpu_layer,
-            kv,
-            scratch,
-            cpu_scratch,
-            layer_idx,
-            pos,
-            config,
-        );
-    }
-
-    // Fused QKV input projection for non-SSM layers: split into Q/K/V via GEMV
-    // and then proceed with standard attention path.
-    if gpu_layer.attn_qkv.is_some() {
+    match gpu_layer.layer_type {
+        GpuLayerType::Ssm => {
+            // Upload decode state first so pos_ptr has correct pos
+            scratch.upload_decode_state(pos, pos + 1, device.stream())?;
+            return gpu_layer_forward_ssm_on_stream(
+                device,
+                gpu_layer,
+                cpu_layer,
+                kv,
+                scratch,
+                cpu_scratch,
+                layer_idx,
+                config,
+            );
+        }
+        GpuLayerType::Shortconv => {
+            return gpu_shortconv_fallback(
+                device,
+                gpu_layer,
+                cpu_layer,
+                kv,
+                scratch,
+                cpu_scratch,
+                layer_idx,
+                pos,
+                config,
+            );
+        }
+        GpuLayerType::AttentionFusedQkv => {
         let h = config.hidden_size;
         let attn_head_dim = config.head_dim;
         let num_q_heads = config.num_heads;
@@ -529,7 +525,8 @@ pub fn gpu_layer_forward_hybrid(
         }
         residual_add_inplace(device, &scratch.hidden, &scratch.gate, h)?;
 
-        return Ok(());
+        }
+        GpuLayerType::Attention => {}
     }
 
     let h = config.hidden_size;

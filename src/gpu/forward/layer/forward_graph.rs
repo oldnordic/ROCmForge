@@ -19,7 +19,7 @@ use crate::gpu::ops::{
     gpu_dispatch_gemv_residual_on_stream, gpu_dispatch_gemv_svd_on_stream,
     gpu_dispatch_gemv_with_fallback_on_stream, gpu_dispatch_rms_norm,
 };
-use crate::gpu::weights::GpuLayerWeights;
+use crate::gpu::weights::{GpuLayerType, GpuLayerWeights};
 
 pub(in crate::gpu::forward) fn gpu_layer_forward_from_state_on_stream(
     device: &GpuDevice,
@@ -29,15 +29,13 @@ pub(in crate::gpu::forward) fn gpu_layer_forward_from_state_on_stream(
     layer_idx: usize,
     config: &ModelConfig,
 ) -> GpuResult<()> {
-    if gpu_layer.ssm.is_some() {
-        return gpu_layer_forward_ssm_on_stream(
-            device, gpu_layer, None, kv, scratch, None, layer_idx, config,
-        );
-    }
-
-    // Fused QKV input projection for non-SSM layers: split into Q/K/V via GEMV
-    // and then proceed with standard attention path.
-    if gpu_layer.attn_qkv.is_some() {
+    match gpu_layer.layer_type {
+        GpuLayerType::Ssm => {
+            return gpu_layer_forward_ssm_on_stream(
+                device, gpu_layer, None, kv, scratch, None, layer_idx, config,
+            );
+        }
+        GpuLayerType::AttentionFusedQkv => {
         let h = config.hidden_size;
         let attn_head_dim = config.head_dim;
         let num_q_heads = config.num_heads;
@@ -266,7 +264,15 @@ pub(in crate::gpu::forward) fn gpu_layer_forward_from_state_on_stream(
         )?;
         residual_add_inplace(device, &scratch.hidden, &scratch.gate, h)?;
 
-        return Ok(());
+        }
+        GpuLayerType::Attention => {}
+        GpuLayerType::Shortconv => {
+            return Err(GpuError::InvalidWeightLayout {
+                tensor: "layer".to_string(),
+                dims: vec![],
+                reason: "Shortconv layers are not supported in the graph decode path".to_string(),
+            });
+        }
     }
 
     let h = config.hidden_size;

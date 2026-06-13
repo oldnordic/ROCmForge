@@ -2,7 +2,7 @@ use super::{
     binding::compute_kv_binding_tag, BlockAllocator, BlockTable, GpuBuffer, GpuError, GpuKvCache,
     GpuResult, TURBOQUANT_POS_ALIGN, TURBOQUANT_POS_ALIGN_MASK, TURBOQUANT_RMS_SCALE_BYTES,
 };
-use crate::config::ModelConfig;
+use crate::config::{FfnLayout, ModelConfig};
 
 const PAGED_BLOCK_SIZE_TOKENS: usize = 16;
 
@@ -338,7 +338,7 @@ impl GpuKvCache {
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_layout, identity_projection_rows, PAGED_BLOCK_SIZE_TOKENS};
+    use super::{compute_layout, identity_projection_rows, FfnLayout, PAGED_BLOCK_SIZE_TOKENS};
 
     fn make_test_config() -> crate::config::ModelConfig {
         crate::config::ModelConfig {
@@ -358,6 +358,7 @@ mod tests {
             rope_neox: false,
             use_attention_bias: false,
             attention_layout: crate::config::AttentionLayout::SplitQkv,
+            ffn_layout: FfnLayout::SwiGLU,
             architecture: "test".to_string(),
             tensor_registry: crate::config::TensorNameRegistry::from_scheme(
                 &crate::config::TensorNamingScheme::Gguf,

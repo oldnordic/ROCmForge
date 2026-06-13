@@ -18,6 +18,24 @@ pub use self::support::{
     GpuSparseCsrWeights, GpuSsmWeights, SvdCorrection,
 };
 
+// ── GPU Layer Type ──────────────────────────────────────────────────────────────────
+
+/// Architecture classification for a single GPU layer.
+///
+/// Determined at load time from which weight sets are present in the checkpoint.
+/// The forward path matches on this enum instead of probing individual Option fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GpuLayerType {
+    /// Standard attention with separate Q/K/V weights
+    Attention,
+    /// Attention with fused QKV input projection (Qwen35-style)
+    AttentionFusedQkv,
+    /// SSM (state-space model) layer (Qwen35 hybrid)
+    Ssm,
+    /// Shortconv (depthwise causal conv1d) layer (LFM2-style)
+    Shortconv,
+}
+
 // ── GPU Layer Weights ─────────────────────────────────────────────────────────────
 
 /// Weights for a single transformer layer, stored in VRAM.
@@ -60,7 +78,10 @@ pub struct GpuLayerWeights {
     /// SSM tensors used by Qwen35 hybrid layers.
     pub ssm: Option<GpuSsmWeights>,
     /// Whether this layer uses attention (true) or shortconv (false).
+    /// **Deprecated:** prefer `layer_type` for dispatch decisions.
     pub is_attention_layer: bool,
+    /// Architecture classification used by the forward path.
+    pub layer_type: GpuLayerType,
     /// Shortconv tensors used by LFM2 hybrid layers.
     pub shortconv: Option<GpuShortconvWeights>,
     /// Attention output projection (quantized)

@@ -75,8 +75,8 @@ fn test_gate_up_operation_correctness() {
     let cpu_layer = cpu_weights.layer(layer_idx);
 
     dispatch_gemv(
-        &cpu_layer.ffn_gate,
-        &cpu_layer.ffn_gate_meta,
+        cpu_layer.ffn_gate.as_ref().expect("cpu ffn_gate"),
+        cpu_layer.ffn_gate_meta.as_ref().expect("cpu ffn_gate_meta"),
         &cpu_input,
         &mut cpu_gate,
         ff_size,
@@ -115,8 +115,8 @@ fn test_gate_up_operation_correctness() {
 
     rocmforge::gpu::ops::gpu_dispatch_gemv_on_stream(
         &device,
-        &gpu_weights.layer(layer_idx).ffn_gate,
-        &gpu_weights.layer(layer_idx).ffn_gate_meta,
+        gpu_weights.layer(layer_idx).ffn_gate.as_ref().expect("ffn_gate"),
+        gpu_weights.layer(layer_idx).ffn_gate_meta.as_ref().expect("ffn_gate_meta"),
         gpu_input.as_ptr() as *const f32,
         gpu_gate.as_ptr() as *mut f32,
         ff_size,

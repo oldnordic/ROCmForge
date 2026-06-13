@@ -57,7 +57,7 @@ fn test_layer2_weight_metadata_diagnostic() {
         eprintln!("FFN meta:");
         eprintln!(
             "  Gate: type={:?}, dims={:?}",
-            layer.ffn_gate_meta.wtype, layer.ffn_gate_meta.dims
+            layer.ffn_gate_meta.as_ref().expect("ffn_gate must be present").wtype, layer.ffn_gate_meta.as_ref().expect("ffn_gate must be present").dims
         );
         eprintln!(
             "  Up: type={:?}, dims={:?}",

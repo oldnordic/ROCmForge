@@ -22,7 +22,7 @@ use super::prefill_debug::{
 };
 use super::prefill_helpers::{embed_prompt_tokens, gpu_batched_qkv_projection};
 use super::prefill_layer::gpu_prefill_ssm_layer_on_stream;
-use super::weights::{GpuLayerWeights, GpuModelWeights};
+use super::weights::{GpuLayerType, GpuLayerWeights, GpuModelWeights};
 use crate::config::ModelConfig;
 use crate::cpu::cache::CpuForwardScratch;
 use crate::cpu::weights::CpuModelWeights;
@@ -111,12 +111,21 @@ pub fn gpu_batched_prefill_forward_q4_0(
     for layer_idx in 0..config.num_layers {
         let gpu_layer = gpu_weights.layer(layer_idx);
 
-        // If this is an SSM layer, use the SSM prefill path
-        if gpu_layer.ssm.is_some() {
-            gpu_prefill_ssm_layer_on_stream(
-                device, gpu_layer, kv, scratch, layer_idx, start_pos, config,
-            )?;
-            continue;
+        match gpu_layer.layer_type {
+            GpuLayerType::Ssm => {
+                gpu_prefill_ssm_layer_on_stream(
+                    device, gpu_layer, kv, scratch, layer_idx, start_pos, config,
+                )?;
+                continue;
+            }
+            GpuLayerType::Shortconv => {
+                return Err(GpuError::InvalidWeightLayout {
+                    tensor: "layer".to_string(),
+                    dims: vec![],
+                    reason: "Shortconv prefill is not yet implemented".to_string(),
+                });
+            }
+            _ => {}
         }
 
         // Attention normalization (batched)

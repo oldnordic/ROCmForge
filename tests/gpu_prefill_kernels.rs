@@ -20,6 +20,7 @@ fn make_test_config() -> ModelConfig {
         rope_neox: false,
         use_attention_bias: false,
         attention_layout: rocmforge::config::AttentionLayout::SplitQkv,
+        ffn_layout: rocmforge::config::FfnLayout::SwiGLU,
         architecture: "test".to_string(),
         tensor_registry: rocmforge::config::TensorNameRegistry::from_scheme(
             &rocmforge::config::TensorNamingScheme::Gguf,

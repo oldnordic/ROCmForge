@@ -64,6 +64,18 @@ fn validate_gemv_layout(meta: &WeightMeta, out_dim: usize, in_dim: usize) -> Gpu
         });
     }
 
+    if meta.needs_transpose && meta.wtype != GgmlType::F32 {
+        return Err(GpuError::InvalidWeightLayout {
+            tensor: "gpu_dispatch_gemv".to_string(),
+            dims: meta.dims.clone(),
+            reason: format!(
+                "GPU GEMV does not support needs_transpose for quantized type {:?}; \
+                 transpose must be applied at load time",
+                meta.wtype
+            ),
+        });
+    }
+
     if (meta.dims[0] as usize == in_dim && meta.dims[1] as usize == out_dim)
         || (meta.dims[0] as usize == out_dim && meta.dims[1] as usize == in_dim)
     {

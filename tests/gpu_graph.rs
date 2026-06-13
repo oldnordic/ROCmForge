@@ -2,7 +2,7 @@
 
 mod common;
 
-use rocmforge::config::{AttentionLayout, ModelConfig, TensorNameRegistry, TensorNamingScheme};
+use rocmforge::config::{AttentionLayout, FfnLayout, ModelConfig, TensorNameRegistry, TensorNamingScheme};
 use rocmforge::gpu::{
     CapturedDecodeGraph, DecodeGraphKey, GpuBuffer, GpuDevice, GpuForwardScratch, GpuLogitsMode,
     HipGraph, TensorRole,
@@ -25,6 +25,7 @@ fn make_test_config() -> ModelConfig {
         rope_neox: false,
         use_attention_bias: true,
         attention_layout: AttentionLayout::SplitQkv,
+        ffn_layout: FfnLayout::SwiGLU,
         architecture: "test".to_string(),
         tensor_registry: TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf),
         shortconv_l_cache: None,

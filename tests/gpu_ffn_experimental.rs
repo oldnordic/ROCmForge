@@ -184,8 +184,8 @@ fn prepare_layer0_ffn_inputs(
         config.rms_norm_eps,
     );
     cpu_dispatch_gemv(
-        &layer.ffn_gate,
-        &layer.ffn_gate_meta,
+        layer.ffn_gate.as_ref().expect("ffn_gate"),
+        layer.ffn_gate_meta.as_ref().expect("ffn_gate_meta"),
         &scratch.normed,
         &mut scratch.gate,
         ff_size,
@@ -246,7 +246,7 @@ fn test_gpu_experimental_gate_up_q4_0_layer0_real_model_matches_cpu() {
     let layer = gpu_weights.layer(0);
 
     assert_eq!(
-        layer.ffn_gate_meta.wtype,
+        layer.ffn_gate_meta.as_ref().expect("ffn_gate must be present").wtype,
         GgmlType::Q4_0,
         "expected layer-0 ffn_gate to be Q4_0 for this experiment"
     );
@@ -265,7 +265,7 @@ fn test_gpu_experimental_gate_up_q4_0_layer0_real_model_matches_cpu() {
     let d_up = GpuBuffer::alloc(ff_size * std::mem::size_of::<f32>()).expect("alloc up");
 
     gpu::kernels::quant::gemv_gate_up_q4_0_f32_on_stream(
-        layer.ffn_gate.as_ptr(),
+        layer.ffn_gate.as_ref().expect("ffn_gate must be present").as_ptr(),
         layer.ffn_up.as_ptr(),
         d_normed.as_ptr() as *const f32,
         d_gate.as_ptr() as *mut f32,
@@ -435,7 +435,7 @@ fn test_gpu_experimental_full_ffn_block_q4_1_layer0_real_model_matches_cpu() {
     let layer = gpu_weights.layer(0);
 
     assert_eq!(
-        layer.ffn_gate_meta.wtype,
+        layer.ffn_gate_meta.as_ref().expect("ffn_gate must be present").wtype,
         GgmlType::Q4_0,
         "expected layer-0 ffn_gate to be Q4_0 for this experiment"
     );
@@ -461,7 +461,7 @@ fn test_gpu_experimental_full_ffn_block_q4_1_layer0_real_model_matches_cpu() {
         GpuBuffer::alloc(hidden_size * std::mem::size_of::<f32>()).expect("alloc output");
 
     gpu::kernels::quant::gemv_gate_up_q4_0_f32_on_stream(
-        layer.ffn_gate.as_ptr(),
+        layer.ffn_gate.as_ref().expect("ffn_gate must be present").as_ptr(),
         layer.ffn_up.as_ptr(),
         d_normed.as_ptr() as *const f32,
         d_gate.as_ptr() as *mut f32,
@@ -574,7 +574,7 @@ fn test_gpu_experimental_full_ffn_block_prompt_tail_matches_cpu_across_eligible_
         .expect("CPU layer forward should succeed");
 
         let gpu_layer = gpu_weights.layer(layer_idx);
-        if gpu_layer.ffn_gate_meta.wtype != GgmlType::Q4_0
+        if gpu_layer.ffn_gate_meta.as_ref().expect("ffn_gate must be present").wtype != GgmlType::Q4_0
             || gpu_layer.ffn_up_meta.wtype != GgmlType::Q4_0
             || gpu_layer.ffn_down_meta.wtype != GgmlType::Q4_1
         {
@@ -589,7 +589,7 @@ fn test_gpu_experimental_full_ffn_block_prompt_tail_matches_cpu_across_eligible_
             GpuBuffer::alloc(hidden_size * std::mem::size_of::<f32>()).expect("alloc output");
 
         gpu::kernels::quant::gemv_gate_up_q4_0_f32_on_stream(
-            gpu_layer.ffn_gate.as_ptr(),
+            gpu_layer.ffn_gate.as_ref().expect("ffn_gate must be present").as_ptr(),
             gpu_layer.ffn_up.as_ptr(),
             d_normed.as_ptr() as *const f32,
             d_gate.as_ptr() as *mut f32,

@@ -371,6 +371,16 @@ pub(super) fn load_for_device(
         None
     };
 
+    let layer_type = if ssm.is_some() {
+        super::GpuLayerType::Ssm
+    } else if !is_attention_layer {
+        super::GpuLayerType::Shortconv
+    } else if attn_qkv.is_some() {
+        super::GpuLayerType::AttentionFusedQkv
+    } else {
+        super::GpuLayerType::Attention
+    };
+
     Ok(GpuLayerWeights {
         attn_norm,
         attn_q,
@@ -395,6 +405,7 @@ pub(super) fn load_for_device(
         attn_gate_svd: None,
         ssm,
         is_attention_layer,
+        layer_type,
         shortconv,
         attn_o,
         attn_o_meta,

@@ -12,11 +12,34 @@ use crate::loader::{GgmlType, TensorDesc};
 /// Metadata for a weight tensor on GPU.
 ///
 /// Same as CPU WeightMeta - quantization type and dimensions.
+/// Semantic role of a weight tensor. Drives kernel selection and layout
+/// normalization at upload time. Adding a new architecture only requires
+/// tagging its tensors with the correct roles — forward paths dispatch
+/// generically.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TensorRole {
+    /// Default — no special handling
     Generic,
+    /// Language-model head (logits projection)
     LmHead,
+    /// Tied embedding / LM head (shared weights)
     TiedLmHead,
+    // ── SSM (Qwen3.5 hybrid) ─────────────────────────────────────────────
+    /// Depthwise causal conv1d kernel weights
+    SsmConv1d,
+    /// SSM alpha projection
+    SsmAlpha,
+    /// SSM beta projection
+    SsmBeta,
+    /// SSM output projection
+    SsmOut,
+    // ── Shortconv (LFM2.5) ───────────────────────────────────────────────
+    /// Shortconv input projection
+    ShortconvInProj,
+    /// Shortconv depthwise conv kernel
+    ShortconvConv,
+    /// Shortconv output projection
+    ShortconvOutProj,
 }
 
 #[derive(Clone, Debug)]

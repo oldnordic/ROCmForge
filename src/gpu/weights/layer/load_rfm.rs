@@ -715,6 +715,14 @@ pub(super) fn load_for_device(
     let ffn_up_compressed = try_load_compressed_experts(file, &ffn_up_name)?;
     let ffn_down_compressed = try_load_compressed_experts(file, &ffn_down_name)?;
 
+    let layer_type = if ssm.is_some() {
+        super::GpuLayerType::Ssm
+    } else if attn_qkv.is_some() {
+        super::GpuLayerType::AttentionFusedQkv
+    } else {
+        super::GpuLayerType::Attention
+    };
+
     Ok(GpuLayerWeights {
         attn_norm,
         attn_q,
@@ -739,6 +747,7 @@ pub(super) fn load_for_device(
         attn_gate_svd,
         ssm,
         is_attention_layer: true,
+        layer_type,
         shortconv: None,
         attn_o,
         attn_o_meta,

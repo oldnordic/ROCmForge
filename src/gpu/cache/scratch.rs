@@ -2,6 +2,7 @@ use super::{
     CapturedDecodeGraph, DecodeGraphKey, GpuBuffer, GpuError, GpuPinnedBuffer, GpuResult,
     ModelConfig,
 };
+use crate::config::FfnLayout;
 use crate::gpu::ffi::hipStream_t;
 
 /// Reusable scratch buffers in GPU VRAM for a single forward pass.
@@ -655,6 +656,7 @@ mod tests {
             rope_neox: false,
             use_attention_bias: false,
             attention_layout: crate::config::AttentionLayout::SplitQkv,
+            ffn_layout: FfnLayout::SwiGLU,
             architecture: "test".to_string(),
             tensor_registry: crate::config::TensorNameRegistry::from_scheme(
                 &crate::config::TensorNamingScheme::Gguf,
