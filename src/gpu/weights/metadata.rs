@@ -59,6 +59,18 @@ impl WeightMeta {
     }
 }
 
+impl Default for WeightMeta {
+    fn default() -> Self {
+        Self {
+            wtype: GgmlType::F32,
+            dims: vec![],
+            needs_transpose: false,
+            role: TensorRole::Generic,
+            svd_k: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

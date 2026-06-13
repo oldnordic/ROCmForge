@@ -1,3 +1,4 @@
+use crate::config::ModelConfig;
 use crate::gpu::cache::{GpuExpertScratch, GpuForwardScratch};
 use crate::gpu::device::GpuDevice;
 use crate::gpu::error::{GpuError, GpuResult};
@@ -265,11 +266,18 @@ pub(super) fn gpu_dispatch_moe_ffn_on_stream(
     scratch: &mut GpuForwardScratch,
     h: usize,
     ff_size: usize,
+    config: &ModelConfig,
 ) -> GpuResult<bool> {
     let Some(moe) = gpu_layer.moe.as_ref() else {
         return Ok(false);
     };
-    let Some(num_experts) = moe_expert_count(&gpu_layer.ffn_gate_meta) else {
+    let Some(gate_meta) = gpu_layer.ffn_gate_meta.as_ref() else {
+        return Ok(false);
+    };
+    let Some(gate_buf) = gpu_layer.ffn_gate.as_ref() else {
+        return Ok(false);
+    };
+    let Some(num_experts) = moe_expert_count(gate_meta) else {
         return Ok(false);
     };
 
@@ -288,17 +296,24 @@ pub(super) fn gpu_dispatch_moe_ffn_on_stream(
         stream,
     )?;
     device.synchronize()?;
-    let router_logits = scratch.gate.copy_to_host_vec()?;
-    let selected = select_moe_topk_weights(&router_logits[..num_experts], QWEN_MOE_TOP_K);
+    let mut router_logits = scratch.gate.copy_to_host_vec()?;
+    let top_k = config.num_experts_per_tok.unwrap_or(4);
+    if let Some(ref bias) = moe.router_bias {
+        let bias_host = bias.copy_to_host_vec()?;
+        for i in 0..num_experts {
+            router_logits[i] += bias_host[i];
+        }
+    }
+    let selected = select_moe_topk_weights(&router_logits[..num_experts], top_k);
 
-    let gate_meta = moe_matrix_meta(&gpu_layer.ffn_gate_meta);
+    let gate_meta = moe_matrix_meta(gate_meta);
     let up_meta = moe_matrix_meta(&gpu_layer.ffn_up_meta);
     let down_meta = moe_matrix_meta(&gpu_layer.ffn_down_meta);
     let gate_stride =
-        moe_expert_stride_bytes(&gpu_layer.ffn_gate_meta, h, ff_size).ok_or_else(|| {
+        moe_expert_stride_bytes(&gate_meta, h, ff_size).ok_or_else(|| {
             GpuError::InvalidWeightLayout {
                 tensor: "ffn_gate_exps".to_string(),
-                dims: gpu_layer.ffn_gate_meta.dims.clone(),
+                dims: gate_meta.dims.clone(),
                 reason: "invalid MoE gate expert tensor shape".to_string(),
             }
         })?;
@@ -499,7 +514,7 @@ pub(super) fn gpu_dispatch_moe_ffn_on_stream(
             )?;
         } else {
             // Dense path (original): stride into packed 3D expert buffer.
-            let gate_ptr = unsafe { gpu_layer.ffn_gate.as_ptr().add(expert_idx * gate_stride) };
+            let gate_ptr = unsafe { gate_buf.as_ptr().add(expert_idx * gate_stride) };
             let up_ptr = unsafe { gpu_layer.ffn_up.as_ptr().add(expert_idx * up_stride) };
             let down_ptr = unsafe { gpu_layer.ffn_down.as_ptr().add(expert_idx * down_stride) };
 

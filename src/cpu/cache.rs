@@ -17,12 +17,19 @@ pub struct CpuKvCache {
     pub k: Vec<AlignedVec<f32>>,
     /// Value cache: [num_layers][max_seq_len * kv_size]
     pub v: Vec<AlignedVec<f32>>,
+    /// Shortconv state cache: [num_layers][conv_state_size * hidden_size]
+    /// Each shortconv layer stores the previous `l_cache - 1` Bx values.
+    pub conv_state: Vec<AlignedVec<f32>>,
     /// Maximum sequence length this cache can hold
     pub max_seq_len: usize,
     /// Size of K/V per position: num_kv_heads * head_dim
     pub kv_size: usize,
     /// Number of layers
     pub num_layers: usize,
+    /// Hidden size
+    pub hidden_size: usize,
+    /// Shortconv L_cache (0 if model doesn't use shortconv)
+    pub shortconv_l_cache: usize,
 }
 
 impl CpuKvCache {
@@ -40,12 +47,26 @@ impl CpuKvCache {
         let v = (0..config.num_layers)
             .map(|_| AlignedVec::new_zeroed(buf_elems, ALIGN_AVX512))
             .collect();
+
+        let shortconv_l_cache = config.shortconv_l_cache.unwrap_or(0);
+        let conv_state_elems = if shortconv_l_cache > 1 {
+            (shortconv_l_cache - 1) * config.hidden_size
+        } else {
+            0
+        };
+        let conv_state = (0..config.num_layers)
+            .map(|_| AlignedVec::new_zeroed(conv_state_elems, ALIGN_AVX512))
+            .collect();
+
         Self {
             k,
             v,
+            conv_state,
             max_seq_len,
             kv_size,
             num_layers: config.num_layers,
+            hidden_size: config.hidden_size,
+            shortconv_l_cache,
         }
     }
 
@@ -98,6 +119,7 @@ impl CpuKvCache {
         for layer in 0..self.num_layers {
             self.k[layer].fill(0.0);
             self.v[layer].fill(0.0);
+            self.conv_state[layer].fill(0.0);
         }
     }
 
@@ -105,8 +127,11 @@ impl CpuKvCache {
     pub fn memory_bytes(&self) -> usize {
         let elements_per_layer = self.max_seq_len * self.kv_size;
         let bytes_per_layer = elements_per_layer * std::mem::size_of::<f32>();
-        let total_bytes = 2 * self.num_layers * bytes_per_layer; // K + V
-        total_bytes
+        let kv_bytes = 2 * self.num_layers * bytes_per_layer; // K + V
+        let conv_bytes = self.num_layers
+            * self.conv_state.first().map(|v| v.len()).unwrap_or(0)
+            * std::mem::size_of::<f32>();
+        kv_bytes + conv_bytes
     }
 }
 
@@ -132,6 +157,12 @@ pub struct CpuForwardScratch {
     pub gate: AlignedVec<f32>,
     /// FFN SwiGLU output [intermediate_size]
     pub swiglu: AlignedVec<f32>,
+    /// Shortconv in_proj output [3 * hidden_size]
+    pub shortconv_bcx: AlignedVec<f32>,
+    /// Shortconv intermediate [hidden_size]
+    pub shortconv_tmp: AlignedVec<f32>,
+    /// Fused QKV scratch [num_heads*head_dim + 2*num_kv_heads*head_dim]
+    pub qkv: AlignedVec<f32>,
     /// Final logits [vocab_size]
     pub logits: AlignedVec<f32>,
     /// Q8_0 scratch buffer for GEMV quantization [hidden_size / 32 * 34 bytes]
@@ -171,6 +202,9 @@ impl CpuForwardScratch {
             layer_out: AlignedVec::new_zeroed(h, ALIGN_AVX512),
             gate: AlignedVec::new_zeroed(ff, ALIGN_AVX512),
             swiglu: AlignedVec::new_zeroed(ff, ALIGN_AVX512),
+            shortconv_bcx: AlignedVec::new_zeroed(3 * h, ALIGN_AVX512),
+            shortconv_tmp: AlignedVec::new_zeroed(h, ALIGN_AVX512),
+            qkv: AlignedVec::new_zeroed(q + 2 * kv, ALIGN_AVX512),
             logits: AlignedVec::new_zeroed(v, ALIGN_AVX512),
             q8_scratch,
             rope_sin: AlignedVec::new_zeroed(half, ALIGN_AVX512),
@@ -188,6 +222,9 @@ impl CpuForwardScratch {
             + self.layer_out.len()
             + self.gate.len()
             + self.swiglu.len()
+            + self.shortconv_bcx.len()
+            + self.shortconv_tmp.len()
+            + self.qkv.len()
             + self.logits.len()
             + self.rope_sin.len()
             + self.rope_cos.len())
@@ -219,8 +256,14 @@ mod tests {
             rope_neox: true,
             use_attention_bias: true,
             attention_layout: crate::config::AttentionLayout::SplitQkv,
+            ffn_layout: crate::config::FfnLayout::SwiGLU,
             architecture: "qwen2".to_string(),
             tensor_registry: TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf),
+            shortconv_l_cache: None,
+            num_dense_layers: None,
+            num_experts_per_tok: None,
+            use_expert_bias: false,
+            expert_weights_scale: 1.0,
             kv_lora_dim: None,
             kv_frame_codec_enabled: None,
             adastate_anchors_enabled: None,

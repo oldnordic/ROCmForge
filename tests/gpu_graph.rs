@@ -27,6 +27,11 @@ fn make_test_config() -> ModelConfig {
         attention_layout: AttentionLayout::SplitQkv,
         architecture: "test".to_string(),
         tensor_registry: TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf),
+        shortconv_l_cache: None,
+        num_dense_layers: None,
+        num_experts_per_tok: None,
+        use_expert_bias: false,
+        expert_weights_scale: 1.0,
         rope_freq: (0..32)
             .map(|i| 1.0 / 10000.0f32.powf((2 * i) as f32 / 64.0f32))
             .collect(),

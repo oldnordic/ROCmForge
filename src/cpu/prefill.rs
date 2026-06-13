@@ -8,7 +8,8 @@
 
 use super::cache::{CpuForwardScratch, CpuKvCache};
 use super::ops::{
-    add_bias_batched, dispatch_gemm, dispatch_gemv, flash_attn_prefill, rms_norm, silu_fuse,
+    add_bias_batched, dispatch_gemm, dispatch_gemv, flash_attn_prefill, gelu_inplace, rms_norm,
+    silu_fuse,
 };
 use super::quant::{
     embed_f32_batch, embed_q2_k_batch, embed_q3_k_batch, embed_q4_0_batch, embed_q4_k_batch,
@@ -56,6 +57,8 @@ struct CpuPrefillScratch {
     gate: Vec<f32>,
     /// FFN SwiGLU [batch_len * intermediate_size]
     swiglu: Vec<f32>,
+    /// Fused QKV scratch [batch_len * (q_size + 2*kv_size)]
+    qkv: Vec<f32>,
 }
 
 impl CpuPrefillScratch {
@@ -76,6 +79,7 @@ impl CpuPrefillScratch {
             layer_out: vec![0.0; n * h],
             gate: vec![0.0; n * ff],
             swiglu: vec![0.0; n * ff],
+            qkv: vec![0.0; n * (q + 2 * kv)],
         }
     }
 }
@@ -104,31 +108,47 @@ fn prefill_layer_forward(
         rms_norm(xr, &weights.attn_norm, or, eps);
     }
 
-    // 2. QKV GEMM
-    dispatch_gemm(
-        &weights.attn_q,
-        &weights.attn_q_meta,
-        &ps.normed,
-        &mut ps.q,
-        q_s,
-        h,
-    )?;
-    dispatch_gemm(
-        &weights.attn_k,
-        &weights.attn_k_meta,
-        &ps.normed,
-        &mut ps.k,
-        kv_s,
-        h,
-    )?;
-    dispatch_gemm(
-        &weights.attn_v,
-        &weights.attn_v_meta,
-        &ps.normed,
-        &mut ps.v,
-        kv_s,
-        h,
-    )?;
+    // 2. QKV GEMM (fused or split)
+    if let (Some(ref qkv_w), Some(ref qkv_m)) = (&weights.attn_qkv,
+        &weights.attn_qkv_meta,
+    ) {
+        let qkv_total = q_s + 2 * kv_s;
+        dispatch_gemm(qkv_w, qkv_m, &ps.normed, &mut ps.qkv, qkv_total, h)?;
+        for s in 0..batch_len {
+            let base = s * qkv_total;
+            ps.q[s * q_s..(s + 1) * q_s]
+                .copy_from_slice(&ps.qkv[base..base + q_s]);
+            ps.k[s * kv_s..(s + 1) * kv_s]
+                .copy_from_slice(&ps.qkv[base + q_s..base + q_s + kv_s]);
+            ps.v[s * kv_s..(s + 1) * kv_s]
+                .copy_from_slice(&ps.qkv[base + q_s + kv_s..base + qkv_total]);
+        }
+    } else {
+        dispatch_gemm(
+            &weights.attn_q,
+            &weights.attn_q_meta,
+            &ps.normed,
+            &mut ps.q,
+            q_s,
+            h,
+        )?;
+        dispatch_gemm(
+            &weights.attn_k,
+            &weights.attn_k_meta,
+            &ps.normed,
+            &mut ps.k,
+            kv_s,
+            h,
+        )?;
+        dispatch_gemm(
+            &weights.attn_v,
+            &weights.attn_v_meta,
+            &ps.normed,
+            &mut ps.v,
+            kv_s,
+            h,
+        )?;
+    }
 
     // 3. Optional biases
     if let Some(bq) = &weights.attn_q_bias {
@@ -210,26 +230,39 @@ fn prefill_layer_forward(
         rms_norm(xr, &weights.ffn_norm, or, eps);
     }
 
-    // 10. MLP: gate + up projections
-    dispatch_gemm(
-        &weights.ffn_gate,
-        &weights.ffn_gate_meta,
-        &ps.normed,
-        &mut ps.gate,
-        ff,
-        h,
-    )?;
-    dispatch_gemm(
-        &weights.ffn_up,
-        &weights.ffn_up_meta,
-        &ps.normed,
-        &mut ps.swiglu,
-        ff,
-        h,
-    )?;
+    // 10. MLP: gate + up projections (SwiGLU) or up only (standard FFN)
+    if let (Some(ref gate_w), Some(ref gate_m)) = (&weights.ffn_gate, &weights.ffn_gate_meta) {
+        dispatch_gemm(
+            gate_w,
+            gate_m,
+            &ps.normed,
+            &mut ps.gate,
+            ff,
+            h,
+        )?;
+        dispatch_gemm(
+            &weights.ffn_up,
+            &weights.ffn_up_meta,
+            &ps.normed,
+            &mut ps.swiglu,
+            ff,
+            h,
+        )?;
 
-    // 11. SwiGLU: silu(gate) * up
-    silu_fuse(&ps.gate, &mut ps.swiglu);
+        // 11. SwiGLU: silu(gate) * up
+        silu_fuse(&ps.gate, &mut ps.swiglu);
+    } else {
+        // Standard FFN (no gate): up projection → GeLU
+        dispatch_gemm(
+            &weights.ffn_up,
+            &weights.ffn_up_meta,
+            &ps.normed,
+            &mut ps.swiglu,
+            ff,
+            h,
+        )?;
+        gelu_inplace(&mut ps.swiglu);
+    }
 
     // 12. Down projection GEMM - uses metadata to determine if transposition is needed
     dispatch_gemm(
@@ -276,10 +309,7 @@ pub fn cpu_prefill_forward(
     config: &ModelConfig,
     batch_config: &BatchConfig,
 ) -> Result<(), CpuError> {
-    if config.architecture == "qwen35"
-        || weights.layer(0).attn_qkv.is_some()
-        || weights.layer(0).ssm.is_some()
-    {
+    if config.architecture == "qwen35" || weights.layer(0).ssm.is_some() {
         return Err(CpuError::InvalidOperation(
             "qwen35 hybrid attention/SSM CPU prefill is not implemented yet".to_string(),
         ));
@@ -434,10 +464,7 @@ pub fn cpu_prefill_forward_parallel(
     config: &ModelConfig,
     batch_config: &BatchConfig,
 ) -> Result<(), CpuError> {
-    if config.architecture == "qwen35"
-        || weights.layer(0).attn_qkv.is_some()
-        || weights.layer(0).ssm.is_some()
-    {
+    if config.architecture == "qwen35" || weights.layer(0).ssm.is_some() {
         return Err(CpuError::InvalidOperation(
             "qwen35 hybrid attention/SSM CPU prefill is not implemented yet".to_string(),
         ));
@@ -761,8 +788,14 @@ mod tests {
             rope_neox: true,
             use_attention_bias: false,
             attention_layout: crate::config::AttentionLayout::SplitQkv,
+            ffn_layout: crate::config::FfnLayout::SwiGLU,
             architecture: "qwen2".to_string(),
             tensor_registry: TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf),
+            shortconv_l_cache: None,
+            num_dense_layers: None,
+            num_experts_per_tok: None,
+            use_expert_bias: false,
+            expert_weights_scale: 1.0,
             kv_lora_dim: None,
             kv_frame_codec_enabled: None,
             adastate_anchors_enabled: None,

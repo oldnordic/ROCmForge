@@ -8,7 +8,7 @@ use super::super::upload::{
 use super::support::{load_qwen35_ssm_gguf, qwen35_post_attention_norm_name};
 use super::{
     CpuCompressedExperts, CpuMpoExperts, GpuLayerWeights, GpuMoeWeights, GpuMpoWeights,
-    GpuSparseCsrWeights,
+    GpuShortconvWeights, GpuSparseCsrWeights,
 };
 use crate::config::{AttentionLayout, ModelConfig, TensorName, TensorNamingScheme};
 use crate::loader::GgufFile;
@@ -90,87 +90,136 @@ pub(super) fn load_for_device(
         }
     };
 
+    let load_weight_opt = |name: &str| -> GpuResult<Option<(GpuBuffer, WeightMeta)>> {
+        match file.tensor(name) {
+            Ok(Some(t)) => {
+                let meta = build_matrix_meta(name, t.dims, t.ggml_type, config, false, false)?;
+                let buf = upload_tensor_bytes_for_device(t.data, device_id)?;
+                Ok(Some((buf, meta)))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(GpuError::HipApiError {
+                code: -1,
+                description: format!("tensor lookup failed: {}", e),
+            }),
+        }
+    };
+
+    // ── Layer type detection ────────────────────────────────────────────────
+    let is_attention_layer = file
+        .tensor(&config.tensor_registry.resolve(TensorName::AttnK, layer))
+        .map_err(|e| GpuError::HipApiError {
+            code: -1,
+            description: format!("tensor lookup failed: {}", e),
+        })?
+        .is_some();
+
     let attn_norm = load_f32(&config.tensor_registry.resolve(TensorName::AttnNorm, layer))?;
-    let qkv_name = format!("blk.{}.attn_qkv.weight", layer);
-    let layer_has_fused_qkv =
-        matches!(config.attention_layout, AttentionLayout::FusedQkv) && file.has_tensor(&qkv_name);
-    let (attn_q, attn_q_meta, attn_k, attn_k_meta, attn_v, attn_v_meta, attn_qkv, attn_qkv_meta) =
-        if layer_has_fused_qkv {
-            let (qkv, qkv_meta) = load_weight(&qkv_name)?;
-            (
-                GpuBuffer::empty(),
-                qkv_meta.clone(),
-                GpuBuffer::empty(),
-                qkv_meta.clone(),
-                GpuBuffer::empty(),
-                qkv_meta.clone(),
-                Some(qkv),
-                Some(qkv_meta),
-            )
-        } else {
-            let (attn_q, attn_q_meta) =
-                load_weight(&config.tensor_registry.resolve(TensorName::AttnQ, layer))?;
-            let (attn_k, attn_k_meta) =
-                load_weight(&config.tensor_registry.resolve(TensorName::AttnK, layer))?;
-            let (attn_v, attn_v_meta) =
-                load_weight(&config.tensor_registry.resolve(TensorName::AttnV, layer))?;
-            (
-                attn_q,
-                attn_q_meta,
-                attn_k,
-                attn_k_meta,
-                attn_v,
-                attn_v_meta,
-                None,
-                None,
-            )
-        };
-    let attn_q_norm = load_f32_opt(&format!("blk.{}.attn_q_norm.weight", layer))?;
-    let attn_k_norm = load_f32_opt(&format!("blk.{}.attn_k_norm.weight", layer))?;
-    let attn_q_bias = load_f32_opt(
-        &config
-            .tensor_registry
-            .resolve_optional(TensorName::AttnQBias, layer)
-            .unwrap_or_default(),
-    )?;
-    let attn_k_bias = load_f32_opt(
-        &config
-            .tensor_registry
-            .resolve_optional(TensorName::AttnKBias, layer)
-            .unwrap_or_default(),
-    )?;
-    let attn_v_bias = load_f32_opt(
-        &config
-            .tensor_registry
-            .resolve_optional(TensorName::AttnVBias, layer)
-            .unwrap_or_default(),
-    )?;
-    let (attn_o, attn_o_meta) = if layer_has_fused_qkv {
-        let meta = attn_qkv_meta
-            .as_ref()
-            .ok_or_else(|| GpuError::HipApiError {
+
+    let (
+        attn_q, attn_q_meta, attn_k, attn_k_meta, attn_v, attn_v_meta,
+        attn_qkv, attn_qkv_meta, attn_o, attn_o_meta,
+        attn_q_norm, attn_k_norm, attn_q_bias, attn_k_bias, attn_v_bias,
+        attn_gate, attn_gate_meta, ssm, shortconv,
+    ) = if is_attention_layer {
+        let qkv_name = format!("blk.{}.attn_qkv.weight", layer);
+        let layer_has_fused_qkv =
+            matches!(config.attention_layout, AttentionLayout::FusedQkv)
+                && file.has_tensor(&qkv_name);
+        let (attn_q, attn_q_meta, attn_k, attn_k_meta, attn_v, attn_v_meta, attn_qkv, attn_qkv_meta) =
+            if layer_has_fused_qkv {
+                let (qkv, qkv_meta) = load_weight(&qkv_name)?;
+                (
+                    GpuBuffer::empty(), qkv_meta.clone(),
+                    GpuBuffer::empty(), qkv_meta.clone(),
+                    GpuBuffer::empty(), qkv_meta.clone(),
+                    Some(qkv), Some(qkv_meta),
+                )
+            } else {
+                let (attn_q, attn_q_meta) =
+                    load_weight(&config.tensor_registry.resolve(TensorName::AttnQ, layer))?;
+                let (attn_k, attn_k_meta) =
+                    load_weight(&config.tensor_registry.resolve(TensorName::AttnK, layer))?;
+                let (attn_v, attn_v_meta) =
+                    load_weight(&config.tensor_registry.resolve(TensorName::AttnV, layer))?;
+                (
+                    attn_q, attn_q_meta, attn_k, attn_k_meta,
+                    attn_v, attn_v_meta, None, None,
+                )
+            };
+        let attn_q_norm = load_f32_opt(&format!("blk.{}.attn_q_norm.weight", layer))?;
+        let attn_k_norm = load_f32_opt(&format!("blk.{}.attn_k_norm.weight", layer))?;
+        let attn_q_bias = load_f32_opt(
+            &config
+                .tensor_registry
+                .resolve_optional(TensorName::AttnQBias, layer)
+                .unwrap_or_default(),
+        )?;
+        let attn_k_bias = load_f32_opt(
+            &config
+                .tensor_registry
+                .resolve_optional(TensorName::AttnKBias, layer)
+                .unwrap_or_default(),
+        )?;
+        let attn_v_bias = load_f32_opt(
+            &config
+                .tensor_registry
+                .resolve_optional(TensorName::AttnVBias, layer)
+                .unwrap_or_default(),
+        )?;
+        let (attn_o, attn_o_meta) = if layer_has_fused_qkv {
+            let meta = attn_qkv_meta.as_ref().ok_or_else(|| GpuError::HipApiError {
                 code: -1,
                 description: "attn_qkv_meta missing for fused QKV layer".to_string(),
             })?;
-        (GpuBuffer::empty(), meta.clone())
-    } else {
-        load_weight(
-            &config
-                .tensor_registry
-                .resolve(TensorName::AttnOutput, layer),
-        )?
-    };
-    let (attn_gate, attn_gate_meta, ssm) = if layer_has_fused_qkv {
-        let attn_gate_name = format!("blk.{}.attn_gate.weight", layer);
-        if file.has_tensor(&attn_gate_name) {
-            let (attn_gate, attn_gate_meta) = load_weight(&attn_gate_name)?;
-            let ssm = load_qwen35_ssm_gguf(file, layer, config, device_id)?;
-            (Some(attn_gate), Some(attn_gate_meta), Some(ssm))
+            (GpuBuffer::empty(), meta.clone())
+        } else {
+            load_weight(
+                &config
+                    .tensor_registry
+                    .resolve(TensorName::AttnOutput, layer),
+            )?
+        };
+        let (attn_gate, attn_gate_meta, ssm) = if layer_has_fused_qkv {
+            let attn_gate_name = format!("blk.{}.attn_gate.weight", layer);
+            if file.has_tensor(&attn_gate_name) {
+                let (attn_gate, attn_gate_meta) = load_weight(&attn_gate_name)?;
+                let ssm = load_qwen35_ssm_gguf(file, layer, config, device_id)?;
+                (Some(attn_gate), Some(attn_gate_meta), Some(ssm))
+            } else {
+                (None, None, None)
+            }
         } else {
             (None, None, None)
-        }
+        };
+        (
+            attn_q, attn_q_meta, attn_k, attn_k_meta, attn_v, attn_v_meta,
+            attn_qkv, attn_qkv_meta, attn_o, attn_o_meta,
+            attn_q_norm, attn_k_norm, attn_q_bias, attn_k_bias, attn_v_bias,
+            attn_gate, attn_gate_meta, ssm, None,
+        )
     } else {
-        (None, None, None)
+        // Shortconv layer
+        let sc_in_proj = load_weight(&format!("blk.{}.shortconv.in_proj.weight", layer))?;
+        let sc_conv = load_weight(&format!("blk.{}.shortconv.conv.weight", layer))?;
+        let sc_out_proj = load_weight(&format!("blk.{}.shortconv.out_proj.weight", layer))?;
+        let shortconv = Some(GpuShortconvWeights {
+            in_proj: sc_in_proj.0,
+            in_proj_meta: sc_in_proj.1,
+            conv: sc_conv.0,
+            conv_meta: sc_conv.1,
+            out_proj: sc_out_proj.0,
+            out_proj_meta: sc_out_proj.1,
+        });
+        (
+            GpuBuffer::empty(), WeightMeta::default(),
+            GpuBuffer::empty(), WeightMeta::default(),
+            GpuBuffer::empty(), WeightMeta::default(),
+            None, None,
+            GpuBuffer::empty(), WeightMeta::default(),
+            None, None, None, None, None,
+            None, None, None, shortconv,
+        )
     };
     let ffn_norm_name = qwen35_post_attention_norm_name(config, layer)
         .unwrap_or_else(|| config.tensor_registry.resolve(TensorName::FfnNorm, layer));
@@ -185,16 +234,17 @@ pub(super) fn load_for_device(
             let ffn_gate_exps_name = config
                 .tensor_registry
                 .resolve(TensorName::FfnGateExps, layer);
-            let (buf, meta) = load_weight_fallback(&[&ffn_gate_exps_name, &ffn_gate_name])?;
-            let chosen = if file.has_tensor(&ffn_gate_exps_name) {
-                ffn_gate_exps_name
+            if let Some((buf, meta)) = load_weight_opt(&ffn_gate_exps_name)? {
+                (ffn_gate_exps_name.clone(), Some(buf), Some(meta))
+            } else if let Some((buf, meta)) = load_weight_opt(&ffn_gate_name)? {
+                (ffn_gate_name.clone(), Some(buf), Some(meta))
             } else {
-                ffn_gate_name.clone()
-            };
-            (chosen, buf, meta)
+                (ffn_gate_name.clone(), None, None)
+            }
+        } else if let Some((buf, meta)) = load_weight_opt(&ffn_gate_name)? {
+            (ffn_gate_name.clone(), Some(buf), Some(meta))
         } else {
-            let (buf, meta) = load_weight(&ffn_gate_name)?;
-            (ffn_gate_name.clone(), buf, meta)
+            (ffn_gate_name.clone(), None, None)
         };
 
     let (ffn_up_name_used, ffn_up, ffn_up_meta) =
@@ -215,9 +265,10 @@ pub(super) fn load_for_device(
     let ffn_gate_up_interleaved = match (
         file.tensor(&ffn_gate_name_used).ok().and_then(|t| t),
         file.tensor(&ffn_up_name_used).ok().and_then(|t| t),
+        ffn_gate_meta.as_ref(),
     ) {
-        (Some(gate_t), Some(up_t)) => {
-            try_build_q4_0_gate_up_interleaved(gate_t.data, &ffn_gate_meta, up_t.data, &ffn_up_meta)
+        (Some(gate_t), Some(up_t), Some(gate_meta)) => {
+            try_build_q4_0_gate_up_interleaved(gate_t.data, gate_meta, up_t.data, &ffn_up_meta)
                 .map(|bytes| upload_tensor_bytes_for_device(&bytes, device_id))
                 .transpose()?
         }
@@ -226,10 +277,11 @@ pub(super) fn load_for_device(
     let ffn_gate_up_interleaved_tile4 = match (
         file.tensor(&ffn_gate_name_used).ok().and_then(|t| t),
         file.tensor(&ffn_up_name_used).ok().and_then(|t| t),
+        ffn_gate_meta.as_ref(),
     ) {
-        (Some(gate_t), Some(up_t)) => try_build_q4_0_gate_up_interleaved_tile4(
+        (Some(gate_t), Some(up_t), Some(gate_meta)) => try_build_q4_0_gate_up_interleaved_tile4(
             gate_t.data,
-            &ffn_gate_meta,
+            gate_meta,
             up_t.data,
             &ffn_up_meta,
         )
@@ -288,10 +340,18 @@ pub(super) fn load_for_device(
                 None => (None, None),
             };
 
+            let router_bias = load_f32_opt(
+                &config
+                    .tensor_registry
+                    .resolve_optional(TensorName::ExpProbsBBias, layer)
+                    .unwrap_or_default(),
+            )?;
+
             Some(GpuMoeWeights {
                 router,
                 router_meta,
                 router_svd: None,
+                router_bias,
                 shared_gate,
                 shared_gate_meta,
                 shared_gate_svd: None,
@@ -334,6 +394,8 @@ pub(super) fn load_for_device(
         attn_gate_meta,
         attn_gate_svd: None,
         ssm,
+        is_attention_layer,
+        shortconv,
         attn_o,
         attn_o_meta,
         attn_o_svd: None,

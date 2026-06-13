@@ -175,7 +175,8 @@ fn test_gguf_to_rfm_cpu_inference_equivalence() {
 
         assert_eq!(gl.ffn_norm, rl.ffn_norm, "layer {} ffn_norm mismatch", i);
         assert_eq!(
-            gl.ffn_gate_meta.needs_transpose, rl.ffn_gate_meta.needs_transpose,
+            gl.ffn_gate_meta.as_ref().map(|m| m.needs_transpose),
+            rl.ffn_gate_meta.as_ref().map(|m| m.needs_transpose),
             "layer {} ffn_gate needs_transpose mismatch",
             i
         );

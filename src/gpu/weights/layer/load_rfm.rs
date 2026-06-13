@@ -507,8 +507,8 @@ pub(super) fn load_for_device(
                 }
             };
         (
-            ffn_gate,
-            ffn_gate_meta,
+            Some(ffn_gate),
+            Some(ffn_gate_meta),
             None,
             ffn_up,
             ffn_up_meta,
@@ -517,16 +517,6 @@ pub(super) fn load_for_device(
             ffn_gate_up_interleaved_tile4,
         )
     } else {
-        let gate_view = file
-            .tensor(&ffn_gate_name)
-            .map_err(|e| GpuError::HipApiError {
-                code: -1,
-                description: format!("tensor error: {}", e),
-            })?
-            .ok_or_else(|| GpuError::HipApiError {
-                code: -1,
-                description: format!("tensor not found: {}", ffn_gate_name),
-            })?;
         let up_view = file
             .tensor(&ffn_up_name)
             .map_err(|e| GpuError::HipApiError {
@@ -538,14 +528,6 @@ pub(super) fn load_for_device(
                 description: format!("tensor not found: {}", ffn_up_name),
             })?;
 
-        let gate_tr = compute_transpose_flag(
-            &ffn_gate_name,
-            gate_view.dims,
-            rfm_type_to_ggml(&gate_view.wtype),
-            config,
-            false,
-            false,
-        );
         let up_tr = compute_transpose_flag(
             &ffn_up_name,
             up_view.dims,
@@ -554,9 +536,32 @@ pub(super) fn load_for_device(
             false,
             false,
         );
-
-        let (ffn_gate, ffn_gate_meta, ffn_gate_svd) = load_rfm_weight(&ffn_gate_name, gate_tr)?;
         let (ffn_up, ffn_up_meta, ffn_up_svd) = load_rfm_weight(&ffn_up_name, up_tr)?;
+
+        let (ffn_gate, ffn_gate_meta, ffn_gate_svd) = if file.has_tensor(&ffn_gate_name) {
+            let gate_view = file
+                .tensor(&ffn_gate_name)
+                .map_err(|e| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor error: {}", e),
+                })?
+                .ok_or_else(|| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor not found: {}", ffn_gate_name),
+                })?;
+            let gate_tr = compute_transpose_flag(
+                &ffn_gate_name,
+                gate_view.dims,
+                rfm_type_to_ggml(&gate_view.wtype),
+                config,
+                false,
+                false,
+            );
+            let (gate, meta, svd) = load_rfm_weight(&ffn_gate_name, gate_tr)?;
+            (Some(gate), Some(meta), svd)
+        } else {
+            (None, None, None)
+        };
 
         (
             ffn_gate,
@@ -670,6 +675,7 @@ pub(super) fn load_for_device(
                 router,
                 router_meta,
                 router_svd,
+                router_bias: None,
                 shared_gate,
                 shared_gate_meta,
                 shared_gate_svd,
@@ -732,6 +738,8 @@ pub(super) fn load_for_device(
         attn_gate_meta,
         attn_gate_svd,
         ssm,
+        is_attention_layer: true,
+        shortconv: None,
         attn_o,
         attn_o_meta,
         attn_o_svd,

@@ -659,6 +659,11 @@ mod tests {
             tensor_registry: crate::config::TensorNameRegistry::from_scheme(
                 &crate::config::TensorNamingScheme::Gguf,
             ),
+            shortconv_l_cache: None,
+            num_dense_layers: None,
+            num_experts_per_tok: None,
+            use_expert_bias: false,
+            expert_weights_scale: 1.0,
             kv_lora_dim: None,
             kv_frame_codec_enabled: None,
             adastate_anchors_enabled: None,

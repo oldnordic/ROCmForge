@@ -4,13 +4,263 @@
 //! Uses KV cache for efficient attention computation.
 
 use super::cache::{CpuForwardScratch, CpuKvCache};
-use super::ops::{dispatch_gemv, flash_attn_decode, residual_add, rms_norm, rope, silu_fuse};
-use super::weights::{CpuLayerWeights, CpuModelWeights};
+use super::ops::{dispatch_gemv, flash_attn_decode, gelu_inplace, residual_add, rms_norm, rope, silu_fuse};
+use super::weights::{CpuLayerWeights, CpuMoeWeights, CpuModelWeights};
 use super::CpuError;
 use crate::config::ModelConfig;
 use crate::loader::GgmlType;
+// WeightMeta used internally via re-export; no direct import needed here.
 
 // ── Layer forward ────────────────────────────────────────────────────────────────
+
+/// Apply RMS norm to Q/K heads when `attn_q_norm` / `attn_k_norm` are present.
+fn apply_qk_norm(
+    q: &mut [f32],
+    k: &mut [f32],
+    q_norm: Option<&[f32]>,
+    k_norm: Option<&[f32]>,
+    num_heads: usize,
+    num_kv_heads: usize,
+    head_dim: usize,
+    eps: f32,
+) {
+    if let Some(norm) = q_norm {
+        for h in 0..num_heads {
+            let start = h * head_dim;
+            let end = start + head_dim;
+            let slice = &mut q[start..end];
+            let mut inv_rms = 0.0f32;
+            for v in slice.iter() {
+                inv_rms += v * v;
+            }
+            inv_rms = (inv_rms / head_dim as f32 + eps).sqrt().recip();
+            for (i, v) in slice.iter_mut().enumerate() {
+                *v = *v * inv_rms * norm[i];
+            }
+        }
+    }
+    if let Some(norm) = k_norm {
+        for h in 0..num_kv_heads {
+            let start = h * head_dim;
+            let end = start + head_dim;
+            let slice = &mut k[start..end];
+            let mut inv_rms = 0.0f32;
+            for v in slice.iter() {
+                inv_rms += v * v;
+            }
+            inv_rms = (inv_rms / head_dim as f32 + eps).sqrt().recip();
+            for (i, v) in slice.iter_mut().enumerate() {
+                *v = *v * inv_rms * norm[i];
+            }
+        }
+    }
+}
+
+/// Single-token shortconv forward (depthwise causal conv1d with double gating).
+fn shortconv_forward(
+    normed: &[f32],
+    weights: &CpuLayerWeights,
+    kv: &mut CpuKvCache,
+    shortconv_bcx: &mut [f32],
+    shortconv_tmp: &mut [f32],
+    layer_out: &mut [f32],
+    layer: usize,
+    config: &ModelConfig,
+) -> Result<(), CpuError> {
+    let h = config.hidden_size;
+    let l_cache = config.shortconv_l_cache.unwrap_or(3);
+    let d_conv = l_cache.saturating_sub(1);
+    let sc = weights.shortconv.as_ref().ok_or_else(|| {
+        CpuError::InvalidOperation(format!("shortconv weights missing for layer {}", layer))
+    })?;
+
+    // 1. in_proj: [h] → [3h]
+    dispatch_gemv(
+        &sc.in_proj,
+        &sc.in_proj_meta,
+        normed,
+        shortconv_bcx,
+        3 * h,
+        h,
+        None,
+    )?;
+
+    // 2. Split into B, C, x
+    let (b, rest) = shortconv_bcx[..3 * h].split_at(h);
+    let (c, x) = rest.split_at(h);
+
+    // 3. Bx = B ⊙ x (elementwise)
+    for i in 0..h {
+        shortconv_tmp[i] = b[i] * x[i];
+    }
+
+    // 4. Read conv state, append Bx, compute causal conv1d
+    let conv_state = &mut kv.conv_state[layer];
+    if d_conv > 0 {
+        let mut concat = vec![0.0f32; l_cache * h];
+        for i in 0..d_conv {
+            for j in 0..h {
+                concat[i * h + j] = conv_state[i * h + j];
+            }
+        }
+        for j in 0..h {
+            concat[d_conv * h + j] = shortconv_tmp[j];
+        }
+
+        // 5. Depthwise conv1d: conv_out[j] = Σ_k concat[k][j] * kernel[k][j]
+        let conv_f32 = crate::cpu::weights::try_as_f32_slice(&sc.conv)
+            .ok_or_else(|| CpuError::InvalidOperation("shortconv conv not f32".to_string()))?;
+        for j in 0..h {
+            let mut acc = 0.0f32;
+            for k in 0..l_cache {
+                acc += concat[k * h + j] * conv_f32[k * h + j];
+            }
+            shortconv_tmp[j] = acc;
+        }
+
+        // 6. Update conv state: shift left, append Bx
+        for i in 0..d_conv.saturating_sub(1) {
+            for j in 0..h {
+                conv_state[i * h + j] = conv_state[(i + 1) * h + j];
+            }
+        }
+        if d_conv > 0 {
+            for j in 0..h {
+                conv_state[(d_conv - 1) * h + j] = shortconv_tmp[j];
+            }
+        }
+    }
+
+    // 7. Second gate: y = C ⊙ conv_out
+    for i in 0..h {
+        shortconv_tmp[i] = c[i] * shortconv_tmp[i];
+    }
+
+    // 8. out_proj: [h] → [h]
+    dispatch_gemv(
+        &sc.out_proj,
+        &sc.out_proj_meta,
+        shortconv_tmp,
+        layer_out,
+        h,
+        h,
+        None,
+    )?;
+
+    Ok(())
+}
+
+/// Decode-time MoE FFN: top-k expert selection + weighted sum.
+fn moe_forward_decode(
+    normed: &[f32],
+    moe: &CpuMoeWeights,
+    gate: &mut [f32],
+    swiglu: &mut [f32],
+    tmp: &mut [f32],
+    layer_out: &mut [f32],
+    config: &ModelConfig,
+) -> Result<(), CpuError> {
+    let h = config.hidden_size;
+    let num_experts = moe.num_experts;
+    let ff_size = moe.ff_size;
+    let top_k = config.num_experts_per_tok.unwrap_or(4).min(num_experts);
+
+    // 1. Router: gate_inp * normed → logits
+    let mut router_meta = moe.gate_inp_meta.clone();
+    if router_meta.dims.len() == 2 {
+        router_meta.dims.truncate(1);
+    }
+    dispatch_gemv(
+        &moe.gate_inp,
+        &router_meta,
+        normed,
+        gate,
+        num_experts,
+        h,
+        None,
+    )?;
+
+    // 2. Optional bias
+    if let Some(ref bias) = moe.exp_probs_b_bias {
+        for i in 0..num_experts {
+            gate[i] += bias[i];
+        }
+    }
+
+    // 3. Softmax + top-k
+    let mut max_logit = f32::NEG_INFINITY;
+    for i in 0..num_experts {
+        if gate[i] > max_logit {
+            max_logit = gate[i];
+        }
+    }
+    let mut sum_exp = 0.0f32;
+    for i in 0..num_experts {
+        gate[i] = (gate[i] - max_logit).exp();
+        sum_exp += gate[i];
+    }
+    if sum_exp > 0.0 {
+        for i in 0..num_experts {
+            gate[i] /= sum_exp;
+        }
+    }
+
+    let mut indexed: Vec<(usize, f32)> = gate[..num_experts]
+        .iter()
+        .copied()
+        .enumerate()
+        .collect();
+    indexed.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    indexed.truncate(top_k);
+
+    // 4. Run selected experts and accumulate
+    layer_out.fill(0.0);
+
+    let gate_stride = moe.gate_exps_meta.wtype.bytes_for_elements(h * ff_size);
+    let up_stride = moe.up_exps_meta.wtype.bytes_for_elements(h * ff_size);
+    let down_stride = moe.down_exps_meta.wtype.bytes_for_elements(ff_size * h);
+
+    for (expert_idx, weight) in indexed {
+        let mut gate_meta_2d = moe.gate_exps_meta.clone();
+        let mut up_meta_2d = moe.up_exps_meta.clone();
+        let mut down_meta_2d = moe.down_exps_meta.clone();
+        if gate_meta_2d.dims.len() == 3 {
+            gate_meta_2d.dims.truncate(2);
+        }
+        if up_meta_2d.dims.len() == 3 {
+            up_meta_2d.dims.truncate(2);
+        }
+        if down_meta_2d.dims.len() == 3 {
+            down_meta_2d.dims.truncate(2);
+        }
+
+        let gate_off = expert_idx * gate_stride;
+        let up_off = expert_idx * up_stride;
+        let down_off = expert_idx * down_stride;
+
+        let gate_slice = &moe.gate_exps[gate_off..gate_off + gate_stride];
+        let up_slice = &moe.up_exps[up_off..up_off + up_stride];
+        let down_slice = &moe.down_exps[down_off..down_off + down_stride];
+
+        dispatch_gemv(gate_slice, &gate_meta_2d, normed, gate, ff_size, h, None)?;
+        dispatch_gemv(up_slice, &up_meta_2d, normed, swiglu, ff_size, h, None)?;
+        silu_fuse(gate, swiglu);
+        dispatch_gemv(down_slice, &down_meta_2d, swiglu, tmp, h, ff_size, None)?;
+
+        for i in 0..h {
+            layer_out[i] += weight * tmp[i];
+        }
+    }
+
+    let scale = config.expert_weights_scale;
+    if scale != 1.0 {
+        for v in layer_out[..h].iter_mut() {
+            *v *= scale;
+        }
+    }
+
+    Ok(())
+}
 
 #[allow(
     clippy::too_many_arguments,
@@ -18,7 +268,7 @@ use crate::loader::GgmlType;
 )]
 /// Forward pass through a single transformer layer.
 ///
-/// Architecture: RMSNorm → Attention → Residual → RMSNorm → FFN → Residual
+/// Architecture: RMSNorm → Attention/Shortconv → Residual → RMSNorm → FFN → Residual
 pub fn cpu_layer_forward(
     hidden: &mut [f32],
     weights: &CpuLayerWeights,
@@ -31,14 +281,10 @@ pub fn cpu_layer_forward(
     config: &ModelConfig,
     debug: bool,
 ) -> Result<(), CpuError> {
-    if config.architecture == "qwen35"
-        || weights.attn_qkv.is_some()
-        || weights.ssm.is_some()
-        || weights.attn_q_norm.is_some()
-        || weights.attn_k_norm.is_some()
-    {
+    // Legacy qwen35 SSM still rejected; everything else now supported.
+    if config.architecture == "qwen35" || weights.ssm.is_some() {
         return Err(CpuError::InvalidOperation(
-            "qwen35 hybrid attention/SSM CPU forward is not implemented yet".to_string(),
+            "qwen35 hybrid SSM CPU forward is not implemented yet".to_string(),
         ));
     }
 
@@ -62,323 +308,133 @@ pub fn cpu_layer_forward(
         );
     }
 
-    // 2. QKV projections (parallel — all read normed, write disjoint outputs)
-    let normed = &*scratch.normed;
-    let q = &mut *scratch.q;
-    let k = &mut *scratch.k;
-    let v = &mut *scratch.v;
-    let (q_res, (k_res, v_res)) = rayon::join(
-        || {
-            dispatch_gemv(
-                &weights.attn_q,
-                &weights.attn_q_meta,
-                normed,
-                q,
-                q_size,
-                h,
-                None,
-            )
-        },
-        || {
-            rayon::join(
+    // 2. Attention or Shortconv
+    if weights.is_attention_layer {
+        // 2a. QKV projections
+        if let (Some(ref qkv_w), Some(ref qkv_m)) = (&weights.attn_qkv, &weights.attn_qkv_meta) {
+            let qkv_total = q_size + 2 * kv_size;
+            dispatch_gemv(qkv_w, qkv_m, &scratch.normed, &mut scratch.qkv, qkv_total, h, None)?;
+            scratch.q.copy_from_slice(&scratch.qkv[0..q_size]);
+            scratch.k.copy_from_slice(&scratch.qkv[q_size..q_size + kv_size]);
+            scratch.v.copy_from_slice(&scratch.qkv[q_size + kv_size..qkv_total]);
+        } else {
+            let normed = &*scratch.normed;
+            let q = &mut *scratch.q;
+            let k = &mut *scratch.k;
+            let v = &mut *scratch.v;
+            let (q_res, (k_res, v_res)) = rayon::join(
+                || dispatch_gemv(&weights.attn_q, &weights.attn_q_meta, normed, q, q_size, h, None),
                 || {
-                    dispatch_gemv(
-                        &weights.attn_k,
-                        &weights.attn_k_meta,
-                        normed,
-                        k,
-                        kv_size,
-                        h,
-                        None,
+                    rayon::join(
+                        || dispatch_gemv(&weights.attn_k, &weights.attn_k_meta, normed, k, kv_size, h, None),
+                        || dispatch_gemv(&weights.attn_v, &weights.attn_v_meta, normed, v, kv_size, h, None),
                     )
                 },
-                || {
-                    dispatch_gemv(
-                        &weights.attn_v,
-                        &weights.attn_v_meta,
-                        normed,
-                        v,
-                        kv_size,
-                        h,
-                        None,
-                    )
-                },
-            )
-        },
-    );
-    q_res?;
-    k_res?;
-    v_res?;
-
-    // 3. Optional biases (same as prefill)
-    if let Some(bq) = &weights.attn_q_bias {
-        super::ops::add_bias(&mut scratch.q, bq);
-    }
-    if let Some(bk) = &weights.attn_k_bias {
-        super::ops::add_bias(&mut scratch.k, bk);
-    }
-    if let Some(bv) = &weights.attn_v_bias {
-        super::ops::add_bias(&mut scratch.v, bv);
-    }
-
-    if debug && layer == 0 {
-        eprintln!(
-            "[Layer {} after QKV] q_mean={:.4} k_mean={:.4} v_mean={:.4}",
-            layer,
-            scratch.q.iter().copied().sum::<f32>() / q_size as f32,
-            scratch.k.iter().copied().sum::<f32>() / kv_size as f32,
-            scratch.v.iter().copied().sum::<f32>() / kv_size as f32
-        );
-    }
-
-    // 3. RoPE on Q and K (uses precomputed sin/cos)
-    rope(
-        &mut scratch.q,
-        config.num_heads,
-        config.head_dim,
-        rope_sin,
-        rope_cos,
-        config.rope_neox,
-    );
-    rope(
-        &mut scratch.k,
-        config.num_kv_heads,
-        config.head_dim,
-        rope_sin,
-        rope_cos,
-        config.rope_neox,
-    );
-
-    // 4. Write K, V in cache
-    kv.write_k(layer, pos, &scratch.k);
-    kv.write_v(layer, pos, &scratch.v);
-
-    // 5. Flash attention decode (reads full KV cache)
-    let seq_len = pos + 1;
-    flash_attn_decode(
-        &scratch.q,
-        kv.k_buf(layer),
-        kv.v_buf(layer),
-        &mut scratch.attn_out,
-        seq_len,
-        config.num_heads,
-        config.num_kv_heads,
-        config.head_dim,
-    );
-    // Verify KV cache indexing (debug check)
-    #[cfg(debug_assertions)]
-    {
-        let kv_size = config.num_kv_heads * config.head_dim;
-        for t in 0..seq_len {
-            let k_start_expected = t * kv_size;
-            let k_start_actual = k_start_expected; // For KV cache interface
-            debug_assert_eq!(k_start_expected, k_start_actual, "KV cache index mismatch");
+            );
+            q_res?;
+            k_res?;
+            v_res?;
         }
-    }
 
-    if debug && layer == 0 {
-        let ao_mean: f32 = scratch.attn_out.iter().copied().sum::<f32>() / q_size as f32;
-        let ao_std: f32 = ((scratch.attn_out.iter().map(|x| x * x).sum::<f32>() / q_size as f32)
-            - ao_mean * ao_mean)
-            .sqrt();
-        eprintln!(
-            "[Layer {} after attn] out_mean={:.4} out_std={:.4}",
-            layer, ao_mean, ao_std
+        // Optional biases
+        if let Some(bq) = &weights.attn_q_bias { super::ops::add_bias(&mut scratch.q, bq); }
+        if let Some(bk) = &weights.attn_k_bias { super::ops::add_bias(&mut scratch.k, bk); }
+        if let Some(bv) = &weights.attn_v_bias { super::ops::add_bias(&mut scratch.v, bv); }
+
+        // QK-Norm (if present)
+        if weights.attn_q_norm.is_some() || weights.attn_k_norm.is_some() {
+            apply_qk_norm(
+                &mut scratch.q,
+                &mut scratch.k,
+                weights.attn_q_norm.as_deref(),
+                weights.attn_k_norm.as_deref(),
+                config.num_heads,
+                config.num_kv_heads,
+                config.head_dim,
+                eps,
+            );
+        }
+
+        // RoPE
+        rope(&mut scratch.q, config.num_heads, config.head_dim, rope_sin, rope_cos, config.rope_neox);
+        rope(&mut scratch.k, config.num_kv_heads, config.head_dim, rope_sin, rope_cos, config.rope_neox);
+
+        // Write K, V cache
+        kv.write_k(layer, pos, &scratch.k);
+        kv.write_v(layer, pos, &scratch.v);
+
+        // Flash attention
+        let seq_len = pos + 1;
+        flash_attn_decode(
+            &scratch.q,
+            kv.k_buf(layer),
+            kv.v_buf(layer),
+            &mut scratch.attn_out,
+            seq_len,
+            config.num_heads,
+            config.num_kv_heads,
+            config.head_dim,
         );
+
+        // Output projection
+        dispatch_gemv(
+            &weights.attn_o,
+            &weights.attn_o_meta,
+            &scratch.attn_out,
+            &mut scratch.layer_out,
+            h,
+            q_size,
+            Some(&mut scratch.q8_scratch),
+        )?;
+    } else {
+        // Shortconv path
+        shortconv_forward(
+            &scratch.normed, weights, kv, &mut scratch.shortconv_bcx,
+            &mut scratch.shortconv_tmp, &mut scratch.layer_out, layer, config,
+        )?;
     }
 
-    // 6. Output projection
-    dispatch_gemv(
-        &weights.attn_o,
-        &weights.attn_o_meta,
-        &scratch.attn_out,
-        &mut scratch.layer_out,
-        h,
-        q_size,
-        Some(&mut scratch.q8_scratch),
-    )?;
-
-    if debug && layer == 0 {
-        let lo_mean: f32 = scratch.layer_out.iter().copied().sum::<f32>() / h as f32;
-        let lo_std: f32 = ((scratch.layer_out.iter().map(|x| x * x).sum::<f32>() / h as f32)
-            - lo_mean * lo_mean)
-            .sqrt();
-        eprintln!(
-            "[Layer {} attn_out_proj] layer_out mean={:.4} std={:.4}",
-            layer, lo_mean, lo_std
-        );
-    }
-
-    // 7. Residual
+    // 3. Residual after attention/shortconv
     residual_add(hidden, &scratch.layer_out);
 
-    if debug && layer == 0 {
-        let h_mean: f32 = hidden.iter().copied().sum::<f32>() / h as f32;
-        let h_std: f32 =
-            ((hidden.iter().map(|x| x * x).sum::<f32>() / h as f32) - h_mean * h_mean).sqrt();
-        eprintln!(
-            "[Layer {} after attn residual] hidden mean={:.4} std={:.4}",
-            layer, h_mean, h_std
-        );
-    }
-
-    // 8. FFN RMS norm
+    // 4. FFN RMS norm
     rms_norm(hidden, &weights.ffn_norm, &mut scratch.normed, eps);
 
-    // 9. FFN: gate + up projections (parallel — both read normed, write disjoint outputs)
-    let normed = &*scratch.normed;
-    let gate = &mut *scratch.gate;
-    let swiglu = &mut *scratch.swiglu;
-    let (gate_res, up_res) = rayon::join(
-        || {
-            dispatch_gemv(
-                &weights.ffn_gate,
-                &weights.ffn_gate_meta,
-                normed,
-                gate,
-                ff_size,
-                h,
-                None,
-            )
-        },
-        || {
-            dispatch_gemv(
-                &weights.ffn_up,
-                &weights.ffn_up_meta,
-                normed,
-                swiglu,
-                ff_size,
-                h,
-                None,
-            )
-        },
-    );
-    gate_res?;
-    up_res?;
-
-    if debug && layer == 0 {
-        let gate_mean: f32 = scratch.gate.iter().copied().sum::<f32>() / ff_size as f32;
-        let gate_std: f32 = ((scratch.gate.iter().map(|x| x * x).sum::<f32>() / ff_size as f32)
-            - gate_mean * gate_mean)
-            .sqrt();
-        let up_mean: f32 = scratch.swiglu.iter().copied().sum::<f32>() / ff_size as f32;
-        let up_std: f32 = ((scratch.swiglu.iter().map(|x| x * x).sum::<f32>() / ff_size as f32)
-            - up_mean * up_mean)
-            .sqrt();
-        eprintln!(
-            "[Layer {} ffn_gate] mean={:.4} std={:.4}",
-            layer, gate_mean, gate_std
-        );
-        eprintln!(
-            "[Layer {} ffn_up] mean={:.4} std={:.4}",
-            layer, up_mean, up_std
-        );
-        eprintln!(
-            "[Layer {} ffn_gate] [0..5] = {:?}",
-            layer,
-            &scratch.gate[0..5]
-        );
-        eprintln!(
-            "[Layer {} ffn_up] [0..5] = {:?}",
-            layer,
-            &scratch.swiglu[0..5]
-        );
-    }
-
-    // 10. SwiGLU: silu(gate) * up
-    silu_fuse(&scratch.gate, &mut scratch.swiglu);
-
-    if debug && layer == 0 {
-        let swiglu_mean: f32 = scratch.swiglu.iter().copied().sum::<f32>() / ff_size as f32;
-        let swiglu_std: f32 = ((scratch.swiglu.iter().map(|x| x * x).sum::<f32>()
-            / ff_size as f32)
-            - swiglu_mean * swiglu_mean)
-            .sqrt();
-        eprintln!(
-            "[Layer {} swiglu] mean={:.4} std={:.4}",
-            layer, swiglu_mean, swiglu_std
-        );
-    }
-
-    // 11. Down projection
-    // Note: FFN down weights are stored as [in_dim, out_dim] = [ff_size, h]
-    // We need to compute: layer_out = ffn_down^T * swiglu
-    if debug && layer == 0 {
-        let num_blocks_per_col = ff_size / 32;
-        let col_bytes = num_blocks_per_col * 18;
-        let expected_weight_bytes = h * col_bytes;
-        eprintln!("[Layer {} ffn_down] out_dim={} in_dim={} num_blocks_per_col={} col_bytes={} expected_weight_bytes={} actual_weight_bytes={}",
-                 layer, h, ff_size, num_blocks_per_col, col_bytes, expected_weight_bytes, weights.ffn_down.len());
-        eprintln!(
-            "[Layer {} ffn_down] swiglu.len={} layer_out.len={}",
-            layer,
-            scratch.swiglu.len(),
-            scratch.layer_out.len()
-        );
-        // Print first 5 values of swiglu
-        eprintln!(
-            "[Layer {} ffn_down] swiglu[0..5] = {:?}",
-            layer,
-            &scratch.swiglu[0..5]
-        );
-        // Print first block of weights
-        let first_block = &weights.ffn_down[0..18];
-        eprintln!(
-            "[Layer {} ffn_down] first_weight_block = {:?}",
-            layer, first_block
-        );
-        let scale = super::quant::load_f16_scale(&first_block[0..2]);
-        let qs = &first_block[2..18];
-        let mut dequant = [0.0f32; 32];
-        for i in 0..16 {
-            dequant[i] = (((qs[i] & 0x0F) as i32) - 8) as f32 * scale;
-            dequant[i + 16] = (((qs[i] >> 4) as i32) - 8) as f32 * scale;
+    // 5. FFN (dense or MoE)
+    if let Some(ref moe) = weights.moe {
+        moe_forward_decode(
+            &scratch.normed, moe, &mut scratch.gate, &mut scratch.swiglu,
+            &mut scratch.shortconv_tmp, &mut scratch.layer_out, config,
+        )?;
+    } else {
+        let normed = &*scratch.normed;
+        let swiglu = &mut *scratch.swiglu;
+        if let (Some(ref gate_w), Some(ref gate_m)) = (&weights.ffn_gate, &weights.ffn_gate_meta) {
+            let gate = &mut *scratch.gate;
+            let (gate_res, up_res) = rayon::join(
+                || dispatch_gemv(gate_w, gate_m, normed, gate, ff_size, h, None),
+                || dispatch_gemv(&weights.ffn_up, &weights.ffn_up_meta, normed, swiglu, ff_size, h, None),
+            );
+            gate_res?;
+            up_res?;
+            silu_fuse(&scratch.gate, &mut scratch.swiglu);
+        } else {
+            dispatch_gemv(&weights.ffn_up, &weights.ffn_up_meta, normed, swiglu, ff_size, h, None)?;
+            gelu_inplace(swiglu);
         }
-        eprintln!(
-            "[Layer {} ffn_down] first_block dequant[0..5] = {:?}",
-            layer,
-            &dequant[0..5]
-        );
-    }
-    // FFN down projection - uses metadata to determine if transposition is needed
-    super::ops::dispatch_gemv(
-        &weights.ffn_down,
-        &weights.ffn_down_meta,
-        &scratch.swiglu,
-        &mut scratch.layer_out,
-        h,       // out_dim (hidden_size)
-        ff_size, // in_dim (intermediate_size)
-        Some(&mut scratch.q8_scratch),
-    )?;
-
-    if debug && layer == 0 {
-        let ffn_out_mean: f32 = scratch.layer_out.iter().copied().sum::<f32>() / h as f32;
-        let ffn_out_std: f32 = ((scratch.layer_out.iter().map(|x| x * x).sum::<f32>() / h as f32)
-            - ffn_out_mean * ffn_out_mean)
-            .sqrt();
-        eprintln!(
-            "[Layer {} ffn_down] layer_out mean={:.4} std={:.4}",
-            layer, ffn_out_mean, ffn_out_std
-        );
-        eprintln!(
-            "[Layer {} ffn_down] layer_out[0..5] = {:?}",
-            layer,
-            &scratch.layer_out[0..5]
-        );
+        super::ops::dispatch_gemv(
+            &weights.ffn_down,
+            &weights.ffn_down_meta,
+            &scratch.swiglu,
+            &mut scratch.layer_out,
+            h,
+            ff_size,
+            Some(&mut scratch.q8_scratch),
+        )?;
     }
 
-    // 12. Residual
+    // 6. Residual after FFN
     residual_add(hidden, &scratch.layer_out);
-
-    if debug && layer == 0 {
-        let h_mean: f32 = hidden.iter().copied().sum::<f32>() / h as f32;
-        let h_std: f32 =
-            ((hidden.iter().map(|x| x * x).sum::<f32>() / h as f32) - h_mean * h_mean).sqrt();
-        eprintln!(
-            "[Layer {} after ffn residual] hidden mean={:.4} std={:.4}",
-            layer, h_mean, h_std
-        );
-    }
 
     Ok(())
 }

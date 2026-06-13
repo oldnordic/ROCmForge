@@ -213,7 +213,9 @@ impl GpuLayerWeights {
         total += self.attn_v.size();
         total += self.attn_o.size();
         total += self.ffn_norm.size();
-        total += self.ffn_gate.size();
+        if let Some(ref buf) = self.ffn_gate {
+            total += buf.size();
+        }
         total += self.ffn_up.size();
         total += self.ffn_down.size();
 

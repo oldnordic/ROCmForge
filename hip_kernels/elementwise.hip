@@ -665,6 +665,24 @@ hipError_t gpu_gelu(
     return hipGetLastError();
 }
 
+hipError_t gpu_gelu_on_stream(
+    const float* d_x,
+    float* d_out,
+    const int n,
+    hipStream_t stream
+) {
+    const int block_size = 256;
+    const int grid_size = (n + block_size - 1) / block_size;
+
+    hipLaunchKernelGGL(
+        gelu_kernel,
+        grid_size, block_size, 0, stream,
+        d_x, d_out, n
+    );
+
+    return hipGetLastError();
+}
+
 hipError_t gpu_silu(
     const float* d_x,
     float* d_out,

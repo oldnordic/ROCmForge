@@ -3,8 +3,11 @@
 use super::cache::GpuPrefillScratch;
 use super::device::GpuDevice;
 use super::error::{GpuError, GpuResult};
-use super::kernels::{add_on_stream, mul_on_stream, rms_norm_batched, silu_on_stream};
-use super::ops::{gpu_dispatch_fused_gate_up_on_stream, gpu_dispatch_gemv_with_fallback_on_stream};
+use super::kernels::{add_on_stream, gelu_on_stream, mul_on_stream, rms_norm_batched, silu_on_stream};
+use super::ops::{
+    gpu_dispatch_fused_gate_up_on_stream, gpu_dispatch_gemv_on_stream,
+    gpu_dispatch_gemv_with_fallback_on_stream,
+};
 use super::ops_batched::{
     gpu_dispatch_batched_fused_gate_up_on_stream, gpu_dispatch_batched_gemv_batched,
 };
@@ -307,44 +310,100 @@ pub fn gpu_prefill_ssm_layer_on_stream(
         tensor: "forced_svd_fallback".to_string(),
         wtype: GgmlType::Q4_0,
     });
-    if gpu_layer.ffn_gate_svd.is_none() && gpu_layer.ffn_up_svd.is_none() {
-        gate_up_result = gpu_dispatch_batched_fused_gate_up_on_stream(
-            device,
-            &gpu_layer.ffn_gate,
-            &gpu_layer.ffn_gate_meta,
-            &gpu_layer.ffn_up,
-            &gpu_layer.ffn_up_meta,
-            scratch.normed.as_ptr() as *const f32,
-            scratch.swiglu.as_ptr() as *mut f32,
-            scratch.gate.as_ptr() as *mut f32,
-            h,
-            ff_size,
-            seq_len,
-            stream,
-        );
-    }
+    if let (Some(gate_buf), Some(gate_meta)) = (
+        gpu_layer.ffn_gate.as_ref(),
+        gpu_layer.ffn_gate_meta.as_ref(),
+    ) {
+        if gpu_layer.ffn_gate_svd.is_none() && gpu_layer.ffn_up_svd.is_none() {
+            gate_up_result = gpu_dispatch_batched_fused_gate_up_on_stream(
+                device,
+                gate_buf,
+                gate_meta,
+                &gpu_layer.ffn_up,
+                &gpu_layer.ffn_up_meta,
+                scratch.normed.as_ptr() as *const f32,
+                scratch.swiglu.as_ptr() as *mut f32,
+                scratch.gate.as_ptr() as *mut f32,
+                h,
+                ff_size,
+                seq_len,
+                stream,
+            );
+        }
 
-    if let Err(GpuError::UnsupportedWeightType { .. }) = gate_up_result {
+        if let Err(GpuError::UnsupportedWeightType { .. }) = gate_up_result {
+            for pos in 0..seq_len {
+                let normed_row = scratch.normed_row_ptr(pos, h);
+                let swiglu_row = scratch.swiglu_row_mut_ptr(pos, ff_size);
+                if gpu_layer.ffn_gate_svd.is_some() || gpu_layer.ffn_up_svd.is_some() {
+                    let gate_row = scratch.gate_row_mut_ptr(pos, ff_size);
+                    let t_scratch =
+                        unsafe { (scratch.svd_scratch.as_ptr() as *mut f32).add(pos * 32) };
+                    gpu_dispatch_gemv_with_fallback_on_stream(
+                        device,
+                        gate_buf,
+                        gate_meta,
+                        gpu_layer.ffn_gate_svd.as_ref(),
+                        gpu_layer.ffn_gate_sparse.as_ref(),
+                        gpu_layer.ffn_gate_mpo.as_ref(),
+                        normed_row,
+                        gate_row,
+                        ff_size,
+                        h,
+                        t_scratch,
+                        stream,
+                    )?;
+                    gpu_dispatch_gemv_with_fallback_on_stream(
+                        device,
+                        &gpu_layer.ffn_up,
+                        &gpu_layer.ffn_up_meta,
+                        gpu_layer.ffn_up_svd.as_ref(),
+                        gpu_layer.ffn_up_sparse.as_ref(),
+                        gpu_layer.ffn_up_mpo.as_ref(),
+                        normed_row,
+                        swiglu_row,
+                        ff_size,
+                        h,
+                        t_scratch,
+                        stream,
+                    )?;
+                    silu_on_stream(gate_row as *const f32, gate_row, ff_size, stream)?;
+                    mul_on_stream(
+                        gate_row as *const f32,
+                        swiglu_row as *const f32,
+                        swiglu_row,
+                        ff_size,
+                        stream,
+                    )?;
+                } else {
+                    gpu_dispatch_fused_gate_up_on_stream(
+                        device,
+                        gate_buf,
+                        gate_meta,
+                        &gpu_layer.ffn_up,
+                        &gpu_layer.ffn_up_meta,
+                        gpu_layer.ffn_gate_up_interleaved.as_ref(),
+                        gpu_layer.ffn_gate_up_interleaved_tile4.as_ref(),
+                        normed_row,
+                        std::ptr::null_mut(),
+                        swiglu_row,
+                        ff_size,
+                        h,
+                        stream,
+                    )?;
+                }
+            }
+        } else {
+            gate_up_result?;
+        }
+    } else {
+        // Standard FFN (non-SwiGLU): per-token up -> gelu
         for pos in 0..seq_len {
             let normed_row = scratch.normed_row_ptr(pos, h);
             let swiglu_row = scratch.swiglu_row_mut_ptr(pos, ff_size);
-            if gpu_layer.ffn_gate_svd.is_some() || gpu_layer.ffn_up_svd.is_some() {
-                let gate_row = scratch.gate_row_mut_ptr(pos, ff_size);
-                let t_scratch = unsafe { (scratch.svd_scratch.as_ptr() as *mut f32).add(pos * 32) };
-                gpu_dispatch_gemv_with_fallback_on_stream(
-                    device,
-                    &gpu_layer.ffn_gate,
-                    &gpu_layer.ffn_gate_meta,
-                    gpu_layer.ffn_gate_svd.as_ref(),
-                    gpu_layer.ffn_gate_sparse.as_ref(),
-                    gpu_layer.ffn_gate_mpo.as_ref(),
-                    normed_row,
-                    gate_row,
-                    ff_size,
-                    h,
-                    t_scratch,
-                    stream,
-                )?;
+            if gpu_layer.ffn_up_svd.is_some() {
+                let t_scratch =
+                    unsafe { (scratch.svd_scratch.as_ptr() as *mut f32).add(pos * 32) };
                 gpu_dispatch_gemv_with_fallback_on_stream(
                     device,
                     &gpu_layer.ffn_up,
@@ -359,34 +418,20 @@ pub fn gpu_prefill_ssm_layer_on_stream(
                     t_scratch,
                     stream,
                 )?;
-                silu_on_stream(gate_row as *const f32, gate_row, ff_size, stream)?;
-                mul_on_stream(
-                    gate_row as *const f32,
-                    swiglu_row as *const f32,
-                    swiglu_row,
-                    ff_size,
-                    stream,
-                )?;
             } else {
-                gpu_dispatch_fused_gate_up_on_stream(
+                gpu_dispatch_gemv_on_stream(
                     device,
-                    &gpu_layer.ffn_gate,
-                    &gpu_layer.ffn_gate_meta,
                     &gpu_layer.ffn_up,
                     &gpu_layer.ffn_up_meta,
-                    gpu_layer.ffn_gate_up_interleaved.as_ref(),
-                    gpu_layer.ffn_gate_up_interleaved_tile4.as_ref(),
                     normed_row,
-                    std::ptr::null_mut(),
                     swiglu_row,
                     ff_size,
                     h,
                     stream,
                 )?;
             }
+            gelu_on_stream(swiglu_row as *const f32, swiglu_row, ff_size, stream)?;
         }
-    } else {
-        gate_up_result?;
     }
 
     // 16. FFN down projection (batched)

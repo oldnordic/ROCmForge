@@ -31,10 +31,10 @@ impl CpuModelWeights {
             false,
         )?;
 
-        let output_norm = copy_f32(
-            file,
-            &config.tensor_registry.resolve(TensorName::OutputNorm, 0),
-        )?;
+        let output_norm_name = config.tensor_registry.resolve(TensorName::OutputNorm, 0);
+        let output_norm = copy_f32(file, &output_norm_name)
+            .or_else(|_| copy_f32(file, "token_embd_norm.weight"))
+            .map_err(|_| WeightError::TensorNotFound(output_norm_name))?;
 
         // lm_head
         let (lm_head, lm_head_meta, lm_head_tied) = if let Some(view) = file
@@ -115,7 +115,13 @@ impl CpuModelWeights {
         Ok(CpuModelWeights {
             token_emb,
             token_emb_meta,
-            output_norm: load_rfm_f32(&config.tensor_registry.resolve(TensorName::OutputNorm, 0))?,
+            output_norm: load_rfm_f32(&config.tensor_registry.resolve(TensorName::OutputNorm, 0))
+                .or_else(|_| load_rfm_f32("token_embd_norm.weight"))
+                .map_err(|_| {
+                    WeightError::TensorNotFound(
+                        config.tensor_registry.resolve(TensorName::OutputNorm, 0),
+                    )
+                })?,
             output: lm_head.clone(),
             output_meta: lm_head_meta.clone(),
             layers,

@@ -8,6 +8,20 @@ pub fn silu(x: f32) -> f32 {
     x / (1.0 + (-x).exp())
 }
 
+/// GeLU activation: 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x^3)))
+#[inline(always)]
+pub fn gelu(x: f32) -> f32 {
+    let c = x + 0.044715 * x * x * x;
+    0.5 * x * (1.0 + (c * 0.797_884_6).tanh())
+}
+
+/// Apply GeLU in-place to a slice.
+pub fn gelu_inplace(buf: &mut [f32]) {
+    for x in buf.iter_mut() {
+        *x = gelu(*x);
+    }
+}
+
 /// SwiGLU fuse in-place: up[i] = silu(gate[i]) * up[i]
 pub fn silu_fuse(gate: &[f32], up: &mut [f32]) {
     debug_assert_eq!(gate.len(), up.len(), "gate/up dimension mismatch");

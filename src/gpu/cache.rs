@@ -57,6 +57,8 @@ pub struct GpuKvCache {
     pub ssm_state: Option<Vec<GpuBuffer>>,
     /// Persistent SSM convolution states per layer: [num_layers][qkv_dim * (kernel_size - 1)]
     pub ssm_conv_state: Option<Vec<GpuBuffer>>,
+    /// Persistent shortconv convolution states per layer: [num_layers][l_cache * hidden_size]
+    pub conv_state: Option<Vec<GpuBuffer>>,
     /// Maximum sequence length this cache can hold
     pub max_seq_len: usize,
     /// Size of K/V per position: num_kv_heads * head_dim
@@ -106,6 +108,11 @@ impl GpuKvCache {
         }
         if let Some(ref conv_states) = self.ssm_conv_state {
             for buf in conv_states {
+                total += buf.size();
+            }
+        }
+        if let Some(ref shortconv_states) = self.conv_state {
+            for buf in shortconv_states {
                 total += buf.size();
             }
         }
@@ -278,6 +285,11 @@ mod tests {
             tensor_registry: crate::config::TensorNameRegistry::from_scheme(
                 &crate::config::TensorNamingScheme::Gguf,
             ),
+            shortconv_l_cache: None,
+            num_dense_layers: None,
+            num_experts_per_tok: None,
+            use_expert_bias: false,
+            expert_weights_scale: 1.0,
             kv_lora_dim: None,
             kv_frame_codec_enabled: None,
             adastate_anchors_enabled: None,

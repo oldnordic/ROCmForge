@@ -133,9 +133,15 @@ impl GpuModelWeights {
                     return true;
                 }
             }
-            if !crate::gpu::ops::supports_gemv_type(layer.attn_o_meta.wtype)
-                || !crate::gpu::ops::supports_gemv_type(layer.ffn_gate_meta.wtype)
-                || !crate::gpu::ops::supports_gemv_type(layer.ffn_up_meta.wtype)
+            if !crate::gpu::ops::supports_gemv_type(layer.attn_o_meta.wtype) {
+                return true;
+            }
+            if let Some(ref meta) = layer.ffn_gate_meta {
+                if !crate::gpu::ops::supports_gemv_type(meta.wtype) {
+                    return true;
+                }
+            }
+            if !crate::gpu::ops::supports_gemv_type(layer.ffn_up_meta.wtype)
                 || !crate::gpu::ops::supports_gemv_type(layer.ffn_down_meta.wtype)
             {
                 return true;
@@ -207,12 +213,18 @@ impl GpuModelWeights {
             load_tensor_no_track(file, &token_emb_name, config, false, false, device_id)?;
         estimated_vram_used += token_emb.size();
 
-        // Load output norm using registry
+        // Load output norm using registry (fallback to token_embd_norm.weight for LFM-style models)
         let output_norm_name = config.tensor_registry.resolve(TensorName::OutputNorm, 0);
-        let output_norm_view = file
+        let output_norm_view = if let Some(v) = file
             .tensor(&output_norm_name)
             .map_err(|_| GpuError::WeightTransferFailed { layer: 0 })?
-            .ok_or(GpuError::WeightTransferFailed { layer: 0 })?;
+        {
+            v
+        } else {
+            file.tensor("token_embd_norm.weight")
+                .map_err(|_| GpuError::WeightTransferFailed { layer: 0 })?
+                .ok_or(GpuError::WeightTransferFailed { layer: 0 })?
+        };
 
         check_model_load_headroom(budget, estimated_vram_used, output_norm_view.data.len())?;
         let mut output_norm = GpuBuffer::alloc_for_device(output_norm_view.data.len(), device_id)?;
@@ -327,7 +339,10 @@ impl GpuModelWeights {
                         || ssm.beta_meta.wtype == GgmlType::Q6_K
                         || ssm.out_meta.wtype == GgmlType::Q6_K
                 })
-                || layer.ffn_gate_meta.wtype == GgmlType::Q6_K
+                || layer
+                    .ffn_gate_meta
+                    .as_ref()
+                    .is_some_and(|m| m.wtype == GgmlType::Q6_K)
                 || layer.ffn_up_meta.wtype == GgmlType::Q6_K
                 || layer.ffn_down_meta.wtype == GgmlType::Q6_K
             {
@@ -445,18 +460,25 @@ impl GpuModelWeights {
         };
         estimated_vram_used += token_emb.size();
 
-        // Output norm
+        // Output norm (fallback to token_embd_norm.weight for LFM-style models)
         let output_norm_name = "output_norm.weight";
-        let output_norm_view = file
-            .tensor(output_norm_name)
-            .map_err(|e| GpuError::HipApiError {
-                code: -1,
-                description: format!("tensor error: {}", e),
-            })?
-            .ok_or_else(|| GpuError::HipApiError {
-                code: -1,
-                description: format!("tensor not found: {}", output_norm_name),
-            })?;
+        let output_norm_view = if let Some(v) = file.tensor(output_norm_name).map_err(|e| GpuError::HipApiError {
+            code: -1,
+            description: format!("tensor error: {}", e),
+        })? {
+            v
+        } else {
+            file.tensor("token_embd_norm.weight")
+                .map_err(|e| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor error: {}", e),
+                })?
+                .ok_or_else(|| GpuError::HipApiError {
+                    code: -1,
+                    description: "tensor not found: output_norm.weight or token_embd_norm.weight"
+                        .to_string(),
+                })?
+        };
 
         check_model_load_headroom(budget, estimated_vram_used, output_norm_view.data.len())?;
         let output_norm = upload_tensor_bytes_for_device(output_norm_view.data, device_id)?;
@@ -654,7 +676,13 @@ fn gpu_layer_weights_binding_tag(layer: &GpuLayerWeights) -> u64 {
     }
     tag = mix_binding_tag(tag, layer.attn_o.as_ptr() as usize);
     tag = mix_binding_tag(tag, layer.ffn_norm.as_ptr() as usize);
-    tag = mix_binding_tag(tag, layer.ffn_gate.as_ptr() as usize);
+    tag = mix_binding_tag(
+        tag,
+        layer
+            .ffn_gate
+            .as_ref()
+            .map_or(0usize, |buf| buf.as_ptr() as usize),
+    );
     tag = mix_binding_tag(tag, layer.ffn_up.as_ptr() as usize);
     tag = mix_binding_tag(
         tag,

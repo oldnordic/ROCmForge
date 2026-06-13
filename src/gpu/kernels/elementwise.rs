@@ -162,6 +162,16 @@ pub fn scale(x: *const f32, out: *mut f32, scale: f32, n: usize) -> GpuResult<()
 /// GELU activation: out = gelu(x)
 /// gelu(x) = 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
 pub fn gelu(x: *const f32, out: *mut f32, n: usize) -> GpuResult<()> {
+    gelu_on_stream(x, out, n, hipStream_t::null())
+}
+
+/// GELU activation on an explicit HIP stream.
+pub fn gelu_on_stream(
+    x: *const f32,
+    out: *mut f32,
+    n: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
     if n == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
@@ -169,7 +179,7 @@ pub fn gelu(x: *const f32, out: *mut f32, n: usize) -> GpuResult<()> {
         });
     }
 
-    let result = unsafe { gpu_gelu(x, out, n as c_int) };
+    let result = unsafe { gpu_gelu_on_stream(x, out, n as c_int, stream) };
 
     if result != hipError_t::hipSuccess {
         return Err(GpuError::HipApiError {
@@ -800,6 +810,13 @@ unsafe extern "C" {
     fn gpu_scale(x: *const f32, out: *mut f32, scale: f32, n: c_int) -> hipError_t;
 
     fn gpu_gelu(x: *const f32, out: *mut f32, n: c_int) -> hipError_t;
+
+    fn gpu_gelu_on_stream(
+        x: *const f32,
+        out: *mut f32,
+        n: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
 
     fn gpu_silu(x: *const f32, out: *mut f32, n: c_int) -> hipError_t;
 

@@ -3,7 +3,8 @@ use super::attention::gpu_attention_decode_from_state;
 use super::gpu_dispatch_moe_ffn_on_stream;
 use super::gpu_layer_forward_ssm_on_stream;
 use crate::config::ModelConfig;
-use crate::cpu::cache::CpuForwardScratch;
+use crate::cpu::cache::{CpuForwardScratch, CpuKvCache};
+use crate::cpu::forward::cpu_layer_forward;
 use crate::cpu::weights::CpuLayerWeights;
 use crate::gpu::cache::{GpuForwardScratch, GpuKvCache};
 use crate::gpu::device::GpuDevice;
@@ -14,7 +15,7 @@ use crate::gpu::kernels::attention::{
 };
 use crate::gpu::kernels::gemv_norm_qkv_rope_kvwrite_q4_0_f32_dp4a_on_stream;
 use crate::gpu::kernels::rope::rope_heads_from_state_on_stream;
-use crate::gpu::kernels::{mul_on_stream, rms_norm_batched, silu_on_stream};
+use crate::gpu::kernels::{gelu_on_stream, mul_on_stream, rms_norm_batched, silu_on_stream};
 use crate::gpu::ops::{
     gpu_dispatch_fused_gate_up_on_stream, gpu_dispatch_fused_qkv_gqa_on_stream,
     gpu_dispatch_fused_qkv_on_stream, gpu_dispatch_gemv_on_stream,
@@ -22,6 +23,88 @@ use crate::gpu::ops::{
     gpu_dispatch_gemv_with_fallback_on_stream, gpu_dispatch_rms_norm, supports_gemv_type,
 };
 use crate::gpu::weights::GpuLayerWeights;
+
+/// CPU fallback for shortconv layers on GPU.
+fn gpu_shortconv_fallback(
+    device: &GpuDevice,
+    gpu_layer: &GpuLayerWeights,
+    cpu_layer: Option<&CpuLayerWeights>,
+    kv: &mut GpuKvCache,
+    scratch: &mut GpuForwardScratch,
+    cpu_scratch: Option<&mut CpuForwardScratch>,
+    layer_idx: usize,
+    pos: usize,
+    config: &ModelConfig,
+) -> GpuResult<()> {
+    let h = config.hidden_size;
+    let (Some(cpu_l), Some(cpu_s)) = (cpu_layer, cpu_scratch) else {
+        return Err(GpuError::UnsupportedOperation {
+            operation: "shortconv GPU fallback".to_string(),
+            reason: "CPU layer weights and scratch required for shortconv fallback".to_string(),
+        });
+    };
+
+    // Download hidden state from GPU to CPU
+    let mut cpu_hidden = vec![0.0f32; h];
+    super::super::utils::download_f32(&scratch.hidden, &mut cpu_hidden)?;
+
+    // Build minimal CPU KV cache for conv_state sync
+    let mut cpu_kv = CpuKvCache::new(config, 1);
+
+    // Sync conv state from GPU to CPU if present
+    if let Some(ref gpu_conv_states) = kv.conv_state {
+        if let Some(gpu_conv_buf) = gpu_conv_states.get(layer_idx) {
+            let conv_elems = gpu_conv_buf.size() / std::mem::size_of::<f32>();
+            let mut cpu_conv = vec![0.0f32; conv_elems];
+            super::super::utils::download_f32(gpu_conv_buf, &mut cpu_conv)?;
+            cpu_kv.conv_state[layer_idx].copy_from_slice(&cpu_conv);
+        }
+    }
+
+    // Ensure CPU scratch has required sizes
+    ensure_size(&mut cpu_s.normed, h);
+    ensure_size(&mut cpu_s.shortconv_bcx, 3 * h);
+    ensure_size(&mut cpu_s.shortconv_tmp, h);
+    ensure_size(&mut cpu_s.layer_out, h);
+    let ff_size = cpu_l
+        .moe
+        .as_ref()
+        .map(|m| m.ff_size)
+        .unwrap_or(config.intermediate_size);
+    ensure_size(&mut cpu_s.gate, ff_size);
+    ensure_size(&mut cpu_s.swiglu, ff_size);
+
+    // Run CPU layer forward
+    let rope_sin: Vec<f32> = Vec::new();
+    let rope_cos: Vec<f32> = Vec::new();
+    cpu_layer_forward(
+        &mut cpu_hidden,
+        cpu_l,
+        &mut cpu_kv,
+        cpu_s,
+        layer_idx,
+        pos,
+        &rope_sin,
+        &rope_cos,
+        config,
+        false,
+    )
+    .map_err(|e| super::super::utils::cpu_fallback_error("shortconv layer", e))?;
+
+    // Upload hidden state back to GPU
+    super::super::utils::upload_f32(&mut scratch.hidden, &cpu_hidden)?;
+
+    // Sync conv state back to GPU
+    if let Some(ref mut gpu_conv_states) = kv.conv_state {
+        if let Some(gpu_conv_buf) = gpu_conv_states.get_mut(layer_idx) {
+            let cpu_conv = &cpu_kv.conv_state[layer_idx];
+            super::super::utils::upload_f32(gpu_conv_buf, &cpu_conv)?;
+        }
+    }
+
+    device.synchronize()?;
+    Ok(())
+}
 
 /// Hybrid single-layer decode step used by the CLI path and GPU integration tests.
 pub fn gpu_layer_forward_hybrid(
@@ -46,6 +129,21 @@ pub fn gpu_layer_forward_hybrid(
             scratch,
             cpu_scratch,
             layer_idx,
+            config,
+        );
+    }
+
+    // Shortconv layer: CPU fallback for the recurrent conv path.
+    if !gpu_layer.is_attention_layer {
+        return gpu_shortconv_fallback(
+            device,
+            gpu_layer,
+            cpu_layer,
+            kv,
+            scratch,
+            cpu_scratch,
+            layer_idx,
+            pos,
             config,
         );
     }
@@ -282,69 +380,118 @@ pub fn gpu_layer_forward_hybrid(
 
         // 10. FFN
         let ff_size = config.intermediate_size;
-        if supports_gemv_type(gpu_layer.ffn_gate_meta.wtype)
-            && supports_gemv_type(gpu_layer.ffn_up_meta.wtype)
-        {
-            gpu_dispatch_fused_gate_up_on_stream(
-                device,
-                &gpu_layer.ffn_gate,
-                &gpu_layer.ffn_gate_meta,
-                &gpu_layer.ffn_up,
-                &gpu_layer.ffn_up_meta,
-                gpu_layer.ffn_gate_up_interleaved.as_ref(),
-                gpu_layer.ffn_gate_up_interleaved_tile4.as_ref(),
-                scratch.normed.as_ptr() as *const f32,
-                scratch.gate.as_ptr() as *mut f32,
-                scratch.swiglu.as_ptr() as *mut f32,
-                ff_size,
-                h,
-                device.stream(),
-            )?;
-        } else if let (Some(cpu_l), Some(cpu_s)) = (cpu_layer, cpu_scratch.as_mut()) {
-            ensure_size(&mut cpu_s.gate, ff_size);
-            ensure_size(&mut cpu_s.swiglu, ff_size);
-            cpu_fallback_gemv_and_upload(
-                "ffn_gate",
-                &cpu_l.ffn_gate,
-                &cpu_l.ffn_gate_meta,
-                &scratch.normed,
-                &mut cpu_s.normed,
-                &mut cpu_s.gate,
-                &mut scratch.gate,
-                ff_size,
-                h,
-                &mut cpu_s.q8_scratch,
-            )?;
-            cpu_fallback_gemv_and_upload(
-                "ffn_up",
-                &cpu_l.ffn_up,
-                &cpu_l.ffn_up_meta,
-                &scratch.normed,
-                &mut cpu_s.normed,
-                &mut cpu_s.swiglu,
-                &mut scratch.swiglu,
-                ff_size,
-                h,
-                &mut cpu_s.q8_scratch,
-            )?;
-            silu_on_stream(
-                scratch.gate.as_ptr() as *const f32,
-                scratch.gate.as_ptr() as *mut f32,
-                ff_size,
-                device.stream(),
-            )?;
-            mul_on_stream(
-                scratch.gate.as_ptr() as *const f32,
+        if let (Some(gate_buf), Some(gate_meta)) = (
+            gpu_layer.ffn_gate.as_ref(),
+            gpu_layer.ffn_gate_meta.as_ref(),
+        ) {
+            if supports_gemv_type(gate_meta.wtype)
+                && supports_gemv_type(gpu_layer.ffn_up_meta.wtype)
+            {
+                gpu_dispatch_fused_gate_up_on_stream(
+                    device,
+                    gate_buf,
+                    gate_meta,
+                    &gpu_layer.ffn_up,
+                    &gpu_layer.ffn_up_meta,
+                    gpu_layer.ffn_gate_up_interleaved.as_ref(),
+                    gpu_layer.ffn_gate_up_interleaved_tile4.as_ref(),
+                    scratch.normed.as_ptr() as *const f32,
+                    scratch.gate.as_ptr() as *mut f32,
+                    scratch.swiglu.as_ptr() as *mut f32,
+                    ff_size,
+                    h,
+                    device.stream(),
+                )?;
+            } else if let (Some(cpu_l), Some(cpu_s)) = (cpu_layer, cpu_scratch.as_mut()) {
+                ensure_size(&mut cpu_s.gate, ff_size);
+                ensure_size(&mut cpu_s.swiglu, ff_size);
+                if let (Some(gate_w), Some(gate_m)) = (
+                    cpu_l.ffn_gate.as_ref(),
+                    cpu_l.ffn_gate_meta.as_ref(),
+                ) {
+                    cpu_fallback_gemv_and_upload(
+                        "ffn_gate",
+                        gate_w,
+                        gate_m,
+                        &scratch.normed,
+                        &mut cpu_s.normed,
+                        &mut cpu_s.gate,
+                        &mut scratch.gate,
+                        ff_size,
+                        h,
+                        &mut cpu_s.q8_scratch,
+                    )?;
+                }
+                cpu_fallback_gemv_and_upload(
+                    "ffn_up",
+                    &cpu_l.ffn_up,
+                    &cpu_l.ffn_up_meta,
+                    &scratch.normed,
+                    &mut cpu_s.normed,
+                    &mut cpu_s.swiglu,
+                    &mut scratch.swiglu,
+                    ff_size,
+                    h,
+                    &mut cpu_s.q8_scratch,
+                )?;
+                silu_on_stream(
+                    scratch.gate.as_ptr() as *const f32,
+                    scratch.gate.as_ptr() as *mut f32,
+                    ff_size,
+                    device.stream(),
+                )?;
+                mul_on_stream(
+                    scratch.gate.as_ptr() as *const f32,
+                    scratch.swiglu.as_ptr() as *const f32,
+                    scratch.swiglu.as_ptr() as *mut f32,
+                    ff_size,
+                    device.stream(),
+                )?;
+            } else {
+                return Err(GpuError::UnsupportedWeightType {
+                    tensor: "ffn_gate/up".to_string(),
+                    wtype: gate_meta.wtype,
+                });
+            }
+        } else {
+            // Standard FFN (non-SwiGLU): up -> gelu -> down
+            if supports_gemv_type(gpu_layer.ffn_up_meta.wtype) {
+                gpu_dispatch_gemv_on_stream(
+                    device,
+                    &gpu_layer.ffn_up,
+                    &gpu_layer.ffn_up_meta,
+                    scratch.normed.as_ptr() as *const f32,
+                    scratch.swiglu.as_ptr() as *mut f32,
+                    ff_size,
+                    h,
+                    device.stream(),
+                )?;
+            } else if let (Some(cpu_l), Some(cpu_s)) = (cpu_layer, cpu_scratch.as_mut()) {
+                ensure_size(&mut cpu_s.swiglu, ff_size);
+                cpu_fallback_gemv_and_upload(
+                    "ffn_up",
+                    &cpu_l.ffn_up,
+                    &cpu_l.ffn_up_meta,
+                    &scratch.normed,
+                    &mut cpu_s.normed,
+                    &mut cpu_s.swiglu,
+                    &mut scratch.swiglu,
+                    ff_size,
+                    h,
+                    &mut cpu_s.q8_scratch,
+                )?;
+            } else {
+                return Err(GpuError::UnsupportedWeightType {
+                    tensor: "ffn_up".to_string(),
+                    wtype: gpu_layer.ffn_up_meta.wtype,
+                });
+            }
+            gelu_on_stream(
                 scratch.swiglu.as_ptr() as *const f32,
                 scratch.swiglu.as_ptr() as *mut f32,
                 ff_size,
                 device.stream(),
             )?;
-        } else {
-            return Err(GpuError::UnsupportedWeightType {
-                tensor: "ffn_gate/up".to_string(),
-                wtype: gpu_layer.ffn_gate_meta.wtype,
-            });
         }
 
         // 11. FFN output projection + residual
@@ -595,73 +742,122 @@ pub fn gpu_layer_forward_hybrid(
         device.stream(),
     )?;
 
-    if gpu_dispatch_moe_ffn_on_stream(device, gpu_layer, scratch, h, ff_size)? {
+    if gpu_dispatch_moe_ffn_on_stream(device, gpu_layer, scratch, h, ff_size, config)? {
         return Ok(());
     }
 
-    if supports_gemv_type(gpu_layer.ffn_gate_meta.wtype)
-        && supports_gemv_type(gpu_layer.ffn_up_meta.wtype)
-    {
-        gpu_dispatch_fused_gate_up_on_stream(
-            device,
-            &gpu_layer.ffn_gate,
-            &gpu_layer.ffn_gate_meta,
-            &gpu_layer.ffn_up,
-            &gpu_layer.ffn_up_meta,
-            gpu_layer.ffn_gate_up_interleaved.as_ref(),
-            gpu_layer.ffn_gate_up_interleaved_tile4.as_ref(),
-            scratch.normed.as_ptr() as *const f32,
-            scratch.gate.as_ptr() as *mut f32,
-            scratch.swiglu.as_ptr() as *mut f32,
-            ff_size,
-            h,
-            device.stream(),
-        )?;
-    } else if let (Some(cpu_l), Some(cpu_s)) = (cpu_layer, cpu_scratch.as_mut()) {
-        ensure_size(&mut cpu_s.gate, ff_size);
-        ensure_size(&mut cpu_s.swiglu, ff_size);
-        cpu_fallback_gemv_and_upload(
-            "ffn_gate",
-            &cpu_l.ffn_gate,
-            &cpu_l.ffn_gate_meta,
-            &scratch.normed,
-            &mut cpu_s.normed,
-            &mut cpu_s.gate,
-            &mut scratch.gate,
-            ff_size,
-            h,
-            &mut cpu_s.q8_scratch,
-        )?;
-        cpu_fallback_gemv_and_upload(
-            "ffn_up",
-            &cpu_l.ffn_up,
-            &cpu_l.ffn_up_meta,
-            &scratch.normed,
-            &mut cpu_s.normed,
-            &mut cpu_s.swiglu,
-            &mut scratch.swiglu,
-            ff_size,
-            h,
-            &mut cpu_s.q8_scratch,
-        )?;
-        silu_on_stream(
-            scratch.gate.as_ptr() as *const f32,
-            scratch.gate.as_ptr() as *mut f32,
-            ff_size,
-            device.stream(),
-        )?;
-        mul_on_stream(
-            scratch.gate.as_ptr() as *const f32,
+    if let (Some(gate_buf), Some(gate_meta)) = (
+        gpu_layer.ffn_gate.as_ref(),
+        gpu_layer.ffn_gate_meta.as_ref(),
+    ) {
+        if supports_gemv_type(gate_meta.wtype)
+            && supports_gemv_type(gpu_layer.ffn_up_meta.wtype)
+        {
+            gpu_dispatch_fused_gate_up_on_stream(
+                device,
+                gate_buf,
+                gate_meta,
+                &gpu_layer.ffn_up,
+                &gpu_layer.ffn_up_meta,
+                gpu_layer.ffn_gate_up_interleaved.as_ref(),
+                gpu_layer.ffn_gate_up_interleaved_tile4.as_ref(),
+                scratch.normed.as_ptr() as *const f32,
+                scratch.gate.as_ptr() as *mut f32,
+                scratch.swiglu.as_ptr() as *mut f32,
+                ff_size,
+                h,
+                device.stream(),
+            )?;
+        } else if let (Some(cpu_l), Some(cpu_s)) = (cpu_layer, cpu_scratch.as_mut()) {
+            ensure_size(&mut cpu_s.gate, ff_size);
+            ensure_size(&mut cpu_s.swiglu, ff_size);
+            if let (Some(gate_w), Some(gate_m)) = (
+                cpu_l.ffn_gate.as_ref(),
+                cpu_l.ffn_gate_meta.as_ref(),
+            ) {
+                cpu_fallback_gemv_and_upload(
+                    "ffn_gate",
+                    gate_w,
+                    gate_m,
+                    &scratch.normed,
+                    &mut cpu_s.normed,
+                    &mut cpu_s.gate,
+                    &mut scratch.gate,
+                    ff_size,
+                    h,
+                    &mut cpu_s.q8_scratch,
+                )?;
+            }
+            cpu_fallback_gemv_and_upload(
+                "ffn_up",
+                &cpu_l.ffn_up,
+                &cpu_l.ffn_up_meta,
+                &scratch.normed,
+                &mut cpu_s.normed,
+                &mut cpu_s.swiglu,
+                &mut scratch.swiglu,
+                ff_size,
+                h,
+                &mut cpu_s.q8_scratch,
+            )?;
+            silu_on_stream(
+                scratch.gate.as_ptr() as *const f32,
+                scratch.gate.as_ptr() as *mut f32,
+                ff_size,
+                device.stream(),
+            )?;
+            mul_on_stream(
+                scratch.gate.as_ptr() as *const f32,
+                scratch.swiglu.as_ptr() as *const f32,
+                scratch.swiglu.as_ptr() as *mut f32,
+                ff_size,
+                device.stream(),
+            )?;
+        } else {
+            return Err(GpuError::UnsupportedWeightType {
+                tensor: "ffn_gate/up".to_string(),
+                wtype: gate_meta.wtype,
+            });
+        }
+    } else {
+        // Standard FFN (non-SwiGLU): up -> gelu -> down
+        if supports_gemv_type(gpu_layer.ffn_up_meta.wtype) {
+            gpu_dispatch_gemv_on_stream(
+                device,
+                &gpu_layer.ffn_up,
+                &gpu_layer.ffn_up_meta,
+                scratch.normed.as_ptr() as *const f32,
+                scratch.swiglu.as_ptr() as *mut f32,
+                ff_size,
+                h,
+                device.stream(),
+            )?;
+        } else if let (Some(cpu_l), Some(cpu_s)) = (cpu_layer, cpu_scratch.as_mut()) {
+            ensure_size(&mut cpu_s.swiglu, ff_size);
+            cpu_fallback_gemv_and_upload(
+                "ffn_up",
+                &cpu_l.ffn_up,
+                &cpu_l.ffn_up_meta,
+                &scratch.normed,
+                &mut cpu_s.normed,
+                &mut cpu_s.swiglu,
+                &mut scratch.swiglu,
+                ff_size,
+                h,
+                &mut cpu_s.q8_scratch,
+            )?;
+        } else {
+            return Err(GpuError::UnsupportedWeightType {
+                tensor: "ffn_up".to_string(),
+                wtype: gpu_layer.ffn_up_meta.wtype,
+            });
+        }
+        gelu_on_stream(
             scratch.swiglu.as_ptr() as *const f32,
             scratch.swiglu.as_ptr() as *mut f32,
             ff_size,
             device.stream(),
         )?;
-    } else {
-        return Err(GpuError::UnsupportedWeightType {
-            tensor: "ffn_gate/up".to_string(),
-            wtype: gpu_layer.ffn_gate_meta.wtype,
-        });
     }
 
     if supports_gemv_type(gpu_layer.ffn_down_meta.wtype) {

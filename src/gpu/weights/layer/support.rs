@@ -125,11 +125,22 @@ impl CpuCompressedExperts {
     }
 }
 
+/// Shortconv (depthwise causal conv1d) weights for LFM2 layers, resident in VRAM.
+pub struct GpuShortconvWeights {
+    pub in_proj: GpuBuffer,
+    pub in_proj_meta: WeightMeta,
+    pub conv: GpuBuffer,
+    pub conv_meta: WeightMeta,
+    pub out_proj: GpuBuffer,
+    pub out_proj_meta: WeightMeta,
+}
+
 /// Mixture-of-Experts side weights for Qwen-style MoE layers.
 pub struct GpuMoeWeights {
     pub router: GpuBuffer,
     pub router_meta: WeightMeta,
     pub router_svd: Option<SvdCorrection>,
+    pub router_bias: Option<GpuBuffer>,
     pub shared_gate: Option<GpuBuffer>,
     pub shared_gate_meta: Option<WeightMeta>,
     pub shared_gate_svd: Option<SvdCorrection>,

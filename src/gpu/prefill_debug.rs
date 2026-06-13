@@ -221,19 +221,27 @@ pub(crate) fn compute_layer0_cpu_reference(
         );
         normed_ffn[pos * h..(pos + 1) * h].copy_from_slice(&t_normed_ffn);
 
-        // 8. FFN Gate + Up
+        // 8. FFN Gate + Up (SwiGLU) or Up only (Standard)
         let mut t_gate = vec![0.0f32; ff_size];
         let mut t_swiglu = vec![0.0f32; ff_size];
-        cpu_dispatch_gemv(
+        if let (Some(ref gate_w), Some(ref gate_m)) = (
             &layer_weights.ffn_gate,
             &layer_weights.ffn_gate_meta,
-            &t_normed_ffn,
-            &mut t_gate,
-            ff_size,
-            h,
-            Some(&mut q8_scratch),
-        )
-        .expect("M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path");
+        ) {
+            cpu_dispatch_gemv(
+                gate_w,
+                gate_m,
+                &t_normed_ffn,
+                &mut t_gate,
+                ff_size,
+                h,
+                Some(&mut q8_scratch),
+            )
+            .expect(
+                "M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path",
+            );
+            gate[pos * ff_size..(pos + 1) * ff_size].copy_from_slice(&t_gate);
+        }
         cpu_dispatch_gemv(
             &layer_weights.ffn_up,
             &layer_weights.ffn_up_meta,
@@ -244,9 +252,12 @@ pub(crate) fn compute_layer0_cpu_reference(
             Some(&mut q8_scratch),
         )
         .expect("M-ALLOW: cpu_dispatch_gemv infallible for valid weight dims in validation path");
-        gate[pos * ff_size..(pos + 1) * ff_size].copy_from_slice(&t_gate);
 
-        crate::cpu::ops::silu_fuse(&t_gate, &mut t_swiglu);
+        if layer_weights.ffn_gate.is_some() {
+            crate::cpu::ops::silu_fuse(&t_gate, &mut t_swiglu);
+        } else {
+            crate::cpu::ops::gelu_inplace(&mut t_swiglu);
+        }
         swiglu[pos * ff_size..(pos + 1) * ff_size].copy_from_slice(&t_swiglu);
 
         // 9. FFN Down Projection

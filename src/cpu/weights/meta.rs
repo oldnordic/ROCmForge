@@ -41,7 +41,22 @@ pub struct WeightMeta {
     pub svd_k: Option<u32>,
 }
 
+impl Default for WeightMeta {
+    fn default() -> Self {
+        Self {
+            wtype: GgmlType::F32,
+            dims: vec![],
+            needs_transpose: false,
+            svd_k: None,
+        }
+    }
+}
+
 impl WeightMeta {
+    pub fn is_empty(&self) -> bool {
+        self.dims.is_empty()
+    }
+
     /// Create metadata from a GGUF tensor view.
     pub fn from_view(view: &crate::loader::TensorView<'_>, needs_transpose: bool) -> Self {
         Self {

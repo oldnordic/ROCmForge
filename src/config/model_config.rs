@@ -1,7 +1,7 @@
 use crate::loader::{GgufFile, LoadError};
 
 use super::tensor_names::TensorNameRegistry;
-use super::traits::{AttentionLayout, ModelTraits, RopeStyle};
+use super::traits::{AttentionLayout, FfnLayout, ModelTraits, RopeStyle};
 
 /// All hyperparameters needed to run inference.
 ///
@@ -33,12 +33,20 @@ pub struct ModelConfig {
     pub rope_neox: bool,
     pub use_attention_bias: bool,
     pub attention_layout: AttentionLayout,
+    pub ffn_layout: FfnLayout,
 
     /// The raw architecture string from GGUF (e.g. "qwen2", "llama")
     pub architecture: String,
 
     /// Tensor name registry for this model
     pub tensor_registry: TensorNameRegistry,
+
+    // LFM2 MoE-specific parameters
+    pub shortconv_l_cache: Option<usize>,
+    pub num_dense_layers: Option<usize>,
+    pub num_experts_per_tok: Option<usize>,
+    pub use_expert_bias: bool,
+    pub expert_weights_scale: f32,
 
     // Research & advanced compression synergy parameters
     pub kv_lora_dim: Option<usize>,
@@ -103,8 +111,14 @@ impl ModelConfig {
             rope_neox: traits.rope_style == RopeStyle::NeoX,
             use_attention_bias: traits.use_attention_bias,
             attention_layout: traits.attention_layout,
+            ffn_layout: traits.ffn_layout,
             architecture: meta.architecture.clone(),
             tensor_registry: TensorNameRegistry::from_scheme(&traits.tensor_naming),
+            shortconv_l_cache: meta.shortconv_l_cache(),
+            num_dense_layers: meta.num_dense_layers(),
+            num_experts_per_tok: meta.num_experts_per_tok(),
+            use_expert_bias: meta.use_expert_bias(),
+            expert_weights_scale: meta.expert_weights_scale(),
             kv_lora_dim: None,
             kv_frame_codec_enabled: None,
             adastate_anchors_enabled: None,
@@ -141,8 +155,14 @@ impl ModelConfig {
             rope_neox: meta.rope_neox,
             use_attention_bias: meta.use_attention_bias,
             attention_layout: traits.attention_layout,
+            ffn_layout: traits.ffn_layout,
             architecture: meta.architecture.clone(),
             tensor_registry: TensorNameRegistry::from_scheme(&traits.tensor_naming),
+            shortconv_l_cache: None,
+            num_dense_layers: None,
+            num_experts_per_tok: None,
+            use_expert_bias: false,
+            expert_weights_scale: 1.0,
             kv_lora_dim: meta.kv_lora_dim.map(|d| d.next_power_of_two()),
             kv_frame_codec_enabled: meta.kv_frame_codec_enabled,
             adastate_anchors_enabled: meta.adastate_anchors_enabled,
@@ -268,9 +288,15 @@ mod tests {
             rope_neox: true,
             use_attention_bias: true,
             attention_layout: AttentionLayout::SplitQkv,
+            ffn_layout: FfnLayout::SwiGLU,
             architecture: "qwen2".to_string(),
             tensor_registry: TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf),
             rope_freq: vec![1.0, 0.5],
+            shortconv_l_cache: None,
+            num_dense_layers: None,
+            num_experts_per_tok: None,
+            use_expert_bias: false,
+            expert_weights_scale: 1.0,
             kv_lora_dim: None,
             kv_frame_codec_enabled: None,
             adastate_anchors_enabled: None,
@@ -298,9 +324,15 @@ mod tests {
             rope_neox: true,
             use_attention_bias: true,
             attention_layout: AttentionLayout::SplitQkv,
+            ffn_layout: FfnLayout::SwiGLU,
             architecture: "qwen2".to_string(),
             tensor_registry: TensorNameRegistry::from_scheme(&TensorNamingScheme::Gguf),
             rope_freq: vec![1.0, 0.5],
+            shortconv_l_cache: None,
+            num_dense_layers: None,
+            num_experts_per_tok: None,
+            use_expert_bias: false,
+            expert_weights_scale: 1.0,
             kv_lora_dim: None,
             kv_frame_codec_enabled: None,
             adastate_anchors_enabled: None,

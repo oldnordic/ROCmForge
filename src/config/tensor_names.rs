@@ -32,9 +32,15 @@ pub enum TensorName {
     FfnUpExps,
     FfnDownExps,
     FfnGateInp,
+    // Shortconv tensors (LFM2 family)
+    ShortconvInProj,
+    ShortconvConv,
+    ShortconvOutProj,
     // Attention normalization (optional, for some MoE models)
     AttnQNorm,
     AttnKNorm,
+    // Expert routing bias (LFM2 MoE)
+    ExpProbsBBias,
     // Normalization
     AttnNorm,
     FfnNorm,
@@ -242,6 +248,20 @@ impl TensorNameRegistry {
             "blk.{}.ffn_gate_inp.weight".to_string(),
         );
 
+        // Shortconv tensors (LFM2 family)
+        templates.insert(
+            TensorName::ShortconvInProj,
+            "blk.{}.shortconv.in_proj.weight".to_string(),
+        );
+        templates.insert(
+            TensorName::ShortconvConv,
+            "blk.{}.shortconv.conv.weight".to_string(),
+        );
+        templates.insert(
+            TensorName::ShortconvOutProj,
+            "blk.{}.shortconv.out_proj.weight".to_string(),
+        );
+
         // Attention normalization (optional, for MoE models)
         templates.insert(
             TensorName::AttnQNorm,
@@ -250,6 +270,12 @@ impl TensorNameRegistry {
         templates.insert(
             TensorName::AttnKNorm,
             "blk.{}.attn_k_norm.weight".to_string(),
+        );
+
+        // Expert routing bias (LFM2 MoE)
+        templates.insert(
+            TensorName::ExpProbsBBias,
+            "blk.{}.exp_probs_b.bias".to_string(),
         );
 
         // Normalization
@@ -298,8 +324,12 @@ impl TensorNameRegistry {
             "FfnUpExps",
             "FfnDownExps",
             "FfnGateInp",
+            "ShortconvInProj",
+            "ShortconvConv",
+            "ShortconvOutProj",
             "AttnQNorm",
             "AttnKNorm",
+            "ExpProbsBBias",
             "AttnNorm",
             "FfnNorm",
             "TokenEmb",

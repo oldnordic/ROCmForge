@@ -287,11 +287,29 @@ impl GpuKvCache {
         let (pos_bytes, block_size_tokens, block_allocator, block_table, paged_k, paged_v) =
             init_paged_state(config.num_layers, layout.layer_bytes, max_seq_len);
 
+        let conv_state = if config.shortconv_l_cache.is_some()
+            || config.architecture == "lfm2moe"
+        {
+            let l_cache = config.shortconv_l_cache.unwrap_or(3);
+            let conv_bytes = l_cache * config.hidden_size * std::mem::size_of::<f32>();
+            let mut states = Vec::with_capacity(config.num_layers);
+            for layer in 0..config.num_layers {
+                let buf = GpuBuffer::alloc(conv_bytes)
+                    .map_err(|e| layer_allocation_error("shortconv conv state", layer, e))?;
+                super::super::ffi::hip_memset(buf.as_ptr(), 0, conv_bytes)?;
+                states.push(buf);
+            }
+            Some(states)
+        } else {
+            None
+        };
+
         Ok(Self {
             k: storage.k,
             v: storage.v,
             ssm_state: hybrid.ssm_state,
             ssm_conv_state: hybrid.ssm_conv_state,
+            conv_state,
             max_seq_len,
             kv_size: layout.kv_size,
             num_layers: config.num_layers,
@@ -344,6 +362,11 @@ mod tests {
             tensor_registry: crate::config::TensorNameRegistry::from_scheme(
                 &crate::config::TensorNamingScheme::Gguf,
             ),
+            shortconv_l_cache: None,
+            num_dense_layers: None,
+            num_experts_per_tok: None,
+            use_expert_bias: false,
+            expert_weights_scale: 1.0,
             kv_lora_dim: None,
             kv_frame_codec_enabled: None,
             adastate_anchors_enabled: None,

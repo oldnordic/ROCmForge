@@ -9,7 +9,7 @@ pub mod gemv;
 pub mod norm;
 pub mod rope;
 
-pub use activation::{argmax, online_softmax_update, silu, silu_fuse, softmax};
+pub use activation::{argmax, gelu, gelu_inplace, online_softmax_update, silu, silu_fuse, softmax};
 pub use arithmetic::{add_bias, add_bias_batched, residual_add, residual_add_batched};
 pub use attention::{flash_attn_decode, flash_attn_prefill};
 pub use avx2::{

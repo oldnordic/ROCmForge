@@ -29,7 +29,7 @@ pub use attention::{
 pub use elementwise::{
     add, add_batched, add_on_stream, argmax_f32, argmax_f32_on_stream,
     dispatch_gemv_f32_add_on_stream, dispatch_gemv_f32_on_stream, dot_f16_f32_on_stream,
-    embed_q4_0_batch, embed_q4_0_token, embed_q8_0_batch, embed_q8_0_token, gelu,
+    embed_q4_0_batch, embed_q4_0_token, embed_q8_0_batch, embed_q8_0_token, gelu, gelu_on_stream,
     increment_decode_state_on_stream, mul, mul_batched, mul_on_stream, scale, silu, silu_on_stream,
     weighted_add_on_stream, zero_fill,
 };

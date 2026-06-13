@@ -14,8 +14,8 @@ mod load_rfm;
 #[path = "layer/support.rs"]
 mod support;
 pub use self::support::{
-    CpuCompressedExperts, CpuMpoExperts, GpuMoeWeights, GpuMpoWeights, GpuSparseCsrWeights,
-    GpuSsmWeights, SvdCorrection,
+    CpuCompressedExperts, CpuMpoExperts, GpuMoeWeights, GpuMpoWeights, GpuShortconvWeights,
+    GpuSparseCsrWeights, GpuSsmWeights, SvdCorrection,
 };
 
 // ── GPU Layer Weights ─────────────────────────────────────────────────────────────
@@ -59,15 +59,19 @@ pub struct GpuLayerWeights {
     pub attn_gate_svd: Option<SvdCorrection>,
     /// SSM tensors used by Qwen35 hybrid layers.
     pub ssm: Option<GpuSsmWeights>,
+    /// Whether this layer uses attention (true) or shortconv (false).
+    pub is_attention_layer: bool,
+    /// Shortconv tensors used by LFM2 hybrid layers.
+    pub shortconv: Option<GpuShortconvWeights>,
     /// Attention output projection (quantized)
     pub attn_o: GpuBuffer,
     pub attn_o_meta: WeightMeta,
     pub attn_o_svd: Option<SvdCorrection>,
     /// RMS norm weights for FFN (always F32)
     pub ffn_norm: GpuBuffer,
-    /// FFN gate projection (SwiGLU gate) (quantized)
-    pub ffn_gate: GpuBuffer,
-    pub ffn_gate_meta: WeightMeta,
+    /// FFN gate projection (SwiGLU gate) (quantized) — None for standard FFN (Phi-3)
+    pub ffn_gate: Option<GpuBuffer>,
+    pub ffn_gate_meta: Option<WeightMeta>,
     pub ffn_gate_svd: Option<SvdCorrection>,
     /// FFN up projection (quantized)
     pub ffn_up: GpuBuffer,

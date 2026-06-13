@@ -141,6 +141,29 @@ impl GgufMetadata {
             0
         }
     }
+
+    pub fn shortconv_l_cache(&self) -> Option<usize> {
+        self.resolve_usize(&["shortconv.l_cache", "conv_L_cache"])
+    }
+
+    pub fn num_dense_layers(&self) -> Option<usize> {
+        self.resolve_usize(&["num_dense_layers"])
+    }
+
+    pub fn num_experts_per_tok(&self) -> Option<usize> {
+        self.resolve_usize(&["num_experts_per_tok", "moe_top_k", "top_k"])
+    }
+
+    pub fn use_expert_bias(&self) -> bool {
+        self.get("use_expert_bias")
+            .map(|s| s == "true" || s == "1")
+            .unwrap_or(true)
+    }
+
+    pub fn expert_weights_scale(&self) -> f32 {
+        self.resolve_f32(&["expert_weights_scale", "routed_scaling_factor"])
+            .unwrap_or(1.0)
+    }
 }
 
 #[cfg(test)]

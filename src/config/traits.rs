@@ -20,6 +20,17 @@ pub enum AttentionLayout {
     FusedQkv,
 }
 
+/// How the FFN (feed-forward network) is structured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfnLayout {
+    /// SwiGLU: gate + up → SiLU(gate) * up → down
+    /// Used by LLaMA, Mistral, Qwen2, Gemma, etc.
+    SwiGLU,
+    /// Standard FFN: up → activation → down
+    /// No separate gate projection. Used by Phi-3.
+    Standard,
+}
+
 /// Hardcoded structural/behavioral differences between architecture families.
 /// All numeric *values* (sizes, epsilons) still come from GGUF metadata.
 #[derive(Debug, Clone)]
@@ -34,6 +45,8 @@ pub struct ModelTraits {
     pub default_norm_eps: f32,
     /// Tensor naming convention used by this architecture
     pub tensor_naming: TensorNamingScheme,
+    /// FFN structure: SwiGLU (gate+up+down) or Standard (up+down only)
+    pub ffn_layout: FfnLayout,
 }
 
 static REGISTRY: OnceLock<HashMap<&'static str, ModelTraits>> = OnceLock::new();
@@ -46,13 +59,14 @@ static DEFAULT_TRAITS: ModelTraits = ModelTraits {
     default_rope_theta: 10000.0,
     default_norm_eps: 1e-5,
     tensor_naming: TensorNamingScheme::Gguf,
+    ffn_layout: FfnLayout::SwiGLU,
 };
 
 fn registry() -> &'static HashMap<&'static str, ModelTraits> {
     REGISTRY.get_or_init(|| {
         let mut m = HashMap::new();
 
-        // LLaMA family - consecutive RoPE, no bias, split QKV
+        // LLaMA family - consecutive RoPE, no bias, split QKV, SwiGLU
         let llama = ModelTraits {
             rope_style: RopeStyle::Normal,
             attention_layout: AttentionLayout::SplitQkv,
@@ -60,6 +74,7 @@ fn registry() -> &'static HashMap<&'static str, ModelTraits> {
             default_rope_theta: 10000.0,
             default_norm_eps: 1e-5,
             tensor_naming: TensorNamingScheme::Gguf,
+            ffn_layout: FfnLayout::SwiGLU,
         };
         for arch in &["llama", "mistral", "baichuan", "internlm2", "deepseek"] {
             m.insert(*arch, llama.clone());
@@ -73,7 +88,7 @@ fn registry() -> &'static HashMap<&'static str, ModelTraits> {
         );
         m.insert("mixtral", llama.clone()); // MoE variant, same behaviors
 
-        // Qwen2 family - NeoX RoPE, QKV bias, split QKV, high rope theta, GGUF naming
+        // Qwen2 family - NeoX RoPE, QKV bias, split QKV, high rope theta, GGUF naming, SwiGLU
         let qwen2 = ModelTraits {
             rope_style: RopeStyle::NeoX,
             attention_layout: AttentionLayout::SplitQkv,
@@ -81,12 +96,13 @@ fn registry() -> &'static HashMap<&'static str, ModelTraits> {
             default_rope_theta: 1_000_000.0,
             default_norm_eps: 1e-6,
             tensor_naming: TensorNamingScheme::Gguf,
+            ffn_layout: FfnLayout::SwiGLU,
         };
         for arch in &["qwen2", "qwen2moe"] {
             m.insert(*arch, qwen2.clone());
         }
 
-        // Qwen3 family - NeoX RoPE, QKV bias, split QKV, high rope theta, GGUF MoE naming
+        // Qwen3 family - NeoX RoPE, QKV bias, split QKV, high rope theta, GGUF MoE naming, SwiGLU
         // Note: Qwen3 uses MoE architecture with _exps suffix for expert tensors
         let qwen3 = ModelTraits {
             rope_style: RopeStyle::NeoX,
@@ -95,6 +111,7 @@ fn registry() -> &'static HashMap<&'static str, ModelTraits> {
             default_rope_theta: 1_000_000.0,
             default_norm_eps: 1e-6,
             tensor_naming: TensorNamingScheme::GgufMoE,
+            ffn_layout: FfnLayout::SwiGLU,
         };
         for arch in &["qwen3", "qwen3moe"] {
             m.insert(*arch, qwen3.clone());
@@ -120,6 +137,22 @@ fn registry() -> &'static HashMap<&'static str, ModelTraits> {
                 default_rope_theta: 10_000_000.0,
                 default_norm_eps: 1e-6,
                 tensor_naming: TensorNamingScheme::Gguf,
+                ffn_layout: FfnLayout::SwiGLU,
+            },
+        );
+
+        // LFM2.5 MoE — Liquid Foundation Model 2 MoE
+        // Mixed attention/shortconv layers, MoE FFN, QK-Norm, SwiGLU
+        m.insert(
+            "lfm2moe",
+            ModelTraits {
+                rope_style: RopeStyle::Normal,
+                attention_layout: AttentionLayout::SplitQkv,
+                use_attention_bias: false,
+                default_rope_theta: 1_000_000.0,
+                default_norm_eps: 1e-5,
+                tensor_naming: TensorNamingScheme::GgufMoE,
+                ffn_layout: FfnLayout::SwiGLU,
             },
         );
 
@@ -133,7 +166,7 @@ fn registry() -> &'static HashMap<&'static str, ModelTraits> {
             },
         );
 
-        // Phi family
+        // Phi family — standard FFN (no SwiGLU gate), fused QKV
         m.insert(
             "phi3",
             ModelTraits {
@@ -143,6 +176,7 @@ fn registry() -> &'static HashMap<&'static str, ModelTraits> {
                 default_rope_theta: 10000.0,
                 default_norm_eps: 1e-5,
                 tensor_naming: TensorNamingScheme::Gguf,
+                ffn_layout: FfnLayout::Standard,
             },
         );
         m.insert("phi2", llama.clone());
@@ -155,6 +189,7 @@ fn registry() -> &'static HashMap<&'static str, ModelTraits> {
             default_rope_theta: 10000.0,
             default_norm_eps: 1e-6,
             tensor_naming: TensorNamingScheme::Gguf,
+            ffn_layout: FfnLayout::SwiGLU,
         };
         for arch in &["gemma", "gemma2", "gemma3"] {
             m.insert(*arch, gemma.clone());
@@ -170,6 +205,7 @@ fn registry() -> &'static HashMap<&'static str, ModelTraits> {
                 default_rope_theta: 10000.0,
                 default_norm_eps: 1e-5,
                 tensor_naming: TensorNamingScheme::Gguf,
+                ffn_layout: FfnLayout::SwiGLU,
             },
         );
 

@@ -15,4 +15,4 @@ mod traits;
 pub use chat_template::{detect_chat_template, ChatTemplate};
 pub use model_config::{ConfigError, ModelConfig};
 pub use tensor_names::{TensorName, TensorNameRegistry, TensorNamingScheme};
-pub use traits::{AttentionLayout, ModelTraits, RopeStyle};
+pub use traits::{AttentionLayout, FfnLayout, ModelTraits, RopeStyle};
