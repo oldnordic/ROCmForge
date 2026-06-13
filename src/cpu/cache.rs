@@ -140,6 +140,7 @@ impl CpuKvCache {
 /// Reusable scratch buffers for a single forward pass.
 ///
 /// Allocated once and reused across all layers to avoid repeated allocations.
+#[derive(Debug)]
 pub struct CpuForwardScratch {
     /// Normalized hidden state [hidden_size]
     pub normed: AlignedVec<f32>,

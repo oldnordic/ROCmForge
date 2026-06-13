@@ -56,6 +56,15 @@ impl GpuKvCache {
     pub fn v_ptr(&self, layer: usize) -> GpuResult<*mut f32> {
         layer_ptr(&self.v, layer, self.num_layers)
     }
+
+    /// Get GPU pointer to shortconv conv state for a layer.
+    pub fn conv_state_ptr(&self, layer: usize) -> GpuResult<Option<*mut f32>> {
+        if let Some(ref states) = self.conv_state {
+            layer_ptr(states, layer, self.num_layers).map(Some)
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 #[cfg(test)]

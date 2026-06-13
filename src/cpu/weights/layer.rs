@@ -7,7 +7,7 @@ use super::shortconv_moe::{
 use super::ssm::{
     load_qwen35_ssm_gguf, load_qwen35_ssm_rfm, qwen35_post_attention_norm_name, CpuSsmWeights,
 };
-use crate::config::{ModelConfig, TensorName};
+use crate::config::{ModelConfig, TensorName, TensorRole};
 use crate::cpu::transpose::compute_transpose_flag;
 use crate::loader::{GgmlType, GgufFile, RfmFile, RfmType};
 
@@ -55,18 +55,20 @@ impl CpuLayerWeights {
                 .tensor(&name)
                 .map_err(WeightError::Load)?
                 .ok_or_else(|| WeightError::TensorNotFound(name.to_string()))?;
+            let role = TensorRole::from_name(&name, false, false);
             let needs_transpose =
-                compute_transpose_flag(&name, t.dims, t.ggml_type, config, false, false);
-            Ok((t.data.to_vec(), WeightMeta::from_view(&t, needs_transpose)))
+                compute_transpose_flag(role, t.dims, t.ggml_type, config);
+            Ok((t.data.to_vec(), WeightMeta::from_view_with_role(&t, needs_transpose, role)))
         };
 
         let load_opt_name = |name: &str| -> Result<Option<(Vec<u8>, WeightMeta)>, WeightError> {
             if let Some(t) = file.tensor(name).map_err(WeightError::Load)? {
+                let role = TensorRole::from_name(name, false, false);
                 let needs_transpose =
-                    compute_transpose_flag(name, t.dims, t.ggml_type, config, false, false);
+                    compute_transpose_flag(role, t.dims, t.ggml_type, config);
                 Ok(Some((
                     t.data.to_vec(),
-                    WeightMeta::from_view(&t, needs_transpose),
+                    WeightMeta::from_view_with_role(&t, needs_transpose, role),
                 )))
             } else {
                 Ok(None)
@@ -271,15 +273,10 @@ impl CpuLayerWeights {
                 }
             };
 
-            let needs_transpose = compute_transpose_flag(
-                t.name,
-                t.dims,
-                rfm_type_to_ggml(&t.wtype),
-                config,
-                false,
-                false,
-            );
-            let meta = rfm_weight_meta(&t, needs_transpose);
+            let role = TensorRole::from_name(t.name, false, false);
+            let needs_transpose = compute_transpose_flag(role, t.dims, rfm_type_to_ggml(&t.wtype), config);
+            let mut meta = rfm_weight_meta(&t, needs_transpose);
+            meta.role = role;
             Ok((data, meta))
         };
 

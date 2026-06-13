@@ -48,6 +48,7 @@ pub(crate) const TURBOQUANT_RMS_SCALE_BYTES: usize = std::mem::size_of::<f32>() 
 ///
 /// Layout: `k[layer][pos * kv_size + offset]` for position-based indexing.
 /// All GPU memory managed via RAII (GpuBuffer).
+#[derive(Debug)]
 pub struct GpuKvCache {
     /// Key cache: [num_layers][max_seq_len * kv_size]
     k: Vec<GpuBuffer>,

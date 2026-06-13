@@ -192,6 +192,7 @@ impl GpuBuffer {
 /// RAII wrapper for Pinned (Page-locked) Host memory.
 ///
 /// Allows for high-speed DMA transfers and zero-copy access from GPU.
+#[derive(Debug)]
 pub struct GpuPinnedBuffer {
     ptr: Option<NonNull<u8>>,
     size: usize,

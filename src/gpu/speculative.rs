@@ -61,6 +61,7 @@ fn supports_batched_gemm_type(wtype: crate::loader::GgmlType) -> bool {
 }
 
 /// The Speculative Engine coordinating dual-model co-execution.
+#[derive(Debug)]
 pub struct SpeculativeEngine {
     pub target_model: GpuModelWeights,
     pub target_cpu_weights: CpuModelWeights,
@@ -114,78 +115,40 @@ impl SpeculativeEngine {
         }
 
         // 1. Load target model config and weights
-        let (target_config, target_cpu_weights, target_model) = if target_path.ends_with(".rfm") {
-            let file =
-                crate::loader::RfmFile::open(target_path).map_err(|e| GpuError::HipApiError {
-                    code: -1,
-                    description: format!("Failed to open target RFM: {}", e),
-                })?;
-            let config =
-                ModelConfig::from_rfm(&file.metadata).map_err(|e| GpuError::HipApiError {
-                    code: -1,
-                    description: format!("Target config error: {}", e),
-                })?;
-            let cpu =
-                CpuModelWeights::load_rfm(&file, &config).map_err(|e| GpuError::HipApiError {
-                    code: -1,
-                    description: format!("Target CPU weights error: {}", e),
-                })?;
-            let gpu = GpuModelWeights::load_rfm_for_device(&file, &config, device_id)?;
-            (config, cpu, gpu)
-        } else {
-            let file =
-                crate::loader::GgufFile::open(target_path).map_err(|e| GpuError::HipApiError {
-                    code: -1,
-                    description: format!("Failed to open target GGUF: {}", e),
-                })?;
-            let config = ModelConfig::from_gguf(&file).map_err(|e| GpuError::HipApiError {
-                code: -1,
-                description: format!("Target config error: {}", e),
-            })?;
-            let cpu = CpuModelWeights::load(&file, &config).map_err(|e| GpuError::HipApiError {
-                code: -1,
-                description: format!("Target CPU weights error: {}", e),
-            })?;
-            let gpu = GpuModelWeights::load_for_device(&file, &config, device_id)?;
-            (config, cpu, gpu)
-        };
+        let target_file = crate::loader::ModelFile::open(target_path).map_err(|e| GpuError::HipApiError {
+            code: -1,
+            description: format!("Failed to open target model: {}", e),
+        })?;
+        let target_config = target_file.config().map_err(|e| GpuError::HipApiError {
+            code: -1,
+            description: format!("Target config error: {}", e),
+        })?;
+        let target_cpu_weights = target_file.load_cpu_weights(&target_config).map_err(|e| GpuError::HipApiError {
+            code: -1,
+            description: format!("Target CPU weights error: {}", e),
+        })?;
+        let target_model = target_file.load_gpu_weights(&target_config, device_id).map_err(|e| GpuError::HipApiError {
+            code: -1,
+            description: format!("Target GPU weights error: {}", e),
+        })?;
 
         // 2. Load draft model config and weights
-        let (draft_config, draft_cpu_weights, draft_model) = if draft_path.ends_with(".rfm") {
-            let file =
-                crate::loader::RfmFile::open(draft_path).map_err(|e| GpuError::HipApiError {
-                    code: -1,
-                    description: format!("Failed to open draft RFM: {}", e),
-                })?;
-            let config =
-                ModelConfig::from_rfm(&file.metadata).map_err(|e| GpuError::HipApiError {
-                    code: -1,
-                    description: format!("Draft config error: {}", e),
-                })?;
-            let cpu =
-                CpuModelWeights::load_rfm(&file, &config).map_err(|e| GpuError::HipApiError {
-                    code: -1,
-                    description: format!("Draft CPU weights error: {}", e),
-                })?;
-            let gpu = GpuModelWeights::load_rfm_for_device(&file, &config, device_id)?;
-            (config, cpu, gpu)
-        } else {
-            let file =
-                crate::loader::GgufFile::open(draft_path).map_err(|e| GpuError::HipApiError {
-                    code: -1,
-                    description: format!("Failed to open draft GGUF: {}", e),
-                })?;
-            let config = ModelConfig::from_gguf(&file).map_err(|e| GpuError::HipApiError {
-                code: -1,
-                description: format!("Draft config error: {}", e),
-            })?;
-            let cpu = CpuModelWeights::load(&file, &config).map_err(|e| GpuError::HipApiError {
-                code: -1,
-                description: format!("Draft CPU weights error: {}", e),
-            })?;
-            let gpu = GpuModelWeights::load_for_device(&file, &config, device_id)?;
-            (config, cpu, gpu)
-        };
+        let draft_file = crate::loader::ModelFile::open(draft_path).map_err(|e| GpuError::HipApiError {
+            code: -1,
+            description: format!("Failed to open draft model: {}", e),
+        })?;
+        let draft_config = draft_file.config().map_err(|e| GpuError::HipApiError {
+            code: -1,
+            description: format!("Draft config error: {}", e),
+        })?;
+        let draft_cpu_weights = draft_file.load_cpu_weights(&draft_config).map_err(|e| GpuError::HipApiError {
+            code: -1,
+            description: format!("Draft CPU weights error: {}", e),
+        })?;
+        let draft_model = draft_file.load_gpu_weights(&draft_config, device_id).map_err(|e| GpuError::HipApiError {
+            code: -1,
+            description: format!("Draft GPU weights error: {}", e),
+        })?;
 
         // 3. Allocate KV Caches
         let target_kv = GpuKvCache::new(&target_config, max_seq_len)?;

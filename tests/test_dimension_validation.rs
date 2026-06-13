@@ -1,6 +1,7 @@
 // Test dimension validation for edge cases
 
 use rocmforge::cpu::ops::{dispatch_gemm, dispatch_gemv};
+use rocmforge::config::TensorRole;
 use rocmforge::cpu::weights::WeightMeta;
 use rocmforge::loader::GgmlType;
 
@@ -53,6 +54,7 @@ fn test_dispatch_gemv_rejects_misaligned_dimensions() {
         wtype: GgmlType::Q4_0,
         dims: vec![33, 100],
         needs_transpose: false,
+        role: TensorRole::Generic,
         svd_k: None,
     };
 
@@ -75,6 +77,7 @@ fn test_dispatch_gemm_rejects_misaligned_dimensions() {
         wtype: GgmlType::Q6_K,
         dims: vec![300, 100],
         needs_transpose: false,
+        role: TensorRole::Generic,
         svd_k: None,
     };
 
@@ -97,6 +100,7 @@ fn test_dispatch_gemv_accepts_aligned_dimensions() {
         wtype: GgmlType::Q4_0,
         dims: vec![32, 100],
         needs_transpose: false,
+        role: TensorRole::Generic,
         svd_k: None,
     };
 

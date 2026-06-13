@@ -8,6 +8,7 @@ use rocmforge::cpu::quant::{
     Q4_1_BLOCK_BYTES, Q4_1_BLOCK_ELEMS, Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS, Q5_0_BLOCK_BYTES,
     Q5_0_BLOCK_ELEMS, Q6_K_BLOCK_BYTES, Q6_K_BLOCK_ELEMS, Q8_BLOCK_BYTES, Q8_BLOCK_ELEMS,
 };
+use rocmforge::config::TensorRole;
 use rocmforge::cpu::weights::WeightMeta;
 use rocmforge::loader::GgmlType;
 use std::time::Instant;
@@ -165,6 +166,7 @@ fn bench_gemv(hidden: usize, intermediate: usize, qt: &QuantType) -> f64 {
         wtype: qt.ggml_type,
         dims: vec![in_dim as u64, out_dim as u64],
         needs_transpose: false,
+        role: TensorRole::Generic,
         svd_k: None,
     };
 
@@ -202,6 +204,7 @@ fn bench_gemm(hidden: usize, intermediate: usize, qt: &QuantType) -> f64 {
         wtype: qt.ggml_type,
         dims: vec![k as u64, n as u64],
         needs_transpose: false,
+        role: TensorRole::Generic,
         svd_k: None,
     };
 

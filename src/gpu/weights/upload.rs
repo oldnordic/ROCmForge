@@ -21,12 +21,8 @@ pub(super) fn supports_gpu_matrix_type(wtype: GgmlType) -> bool {
     )
 }
 
-pub(super) fn derive_tensor_role(is_lm_head: bool, is_tied: bool) -> TensorRole {
-    match (is_lm_head, is_tied) {
-        (true, true) => TensorRole::TiedLmHead,
-        (true, false) => TensorRole::LmHead,
-        (false, _) => TensorRole::Generic,
-    }
+pub(super) fn derive_tensor_role(name: &str, is_lm_head: bool, is_tied: bool) -> TensorRole {
+    TensorRole::from_name(name, is_lm_head, is_tied)
 }
 
 pub(super) fn build_matrix_meta(
@@ -52,18 +48,12 @@ pub(super) fn build_matrix_meta(
         });
     }
 
+    let role = derive_tensor_role(weight_name, is_lm_head, is_tied);
     Ok(WeightMeta {
         wtype,
         dims: dims.to_vec(),
-        needs_transpose: compute_transpose_flag(
-            weight_name,
-            dims,
-            wtype,
-            config,
-            is_lm_head,
-            is_tied,
-        ),
-        role: derive_tensor_role(is_lm_head, is_tied),
+        needs_transpose: compute_transpose_flag(role, dims, wtype, config),
+        role,
         svd_k: None,
     })
 }

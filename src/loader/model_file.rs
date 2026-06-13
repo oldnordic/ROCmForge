@@ -8,6 +8,12 @@ use crate::cpu::weights::CpuModelWeights;
 use crate::loader::{GgufFile, RfmFile};
 use crate::tokenizer::BpeTokenizer;
 
+pub struct ModelTensorDesc {
+    pub name: String,
+    pub dims: Vec<u64>,
+    pub type_name: String,
+}
+
 pub enum ModelFile {
     Gguf(GgufFile),
     Rfm(RfmFile),
@@ -94,6 +100,28 @@ impl ModelFile {
         match self {
             Self::Gguf(f) => Some(f),
             _ => None,
+        }
+    }
+
+    pub fn tensor_names(&self) -> Box<dyn Iterator<Item = &str> + '_> {
+        match self {
+            Self::Gguf(f) => Box::new(f.tensor_names()),
+            Self::Rfm(f) => Box::new(f.tensor_names()),
+        }
+    }
+
+    pub fn tensor_desc(&self, name: &str) -> Option<ModelTensorDesc> {
+        match self {
+            Self::Gguf(f) => f.tensor(name).ok().flatten().map(|t| ModelTensorDesc {
+                name: name.to_string(),
+                dims: t.dims.to_vec(),
+                type_name: format!("{:?}", t.ggml_type),
+            }),
+            Self::Rfm(f) => f.tensor(name).ok().flatten().map(|t| ModelTensorDesc {
+                name: name.to_string(),
+                dims: t.dims.to_vec(),
+                type_name: format!("{:?}", t.wtype),
+            }),
         }
     }
 

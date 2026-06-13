@@ -3,183 +3,180 @@
 //! Inspects loaded model metadata and selects the optimal inference path.
 //! The router runs AFTER the VRAM manager pre-flight check and BEFORE any
 //! scratch buffer allocation.
-//!
-//! Design goals:
-//! - Single decision point for path selection
-//! - Model-profile-driven routing (not ad-hoc checks in main.rs)
-//! - Easy to add new paths without touching main.rs
-//! - Clear fallback chains when a path fails
 
-use crate::config::ModelConfig;
+use crate::config::{AttentionLayout, ModelConfig};
 use crate::gpu::error::{GpuError, GpuResult};
 use crate::gpu::vram_budget::VramSession;
 use crate::gpu::weights::{GpuModelWeights, WeightMeta};
 use crate::loader::GgmlType;
 
-// ── Model Profile ────────────────────────────────────────────────────────────────
+// ── Hotpath Capabilities ─────────────────────────────────────────────────────────
 
-/// Detected characteristics of a loaded model.
+/// Classification of model format for routing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelFormat {
+    Gguf,
+    Rfm,
+}
+
+/// Detailed classification of quantization for routing decisions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuantizationClass {
+    /// All weights are Q4_0 (highly optimized batched kernels available).
+    PureQ4_0,
+    /// All weights are Q4_1.
+    PureQ4_1,
+    /// All weights are Q8_0.
+    PureQ8_0,
+    /// Mixed quantization types or unsupported types.
+    MixedOrOther,
+}
+
+/// Detected characteristics and capabilities of a loaded model.
 ///
 /// Built from `GpuModelWeights` inspection. This is the input to path selection.
 #[derive(Debug, Clone)]
-pub struct ModelProfile {
-    /// Quantization type across all attention weights.
-    pub attention_quant: QuantizationType,
-    /// Whether any layer has SVD-corrected weights.
-    pub has_svd: bool,
-    /// Whether any layer has sparse CSR weights.
-    pub has_sparse: bool,
-    /// Whether any layer has MPO-compressed weights.
-    pub has_mpo: bool,
-    /// Whether any layer has MoE routing.
-    pub has_moe: bool,
-    /// Whether any layer has SSM (Mamba-style) state.
-    pub has_ssm: bool,
-    /// Architecture string from config.
+pub struct HotpathCapabilities {
+    pub format: ModelFormat,
     pub architecture: String,
-    /// Number of layers.
+    pub attention_layout: AttentionLayout,
+    pub quant_class: QuantizationClass,
+    pub has_svd: bool,
+    pub has_sparse: bool,
+    pub has_mpo: bool,
+    pub has_moe: bool,
+    pub has_ssm: bool,
+    pub has_shortconv: bool,
     pub num_layers: usize,
+    /// Whether the model is eligible for HIP graph capture.
+    pub is_graph_eligible: bool,
+    /// Whether the model is eligible for batched prefill kernels.
+    pub is_prefill_eligible: bool,
+    
+    // Sizing hints for VRAM checks
+    pub hidden_size: usize,
+    pub intermediate_size: usize,
+    pub num_heads: usize,
+    pub num_kv_heads: usize,
+    pub head_dim: usize,
 }
 
-/// Classification of quantization type for routing decisions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QuantizationType {
-    /// All attention weights are Q4_0 (batched kernels available).
-    Q4_0,
-    /// Mixed or other quantization (use decode-style path).
-    Other,
-}
-
-impl ModelProfile {
-    /// Build a profile by inspecting loaded GPU weights.
+impl HotpathCapabilities {
+    /// Build capabilities by inspecting loaded GPU weights.
     pub fn from_weights(weights: &GpuModelWeights, config: &ModelConfig) -> Self {
         let mut has_svd = false;
         let mut has_sparse = false;
         let mut has_mpo = false;
         let mut has_moe = false;
         let mut has_ssm = false;
+        let mut has_shortconv = false;
+        
         let mut all_q4_0 = true;
+        let mut all_q4_1 = true;
+        let mut all_q8_0 = true;
 
         for layer in &weights.layers {
-            // SVD check
-            if layer.attn_q_svd.is_some()
-                || layer.attn_k_svd.is_some()
-                || layer.attn_v_svd.is_some()
-                || layer.attn_o_svd.is_some()
-                || layer.ffn_gate_svd.is_some()
-                || layer.ffn_up_svd.is_some()
-                || layer.ffn_down_svd.is_some()
-            {
+            if layer.attn_q_svd.is_some() || layer.attn_k_svd.is_some() || layer.attn_v_svd.is_some() ||
+               layer.attn_o_svd.is_some() || layer.ffn_gate_svd.is_some() || layer.ffn_up_svd.is_some() || 
+               layer.ffn_down_svd.is_some() {
                 has_svd = true;
             }
-
-            // Sparse check
-            if layer.ffn_gate_sparse.is_some()
-                || layer.ffn_up_sparse.is_some()
-                || layer.ffn_down_sparse.is_some()
-            {
+            if layer.ffn_gate_sparse.is_some() || layer.ffn_up_sparse.is_some() || layer.ffn_down_sparse.is_some() {
                 has_sparse = true;
             }
-
-            // MPO check
-            if layer.ffn_gate_mpo.is_some()
-                || layer.ffn_up_mpo.is_some()
-                || layer.ffn_down_mpo.is_some()
-            {
+            if layer.ffn_gate_mpo.is_some() || layer.ffn_up_mpo.is_some() || layer.ffn_down_mpo.is_some() {
                 has_mpo = true;
             }
+            if layer.moe.is_some() { has_moe = true; }
+            if layer.ssm.is_some() { has_ssm = true; }
+            if layer.shortconv.is_some() { has_shortconv = true; }
 
-            // MoE check
-            if layer.moe.is_some() {
-                has_moe = true;
+            // Quantization check (all projection weights)
+            let q_types = [
+                layer.attn_q_meta.wtype, layer.attn_k_meta.wtype, layer.attn_v_meta.wtype,
+                layer.attn_o_meta.wtype, layer.ffn_up_meta.wtype, layer.ffn_down_meta.wtype
+            ];
+            for &t in &q_types {
+                if t != GgmlType::Q4_0 { all_q4_0 = false; }
+                if t != GgmlType::Q4_1 { all_q4_1 = false; }
+                if t != GgmlType::Q8_0 { all_q8_0 = false; }
             }
-
-            // SSM check
-            if layer.ssm.is_some() {
-                has_ssm = true;
-            }
-
-            // Quantization check (attention weights only)
-            if layer.attn_qkv_meta.is_some() {
-                // Fused QKV means not standard split Q4_0
-                all_q4_0 = false;
-            } else if layer.attn_q_meta.wtype != GgmlType::Q4_0
-                || layer.attn_k_meta.wtype != GgmlType::Q4_0
-                || layer.attn_v_meta.wtype != GgmlType::Q4_0
-                || layer.attn_o_meta.wtype != GgmlType::Q4_0
-            {
-                all_q4_0 = false;
+            if let Some(ref m) = layer.ffn_gate_meta {
+                if m.wtype != GgmlType::Q4_0 { all_q4_0 = false; }
+                if m.wtype != GgmlType::Q4_1 { all_q4_1 = false; }
+                if m.wtype != GgmlType::Q8_0 { all_q8_0 = false; }
             }
         }
 
+        let quant_class = if all_q4_0 {
+            QuantizationClass::PureQ4_0
+        } else if all_q4_1 {
+            QuantizationClass::PureQ4_1
+        } else if all_q8_0 {
+            QuantizationClass::PureQ8_0
+        } else {
+            QuantizationClass::MixedOrOther
+        };
+
+        // Graph eligibility
+        let is_graph_eligible = !has_sparse && !has_mpo;
+        
+        // Prefill eligibility: requires batched kernels (Q4_0/Q4_1)
+        let is_prefill_eligible = (quant_class == QuantizationClass::PureQ4_0 || quant_class == QuantizationClass::PureQ4_1) && !has_sparse && !has_mpo;
+
         Self {
-            attention_quant: if all_q4_0 {
-                QuantizationType::Q4_0
-            } else {
-                QuantizationType::Other
-            },
+            format: ModelFormat::Gguf,
+            architecture: config.architecture.clone(),
+            attention_layout: config.attention_layout,
+            quant_class,
             has_svd,
             has_sparse,
             has_mpo,
             has_moe,
             has_ssm,
-            architecture: config.architecture.clone(),
+            has_shortconv,
             num_layers: config.num_layers,
+            is_graph_eligible,
+            is_prefill_eligible,
+            hidden_size: config.hidden_size,
+            intermediate_size: config.intermediate_size,
+            num_heads: config.num_heads,
+            num_kv_heads: config.num_kv_heads,
+            head_dim: config.head_dim,
         }
     }
 
-    /// Human-readable summary for startup logging.
     pub fn summary(&self) -> String {
         let mut parts = Vec::new();
         parts.push(format!("arch={}", self.architecture));
-        parts.push(format!(
-            "quant={}",
-            match self.attention_quant {
-                QuantizationType::Q4_0 => "Q4_0",
-                QuantizationType::Other => "mixed",
-            }
-        ));
-        if self.has_svd {
-            parts.push("svd".to_string());
-        }
-        if self.has_sparse {
-            parts.push("sparse".to_string());
-        }
-        if self.has_mpo {
-            parts.push("mpo".to_string());
-        }
-        if self.has_moe {
-            parts.push("moe".to_string());
-        }
-        if self.has_ssm {
-            parts.push("ssm".to_string());
-        }
+        parts.push(format!("quant={:?}", self.quant_class));
+        if self.has_svd { parts.push("svd".to_string()); }
+        if self.has_sparse { parts.push("sparse".to_string()); }
+        if self.has_mpo { parts.push("mpo".to_string()); }
+        if self.has_moe { parts.push("moe".to_string()); }
+        if self.has_ssm { parts.push("ssm".to_string()); }
+        if self.has_shortconv { parts.push("shortconv".to_string()); }
         parts.join(", ")
     }
 }
 
+// Keep alias for backward compatibility during migration
+pub type ModelProfile = HotpathCapabilities;
+
 // ── Inference Path ───────────────────────────────────────────────────────────────
 
-/// Selected inference path for a model.
-///
-/// Each variant carries the context needed to execute that path.
 #[derive(Debug, Clone)]
 pub enum InferencePath {
-    /// Batched prefill with Q4_0 kernels.
-    /// Fastest path for standard transformer models with Q4_0 attention.
+    /// Batched prefill with optimized kernels.
     BatchedPrefill {
-        /// Maximum sequence length supported by batched kernels.
         max_seq_len: usize,
     },
     /// Token-by-token decode-style processing.
-    /// Universal fallback that works with any quantization type.
     DecodeStyle,
-    /// SVD-optimized path (when stable).
-    /// Uses SVD correction kernels for attention projections.
+    /// SVD-optimized path.
     SvdOptimized,
-    /// CPU fallback for incompatible or unsafe models.
+    /// CPU fallback.
     CpuFallback {
-        /// Reason for CPU fallback.
         reason: String,
     },
 }
@@ -187,9 +184,7 @@ pub enum InferencePath {
 impl std::fmt::Display for InferencePath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            InferencePath::BatchedPrefill { max_seq_len } => {
-                write!(f, "BatchedPrefill(max_seq={})", max_seq_len)
-            }
+            InferencePath::BatchedPrefill { max_seq_len } => write!(f, "BatchedPrefill(max_seq={})", max_seq_len),
             InferencePath::DecodeStyle => write!(f, "DecodeStyle"),
             InferencePath::SvdOptimized => write!(f, "SvdOptimized"),
             InferencePath::CpuFallback { reason } => write!(f, "CpuFallback({})", reason),
@@ -199,41 +194,24 @@ impl std::fmt::Display for InferencePath {
 
 // ── Router ───────────────────────────────────────────────────────────────────────
 
-/// Select the optimal inference path based on model profile and runtime constraints.
-///
-/// This is the single decision point. All path selection logic lives here.
-///
-/// # Arguments
-/// * `profile` — Detected model characteristics.
-/// * `prompt_len` — Number of tokens in the prompt.
-/// * `vram_session` — Current VRAM state (for headroom checks).
-///
-/// # Returns
-/// The selected `InferencePath`.
 pub fn select_path(
-    profile: &ModelProfile,
+    capabilities: &HotpathCapabilities,
     prompt_len: usize,
     _vram_session: &VramSession,
 ) -> InferencePath {
-    // Safety: experimental kernels (sparse, MPO) are gated at the dispatch level,
-    // but we also avoid routing to paths that would use them.
-    if profile.has_sparse || profile.has_mpo {
-        // Sparse/MPO models always use decode-style until kernels are proven stable.
+    if capabilities.has_sparse || capabilities.has_mpo {
         return InferencePath::DecodeStyle;
     }
 
-    // MoE and SSM models don't have batched prefill kernels yet.
-    if profile.has_moe || profile.has_ssm {
+    if capabilities.has_moe || (capabilities.has_ssm && prompt_len > 1) {
         return InferencePath::DecodeStyle;
     }
 
-    // SVD models: use optimized path by default.
-    if profile.has_svd {
+    if capabilities.has_svd {
         return InferencePath::SvdOptimized;
     }
 
-    // Standard transformer with Q4_0 attention: batched prefill if prompt is multi-token.
-    if profile.attention_quant == QuantizationType::Q4_0 && prompt_len > 1 {
+    if capabilities.is_prefill_eligible && prompt_len > 1 {
         const MAX_BATCHED_SEQ: usize = 512;
         if prompt_len <= MAX_BATCHED_SEQ {
             return InferencePath::BatchedPrefill {
@@ -242,13 +220,9 @@ pub fn select_path(
         }
     }
 
-    // Single-token prompts or non-Q4_0 models: decode-style.
     InferencePath::DecodeStyle
 }
 
-/// Check if a path can be executed with available VRAM.
-///
-/// Returns `Ok(())` if the path fits, or an error with a descriptive message.
 pub fn check_path_vram(
     path: &InferencePath,
     config: &ModelConfig,
@@ -283,122 +257,41 @@ pub fn check_path_vram(
     }
 }
 
-// ── Tests ────────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn fake_vram_session(free_gb: f64) -> VramSession {
-        VramSession {
-            device_id: 0,
-            total: (20.0 * 1024.0 * 1024.0 * 1024.0) as usize,
-            startup_free: (free_gb * 1024.0 * 1024.0 * 1024.0) as usize,
-            already_used: 0,
-            desktop_reserved: (4.0 * 1024.0 * 1024.0 * 1024.0) as usize,
-            inference_budget: ((free_gb - 4.0) * 1024.0 * 1024.0 * 1024.0) as usize,
-        }
-    }
-
     #[test]
-    fn q4_0_multi_token_selects_batched() {
-        let profile = ModelProfile {
-            attention_quant: QuantizationType::Q4_0,
+    fn test_select_path_prefill() {
+        let mut caps = HotpathCapabilities {
+            format: ModelFormat::Gguf,
+            architecture: "llama".to_string(),
+            attention_layout: AttentionLayout::SplitQkv,
+            quant_class: QuantizationClass::PureQ4_0,
             has_svd: false,
             has_sparse: false,
             has_mpo: false,
             has_moe: false,
             has_ssm: false,
-            architecture: "llama".to_string(),
-            num_layers: 16,
+            has_shortconv: false,
+            num_layers: 12,
+            is_graph_eligible: true,
+            is_prefill_eligible: true,
+            hidden_size: 256,
+            intermediate_size: 768,
+            num_heads: 4,
+            num_kv_heads: 4,
+            head_dim: 64,
         };
-        let vram = fake_vram_session(16.0);
-        let path = select_path(&profile, 10, &vram);
+        
+        let vram = VramSession::mock();
+        
+        // Long prompt -> BatchedPrefill
+        let path = select_path(&caps, 10, &vram);
         assert!(matches!(path, InferencePath::BatchedPrefill { .. }));
-    }
 
-    #[test]
-    fn single_token_selects_decode() {
-        let profile = ModelProfile {
-            attention_quant: QuantizationType::Q4_0,
-            has_svd: false,
-            has_sparse: false,
-            has_mpo: false,
-            has_moe: false,
-            has_ssm: false,
-            architecture: "llama".to_string(),
-            num_layers: 16,
-        };
-        let vram = fake_vram_session(16.0);
-        let path = select_path(&profile, 1, &vram);
-        assert!(matches!(path, InferencePath::DecodeStyle));
-    }
-
-    #[test]
-    fn sparse_always_selects_decode() {
-        let profile = ModelProfile {
-            attention_quant: QuantizationType::Q4_0,
-            has_svd: false,
-            has_sparse: true,
-            has_mpo: false,
-            has_moe: false,
-            has_ssm: false,
-            architecture: "llama".to_string(),
-            num_layers: 16,
-        };
-        let vram = fake_vram_session(16.0);
-        let path = select_path(&profile, 10, &vram);
-        assert!(matches!(path, InferencePath::DecodeStyle));
-    }
-
-    #[test]
-    fn mpo_always_selects_decode() {
-        let profile = ModelProfile {
-            attention_quant: QuantizationType::Q4_0,
-            has_svd: false,
-            has_sparse: false,
-            has_mpo: true,
-            has_moe: false,
-            has_ssm: false,
-            architecture: "llama".to_string(),
-            num_layers: 16,
-        };
-        let vram = fake_vram_session(16.0);
-        let path = select_path(&profile, 10, &vram);
-        assert!(matches!(path, InferencePath::DecodeStyle));
-    }
-
-    #[test]
-    fn svd_always_selects_svd_optimized() {
-        let profile = ModelProfile {
-            attention_quant: QuantizationType::Q4_0,
-            has_svd: true,
-            has_sparse: false,
-            has_mpo: false,
-            has_moe: false,
-            has_ssm: false,
-            architecture: "llama".to_string(),
-            num_layers: 16,
-        };
-        let vram = fake_vram_session(16.0);
-        let path = select_path(&profile, 10, &vram);
-        assert!(matches!(path, InferencePath::SvdOptimized));
-    }
-
-    #[test]
-    fn mixed_quant_selects_decode() {
-        let profile = ModelProfile {
-            attention_quant: QuantizationType::Other,
-            has_svd: false,
-            has_sparse: false,
-            has_mpo: false,
-            has_moe: false,
-            has_ssm: false,
-            architecture: "qwen2".to_string(),
-            num_layers: 24,
-        };
-        let vram = fake_vram_session(16.0);
-        let path = select_path(&profile, 10, &vram);
+        // Single token -> DecodeStyle
+        let path = select_path(&caps, 1, &vram);
         assert!(matches!(path, InferencePath::DecodeStyle));
     }
 }

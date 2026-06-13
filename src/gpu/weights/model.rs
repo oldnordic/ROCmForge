@@ -84,6 +84,7 @@ impl GpuWeightTensor {
 /// All weights for a transformer model, stored in VRAM.
 ///
 /// Holds token embeddings, all layer weights, output norm, and LM head.
+#[derive(Debug)]
 pub struct GpuModelWeights {
     /// Per-layer weights (all in VRAM)
     pub layers: Vec<GpuLayerWeights>,
@@ -498,8 +499,12 @@ impl GpuModelWeights {
                     description: format!("tensor not found: {}", lm_head_name),
                 })?;
             let lm_wtype = rfm_type_to_ggml(&lm_view.wtype);
-            let needs_transpose =
-                compute_transpose_flag(lm_head_name, lm_view.dims, lm_wtype, config, true, false);
+            let needs_transpose = compute_transpose_flag(
+                TensorRole::from_name(lm_head_name, true, false),
+                lm_view.dims,
+                lm_wtype,
+                config,
+            );
 
             let lm_unpacked_size = match lm_view.wtype {
                 RfmType::Q4Split => (lm_view.element_count() / 32) * 18,

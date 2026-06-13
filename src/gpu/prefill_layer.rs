@@ -462,3 +462,103 @@ pub fn gpu_prefill_ssm_layer_on_stream(
     let _ = start_pos; // used by caller for KV cache positioning
     Ok(())
 }
+
+/// Batched shortconv prefill layer forward pass.
+pub fn gpu_prefill_shortconv_layer_on_stream(
+    device: &GpuDevice,
+    gpu_layer: &GpuLayerWeights,
+    kv: &mut super::cache::GpuKvCache,
+    scratch: &mut GpuPrefillScratch,
+    layer_idx: usize,
+    _start_pos: usize,
+    config: &ModelConfig,
+) -> GpuResult<()> {
+    let sc = gpu_layer
+        .shortconv
+        .as_ref()
+        .ok_or_else(|| GpuError::HipApiError {
+            code: -1,
+            description: "Shortconv weights not found in layer".to_string(),
+        })?;
+
+    let h = config.hidden_size;
+    let eps = config.rms_norm_eps;
+    let stream = device.stream();
+    let seq_len = scratch.seq_len;
+    let l_cache = config.shortconv_l_cache.unwrap_or(3);
+
+    // 1. RMSNorm of input hidden states (batched)
+    rms_norm_batched(
+        scratch.hidden.as_ptr() as *const f32,
+        gpu_layer.attn_norm.as_ptr() as *const f32,
+        scratch.normed.as_ptr() as *mut f32,
+        h,
+        eps,
+        seq_len,
+    )?;
+
+    // 2. in_proj batched GEMM: [seq_len, h] x [h, 3h] -> [seq_len, 3h]
+    // We use scratch.gate as temporary for [seq_len, 3h]. 
+    // Ensure ff_size is at least 3*h.
+    let ff_size = config.intermediate_size;
+    if ff_size < 3 * h {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!("intermediate_size {} too small for shortconv in_proj 3*h {}", ff_size, 3*h),
+        });
+    }
+
+    gpu_dispatch_batched_gemv_batched(
+        device,
+        &sc.in_proj,
+        &sc.in_proj_meta,
+        scratch.normed.as_ptr() as *const f32,
+        scratch.gate.as_ptr() as *mut f32,
+        h,
+        3 * h,
+        seq_len,
+        stream,
+    )?;
+
+    // 3. Shortconv logic: B*x, causal conv1d, C*out
+    let conv_state_ptr = kv.conv_state_ptr(layer_idx)?
+        .ok_or_else(|| GpuError::HipApiError {
+            code: -1,
+            description: "shortconv state not allocated".to_string(),
+        })?;
+
+    super::kernels::shortconv::dispatch_shortconv_sequence(
+        scratch.swiglu.as_ptr() as *mut f32,
+        scratch.gate.as_ptr() as *const f32,
+        sc.conv.as_ptr() as *const f32,
+        conv_state_ptr,
+        h,
+        l_cache,
+        seq_len,
+        stream,
+    )?;
+
+    // 4. out_proj batched GEMM: [seq_len, h] x [h, h] -> [seq_len, h]
+    gpu_dispatch_batched_gemv_batched(
+        device,
+        &sc.out_proj,
+        &sc.out_proj_meta,
+        scratch.swiglu.as_ptr() as *const f32,
+        scratch.layer_out.as_ptr() as *mut f32,
+        h,
+        h,
+        seq_len,
+        stream,
+    )?;
+
+    // 5. Residual connection
+    add_on_stream(
+        scratch.layer_out.as_ptr() as *const f32,
+        scratch.hidden.as_ptr() as *const f32,
+        scratch.hidden.as_ptr() as *mut f32,
+        seq_len * h,
+        stream,
+    )?;
+
+    Ok(())
+}

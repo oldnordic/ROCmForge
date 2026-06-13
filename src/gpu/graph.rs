@@ -165,6 +165,7 @@ fn decode_graph_scope_tag(scope: DecodeGraphScope) -> u8 {
     }
 }
 
+#[derive(Debug)]
 pub struct HipGraph {
     raw: ffi::hipGraph_t,
 }
@@ -202,6 +203,7 @@ impl Drop for HipGraph {
     }
 }
 
+#[derive(Debug)]
 pub struct HipGraphExec {
     raw: ffi::hipGraphExec_t,
 }
@@ -240,6 +242,7 @@ impl Drop for HipGraphExec {
     }
 }
 
+#[derive(Debug)]
 pub struct CapturedDecodeGraph {
     exec: HipGraphExec,
     graph: HipGraph,

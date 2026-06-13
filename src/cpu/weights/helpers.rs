@@ -1,4 +1,5 @@
 use super::meta::{WeightError, WeightMeta};
+use crate::config::TensorRole;
 use crate::loader::{GgmlType, GgufFile, RfmType};
 
 /// Copy tensor bytes from the mmap into a Vec<u8>.
@@ -56,7 +57,8 @@ pub(crate) fn copy_tensor_with_meta(
         .tensor(name)
         .map_err(WeightError::Load)?
         .ok_or_else(|| WeightError::TensorNotFound(name.to_string()))?;
-    Ok((t.data.to_vec(), WeightMeta::from_view(&t, needs_transpose)))
+    let role = TensorRole::from_name(name, false, false);
+    Ok((t.data.to_vec(), WeightMeta::from_view_with_role(&t, needs_transpose, role)))
 }
 
 pub(crate) fn rfm_type_to_ggml(rfm: &RfmType) -> GgmlType {
@@ -78,10 +80,12 @@ pub(crate) fn rfm_weight_meta(
     t: &crate::loader::RfmTensorView<'_>,
     needs_transpose: bool,
 ) -> WeightMeta {
+    let role = TensorRole::from_name(t.name, false, false);
     let mut meta = WeightMeta {
         wtype: rfm_type_to_ggml(&t.wtype),
         dims: t.dims.to_vec(),
         needs_transpose,
+        role,
         svd_k: None,
     };
     if let RfmType::Q4SvdQuant { k, .. } = t.wtype {

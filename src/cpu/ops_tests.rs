@@ -166,6 +166,7 @@ mod tests {
             wtype: crate::loader::GgmlType::F16,
             dims: vec![2, 3],
             needs_transpose: false,
+            role: crate::config::TensorRole::Generic,
             svd_k: None,
         };
         crate::cpu::ops::dispatch_gemv(&w_bytes, &meta, &x, &mut y, 2, 3, None)?;

@@ -13,6 +13,7 @@ const GPU_ARGMAX_BLOCK_SIZE: usize = 256;
 const GPU_ARGMAX_ITEMS_PER_THREAD: usize = 4;
 const GPU_ARGMAX_ITEMS_PER_BLOCK: usize = GPU_ARGMAX_BLOCK_SIZE * GPU_ARGMAX_ITEMS_PER_THREAD;
 
+#[derive(Debug)]
 pub struct GpuForwardScratch {
     /// Current hidden state [hidden_size]
     pub hidden: GpuBuffer,
@@ -63,6 +64,7 @@ pub struct GpuForwardScratch {
 ///
 /// Allocated once when a compressed-expert model is detected; reused across all
 /// layers and tokens. Sized for the largest expert dimensions in the model.
+#[derive(Debug)]
 pub struct GpuExpertScratch {
     /// U factor upload buffer: [rows * k] F32
     pub u: GpuBuffer,
@@ -91,6 +93,7 @@ pub struct GpuExpertScratch {
 /// Reusable scratch buffers in GPU VRAM for batched prompt prefill.
 ///
 /// Layout is row-major `[seq_len, dim]` for all activation buffers.
+#[derive(Debug)]
 pub struct GpuPrefillScratch {
     pub seq_len: usize,
     pub hidden: GpuBuffer,

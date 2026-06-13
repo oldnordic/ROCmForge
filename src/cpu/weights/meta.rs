@@ -1,3 +1,4 @@
+use crate::config::TensorRole;
 use crate::loader::{GgmlType, LoadError};
 
 // ── Error ─────────────────────────────────────────────────────────────────────────
@@ -37,6 +38,11 @@ pub struct WeightMeta {
     pub dims: Vec<u64>,
     /// Whether this weight tensor needs transposed access
     pub needs_transpose: bool,
+    /// Semantic role derived from GGUF/model metadata.
+    ///
+    /// Allows dispatch to specialize important tensors without
+    /// hardcoding model names or architecture-specific assumptions.
+    pub role: TensorRole,
     /// If this weight uses SVD outlier correction, this is the SVD rank k
     pub svd_k: Option<u32>,
 }
@@ -47,6 +53,7 @@ impl Default for WeightMeta {
             wtype: GgmlType::F32,
             dims: vec![],
             needs_transpose: false,
+            role: TensorRole::Generic,
             svd_k: None,
         }
     }
@@ -63,6 +70,22 @@ impl WeightMeta {
             wtype: view.ggml_type,
             dims: view.dims.to_vec(),
             needs_transpose,
+            role: TensorRole::Generic,
+            svd_k: None,
+        }
+    }
+
+    /// Create metadata from a GGUF tensor view with an explicit role.
+    pub fn from_view_with_role(
+        view: &crate::loader::TensorView<'_>,
+        needs_transpose: bool,
+        role: TensorRole,
+    ) -> Self {
+        Self {
+            wtype: view.ggml_type,
+            dims: view.dims.to_vec(),
+            needs_transpose,
+            role,
             svd_k: None,
         }
     }

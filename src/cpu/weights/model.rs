@@ -1,7 +1,7 @@
 use super::helpers::{copy_f32, copy_tensor_with_meta, rfm_type_to_ggml};
 use super::layer::CpuLayerWeights;
 use super::meta::{WeightError, WeightMeta};
-use crate::config::{ModelConfig, TensorName};
+use crate::config::{ModelConfig, TensorName, TensorRole};
 use crate::loader::{GgufFile, RfmFile};
 
 #[derive(Clone, Debug)]
@@ -43,7 +43,7 @@ impl CpuModelWeights {
         {
             (
                 view.data.to_vec(),
-                WeightMeta::from_view(&view, false),
+                WeightMeta::from_view_with_role(&view, false, TensorRole::LmHead),
                 false,
             )
         } else {
@@ -87,10 +87,12 @@ impl CpuModelWeights {
                 .tensor(name)
                 .map_err(WeightError::Load)?
                 .ok_or_else(|| WeightError::TensorNotFound(name.to_string()))?;
+            let role = TensorRole::from_name(t.name, false, false);
             let mut meta = WeightMeta {
                 wtype: rfm_type_to_ggml(&t.wtype),
                 dims: t.dims.to_vec(),
                 needs_transpose: false,
+                role,
                 svd_k: None,
             };
             if let crate::loader::RfmType::Q4SvdQuant { k, .. } = t.wtype {

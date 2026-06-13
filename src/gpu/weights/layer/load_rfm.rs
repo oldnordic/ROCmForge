@@ -156,12 +156,10 @@ pub(super) fn load_for_device(
                 description: format!("tensor not found: {}", qkv_name),
             })?;
         let qkv_tr = compute_transpose_flag(
-            &qkv_name,
+            TensorRole::from_name(&qkv_name, false, false),
             qkv_view.dims,
             rfm_type_to_ggml(&qkv_view.wtype),
             config,
-            false,
-            false,
         );
         let (qkv, qkv_meta, qkv_svd) = load_rfm_weight(&qkv_name, qkv_tr)?;
         (
@@ -210,28 +208,22 @@ pub(super) fn load_for_device(
                 description: format!("tensor not found: {}", v_name),
             })?;
         let q_tr = compute_transpose_flag(
-            &q_name,
+            TensorRole::from_name(&q_name, false, false),
             q_view.dims,
             rfm_type_to_ggml(&q_view.wtype),
             config,
-            false,
-            false,
         );
         let k_tr = compute_transpose_flag(
-            &k_name,
+            TensorRole::from_name(&k_name, false, false),
             k_view.dims,
             rfm_type_to_ggml(&k_view.wtype),
             config,
-            false,
-            false,
         );
         let v_tr = compute_transpose_flag(
-            &v_name,
+            TensorRole::from_name(&v_name, false, false),
             v_view.dims,
             rfm_type_to_ggml(&v_view.wtype),
             config,
-            false,
-            false,
         );
         let (attn_q, attn_q_meta, attn_q_svd) = load_rfm_weight(&q_name, q_tr)?;
         let (attn_k, attn_k_meta, attn_k_svd) = load_rfm_weight(&k_name, k_tr)?;
@@ -263,12 +255,10 @@ pub(super) fn load_for_device(
                 description: format!("tensor not found: {}", o_name),
             })?;
         let o_tr = compute_transpose_flag(
-            &o_name,
+            TensorRole::from_name(&o_name, false, false),
             o_view.dims,
             rfm_type_to_ggml(&o_view.wtype),
             config,
-            false,
-            false,
         );
         load_rfm_weight(&o_name, o_tr)?
     } else {
@@ -338,12 +328,10 @@ pub(super) fn load_for_device(
                     description: format!("tensor not found: {}", attn_gate_name),
                 })?;
             let attn_gate_tr = compute_transpose_flag(
-                &attn_gate_name,
+                TensorRole::from_name(&attn_gate_name, false, false),
                 attn_gate_view.dims,
                 rfm_type_to_ggml(&attn_gate_view.wtype),
                 config,
-                false,
-                false,
             );
             let (attn_gate, attn_gate_meta, attn_gate_svd) =
                 load_rfm_weight(&attn_gate_name, attn_gate_tr)?;
@@ -407,20 +395,16 @@ pub(super) fn load_for_device(
             })?;
 
         let gate_tr = compute_transpose_flag(
-            &ffn_gate_name,
+            TensorRole::from_name(&ffn_gate_name, false, false),
             ffn_gate_up_view.dims,
             GgmlType::Q4_0,
             config,
-            false,
-            false,
         );
         let up_tr = compute_transpose_flag(
-            &ffn_up_name,
+            TensorRole::from_name(&ffn_up_name, false, false),
             ffn_gate_up_view.dims,
             GgmlType::Q4_0,
             config,
-            false,
-            false,
         );
 
         let ffn_gate_meta = WeightMeta {
@@ -529,12 +513,10 @@ pub(super) fn load_for_device(
             })?;
 
         let up_tr = compute_transpose_flag(
-            &ffn_up_name,
+            TensorRole::from_name(&ffn_up_name, false, false),
             up_view.dims,
             rfm_type_to_ggml(&up_view.wtype),
             config,
-            false,
-            false,
         );
         let (ffn_up, ffn_up_meta, ffn_up_svd) = load_rfm_weight(&ffn_up_name, up_tr)?;
 
@@ -550,12 +532,10 @@ pub(super) fn load_for_device(
                     description: format!("tensor not found: {}", ffn_gate_name),
                 })?;
             let gate_tr = compute_transpose_flag(
-                &ffn_gate_name,
+                TensorRole::from_name(&ffn_gate_name, false, false),
                 gate_view.dims,
                 rfm_type_to_ggml(&gate_view.wtype),
                 config,
-                false,
-                false,
             );
             let (gate, meta, svd) = load_rfm_weight(&ffn_gate_name, gate_tr)?;
             (Some(gate), Some(meta), svd)
@@ -598,12 +578,10 @@ pub(super) fn load_for_device(
             description: format!("tensor not found: {}", ffn_down_name),
         })?;
     let down_tr = compute_transpose_flag(
-        &ffn_down_name,
+        TensorRole::from_name(&ffn_down_name, false, false),
         ffn_down_view.dims,
         rfm_type_to_ggml(&ffn_down_view.wtype),
         config,
-        false,
-        false,
     );
     let (ffn_down, ffn_down_meta, ffn_down_svd) = load_rfm_weight(&ffn_down_name, down_tr)?;
 
@@ -623,12 +601,10 @@ pub(super) fn load_for_device(
                     description: format!("tensor not found: {}", router_name),
                 })?;
             let router_tr = compute_transpose_flag(
-                &router_name,
+                TensorRole::from_name(&router_name, false, false),
                 router_view.dims,
                 rfm_type_to_ggml(&router_view.wtype),
                 config,
-                false,
-                false,
             );
             let (router, router_meta, router_svd) = load_rfm_weight(&router_name, router_tr)?;
 
@@ -651,12 +627,10 @@ pub(super) fn load_for_device(
                         description: format!("tensor not found: {}", name),
                     })?;
                 let tr = compute_transpose_flag(
-                    name,
+                    TensorRole::from_name(name, false, false),
                     view.dims,
                     rfm_type_to_ggml(&view.wtype),
                     config,
-                    false,
-                    false,
                 );
                 let (buf, meta, svd) = load_rfm_weight(name, tr)?;
                 Ok((Some(buf), Some(meta), svd))
@@ -715,13 +689,11 @@ pub(super) fn load_for_device(
     let ffn_up_compressed = try_load_compressed_experts(file, &ffn_up_name)?;
     let ffn_down_compressed = try_load_compressed_experts(file, &ffn_down_name)?;
 
-    let layer_type = if ssm.is_some() {
-        super::GpuLayerType::Ssm
-    } else if attn_qkv.is_some() {
-        super::GpuLayerType::AttentionFusedQkv
-    } else {
-        super::GpuLayerType::Attention
-    };
+    let layer_type = super::GpuLayerType::from_weights_present(
+        ssm.is_some(),
+        true, // RFM loader currently only handles attention layers
+        attn_qkv.is_some(),
+    );
 
     Ok(GpuLayerWeights {
         attn_norm,

@@ -2,6 +2,7 @@ use super::super::utils::{cpu_fallback_gemv_and_upload, ensure_size, residual_ad
 use super::attention::gpu_attention_decode_from_state;
 use super::gpu_dispatch_moe_ffn_on_stream;
 use super::gpu_layer_forward_ssm_on_stream;
+use super::gpu_shortconv_native_on_stream;
 use crate::config::ModelConfig;
 use crate::cpu::cache::{CpuForwardScratch, CpuKvCache};
 use crate::cpu::forward::cpu_layer_forward;
@@ -24,7 +25,6 @@ use crate::gpu::ops::{
 };
 use crate::gpu::weights::{GpuLayerType, GpuLayerWeights};
 
-/// CPU fallback for shortconv layers on GPU.
 fn gpu_shortconv_fallback(
     device: &GpuDevice,
     gpu_layer: &GpuLayerWeights,
@@ -134,13 +134,11 @@ pub fn gpu_layer_forward_hybrid(
             );
         }
         GpuLayerType::Shortconv => {
-            return gpu_shortconv_fallback(
+            return gpu_shortconv_native_on_stream(
                 device,
                 gpu_layer,
-                cpu_layer,
                 kv,
                 scratch,
-                cpu_scratch,
                 layer_idx,
                 pos,
                 config,

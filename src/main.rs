@@ -8,7 +8,6 @@ use app::cli::parse_args;
 use app::cpu_inference::run_cpu_inference;
 use app::dispatch::handle_non_server_cli;
 use app::server_entry::handle_server_cli;
-use rocmforge::loader::GgufFile;
 
 // ── CPU Inference ────────────────────────────────────────────────────────────────
 

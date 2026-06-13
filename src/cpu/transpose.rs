@@ -9,7 +9,7 @@
 //!
 //! This module provides tensor analysis to determine if transposition is needed.
 
-use crate::config::ModelConfig;
+use crate::config::{ModelConfig, TensorRole};
 use crate::loader::TensorDesc;
 
 /// Determine if a tensor needs transposition for GEMV.
@@ -46,7 +46,7 @@ pub fn needs_transposition(
 
 /// Compute whether a weight tensor needs transposed access.
 ///
-/// This function analyzes the tensor name, dimensions, and model configuration
+/// This function uses the tensor's semantic [`TensorRole`] and model configuration
 /// to determine if the weight is stored in a transposed layout.
 ///
 /// GGUF dimensions are innermost-first (column-major for 2D matrices):
@@ -54,22 +54,17 @@ pub fn needs_transposition(
 /// - Transposed layout: [in_dim, out_dim] - needs transposed GEMV
 ///
 /// # Arguments
-/// * `weight_name` - Name of the weight tensor (e.g., "blk.0.ffn_down.weight")
+/// * `role` - Semantic role of the weight tensor (e.g. `SsmConv1d`, `LmHead`)
 /// * `actual_dims` - Dimensions from GGUF (innermost first)
-/// * `wtype` - Quantization type
 /// * `config` - Model configuration
-/// * `is_lm_head` - Whether this is the language model head
-/// * `is_tied` - Whether LM head is tied to embeddings
 ///
 /// # Returns
 /// `true` if transposed access is needed, `false` otherwise
 pub fn compute_transpose_flag(
-    weight_name: &str,
+    role: TensorRole,
     actual_dims: &[u64],
     _wtype: crate::loader::GgmlType,
     config: &ModelConfig,
-    is_lm_head: bool,
-    is_tied: bool,
 ) -> bool {
     // Need at least 2 dimensions to determine transposition
     if actual_dims.len() < 2 {
@@ -83,48 +78,42 @@ pub fn compute_transpose_flag(
     // Standard GEMV expects: [out_dim, in_dim]
     // Transposed layout is: [in_dim, out_dim]
 
-    // Handle tied LM head: stored as [hidden_size, vocab_size], standard layout
-    if is_lm_head && is_tied {
-        // Tied embeddings: [hidden_size, vocab_size] where hidden_size is dim0 (innermost).
-        // Since hidden_size is the contiguous dimension, we can access row-major directly
-        // on CPU, so no transpose is needed.
-        return false;
+    match role {
+        // LM head variants
+        TensorRole::TiedLmHead => {
+            // Tied embeddings: [hidden_size, vocab_size] where hidden_size is dim0 (innermost).
+            // Since hidden_size is the contiguous dimension, we can access row-major directly
+            // on CPU, so no transpose is needed.
+            false
+        }
+        TensorRole::LmHead => {
+            // Explicit LM head: standard layout, no transpose
+            false
+        }
+
+        // SSM conv1d: GGUF stores [kernel_size, channels] but kernels expect
+        // [channels, kernel_size]. Transpose at upload time.
+        TensorRole::SsmConv1d => true,
+
+        // Shortconv conv: same pattern as SSM conv1d
+        TensorRole::ShortconvConv => true,
+
+        // Everything else: fall back to dimension-based heuristics
+        _ => {
+            // Handle FFN down projection
+            if dim0 == config.hidden_size && dim1 == config.intermediate_size {
+                // FFN down projects from intermediate_size to hidden_size.
+                // Transposed layout: dim0 = hidden_size, dim1 = intermediate_size
+                return true;
+            }
+
+            // Square matrices (attention output, etc.) — transpose doesn't matter
+            if dim0 == config.hidden_size && dim1 == config.hidden_size {
+                return false;
+            }
+
+            // Standard layout assumed for all other roles
+            false
+        }
     }
-
-    // Handle FFN down projection
-    if weight_name.contains("ffn_down.weight") {
-        // FFN down projects from intermediate_size to hidden_size.
-        // Input is intermediate_size, output is hidden_size.
-        // Standard layout has dim0 = intermediate_size (innermost/contiguous), dim1 = hidden_size (no transpose).
-        // Transposed layout would have dim0 = hidden_size (innermost/contiguous), dim1 = intermediate_size (needs transpose).
-        let h = config.hidden_size;
-        let ff = config.intermediate_size;
-
-        return dim0 == h && dim1 == ff;
-    }
-
-    // Handle attention output projection
-    // Expected: [hidden_size, hidden_size] (square, transpose doesn't matter)
-    if weight_name.contains("attn_output.weight") {
-        // Square matrix, no transpose needed
-        return false;
-    }
-
-    // Handle Q/K/V projections and FFN gate/up
-    // Expected: [projection_size, hidden_size]
-    // These are typically in standard layout
-    // Q: [num_heads * head_dim, hidden_size]
-    // K/V: [num_kv_heads * head_dim, hidden_size]
-    // FFN gate/up: [intermediate_size, hidden_size]
-    if weight_name.contains("attn_q.weight")
-        || weight_name.contains("attn_k.weight")
-        || weight_name.contains("attn_v.weight")
-        || weight_name.contains("ffn_gate.weight")
-        || weight_name.contains("ffn_up.weight")
-    {
-        return false; // Standard layout
-    }
-
-    // Default: assume no transposition
-    false
 }

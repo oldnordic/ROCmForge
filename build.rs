@@ -31,6 +31,7 @@ mod gpu_build {
             ("elementwise", "hip_kernels/elementwise.hip"),
             ("attention", "hip_kernels/attention.hip"),
             ("ssm", "hip_kernels/ssm.hip"),
+            ("shortconv", "hip_kernels/shortconv.hip"),
             ("sparse_csr", "hip_kernels/sparse_csr.hip"),
             ("mpo", "hip_kernels/mpo.hip"),
         ];

@@ -371,15 +371,11 @@ pub(super) fn load_for_device(
         None
     };
 
-    let layer_type = if ssm.is_some() {
-        super::GpuLayerType::Ssm
-    } else if !is_attention_layer {
-        super::GpuLayerType::Shortconv
-    } else if attn_qkv.is_some() {
-        super::GpuLayerType::AttentionFusedQkv
-    } else {
-        super::GpuLayerType::Attention
-    };
+    let layer_type = super::GpuLayerType::from_weights_present(
+        ssm.is_some(),
+        is_attention_layer,
+        attn_qkv.is_some(),
+    );
 
     Ok(GpuLayerWeights {
         attn_norm,

@@ -14,6 +14,7 @@ pub mod q8_gemv;
 pub mod quant;
 pub mod quant_gqa;
 pub mod rope;
+pub mod shortconv;
 pub mod sparse_csr;
 pub mod ssm;
 

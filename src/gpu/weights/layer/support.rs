@@ -11,6 +11,7 @@ use crate::gpu::kernels::quant;
 use crate::loader::{GgmlType, GgufFile, RfmFile, RfmType};
 
 /// SVD low-rank outlier correction matrices stored in VRAM.
+#[derive(Debug)]
 pub struct SvdCorrection {
     /// Left singular vectors (N_out x k) scaled by singular values
     pub u: GpuBuffer,
@@ -68,6 +69,7 @@ impl CpuMpoExperts {
 /// uploaded one expert at a time to `GpuExpertScratch` during decode.
 ///
 /// Expert `i`'s matrix is `[rows, cols]` row-major — rows = out_dim, cols = in_dim.
+#[derive(Debug)]
 pub struct CpuCompressedExperts {
     pub n_experts: usize,
     pub k: usize,
@@ -128,6 +130,7 @@ impl CpuCompressedExperts {
 }
 
 /// Shortconv (depthwise causal conv1d) weights for LFM2 layers, resident in VRAM.
+#[derive(Debug)]
 pub struct GpuShortconvWeights {
     pub in_proj: GpuBuffer,
     pub in_proj_meta: WeightMeta,
@@ -138,6 +141,7 @@ pub struct GpuShortconvWeights {
 }
 
 /// Mixture-of-Experts side weights for Qwen-style MoE layers.
+#[derive(Debug)]
 pub struct GpuMoeWeights {
     pub router: GpuBuffer,
     pub router_meta: WeightMeta,
@@ -157,6 +161,7 @@ pub struct GpuMoeWeights {
 }
 
 /// Native Qwen35 SSM tensors for one layer, resident in VRAM.
+#[derive(Debug)]
 pub struct GpuSsmWeights {
     pub a: GpuBuffer,
     pub dt: GpuBuffer,
@@ -174,11 +179,12 @@ pub struct GpuSsmWeights {
 }
 
 fn qwen35_ssm_meta(name: &str, dims: &[u64], wtype: GgmlType, config: &ModelConfig) -> WeightMeta {
+    let role = TensorRole::from_name(name, false, false);
     WeightMeta {
         wtype,
         dims: dims.to_vec(),
-        needs_transpose: compute_transpose_flag(name, dims, wtype, config, false, false),
-        role: TensorRole::Generic,
+        needs_transpose: compute_transpose_flag(role, dims, wtype, config),
+        role,
         svd_k: None,
     }
 }

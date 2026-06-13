@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Features
+- **Native GPU Shortconv Support** — Implemented high-performance HIP kernels for causal gated depthwise convolution (`shortconv_f32_kernel`, `shortconv_sequence_f32_kernel`). Integrated into both decode and prefill paths, enabling full GPU execution for LFM2.5 models.
+- **HIP Graph Shortconv Integration** — Enabled HIP graph capture and replay for shortconv layers, significantly reducing kernel launch overhead in the decode hotpath.
+
+### Refactored
+- **Unified `HotpathCapabilities` Router** — Replaced ad-hoc model profiling with a centralized `HotpathCapabilities` descriptor in `src/gpu/router.rs`. Standardized format, architecture, and quantization class detection (PureQ4_0, PureQ4_1, PureQ8_0, Mixed).
+- **Format-Agnostic `ModelFile` Abstraction** — Refactored `speculative.rs`, `app/inspect.rs`, and `main/inspect.rs` to use `ModelFile` for all loading and inspection tasks, eliminating repeated `path.ends_with(".rfm")` branching logic.
+- **Synthetic Test Infrastructure** — Introduced `tests/common/helpers.rs` with synthetic weight generators and mock configurations. Refactored `gpu_gate_up_test.rs` and `gpu_ffn_experimental.rs` to use synthetic data, removing the hardcoded 0.5B-Q4_0 GGUF dependency and making them fully portable and self-contained.
+
+### Tests
+- **Shortconv Correctness Suite** — Added `tests/gpu_shortconv_correctness.rs` covering both single-token decode and multi-token prefill parity between CPU and GPU reference implementations.
+
 ### Status
 - **Current modularization state (`COMPLETE`)** — All files in `src/` are now under the **1,000 LOC limit**.
   - `src/main.rs` (100 LOC): thin entrypoint.

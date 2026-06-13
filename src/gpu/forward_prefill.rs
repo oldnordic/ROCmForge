@@ -119,11 +119,10 @@ pub fn gpu_batched_prefill_forward_q4_0(
                 continue;
             }
             GpuLayerType::Shortconv => {
-                return Err(GpuError::InvalidWeightLayout {
-                    tensor: "layer".to_string(),
-                    dims: vec![],
-                    reason: "Shortconv prefill is not yet implemented".to_string(),
-                });
+                super::prefill_layer::gpu_prefill_shortconv_layer_on_stream(
+                    device, gpu_layer, kv, scratch, layer_idx, start_pos, config,
+                )?;
+                continue;
             }
             _ => {}
         }

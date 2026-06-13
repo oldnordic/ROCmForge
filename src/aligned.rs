@@ -23,6 +23,7 @@ pub const ALIGN_ODIRECT: usize = 512;
 /// # Safety
 /// The buffer is allocated with `alloc_zeroed` and deallocated on `Drop`.
 /// It is safe to transmute to SIMD register types when alignment is satisfied.
+#[derive(Debug)]
 pub struct AlignedVec<T> {
     ptr: *mut T,
     len: usize,

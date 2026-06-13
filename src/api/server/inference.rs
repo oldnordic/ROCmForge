@@ -3,6 +3,7 @@ use crate::cpu::weights::CpuModelWeights;
 use crate::tokenizer::BpeTokenizer;
 use bytes::Bytes;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 pub(crate) fn run_sync_inference(
     cpu_weights: &Arc<CpuModelWeights>,
@@ -69,7 +70,7 @@ pub(crate) fn run_stream_inference(
     #[cfg(feature = "gpu")]
     {
         if speculative_engine.is_some() {
-            return Err("Streaming is not yet supported for speculative decoding".to_string());
+            return Err("Streaming is not yet supported for speculative decoding".into());
         }
         if let Some(gw) = gpu_weights {
             return crate::api::gpu_inference::run_gpu_stream_inference(

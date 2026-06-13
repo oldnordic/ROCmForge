@@ -30,11 +30,12 @@ async fn test_server_speculative_loading_and_inference() {
     }
 
     // 1. Initialize the server with a baseline model (no draft)
-    let entry = ModelEntry::load(init_model_path, None)
-        .expect("Failed to load initial baseline ModelEntry");
+    let entry = Arc::new(ModelEntry::load(init_model_path, None)
+        .expect("Failed to load initial baseline ModelEntry"));
 
-    let manager = ModelManager::new(entry);
-    let state = Arc::new(Mutex::new(manager));
+    let manager = ModelManager::new();
+    manager.try_load_entry(entry).await.expect("Failed to register entry");
+    let state = Arc::new(manager);
     let app = create_router(state);
 
     // 2. Load the speculative target + draft model dynamically via POST /v1/models/load
