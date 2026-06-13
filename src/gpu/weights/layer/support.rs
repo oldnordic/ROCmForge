@@ -181,6 +181,49 @@ fn qwen35_ssm_meta(name: &str, dims: &[u64], wtype: GgmlType, config: &ModelConf
     }
 }
 
+/// Transpose a [K, C] f32 tensor to [C, K] for GPU conv1d kernels.
+/// The GGUF stores conv1d weights as [kernel_size, channels], but the
+/// HIP kernel expects channel-major layout: weight[c * K + k].
+fn transpose_conv1d_f32_upload(
+    data: &[u8],
+    dims: &[u64],
+    device_id: i32,
+) -> GpuResult<GpuBuffer> {
+    if dims.len() != 2 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!("conv1d weight expected 2D, got {}D", dims.len()),
+        });
+    }
+    let k = dims[0] as usize;
+    let c = dims[1] as usize;
+    let n_f32 = k * c;
+    let expected = n_f32 * std::mem::size_of::<f32>();
+    if data.len() != expected {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!(
+                "conv1d weight size mismatch: expected {} bytes for [{}, {}], got {}",
+                expected, k, c, data.len()
+            ),
+        });
+    }
+    let src = unsafe { std::slice::from_raw_parts(data.as_ptr() as *const f32, n_f32) };
+    let mut dst = vec![0.0f32; n_f32];
+    for i in 0..k {
+        for j in 0..c {
+            dst[j * k + i] = src[i * c + j];
+        }
+    }
+    let bytes = unsafe {
+        std::slice::from_raw_parts(
+            dst.as_ptr() as *const u8,
+            dst.len() * std::mem::size_of::<f32>(),
+        )
+    };
+    upload_tensor_bytes_for_device(bytes, device_id)
+}
+
 pub(super) fn qwen35_post_attention_norm_name(
     config: &ModelConfig,
     layer: usize,
@@ -212,6 +255,20 @@ pub(super) fn load_qwen35_ssm_gguf(
             })?;
         upload_tensor_bytes_for_device(tensor.data, device_id)
     };
+    let load_conv1d = || -> GpuResult<GpuBuffer> {
+        let name = format!("blk.{}.ssm_conv1d.weight", layer);
+        let tensor = file
+            .tensor(&name)
+            .map_err(|e| GpuError::HipApiError {
+                code: -1,
+                description: format!("tensor lookup failed: {}", e),
+            })?
+            .ok_or_else(|| GpuError::HipApiError {
+                code: -1,
+                description: format!("tensor not found: {}", name),
+            })?;
+        transpose_conv1d_f32_upload(tensor.data, &tensor.dims, device_id)
+    };
     let load_weight = |suffix: &str| -> GpuResult<(GpuBuffer, WeightMeta)> {
         let name = format!("blk.{}.{}", layer, suffix);
         let tensor = file
@@ -237,7 +294,7 @@ pub(super) fn load_qwen35_ssm_gguf(
         a: load_f32("ssm_a")?,
         dt: load_f32("ssm_dt")?,
         norm: load_f32("ssm_norm.weight")?,
-        conv1d: load_f32("ssm_conv1d.weight")?,
+        conv1d: load_conv1d()?,
         alpha,
         alpha_meta,
         alpha_svd: None,
@@ -271,6 +328,11 @@ pub(super) fn load_qwen35_ssm_rfm(
         let name = format!("blk.{}.{}", layer, suffix);
         let tensor = load_tensor(&name)?;
         upload_tensor_bytes_for_device(tensor.data, device_id)
+    };
+    let load_conv1d = || -> GpuResult<GpuBuffer> {
+        let name = format!("blk.{}.ssm_conv1d.weight", layer);
+        let tensor = load_tensor(&name)?;
+        transpose_conv1d_f32_upload(tensor.data, &tensor.dims, device_id)
     };
     let load_weight_svd =
         |suffix: &str| -> GpuResult<(GpuBuffer, WeightMeta, Option<SvdCorrection>)> {
@@ -329,7 +391,7 @@ pub(super) fn load_qwen35_ssm_rfm(
         a: load_f32("ssm_a")?,
         dt: load_f32("ssm_dt")?,
         norm: load_f32("ssm_norm.weight")?,
-        conv1d: load_f32("ssm_conv1d.weight")?,
+        conv1d: load_conv1d()?,
         alpha,
         alpha_meta,
         alpha_svd,

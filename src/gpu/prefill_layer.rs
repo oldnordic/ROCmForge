@@ -176,7 +176,7 @@ pub fn gpu_prefill_ssm_layer_on_stream(
         stream,
     )?;
 
-    // 6. Fused conv1d + SiLU (batched)
+    // 6. Fused conv1d + SiLU (sequential — causal conv1d state must update per-token)
     let conv_state_ptr =
         kv.ssm_conv_state_ptr(layer_idx)?
             .ok_or_else(|| GpuError::HipApiError {
@@ -184,15 +184,18 @@ pub fn gpu_prefill_ssm_layer_on_stream(
                 description: "SSM conv state not allocated".to_string(),
             })?;
 
-    crate::gpu::kernels::dispatch_batched_conv1d_silu(
-        scratch.swiglu.as_ptr() as *mut f32,
-        scratch.gate.as_ptr() as *const f32,
-        ssm.conv1d.as_ptr() as *const f32,
-        conv_state_ptr,
-        qkv_dim,
-        seq_len,
-        stream,
-    )?;
+    for t in 0..seq_len {
+        let input_ptr = unsafe { (scratch.gate.as_ptr() as *const f32).add(t * qkv_dim) };
+        let output_ptr = unsafe { (scratch.swiglu.as_ptr() as *mut f32).add(t * qkv_dim) };
+        crate::gpu::kernels::dispatch_conv1d_silu(
+            output_ptr,
+            input_ptr,
+            ssm.conv1d.as_ptr() as *const f32,
+            conv_state_ptr,
+            qkv_dim,
+            stream,
+        )?;
+    }
 
     // 7. Split conv output into Q, K, V
     let ssm_kv_heads = (qkv_dim / 128 - ssm_heads) / 2;
@@ -202,7 +205,7 @@ pub fn gpu_prefill_ssm_layer_on_stream(
     // 8. Fused Q/K L2-norm and scale (batched)
     crate::gpu::kernels::dispatch_batched_fused_qk_l2_norm_scale(
         scratch.swiglu.as_ptr() as *mut f32,
-        unsafe { scratch.swiglu.as_ptr().add(k_dim) } as *mut f32,
+        unsafe { (scratch.swiglu.as_ptr() as *mut f32).add(k_dim) },
         ssm_kv_heads,
         128,
         seq_len,
@@ -219,8 +222,8 @@ pub fn gpu_prefill_ssm_layer_on_stream(
 
         for t in 0..seq_len {
             crate::gpu::kernels::dispatch_repeat_interleave_qk(
-                unsafe { scratch.swiglu.as_ptr().add(t * qkv_dim) } as *const f32,
-                unsafe { scratch.swiglu.as_ptr().add(t * qkv_dim + k_dim) } as *const f32,
+                unsafe { (scratch.swiglu.as_ptr() as *const f32).add(t * qkv_dim) },
+                unsafe { (scratch.swiglu.as_ptr() as *const f32).add(t * qkv_dim + k_dim) },
                 unsafe { q_exp_ptr.add(t * q_dim) },
                 unsafe { k_exp_ptr.add(t * k_dim) },
                 ssm_kv_heads,
@@ -233,7 +236,7 @@ pub fn gpu_prefill_ssm_layer_on_stream(
     } else {
         (
             scratch.swiglu.as_ptr() as *const f32,
-            unsafe { scratch.swiglu.as_ptr().add(k_dim) } as *const f32,
+            unsafe { (scratch.swiglu.as_ptr() as *const f32).add(k_dim) },
         )
     };
 
@@ -248,7 +251,7 @@ pub fn gpu_prefill_ssm_layer_on_stream(
     crate::gpu::kernels::dispatch_batched_gated_delta_net(
         q_gdn_ptr,
         k_gdn_ptr,
-        unsafe { scratch.swiglu.as_ptr().add(k_dim * 2) } as *const f32,
+        unsafe { (scratch.swiglu.as_ptr() as *const f32).add(k_dim * 2) },
         scratch.q.as_ptr() as *const f32,
         scratch.k.as_ptr() as *const f32,
         ssm_state_ptr,
