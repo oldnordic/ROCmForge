@@ -143,6 +143,29 @@
     - `src/gpu/cache.rs` — `TURBOQUANT_POS_ALIGN` (32), `TURBOQUANT_POS_ALIGN_MASK` (31), `TURBOQUANT_RMS_SCALE_BYTES` (8).
   - **All sites updated:** `src/gpu/cache/init.rs` (`compute_layout`), `src/gpu/cache.rs` (`estimate_bytes`), and both TurboQuant kernels in `hip_kernels/attention.hip` now use the shared constants and identical formulas. The alignment can be changed in one place (`common.hip` + `cache.rs`) and rebuilds cleanly.
 
+### Refactored
+- **Metadata-Driven GPU Dispatch (`INF-17`)** — Replaced hardcoded architecture-specific `if`-chains in the GPU forward path with a unified `GpuLayerType`-driven dispatch table, eliminating the need to edit forward kernels when adding new architectures.
+  - **`GpuLayerType` enum** (`src/gpu/weights/layer.rs`) — classifies every layer at load time into one of `Attention`, `AttentionFusedQkv`, `Ssm`, or `Shortconv`.
+  - **Load-time detection** (`src/gpu/weights/layer/load_gguf.rs`, `load_rfm.rs`) — `layer_type` is derived from which weight sets are present (`ssm`, `attn_qkv`, `is_attention_layer`) during `GpuLayerWeights` construction and stored alongside the weights.
+  - **Table-driven forward dispatch** — replaced `if gpu_layer.ssm.is_some() { ... } else if !gpu_layer.is_attention_layer { ... } else if gpu_layer.attn_qkv.is_some() { ... }` chains in:
+    - `gpu_layer_forward_hybrid` (`src/gpu/forward/layer/forward_hybrid.rs`)
+    - `gpu_layer_forward_from_state_on_stream` (`src/gpu/forward/layer/forward_graph.rs`)
+    - `gpu_batched_prefill_forward_q4_0` (`src/gpu/forward_prefill.rs`)
+    with `match gpu_layer.layer_type { ... }`, making the dispatch explicit and extensible.
+  - **`TensorRole` extension** (`src/gpu/weights/metadata.rs`) — added architecture-specific roles: `SsmConv1d`, `SsmAlpha`, `SsmBeta`, `SsmOut`, `ShortconvInProj`, `ShortconvConv`, `ShortconvOutProj`.
+  - **Upload-time transpose** (`src/gpu/weights/upload.rs`) — `normalize_f32_for_gpu()` applies F32 transposition at weight-upload time based on `needs_transpose` or `TensorRole::SsmConv1d`, updates `meta.dims`, and clears `needs_transpose`. This fixes the Qwen3.5 SSM conv1d weight layout mismatch (`[4, 8192]` stored → `[8192, 4]` expected by kernel) without adding runtime transpose logic to every GEMV path.
+  - **Weight loader refactor** (`src/gpu/weights/layer/support.rs`) — `load_qwen35_ssm_gguf` and `load_qwen35_ssm_rfm` now use a `TensorRole`-aware `load_weight` closure that calls `normalize_f32_for_gpu` before upload. Removed the now-obsolete `transpose_conv1d_f32_upload` function.
+  - **GEMV transpose safety guard** (`src/gpu/ops/mod.rs`) — `validate_gemv_layout` now errors early if `needs_transpose` is still set on a quantized weight, since the GPU GEMV pipeline does not support runtime transpose for quantized types. F32 transposes are already resolved at upload time by `normalize_f32_for_gpu`.
+  - **Graph serialization compatibility** (`src/gpu/graph.rs`) — updated `tensor_role_tag` to cover all new `TensorRole` variants.
+
+### Fixed
+- **Qwen3.5 GPU SSM NaN at layer 2 (`INF-18`)** — Three root causes identified and fixed:
+  1. **Buffer overflow in batched conv1d prefill** — `batched_conv1d_silu_f32_kernel` processed `batch_size` tokens with state offsets `b * n_channels * 3`, but the `GpuKvCache` conv state buffer was only sized for 1 token. Fixed by replacing the batched kernel call with a sequential loop over tokens in `src/gpu/prefill_layer.rs`.
+  2. **Conv1d weight layout mismatch** — GGUF stores `ssm_conv1d.weight` as `[kernel_size, channels]` = `[4, 8192]`, but `conv1d_silu_f32_kernel` indexes as `weight[c * 4 + k]`, expecting `[channels, kernel_size]`. Fixed by transposing at upload time via `normalize_f32_for_gpu` (`TensorRole::SsmConv1d`).
+  3. **Pointer arithmetic off-by-4×** — `.add(k_dim)` on `*mut u8` before casting to `f32` produced byte offsets instead of element offsets. Fixed by casting to `f32` first, then calling `.add(k_dim)` in four locations in `src/gpu/prefill_layer.rs`.
+- **Test-only `ModelConfig` constructors missing `ffn_layout`** — added missing `ffn_layout: FfnLayout::SwiGLU` field to all 12 test-only `ModelConfig` constructors across `tests/` and `src/gpu/` that were failing `cargo test --features gpu` compilation.
+- **Test `Option<GpuBuffer>` / `Option<WeightMeta>` unwrap regressions** — fixed `gpu_gate_up_test.rs`, `gpu_ffn_experimental.rs`, `gpu_transposed_weights_analysis.rs`, and `gpu_layer2_diagnostic.rs` to unwrap optional FFN fields before passing them to kernel dispatch functions, matching the `ffn_gate: Option<GpuBuffer>` type change from the standard-FFN refactor.
+
 ### Added
 - **Configurable Bit-Width TurboQuant KV Cache (`INF-13`)** — Extended the TurboQuant GPU kernel pipeline from hardcoded 3-bit to explicit support for 1-bit, 2-bit, 3-bit, and 4-bit quantization. This enables density targets below the previous 6.25% floor (achievable with 2-bit + `kv_lora_dim=64`).
   - **HIP kernels (`hip_kernels/attention.hip`):**
