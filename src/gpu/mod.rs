@@ -60,7 +60,7 @@ pub use features::GpuFeatures;
 pub use forward::{
     gpu_embed_token_hybrid, gpu_full_forward_hybrid, gpu_layer_forward_hybrid, GpuLogitsMode,
 };
-pub use forward_prefill::gpu_batched_prefill_forward_q4_0;
+pub use forward_prefill::gpu_batched_prefill_forward;
 pub use graph::{CapturedDecodeGraph, DecodeGraphKey, HipGraph, HipGraphExec};
 pub use kernel_dispatch_profile::{
     record_gemm_dispatch, record_gemv_dispatch, DispatchRecord, KernelDispatchProfiler,

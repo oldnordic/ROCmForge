@@ -46,7 +46,7 @@ use crate::loader::GgmlType;
 ///
 /// # Returns
 /// Ok(next_token) if greedy sampling, Ok(None) if skipped or error
-pub fn gpu_batched_prefill_forward_q4_0(
+pub fn gpu_batched_prefill_forward(
     device: &GpuDevice,
     gpu_weights: &GpuModelWeights,
     cpu_weights: &CpuModelWeights,
@@ -68,7 +68,7 @@ pub fn gpu_batched_prefill_forward_q4_0(
     if seq_len == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
-            description: "gpu_batched_prefill_forward_q4_0: token_ids cannot be empty".to_string(),
+            description: "gpu_batched_prefill_forward: token_ids cannot be empty".to_string(),
         });
     }
 
@@ -76,7 +76,7 @@ pub fn gpu_batched_prefill_forward_q4_0(
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
-                "gpu_batched_prefill_forward_q4_0: seq_len {} exceeds scratch capacity {}",
+                "gpu_batched_prefill_forward: seq_len {} exceeds scratch capacity {}",
                 seq_len, scratch.seq_len
             ),
         });
@@ -396,22 +396,17 @@ pub fn gpu_batched_prefill_forward_q4_0(
             );
         }
 
-        // Attention output projection (loop over tokens)
-        for pos in 0..seq_len {
-            let attn_out_row =
-                unsafe { (scratch.attn_out.as_ptr() as *const f32).add(pos * q_size) };
-            let layer_out_row = scratch.layer_out_row_mut_ptr(pos, h);
-            crate::gpu::ops::gpu_dispatch_gemv_on_stream(
-                device,
-                &gpu_layer.attn_o,
-                &gpu_layer.attn_o_meta,
-                attn_out_row,
-                layer_out_row,
-                h,
-                q_size,
-                device.stream(),
-            )?;
-        }
+        // Attention output projection
+        crate::gpu::ops::gpu_dispatch_gemm(
+            device,
+            &gpu_layer.attn_o,
+            &gpu_layer.attn_o_meta,
+            scratch.attn_out.as_ptr() as *const f32,
+            scratch.layer_out.as_ptr() as *mut f32,
+            h,
+            q_size,
+            seq_len,
+        )?;
 
         // Apply SVD correction for attn_o if present
         if let Some(svd) = gpu_layer.attn_o_svd.as_ref() {
@@ -606,11 +601,29 @@ pub fn gpu_batched_prefill_forward_q4_0(
                 device.synchronize()?;
             }
         } else {
-            // Standard FFN (non-SwiGLU): per-token up -> gelu
-            for pos in 0..seq_len {
-                let normed_row = scratch.normed_row_ptr(pos, h);
-                let swiglu_row = scratch.swiglu_row_mut_ptr(pos, ff_size);
-                if gpu_layer.ffn_up_svd.is_some() {
+            // Standard FFN (non-SwiGLU)
+            if gpu_layer.ffn_up_svd.is_none() && gpu_layer.ffn_up_sparse.is_none() && gpu_layer.ffn_up_mpo.is_none() {
+                crate::gpu::ops::gpu_dispatch_gemm(
+                    device,
+                    &gpu_layer.ffn_up,
+                    &gpu_layer.ffn_up_meta,
+                    scratch.normed.as_ptr() as *const f32,
+                    scratch.swiglu.as_ptr() as *mut f32,
+                    ff_size,
+                    h,
+                    seq_len,
+                )?;
+                gelu_on_stream(
+                    scratch.swiglu.as_ptr() as *const f32,
+                    scratch.swiglu.as_ptr() as *mut f32,
+                    ff_size * seq_len,
+                    device.stream(),
+                )?;
+            } else {
+                // per-token up -> gelu
+                for pos in 0..seq_len {
+                    let normed_row = scratch.normed_row_ptr(pos, h);
+                    let swiglu_row = scratch.swiglu_row_mut_ptr(pos, ff_size);
                     let t_scratch =
                         unsafe { (scratch.svd_scratch.as_ptr() as *mut f32).add(pos * 32) };
                     gpu_dispatch_gemv_with_fallback_on_stream(
@@ -627,24 +640,13 @@ pub fn gpu_batched_prefill_forward_q4_0(
                         t_scratch,
                         device.stream(),
                     )?;
-                } else {
-                    gpu_dispatch_gemv_on_stream(
-                        device,
-                        &gpu_layer.ffn_up,
-                        &gpu_layer.ffn_up_meta,
-                        normed_row,
+                    gelu_on_stream(
+                        swiglu_row as *const f32,
                         swiglu_row,
                         ff_size,
-                        h,
                         device.stream(),
                     )?;
                 }
-                gelu_on_stream(
-                    swiglu_row as *const f32,
-                    swiglu_row,
-                    ff_size,
-                    device.stream(),
-                )?;
             }
             device.synchronize()?;
         }
@@ -697,25 +699,39 @@ pub fn gpu_batched_prefill_forward_q4_0(
             );
         }
 
-        // FFN down projection (loop over tokens)
-        for pos in 0..seq_len {
-            let swiglu_row = unsafe { (scratch.swiglu.as_ptr() as *const f32).add(pos * ff_size) };
-            let layer_out_row = scratch.layer_out_row_mut_ptr(pos, h);
-            let t_scratch = unsafe { (scratch.svd_scratch.as_ptr() as *mut f32).add(pos * 32) };
-            gpu_dispatch_gemv_with_fallback_on_stream(
+        // FFN down projection
+        if gpu_layer.ffn_down_svd.is_none() && gpu_layer.ffn_down_sparse.is_none() && gpu_layer.ffn_down_mpo.is_none() {
+             crate::gpu::ops::gpu_dispatch_gemm(
                 device,
                 &gpu_layer.ffn_down,
                 &gpu_layer.ffn_down_meta,
-                gpu_layer.ffn_down_svd.as_ref(),
-                gpu_layer.ffn_down_sparse.as_ref(),
-                gpu_layer.ffn_down_mpo.as_ref(),
-                swiglu_row,
-                layer_out_row,
+                scratch.swiglu.as_ptr() as *const f32,
+                scratch.layer_out.as_ptr() as *mut f32,
                 h,
                 ff_size,
-                t_scratch,
-                device.stream(),
+                seq_len,
             )?;
+        } else {
+            // Fallback to loop for complex layouts
+            for pos in 0..seq_len {
+                let swiglu_row = unsafe { (scratch.swiglu.as_ptr() as *const f32).add(pos * ff_size) };
+                let layer_out_row = scratch.layer_out_row_mut_ptr(pos, h);
+                let t_scratch = unsafe { (scratch.svd_scratch.as_ptr() as *mut f32).add(pos * 32) };
+                gpu_dispatch_gemv_with_fallback_on_stream(
+                    device,
+                    &gpu_layer.ffn_down,
+                    &gpu_layer.ffn_down_meta,
+                    gpu_layer.ffn_down_svd.as_ref(),
+                    gpu_layer.ffn_down_sparse.as_ref(),
+                    gpu_layer.ffn_down_mpo.as_ref(),
+                    swiglu_row,
+                    layer_out_row,
+                    h,
+                    ff_size,
+                    t_scratch,
+                    device.stream(),
+                )?;
+            }
         }
         device.synchronize()?;
 

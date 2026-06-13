@@ -871,7 +871,7 @@ fn test_gpu_prefill_real_model_matches_cpu_greedy_token() {
     let mut host_scratch = CpuForwardScratch::new(&config);
 
     println!("DEBUG: Starting batched prefill call...");
-    let prefill_res = gpu::gpu_batched_prefill_forward_q4_0(
+    let prefill_res = gpu::gpu_batched_prefill_forward(
         &device,
         &gpu_weights,
         &cpu_weights,

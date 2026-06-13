@@ -121,8 +121,13 @@ impl HotpathCapabilities {
         // Graph eligibility
         let is_graph_eligible = !has_sparse && !has_mpo;
         
-        // Prefill eligibility: requires batched kernels (Q4_0/Q4_1)
-        let is_prefill_eligible = (quant_class == QuantizationClass::PureQ4_0 || quant_class == QuantizationClass::PureQ4_1) && !has_sparse && !has_mpo;
+        // Prefill eligibility: requires batched kernels
+        let is_prefill_eligible = match quant_class {
+            QuantizationClass::PureQ4_0 | QuantizationClass::PureQ4_1 | QuantizationClass::PureQ8_0 => {
+                !has_sparse && !has_mpo
+            }
+            _ => false,
+        };
 
         Self {
             format: ModelFormat::Gguf,

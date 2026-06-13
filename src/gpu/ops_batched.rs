@@ -258,13 +258,9 @@ pub fn gpu_dispatch_batched_fused_gate_up_on_stream(
                 seq_len,
                 stream,
             )?;
-            // 3. element-wise: output = SiLU(gate) * up, per row
-            for i in 0..seq_len {
-                let gate_row = unsafe { gate_scratch.add(i * ff_size) };
-                let up_row = unsafe { output.add(i * ff_size) };
-                silu_on_stream(gate_row, gate_row, ff_size, stream)?;
-                mul_on_stream(gate_row, up_row, up_row, ff_size, stream)?;
-            }
+            // 3. element-wise: output = SiLU(gate) * up
+            silu_on_stream(gate_scratch, gate_scratch, seq_len * ff_size, stream)?;
+            mul_on_stream(gate_scratch, output, output, seq_len * ff_size, stream)?;
             Ok(())
         }
 

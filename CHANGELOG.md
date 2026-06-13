@@ -6,8 +6,16 @@
 - **Native GPU Shortconv Support** — Implemented high-performance HIP kernels for causal gated depthwise convolution (`shortconv_f32_kernel`, `shortconv_sequence_f32_kernel`). Integrated into both decode and prefill paths, enabling full GPU execution for LFM2.5 models.
 - **HIP Graph Shortconv Integration** — Enabled HIP graph capture and replay for shortconv layers, significantly reducing kernel launch overhead in the decode hotpath.
 
-### Refactored
+### Refactor
+- **Final God-File Decomposition** — Successfully modularized the remaining large files in the codebase, ensuring all source files are strictly under the 1,000 LOC limit:
+  - `src/bin/convert/pipeline.rs` (1154 → 180 LOC) decomposed into `pipeline/utils.rs` and `pipeline/conversion.rs`.
+  - `src/gpu/kernels/elementwise.rs` (1013 → 15 LOC) decomposed into a structured `elementwise/` module.
+  - `src/cpu/ops/gemv.rs` (1010 → 320 LOC) decomposed into `gemv/dense.rs` and `gemv/k_quant.rs`.
 - **Unified `HotpathCapabilities` Router** — Replaced ad-hoc model profiling with a centralized `HotpathCapabilities` descriptor in `src/gpu/router.rs`. Standardized format, architecture, and quantization class detection (PureQ4_0, PureQ4_1, PureQ8_0, Mixed).
+
+### Performance
+- **Prefill Hotpath Optimization** — Replaced high-latency Rust loops over `seq_len` with unified `gpu_dispatch_gemm` calls for Q4_0, Q4_1, and Q8_0 weights. This significantly improves prefill throughput for long prompts on these quantization types.
+- **Batched Element-wise Ops** — Optimized Q8_0 batched fused gate-up by replacing per-row kernel launches with single large-batch launches for SiLU and multiplication.
 - **Format-Agnostic `ModelFile` Abstraction** — Refactored `speculative.rs`, `app/inspect.rs`, and `main/inspect.rs` to use `ModelFile` for all loading and inspection tasks, eliminating repeated `path.ends_with(".rfm")` branching logic.
 - **Synthetic Test Infrastructure** — Introduced `tests/common/helpers.rs` with synthetic weight generators and mock configurations. Refactored `gpu_gate_up_test.rs` and `gpu_ffn_experimental.rs` to use synthetic data, removing the hardcoded 0.5B-Q4_0 GGUF dependency and making them fully portable and self-contained.
 

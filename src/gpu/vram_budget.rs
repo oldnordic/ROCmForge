@@ -137,6 +137,18 @@ impl VramSession {
         })
     }
 
+    #[cfg(test)]
+    pub fn mock() -> Self {
+        VramSession {
+            device_id: 0,
+            total: 16 * 1024 * 1024 * 1024,
+            startup_free: 12 * 1024 * 1024 * 1024,
+            already_used: 4 * 1024 * 1024 * 1024,
+            desktop_reserved: 4 * 1024 * 1024 * 1024,
+            inference_budget: 8 * 1024 * 1024 * 1024,
+        }
+    }
+
     /// Print a human-readable VRAM status table to stderr.
     ///
     /// `model_bytes`, `kv_bytes`, `scratch_bytes` are estimates from static

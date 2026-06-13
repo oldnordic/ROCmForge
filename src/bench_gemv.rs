@@ -28,7 +28,13 @@ fn main() {
 
     // Warmup
     gemv_q4_0(&w, &x, &mut y_f32, OUT_DIM, H);
-    gemv_q4_0_q8_0(&w, &x, &mut y_q8, OUT_DIM, H, None);
+    let mut scratch = vec![0u8; H / 32 * 34];
+    // Need a function to quantize x to Q8_0 for the benchmark
+    // For simplicity, we just use a helper here or call dispatch_gemv
+    use rocmforge::cpu::weights::WeightMeta;
+    use rocmforge::loader::GgmlType;
+    let meta = WeightMeta { wtype: GgmlType::Q4_0, dims: vec![OUT_DIM as u64, H as u64], needs_transpose: false, role: rocmforge::config::TensorRole::Generic, svd_k: None };
+    rocmforge::cpu::ops::dispatch_gemv(&w, &meta, &x, &mut y_q8, OUT_DIM, H, Some(&mut scratch)).expect("bench failure");
 
     // Benchmark Q4_0 × f32
     let start = std::time::Instant::now();
@@ -42,7 +48,7 @@ fn main() {
     // Benchmark Q4_0 × Q8_0
     let start = std::time::Instant::now();
     for _ in 0..iterations {
-        gemv_q4_0_q8_0(&w, &x, &mut y_q8, OUT_DIM, H, None);
+        rocmforge::cpu::ops::dispatch_gemv(&w, &meta, &x, &mut y_q8, OUT_DIM, H, Some(&mut scratch)).expect("bench failure");
     }
     let elapsed_q8 = start.elapsed();
     let tps_q8 = (iterations as f64 * 1000.0) / elapsed_q8.as_secs_f64();

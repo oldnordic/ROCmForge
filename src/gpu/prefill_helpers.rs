@@ -49,28 +49,21 @@ pub fn gpu_batched_qkv_projection(
     q_dim: usize,
     kv_dim: usize,
     seq_len: usize,
-    stream: hipStream_t,
+    _stream: hipStream_t,
 ) -> GpuResult<()> {
     validate_batched_qkv_dims(hidden_dim, q_dim, kv_dim, seq_len)?;
 
-    use crate::gpu::ops::gpu_dispatch_gemv_on_stream;
+    use crate::gpu::ops::gpu_dispatch_gemm;
 
-    for pos in 0..seq_len {
-        let input_row = unsafe { input.add(pos * hidden_dim) };
-        let q_row = unsafe { q_output.add(pos * q_dim) };
-        let k_row = unsafe { k_output.add(pos * kv_dim) };
-        let v_row = unsafe { v_output.add(pos * kv_dim) };
-
-        gpu_dispatch_gemv_on_stream(
-            device, q_weights, q_meta, input_row, q_row, q_dim, hidden_dim, stream,
-        )?;
-        gpu_dispatch_gemv_on_stream(
-            device, k_weights, k_meta, input_row, k_row, kv_dim, hidden_dim, stream,
-        )?;
-        gpu_dispatch_gemv_on_stream(
-            device, v_weights, v_meta, input_row, v_row, kv_dim, hidden_dim, stream,
-        )?;
-    }
+    gpu_dispatch_gemm(
+        device, q_weights, q_meta, input, q_output, q_dim, hidden_dim, seq_len,
+    )?;
+    gpu_dispatch_gemm(
+        device, k_weights, k_meta, input, k_output, kv_dim, hidden_dim, seq_len,
+    )?;
+    gpu_dispatch_gemm(
+        device, v_weights, v_meta, input, v_output, kv_dim, hidden_dim, seq_len,
+    )?;
 
     Ok(())
 }

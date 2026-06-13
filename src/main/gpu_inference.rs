@@ -138,7 +138,7 @@ pub(crate) fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::E
                         "Using batched GPU prefill for Q4_0 model ({} tokens)",
                         prompt_tokens.len()
                     );
-                    match gpu::gpu_batched_prefill_forward_q4_0(
+                    match gpu::gpu_batched_prefill_forward(
                         device,
                         &gpu_weights,
                         &cpu_weights,
@@ -481,7 +481,7 @@ pub(crate) fn run_gpu_speculative_inference(
             "Using batched GPU prefill for Target model ({} tokens)",
             prompt_tokens.len()
         );
-        match gpu::gpu_batched_prefill_forward_q4_0(
+        match gpu::gpu_batched_prefill_forward(
             device,
             &engine.target_model,
             &engine.target_cpu_weights,
@@ -548,7 +548,7 @@ pub(crate) fn run_gpu_speculative_inference(
             "Using batched GPU prefill for Draft model ({} tokens)",
             prompt_tokens.len()
         );
-        match gpu::gpu_batched_prefill_forward_q4_0(
+        match gpu::gpu_batched_prefill_forward(
             device,
             &engine.draft_model,
             &engine.draft_cpu_weights,

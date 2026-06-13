@@ -31,13 +31,17 @@ fn bench_q4_0_q8_0(c: &mut Criterion) {
     // Generate fake input
     let x: Vec<f32> = (0..hidden_size).map(|i| i as f32 * 0.01).collect();
     let mut output = vec![0.0f32; out_dim];
+    let mut scratch = vec![0u8; hidden_size / 32 * 34];
+    use rocmforge::cpu::weights::WeightMeta;
+    use rocmforge::loader::GgmlType;
+    let meta = WeightMeta { wtype: GgmlType::Q4_0, dims: vec![out_dim as u64, hidden_size as u64], needs_transpose: false, role: rocmforge::config::TensorRole::Generic, svd_k: None };
 
     // Warmup
-    gemv_q4_0_q8_0(&w, &x, &mut output, out_dim, hidden_size, None);
+    rocmforge::cpu::ops::dispatch_gemv(&w, &meta, &x, &mut output, out_dim, hidden_size, Some(&mut scratch)).expect("bench failure");
 
     group.bench_function("Q4_0×Q8_0", |b| {
         b.iter(|| {
-            gemv_q4_0_q8_0(&w, &x, &mut output, out_dim, hidden_size, None);
+            rocmforge::cpu::ops::dispatch_gemv(&w, &meta, &x, &mut output, out_dim, hidden_size, Some(&mut scratch)).expect("bench failure");
             black_box(&output);
         })
     });

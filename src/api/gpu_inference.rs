@@ -140,7 +140,7 @@ pub fn run_gpu_sync_inference(
         gpu::InferencePath::BatchedPrefill { .. } => {
             match gpu::GpuPrefillScratch::new(config, prompt_tokens.len()) {
                 Ok(mut prefill_scratch) => {
-                    match gpu::gpu_batched_prefill_forward_q4_0(
+                    match gpu::gpu_batched_prefill_forward(
                         &device,
                         &gpu_weights,
                         &cpu_weights,
@@ -481,7 +481,7 @@ pub fn run_gpu_stream_inference(
         gpu::InferencePath::BatchedPrefill { .. } => {
             match gpu::GpuPrefillScratch::new(config, prompt_tokens.len()) {
                 Ok(mut prefill_scratch) => {
-                    match gpu::gpu_batched_prefill_forward_q4_0(
+                    match gpu::gpu_batched_prefill_forward(
                         device,
                         gpu_weights,
                         cpu_weights,
