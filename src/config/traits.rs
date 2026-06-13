@@ -146,7 +146,7 @@ fn registry() -> &'static HashMap<&'static str, ModelTraits> {
         m.insert(
             "lfm2moe",
             ModelTraits {
-                rope_style: RopeStyle::Normal,
+                rope_style: RopeStyle::NeoX,
                 attention_layout: AttentionLayout::SplitQkv,
                 use_attention_bias: false,
                 default_rope_theta: 1_000_000.0,

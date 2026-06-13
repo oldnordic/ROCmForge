@@ -8,6 +8,77 @@ use crate::config::{AttentionLayout, ModelConfig, TensorName, TensorNamingScheme
 use crate::loader::GgufFile;
 
 impl GpuLayerWeights {
+    /// Estimate total VRAM bytes used by this layer's weights.
+    pub fn estimate_vram_usage(&self) -> usize {
+        let mut total = 0;
+        total += self.attn_norm.size();
+        total += self.attn_q.size();
+        total += self.attn_k.size();
+        total += self.attn_v.size();
+        total += self.attn_o.size();
+        total += self.ffn_norm.size();
+        total += self.ffn_up.size();
+        total += self.ffn_down.size();
+
+        if let Some(ref qkv) = self.attn_qkv {
+            total += qkv.size();
+        }
+        if let Some(ref gate) = self.attn_gate {
+            total += gate.size();
+        }
+        if let Some(ref ssm) = self.ssm {
+            total += ssm.a.size() + ssm.dt.size() + ssm.norm.size() + ssm.conv1d.size();
+            total += ssm.alpha.size() + ssm.beta.size() + ssm.out.size();
+        }
+        if let Some(ref sc) = self.shortconv {
+            total += sc.in_proj.size() + sc.conv.size() + sc.out_proj.size();
+        }
+        if let Some(ref ffn_gate) = self.ffn_gate {
+            total += ffn_gate.size();
+        }
+        if let Some(ref q_norm) = self.attn_q_norm {
+            total += q_norm.size();
+        }
+        if let Some(ref k_norm) = self.attn_k_norm {
+            total += k_norm.size();
+        }
+        if let Some(ref q_bias) = self.attn_q_bias {
+            total += q_bias.size();
+        }
+        if let Some(ref k_bias) = self.attn_k_bias {
+            total += k_bias.size();
+        }
+        if let Some(ref v_bias) = self.attn_v_bias {
+            total += v_bias.size();
+        }
+        if let Some(ref g_inter) = self.ffn_gate_up_interleaved {
+            total += g_inter.size();
+        }
+        if let Some(ref g_tile4) = self.ffn_gate_up_interleaved_tile4 {
+            total += g_tile4.size();
+        }
+        if let Some(ref moe) = self.moe {
+            total += moe.router.size();
+            if let Some(ref b) = moe.router_bias {
+                total += b.size();
+            }
+            if let Some(ref g) = moe.shared_gate {
+                total += g.size();
+            }
+            if let Some(ref u) = moe.shared_up {
+                total += u.size();
+            }
+            if let Some(ref d) = moe.shared_down {
+                total += d.size();
+            }
+            if let Some(ref gi) = moe.shared_gate_inp {
+                total += gi.size();
+            }
+        }
+
+        total
+    }
+
     pub(in crate::gpu::weights) fn estimate_vram_usage_from_file(
         file: &GgufFile,
         layer: usize,
@@ -153,149 +224,62 @@ impl GpuLayerWeights {
         )
         .map_or(0, |bytes| bytes.len());
 
-        let attention_bytes = if layer_has_fused_qkv {
-            tensor_bytes(&qkv_name)?
-                + tensor_bytes_optional(&format!("blk.{}.attn_gate.weight", layer))?
-                + tensor_bytes_optional(&format!("blk.{}.ssm_a", layer))?
-                + tensor_bytes_optional(&format!("blk.{}.ssm_dt", layer))?
-                + tensor_bytes_optional(&format!("blk.{}.ssm_norm.weight", layer))?
-                + tensor_bytes_optional(&format!("blk.{}.ssm_conv1d.weight", layer))?
-                + tensor_bytes_optional(&format!("blk.{}.ssm_alpha.weight", layer))?
-                + tensor_bytes_optional(&format!("blk.{}.ssm_beta.weight", layer))?
-                + tensor_bytes_optional(&format!("blk.{}.ssm_out.weight", layer))?
+        let is_attention_layer = file.has_tensor(&attn_k_name);
+
+        let attention_bytes = if is_attention_layer {
+            if layer_has_fused_qkv {
+                tensor_bytes(&qkv_name)?
+                    + tensor_bytes_optional(&format!("blk.{}.attn_gate.weight", layer))?
+                    + tensor_bytes_optional(&format!("blk.{}.ssm_a", layer))?
+                    + tensor_bytes_optional(&format!("blk.{}.ssm_dt", layer))?
+                    + tensor_bytes_optional(&format!("blk.{}.ssm_norm.weight", layer))?
+                    + tensor_bytes_optional(&format!("blk.{}.ssm_conv1d.weight", layer))?
+                    + tensor_bytes_optional(&format!("blk.{}.ssm_alpha.weight", layer))?
+                    + tensor_bytes_optional(&format!("blk.{}.ssm_beta.weight", layer))?
+                    + tensor_bytes_optional(&format!("blk.{}.ssm_out.weight", layer))?
+            } else {
+                tensor_bytes(&attn_q_name)?
+                    + tensor_bytes_optional(&format!("blk.{}.attn_q_norm.weight", layer))?
+                    + tensor_bytes_optional(
+                        &config
+                            .tensor_registry
+                            .resolve_optional(TensorName::AttnQBias, layer)
+                            .unwrap_or_default(),
+                    )?
+                    + tensor_bytes(&attn_k_name)?
+                    + tensor_bytes_optional(&format!("blk.{}.attn_k_norm.weight", layer))?
+                    + tensor_bytes_optional(
+                        &config
+                            .tensor_registry
+                            .resolve_optional(TensorName::AttnKBias, layer)
+                            .unwrap_or_default(),
+                    )?
+                    + tensor_bytes(&attn_v_name)?
+                    + tensor_bytes_optional(
+                        &config
+                            .tensor_registry
+                            .resolve_optional(TensorName::AttnVBias, layer)
+                            .unwrap_or_default(),
+                    )?
+                    + tensor_bytes(&attn_o_name)?
+            }
         } else {
-            tensor_bytes(&attn_q_name)?
-                + tensor_bytes_optional(&format!("blk.{}.attn_q_norm.weight", layer))?
-                + tensor_bytes_optional(
-                    &config
-                        .tensor_registry
-                        .resolve_optional(TensorName::AttnQBias, layer)
-                        .unwrap_or_default(),
-                )?
-                + tensor_bytes(&attn_k_name)?
-                + tensor_bytes_optional(&format!("blk.{}.attn_k_norm.weight", layer))?
-                + tensor_bytes_optional(
-                    &config
-                        .tensor_registry
-                        .resolve_optional(TensorName::AttnKBias, layer)
-                        .unwrap_or_default(),
-                )?
-                + tensor_bytes(&attn_v_name)?
-                + tensor_bytes_optional(
-                    &config
-                        .tensor_registry
-                        .resolve_optional(TensorName::AttnVBias, layer)
-                        .unwrap_or_default(),
-                )?
-                + tensor_bytes(&attn_o_name)?
+            // Shortconv layer
+            tensor_bytes(&format!("blk.{}.shortconv.in_proj.weight", layer))?
+                + tensor_bytes(&format!("blk.{}.shortconv.conv.weight", layer))?
+                + tensor_bytes(&format!("blk.{}.shortconv.out_proj.weight", layer))?
         };
 
-        Ok(tensor_bytes(&attn_norm_name)?
+        let total = tensor_bytes(&attn_norm_name)?
             + attention_bytes
             + tensor_bytes(&ffn_norm_name)?
             + ffn_gate_bytes
             + ffn_up_bytes
-            + interleaved_bytes
-            + interleaved_tile4_bytes
             + ffn_down_bytes
-            + moe_extra_bytes)
+            + moe_extra_bytes
+            + interleaved_bytes
+            + interleaved_tile4_bytes;
+
+        Ok(total)
     }
-
-    /// Estimate total VRAM usage for this layer in bytes.
-    ///
-    /// This is a conservative estimate that sums all buffer sizes.
-    pub fn estimate_vram_usage(&self) -> usize {
-        let mut total = 0;
-
-        total += self.attn_norm.size();
-        total += self.attn_q.size();
-        total += self.attn_k.size();
-        total += self.attn_v.size();
-        total += self.attn_o.size();
-        total += self.ffn_norm.size();
-        if let Some(ref buf) = self.ffn_gate {
-            total += buf.size();
-        }
-        total += self.ffn_up.size();
-        total += self.ffn_down.size();
-
-        if let Some(ref buf) = self.attn_q_bias {
-            total += buf.size();
-        }
-        if let Some(ref buf) = self.attn_q_norm {
-            total += buf.size();
-        }
-        if let Some(ref buf) = self.attn_k_bias {
-            total += buf.size();
-        }
-        if let Some(ref buf) = self.attn_k_norm {
-            total += buf.size();
-        }
-        if let Some(ref buf) = self.attn_v_bias {
-            total += buf.size();
-        }
-        if let Some(ref buf) = self.attn_qkv {
-            total += buf.size();
-        }
-        if let Some(ref buf) = self.attn_gate {
-            total += buf.size();
-        }
-        if let Some(ref ssm) = self.ssm {
-            total += ssm.a.size();
-            total += ssm.dt.size();
-            total += ssm.norm.size();
-            total += ssm.conv1d.size();
-            total += ssm.alpha.size();
-            total += ssm.beta.size();
-            total += ssm.out.size();
-        }
-        if let Some(ref buf) = self.ffn_gate_up_interleaved {
-            total += buf.size();
-        }
-        if let Some(ref buf) = self.ffn_gate_up_interleaved_tile4 {
-            total += buf.size();
-        }
-        if let Some(ref moe) = self.moe {
-            total += moe.router.size();
-            if let Some(ref buf) = moe.shared_gate {
-                total += buf.size();
-            }
-            if let Some(ref buf) = moe.shared_up {
-                total += buf.size();
-            }
-            if let Some(ref buf) = moe.shared_down {
-                total += buf.size();
-            }
-            if let Some(ref buf) = moe.shared_gate_inp {
-                total += buf.size();
-            }
-        }
-
-        total += svd_bytes(self.attn_q_svd.as_ref());
-        total += svd_bytes(self.attn_k_svd.as_ref());
-        total += svd_bytes(self.attn_v_svd.as_ref());
-        total += svd_bytes(self.attn_qkv_svd.as_ref());
-        total += svd_bytes(self.attn_gate_svd.as_ref());
-        total += svd_bytes(self.attn_o_svd.as_ref());
-        if let Some(ref ssm) = self.ssm {
-            total += svd_bytes(ssm.alpha_svd.as_ref());
-            total += svd_bytes(ssm.beta_svd.as_ref());
-            total += svd_bytes(ssm.out_svd.as_ref());
-        }
-        total += svd_bytes(self.ffn_gate_svd.as_ref());
-        total += svd_bytes(self.ffn_up_svd.as_ref());
-        total += svd_bytes(self.ffn_down_svd.as_ref());
-        if let Some(ref moe) = self.moe {
-            total += svd_bytes(moe.router_svd.as_ref());
-            total += svd_bytes(moe.shared_gate_svd.as_ref());
-            total += svd_bytes(moe.shared_up_svd.as_ref());
-            total += svd_bytes(moe.shared_down_svd.as_ref());
-        }
-
-        total
-    }
-}
-
-fn svd_bytes(svd: Option<&SvdCorrection>) -> usize {
-    svd.map_or(0, |svd| svd.u.size() + svd.v.size())
 }

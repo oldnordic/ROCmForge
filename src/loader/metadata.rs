@@ -151,7 +151,7 @@ impl GgufMetadata {
     }
 
     pub fn num_experts_per_tok(&self) -> Option<usize> {
-        self.resolve_usize(&["num_experts_per_tok", "moe_top_k", "top_k"])
+        self.resolve_usize(&["num_experts_per_tok", "moe_top_k", "top_k", "expert_used_count"])
     }
 
     pub fn use_expert_bias(&self) -> bool {

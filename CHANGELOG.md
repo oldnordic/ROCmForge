@@ -3,15 +3,19 @@
 ## [Unreleased]
 
 ### Features
-- **Native GPU Shortconv Support** — Implemented high-performance HIP kernels for causal gated depthwise convolution (`shortconv_f32_kernel`, `shortconv_sequence_f32_kernel`). Integrated into both decode and prefill paths, enabling full GPU execution for LFM2.5 models.
+- **LFM2.5 Hybrid Support** — Implemented full support for Liquid Foundation Model 2.5 architecture, including mixed Attention/Shortconv layers and MoE FFNs.
+- **Layer Type Detection** — Added automatic detection of Shortconv layers in GGUF/RFM loaders by checking for the absence of standard attention tensors.
+- **Shortconv HIP Launchers** — Added C-compatible launchers (`gpu_shortconv_f32`, `gpu_shortconv_sequence_f32`) to the shortconv HIP kernel suite, fixing linker errors in GPU builds.
 - **HIP Graph Shortconv Integration** — Enabled HIP graph capture and replay for shortconv layers, significantly reducing kernel launch overhead in the decode hotpath.
 
+### Fixes
+- **MoE Expert Stride Calculation** — Fixed incorrect stride logic for 3D MoE expert tensors, ensuring correct memory indexing during expert dispatch.
+- **GGUF Transposition Logic** — Corrected `compute_transpose_flag` to avoid unnecessary transposition of standard row-major matrices, fixing initialization crashes for quantized models (Q6_K, Q2_K, etc.).
+- **RoPE Style Correction** — Updated LFM2.5 traits to use NeoX style RoPE (split-half pairing), ensuring correct positional embeddings for this architecture.
+- **MoE Metadata Resolution** — Added resolution for `expert_used_count` from GGUF metadata, enabling correct `top_k` expert selection.
+
 ### Refactor
-- **Final God-File Decomposition** — Successfully modularized the remaining large files in the codebase, ensuring all source files are strictly under the 1,000 LOC limit:
-  - `src/bin/convert/pipeline.rs` (1154 → 180 LOC) decomposed into `pipeline/utils.rs` and `pipeline/conversion.rs`.
-  - `src/gpu/kernels/elementwise.rs` (1013 → 15 LOC) decomposed into a structured `elementwise/` module.
-  - `src/cpu/ops/gemv.rs` (1010 → 320 LOC) decomposed into `gemv/dense.rs` and `gemv/k_quant.rs`.
-- **Unified `HotpathCapabilities` Router** — Replaced ad-hoc model profiling with a centralized `HotpathCapabilities` descriptor in `src/gpu/router.rs`. Standardized format, architecture, and quantization class detection (PureQ4_0, PureQ4_1, PureQ8_0, Mixed).
+- **GPU VRAM Reporting** — Implemented `GpuLayerWeights::estimate_vram_usage` for accurate instance-level memory usage tracking.
 
 ### Performance
 - **Prefill Hotpath Optimization** — Replaced high-latency Rust loops over `seq_len` with unified `gpu_dispatch_gemm` calls for Q4_0, Q4_1, and Q8_0 weights. This significantly improves prefill throughput for long prompts on these quantization types.

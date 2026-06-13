@@ -64,56 +64,20 @@ pub fn compute_transpose_flag(
     role: TensorRole,
     actual_dims: &[u64],
     _wtype: crate::loader::GgmlType,
-    config: &ModelConfig,
+    _config: &ModelConfig,
 ) -> bool {
     // Need at least 2 dimensions to determine transposition
     if actual_dims.len() < 2 {
         return false;
     }
 
-    let dim0 = actual_dims[0] as usize;
-    let dim1 = actual_dims[1] as usize;
-
-    // GGUF stores 2D matrices with innermost dimension first
-    // Standard GEMV expects: [out_dim, in_dim]
-    // Transposed layout is: [in_dim, out_dim]
-
     match role {
-        // LM head variants
-        TensorRole::TiedLmHead => {
-            // Tied embeddings: [hidden_size, vocab_size] where hidden_size is dim0 (innermost).
-            // Since hidden_size is the contiguous dimension, we can access row-major directly
-            // on CPU, so no transpose is needed.
-            false
-        }
-        TensorRole::LmHead => {
-            // Explicit LM head: standard layout, no transpose
-            false
-        }
+        // SSM conv1d and Shortconv conv: GGUF stores [kernel_size, channels]
+        // but kernels expect [channels, kernel_size].
+        TensorRole::SsmConv1d | TensorRole::ShortconvConv => true,
 
-        // SSM conv1d: GGUF stores [kernel_size, channels] but kernels expect
-        // [channels, kernel_size]. Transpose at upload time.
-        TensorRole::SsmConv1d => true,
-
-        // Shortconv conv: same pattern as SSM conv1d
-        TensorRole::ShortconvConv => true,
-
-        // Everything else: fall back to dimension-based heuristics
-        _ => {
-            // Handle FFN down projection
-            if dim0 == config.hidden_size && dim1 == config.intermediate_size {
-                // FFN down projects from intermediate_size to hidden_size.
-                // Transposed layout: dim0 = hidden_size, dim1 = intermediate_size
-                return true;
-            }
-
-            // Square matrices (attention output, etc.) — transpose doesn't matter
-            if dim0 == config.hidden_size && dim1 == config.hidden_size {
-                return false;
-            }
-
-            // Standard layout assumed for all other roles
-            false
-        }
+        // Standard 2D matrices in GGUF [dim0=in, dim1=out] correspond to
+        // row-major [out, in] which is exactly what our GEMV/GEMM kernels expect.
+        _ => false,
     }
 }
