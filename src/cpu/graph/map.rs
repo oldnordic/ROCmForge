@@ -9,7 +9,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::cpu::graph::{
-    CaptureContext, CpuGraph, CpuGraphArena, CpuOpNode, F32Handle, PersistentSnapshot, U8Handle,
+    CaptureContext, CpuGraph, CpuGraphArena, CpuOpNode, F32Handle, PersistentSnapshot, ScoreMetric,
+    U8Handle,
 };
 use geographdb_core::algorithms::four_d::GraphNode4D;
 use geographdb_core::storage::{load_graph4d, save_graph4d, SectionedStorage};
@@ -27,6 +28,7 @@ const F32_BINDINGS_SECTION: &str = "f32_bindings";
 const U8_BINDINGS_SECTION: &str = "u8_bindings";
 const OUTPUT_LOG_SECTION: &str = "output_log";
 const SHELF_SNAPSHOTS_SECTION: &str = "shelf_snapshots";
+const SCORE_LOG_SECTION: &str = "score_log";
 const META_SECTION: &str = "meta";
 
 #[derive(Debug, Error)]
@@ -60,6 +62,7 @@ pub struct GraphMap {
     pub arena: CpuGraphArena,
     pub output_log: Vec<(u64, usize, F32Handle)>,
     pub shelf_snapshots: HashMap<u64, PersistentSnapshot>,
+    pub score_log: Vec<(u64, ScoreMetric, f32)>,
     pub layer: usize,
     pub timestamp: u64,
     pub last_timestamp: u64,
@@ -74,6 +77,7 @@ impl GraphMap {
             arena: ctx.arena.clone(),
             output_log: ctx.output_log.clone(),
             shelf_snapshots: ctx.shelf_snapshots.clone(),
+            score_log: ctx.score_log.clone(),
             layer: ctx.layer,
             timestamp: ctx.timestamp,
             last_timestamp: ctx.last_timestamp,
@@ -113,6 +117,7 @@ impl GraphMap {
             .collect();
         let output_log_bytes = bincode::serialize(&self.output_log)?;
         let shelf_snapshots_bytes = bincode::serialize(&self.shelf_snapshots)?;
+        let score_log_bytes = bincode::serialize(&self.score_log)?;
         let meta = GraphMapMeta {
             layer: self.layer,
             timestamp: self.timestamp,
@@ -143,6 +148,7 @@ impl GraphMap {
             SHELF_SNAPSHOTS_SECTION,
             &shelf_snapshots_bytes,
         )?;
+        create_and_write(&mut storage, SCORE_LOG_SECTION, &score_log_bytes)?;
         create_and_write(&mut storage, META_SECTION, &meta_bytes)?;
 
         storage
@@ -181,6 +187,8 @@ impl GraphMap {
             read_section_bincode(&mut storage, OUTPUT_LOG_SECTION)?;
         let shelf_snapshots: HashMap<u64, PersistentSnapshot> =
             read_section_bincode(&mut storage, SHELF_SNAPSHOTS_SECTION)?;
+        let score_log: Vec<(u64, ScoreMetric, f32)> =
+            read_section_bincode(&mut storage, SCORE_LOG_SECTION)?;
         let meta: GraphMapMeta = read_section_bincode(&mut storage, META_SECTION)?;
 
         let f32_bindings: HashMap<usize, F32Handle> = f32_bindings_vec.into_iter().collect();
@@ -203,6 +211,7 @@ impl GraphMap {
             arena,
             output_log,
             shelf_snapshots,
+            score_log,
             layer: meta.layer,
             timestamp: meta.timestamp,
             last_timestamp: meta.last_timestamp,
@@ -220,7 +229,27 @@ impl GraphMap {
             last_timestamp: self.last_timestamp,
             output_log: self.output_log,
             shelf_snapshots: self.shelf_snapshots,
+            score_log: self.score_log,
         }
+    }
+
+    /// Return the last recorded score for each timestamp.
+    pub fn branch_scores(&self) -> HashMap<u64, f32> {
+        let mut scores = HashMap::new();
+        for (ts, _metric, score) in &self.score_log {
+            scores.insert(*ts, *score);
+        }
+        scores
+    }
+
+    /// Return the absolute difference between each branch score and a reference
+    /// score.  For similarity metrics the reference is typically the best
+    /// attainable score (e.g. `1.0` for cosine similarity).
+    pub fn divergence(&self, reference: f32) -> HashMap<u64, f32> {
+        self.branch_scores()
+            .into_iter()
+            .map(|(ts, score)| (ts, (score - reference).abs()))
+            .collect()
     }
 }
 

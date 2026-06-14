@@ -11,6 +11,7 @@
 - Step 1 (`GraphMap` persistence) committed: `GraphMap::save`/`load`/`into_context` round-trip through `geographdb-core` storage passes.
 - Step 2 (timestamp shelves) committed: arena split into `Constants` / `Persistent` / `Ephemeral` shelves; `regress_to(t)` restores the persistent shelf in O(shelf size) instead of replaying the prefix; instant-rollback test verifies zero active nodes and zero replay after rollback.
 - Step 2.5 (validation experiment) committed: `tests/test_cpu_graph_search_experiment.rs` encodes grid mazes as one-hot `Gemv` transitions and shows structured-recurrence DFS beats a linear random baseline in compute-normalized accuracy.
+- Step 3 (branch scoring) committed: `CpuOpNode::Score`, `ScoreMetric`, `CaptureContext::score_against()`, and `GraphMap::branch_scores()`/`divergence()` implemented and validated by `tests/test_cpu_graph_branch_scoring.rs`.
 
 ## Vision
 
@@ -81,6 +82,8 @@ Because `geographdb-core` already has storage primitives, traces should live the
 - **Refute thesis:** linear baseline matches or beats structured recurrence; in that case, stop the ladder here and do not proceed to Steps 4–8.
 
 **Implementation status:** `tests/test_cpu_graph_search_experiment.rs` is implemented and passing. It uses 3×3 grid mazes encoded as one-hot state transition matrices and `CpuOpNode::Gemv`. On 16 seeded trials, structured DFS solves 16/16 mazes with an average of ~31 forward ops, while the linear random baseline (same op budget) solves 2/16. Compute-normalized accuracy: search ≈ 0.0020, baseline ≈ 0.0004.
+
+**Implementation status:** `tests/test_cpu_graph_branch_scoring.rs` is implemented and passing. It proves that a `Score` node replayed via `CpuGraph::execute_window` matches the expected cosine similarity, that `CaptureContext::score_against()` ranks a branch moved toward a target reference higher than a branch moved away from it, and that the score log round-trips through `GraphMap::save`/`load`.
 
 **Why this gate exists:** Steps 4–8 assume that branching + rollback actually helps solve problems. Without this experiment, we risk building a polished introspection pipeline that answers a question nobody asked.
 
@@ -183,4 +186,4 @@ Because `geographdb-core` already has storage primitives, traces should live the
 
 ## Next action
 
-Step 2.5 confirmed the thesis on the maze task. The recommended next move is **Step 3**: build branch-quality metrics that can rank plausible branches against ground truth. The trivial perturbation test is a sanity check; the real gate is blind ranking on held-out branch pairs from a task with a known oracle.
+Step 3 is now locked and verified. The recommended next move is **Step 4**: build an `IntrospectionPrompt` / `GraphSummarizer` that compresses a `GraphMap` (branch count, per-branch scores, divergence points, final hidden norm) into a short prompt for the local 0.5B model, and verify that the model picks the higher-scoring branch more often than random on a held-out set of traces.

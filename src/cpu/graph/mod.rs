@@ -24,6 +24,23 @@ pub enum Shelf {
     /// Temporary scratch buffers reused within a timestamp.
     Ephemeral,
 }
+
+/// Scalar metric used by a `Score` node to evaluate a tensor against an
+/// optional reference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ScoreMetric {
+    /// Dot-product similarity normalized by both vector magnitudes.
+    CosineSimilarity,
+    /// Negative Euclidean distance to the reference (higher is closer).
+    L2Similarity,
+    /// Arithmetic mean of the tensor elements.
+    MeanActivation,
+    /// Negative Shannon entropy of the softmax distribution (sharper is higher).
+    NegEntropy,
+    /// Negative cross-entropy against the reference distribution (higher is
+    /// a better match).
+    CrossEntropy,
+}
 #[cfg(feature = "cpu-graph")]
 pub use map::{GraphMap, GraphMapError};
 
@@ -320,6 +337,14 @@ pub enum CpuOpNode {
         out: F32Handle,
         h: usize,
     },
+    /// Reduction operator that writes a single scalar score to `out`.
+    Score {
+        a: F32Handle,
+        b: Option<F32Handle>,
+        out: F32Handle,
+        metric: ScoreMetric,
+        n: usize,
+    },
 }
 
 #[cfg(feature = "cpu-graph")]
@@ -340,6 +365,84 @@ impl CpuGraph {
 /// Allows same forward code to be used for direct execution or graph capture.
 #[cfg(test)]
 pub mod tests;
+
+/// Compute a scalar `metric` from tensor `a` and an optional reference `b`.
+#[cfg(feature = "cpu-graph")]
+fn compute_score(metric: ScoreMetric, a: &[f32], b: Option<&[f32]>) -> f32 {
+    const EPS: f32 = 1e-8;
+    match metric {
+        ScoreMetric::CosineSimilarity => {
+            let b = match b {
+                Some(b) if b.len() == a.len() => b,
+                _ => return 0.0,
+            };
+            let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+            let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+            let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+            let denom = norm_a * norm_b;
+            if denom < EPS {
+                return 0.0;
+            }
+            dot / denom
+        }
+        ScoreMetric::L2Similarity => {
+            if let Some(b) = b {
+                if b.len() != a.len() {
+                    return 0.0;
+                }
+                let dist: f32 = a
+                    .iter()
+                    .zip(b)
+                    .map(|(x, y)| (x - y) * (x - y))
+                    .sum::<f32>()
+                    .sqrt();
+                -dist
+            } else {
+                let norm: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+                -norm
+            }
+        }
+        ScoreMetric::MeanActivation => {
+            if a.is_empty() {
+                0.0
+            } else {
+                a.iter().sum::<f32>() / a.len() as f32
+            }
+        }
+        ScoreMetric::NegEntropy => {
+            if a.is_empty() {
+                return 0.0;
+            }
+            let max = a.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            let exp_sum: f32 = a.iter().map(|x| (x - max).exp()).sum();
+            let log_z = max + exp_sum.ln();
+            a.iter()
+                .map(|x| {
+                    let p = (x - max).exp() / exp_sum;
+                    if p > EPS {
+                        // p * log(p) where log(p) = x - log_z
+                        p * (x - log_z)
+                    } else {
+                        0.0
+                    }
+                })
+                .sum()
+        }
+        ScoreMetric::CrossEntropy => {
+            let b = match b {
+                Some(b) if b.len() == a.len() => b,
+                _ => return 0.0,
+            };
+            if a.is_empty() {
+                return 0.0;
+            }
+            let max = a.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            let exp_sum: f32 = a.iter().map(|x| (x - max).exp()).sum();
+            let log_z = max + exp_sum.ln();
+            a.iter().zip(b).map(|(x, y)| y * (x - log_z)).sum()
+        }
+    }
+}
 
 pub trait CpuExecutionContext {
     #[allow(clippy::too_many_arguments)]
@@ -471,6 +574,8 @@ pub struct CaptureContext {
     /// Persistent-shelf snapshots keyed by timestamp.  Enables instant rollback
     /// without replaying the prefix.
     pub shelf_snapshots: HashMap<u64, PersistentSnapshot>,
+    /// Recorded branch scores keyed by timestamp.
+    pub score_log: Vec<(u64, ScoreMetric, f32)>,
 }
 
 #[cfg(feature = "cpu-graph")]
@@ -486,6 +591,7 @@ impl CaptureContext {
             last_timestamp: timestamp,
             output_log: Vec::new(),
             shelf_snapshots: HashMap::new(),
+            score_log: Vec::new(),
         }
     }
 
@@ -536,6 +642,40 @@ impl CaptureContext {
         for (ptr, handle) in surviving {
             self.arena.rebind_f32(ptr, handle);
         }
+    }
+
+    /// Score `input` against an optional `reference` using `metric` and record
+    /// the scalar in `score_log` keyed by the current timestamp.
+    ///
+    /// The score is written into the ephemeral shelf so that replaying the
+    /// current timestamp window reproduces it.
+    pub fn score_against(
+        &mut self,
+        input: &[f32],
+        reference: Option<&[f32]>,
+        metric: ScoreMetric,
+    ) -> f32 {
+        self.maybe_snapshot();
+
+        let a = self.arena.copy_f32(Shelf::Ephemeral, input);
+        let b = reference.map(|r| self.arena.copy_f32(Shelf::Constants, r));
+        let out = self.arena.alloc_f32(Shelf::Ephemeral, 1);
+
+        let op = CpuOpNode::Score {
+            a,
+            b,
+            out,
+            metric,
+            n: input.len(),
+        };
+        self.graph
+            .add_node(op, self.layer, self.step, self.timestamp);
+        self.step += 1;
+
+        let score = compute_score(metric, input, reference);
+        self.arena.f32_mut(out)[0] = score;
+        self.score_log.push((self.timestamp, metric, score));
+        score
     }
 }
 
@@ -968,6 +1108,18 @@ impl CpuGraph {
                 }
                 let b = f32_slice(*b);
                 crate::cpu::ops::residual_add(out, b);
+            }
+            CpuOpNode::Score {
+                a,
+                b,
+                out,
+                metric,
+                n: _,
+            } => {
+                let a = f32_slice(*a);
+                let b = b.map(f32_slice);
+                let out = f32_slice_mut(*out);
+                out[0] = compute_score(*metric, a, b);
             }
         }
         Ok(())
