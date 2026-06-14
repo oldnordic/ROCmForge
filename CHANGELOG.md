@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.1] – 2026-06-14
+
 ### Features
 - **CPU Graph Execution Engine** — Implemented a `geographdb-core` backed execution engine for the CPU path, enabling 4D causal graph captures and replays.
 - **LFM2.5 Hybrid Support** — Implemented full support for Liquid Foundation Model 2.5 architecture, including mixed Attention/Shortconv layers and MoE FFNs.
@@ -13,6 +15,11 @@
 - **CPU Graph Temporal Logic** — Fixed a logic error where regressed execution nodes were unintentionally treated as "forever" nodes, causing them to be replayed incorrectly.
 - **Dependency Versioning** — Bumped `geographdb-core` to 0.5.4 to pull in stricter temporal validity checks.
 
+### Performance
+- **RDNA3 WMMA Optimization** — Implemented a dedicated WMMA variant for the fused QKV projection kernel, providing hardware acceleration for Q4_0 models on RDNA3 (gfx1100+) GPUs.
+- **Portable DOT4 Dispatcher** — Updated the `DOT4` macro to use the ROCm device library (`__ockl_sdot4`), enabling portable hardware acceleration on both RDNA2 and RDNA3 architectures while avoiding generation-specific compiler feature flags.
+- **Fused QKV Dispatch** — Enabled the high-performance fused QKV kernel path for Q4_0 models, significantly reducing launch overhead and improving end-to-end token throughput.
+
 ### Fixes
 - **MoE Expert Stride Calculation** — Fixed incorrect stride logic for 3D MoE expert tensors, ensuring correct memory indexing during expert dispatch.
 - **GGUF Transposition Logic** — Corrected `compute_transpose_flag` to avoid unnecessary transposition of standard row-major matrices, fixing initialization crashes for quantized models (Q6_K, Q2_K, etc.).
@@ -21,18 +28,17 @@
 
 ### Refactor
 - **GPU VRAM Reporting** — Implemented `GpuLayerWeights::estimate_vram_usage` for accurate instance-level memory usage tracking.
-
-### Performance
-- **RDNA3 WMMA Optimization** — Implemented a dedicated WMMA variant for the fused QKV projection kernel, providing hardware acceleration for Q4_0 models on RDNA3 (gfx1100+) GPUs.
-- **Portable DOT4 Dispatcher** — Updated the `DOT4` macro to use the ROCm device library (`__ockl_sdot4`), enabling portable hardware acceleration on both RDNA2 and RDNA3 architectures while avoiding generation-specific compiler feature flags.
-- **Fused QKV Dispatch** — Enabled the high-performance fused QKV kernel path for Q4_0 models, significantly reducing launch overhead and improving end-to-end token throughput.
-- **Prefill Hotpath Optimization** — Replaced high-latency Rust loops over `seq_len` with unified `gpu_dispatch_gemm` calls for Q4_0, Q4_1, and Q8_0 weights. This significantly improves prefill throughput for long prompts on these quantization types.
-- **Batched Element-wise Ops** — Optimized Q8_0 batched fused gate-up by replacing per-row kernel launches with single large-batch launches for SiLU and multiplication.
 - **Format-Agnostic `ModelFile` Abstraction** — Refactored `speculative.rs`, `app/inspect.rs`, and `main/inspect.rs` to use `ModelFile` for all loading and inspection tasks, eliminating repeated `path.ends_with(".rfm")` branching logic.
 - **Synthetic Test Infrastructure** — Introduced `tests/common/helpers.rs` with synthetic weight generators and mock configurations. Refactored `gpu_gate_up_test.rs` and `gpu_ffn_experimental.rs` to use synthetic data, removing the hardcoded 0.5B-Q4_0 GGUF dependency and making them fully portable and self-contained.
 
 ### Tests
 - **Shortconv Correctness Suite** — Added `tests/gpu_shortconv_correctness.rs` covering both single-token decode and multi-token prefill parity between CPU and GPU reference implementations.
+- **CPU Graph Parity** — Added `tests/test_cpu_graph_parity.rs` to verify that the GeoGraph-backed path produces bit-exact matches to the imperative CPU path.
+- **Temporal Regression** — Added `tests/test_cpu_graph_temporal.rs` to verify causal rollback and windowed execution in the 4D graph.
+
+## [0.1.0] – 2026-06-12
+- Initial release with support for Qwen2.5 and Llama architectures.
+- Basic GPU and CPU inference backends.
 
 ### Status
 - **Current modularization state (`COMPLETE`)** — All files in `src/` are now under the **1,000 LOC limit**.
