@@ -142,12 +142,12 @@ impl GpuKvCache {
         }
         // Include paged block buffers
         for layer in &self.paged_k {
-            for ref buf in layer.iter().flatten() {
+            for buf in layer.iter().flatten() {
                 total += buf.size();
             }
         }
         for layer in &self.paged_v {
-            for ref buf in layer.iter().flatten() {
+            for buf in layer.iter().flatten() {
                 total += buf.size();
             }
         }
