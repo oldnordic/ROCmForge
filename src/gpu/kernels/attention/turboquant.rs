@@ -92,7 +92,7 @@ pub fn kv_write_batched_compressed(
 }
 
 fn validate_turboquant_bits(bits: i32) -> GpuResult<()> {
-    if bits < 1 || bits > 4 {
+    if !(1..=4).contains(&bits) {
         return Err(GpuError::UnsupportedOperation {
             operation: "TurboQuant".to_string(),
             reason: format!("bits must be in {{1,2,3,4}}, got {}", bits),

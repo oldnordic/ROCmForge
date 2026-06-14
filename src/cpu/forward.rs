@@ -135,7 +135,7 @@ fn shortconv_forward(
 
     // 7. Second gate: y = C ⊙ conv_out
     for i in 0..h {
-        shortconv_tmp[i] = c[i] * shortconv_tmp[i];
+        shortconv_tmp[i] *= c[i];
     }
 
     // 8. out_proj: [h] → [h]

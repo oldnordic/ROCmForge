@@ -56,8 +56,8 @@ pub(super) fn compute_layout(config: &ModelConfig, max_seq_len: usize) -> CacheL
     let kv_size = config.num_kv_heads * config.head_dim;
     let effective_kv = config.kv_lora_dim.unwrap_or(kv_size);
     let layer_bytes = if let Some(bits) = config.kv_quant_bits {
-        let pack_bytes = (effective_kv * bits + 7) / 8;
-        let qjl_bytes = (effective_kv + 7) / 8;
+        let pack_bytes = (effective_kv * bits).div_ceil(8);
+        let qjl_bytes = effective_kv.div_ceil(8);
         // V cache stores RMS scales (not QJL signs) at pos_v_base + pack_bytes,
         // so the per-position stride must accommodate the larger of:
         //   K: pack_bytes + qjl_bytes  (indices + signs)
@@ -270,7 +270,7 @@ pub(super) fn init_paged_state(
 impl GpuKvCache {
     pub(super) fn build_from_config(config: &ModelConfig, max_seq_len: usize) -> GpuResult<Self> {
         if let Some(bits) = config.kv_quant_bits {
-            if bits < 1 || bits > 4 {
+            if !(1..=4).contains(&bits) {
                 return Err(GpuError::UnsupportedOperation {
                     operation: "TurboQuant cache init".to_string(),
                     reason: format!("kv_quant_bits must be in {{1,2,3,4}}, got {}", bits),

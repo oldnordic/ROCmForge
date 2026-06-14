@@ -142,17 +142,13 @@ impl GpuKvCache {
         }
         // Include paged block buffers
         for layer in &self.paged_k {
-            for opt_buf in layer {
-                if let Some(ref buf) = opt_buf {
-                    total += buf.size();
-                }
+            for ref buf in layer.iter().flatten() {
+                total += buf.size();
             }
         }
         for layer in &self.paged_v {
-            for opt_buf in layer {
-                if let Some(ref buf) = opt_buf {
-                    total += buf.size();
-                }
+            for ref buf in layer.iter().flatten() {
+                total += buf.size();
             }
         }
         total
@@ -165,8 +161,8 @@ impl GpuKvCache {
         let kv_size = config.num_kv_heads * config.head_dim;
         let d = config.kv_lora_dim.unwrap_or(kv_size);
         let layer_bytes = if let Some(bits) = config.kv_quant_bits {
-            let pack_bytes = (d * bits + 7) / 8;
-            let qjl_bytes = (d + 7) / 8;
+            let pack_bytes = (d * bits).div_ceil(8);
+            let qjl_bytes = d.div_ceil(8);
             let content_bytes = pack_bytes + qjl_bytes.max(TURBOQUANT_RMS_SCALE_BYTES);
             let aligned_pos_bytes =
                 (content_bytes + TURBOQUANT_POS_ALIGN_MASK) & !TURBOQUANT_POS_ALIGN_MASK;

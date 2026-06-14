@@ -165,7 +165,7 @@ pub fn gemv_q2_k_f32_on_stream(
         });
     }
 
-    if n_rows % 256 != 0 {
+    if !n_rows.is_multiple_of(256) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -237,7 +237,7 @@ pub fn gemv_q3_k_f32_on_stream(
         });
     }
 
-    if n_rows % 256 != 0 {
+    if !n_rows.is_multiple_of(256) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -309,7 +309,7 @@ pub fn gemv_q4_k_f32_on_stream(
         });
     }
 
-    if n_rows % 256 != 0 {
+    if !n_rows.is_multiple_of(256) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -381,7 +381,7 @@ pub fn gemv_q5_k_f32_on_stream(
         });
     }
 
-    if n_rows % 256 != 0 {
+    if !n_rows.is_multiple_of(256) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -453,7 +453,7 @@ pub fn gemv_q5_0_f32_on_stream(
         });
     }
 
-    if n_rows % 32 != 0 {
+    if !n_rows.is_multiple_of(32) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -506,7 +506,7 @@ pub fn gemm_q5_0_f32(
         });
     }
 
-    if n_rows % 32 != 0 {
+    if !n_rows.is_multiple_of(32) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -561,7 +561,7 @@ pub fn gemm_q5_0_f32_on_stream(
         });
     }
 
-    if n_rows % 32 != 0 {
+    if !n_rows.is_multiple_of(32) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -634,7 +634,7 @@ pub fn gemv_q5_1_f32_on_stream(
         });
     }
 
-    if n_rows % 32 != 0 {
+    if !n_rows.is_multiple_of(32) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -687,7 +687,7 @@ pub fn gemm_q5_1_f32(
         });
     }
 
-    if n_rows % 32 != 0 {
+    if !n_rows.is_multiple_of(32) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -742,7 +742,7 @@ pub fn gemm_q5_1_f32_on_stream(
         });
     }
 
-    if n_rows % 32 != 0 {
+    if !n_rows.is_multiple_of(32) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(
@@ -815,7 +815,7 @@ pub fn gemv_q6_k_f32_on_stream(
         });
     }
 
-    if n_rows % 256 != 0 {
+    if !n_rows.is_multiple_of(256) {
         return Err(GpuError::HipApiError {
             code: -1,
             description: format!(

@@ -303,7 +303,7 @@ impl DecodeBatch {
         slot.position += 1;
         slot.last_token = token;
 
-        let eos = token.map_or(false, |t| t == self.eos_token);
+        let eos = token == Some(self.eos_token);
         let reached_limit = slot.position >= slot.max_tokens;
         if eos || reached_limit {
             slot.state = SequenceState::Completed;

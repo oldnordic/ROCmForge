@@ -183,7 +183,7 @@ impl GpuQuant {
         }
 
         // n_rows must be aligned to QK_K (256)
-        if n_rows % QK_K != 0 {
+        if !n_rows.is_multiple_of(QK_K) {
             return Err(GpuError::HipApiError {
                 code: -1,
                 description: format!(

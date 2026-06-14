@@ -123,7 +123,7 @@ pub fn gpu_dispatch_gemv_residual_on_stream(
                 }
 
                 let features = super::super::features::GpuFeatures::detect(device).ok();
-                let is_rdna3 = features.map_or(false, |f| f.arch.starts_with("gfx11"));
+                let is_rdna3 = features.is_some_and(|f| f.arch.starts_with("gfx11"));
                 let use_wave32 = force_wave32_enabled() || (is_rdna3 && !disable_wave32_enabled());
 
                 if use_wave32 {
@@ -155,7 +155,7 @@ pub fn gpu_dispatch_gemv_residual_on_stream(
 
             GgmlType::Q4_1 => {
                 let features = super::super::features::GpuFeatures::detect(device).ok();
-                let is_rdna3 = features.map_or(false, |f| f.arch.starts_with("gfx11"));
+                let is_rdna3 = features.is_some_and(|f| f.arch.starts_with("gfx11"));
                 let use_wave32 = force_wave32_enabled() || (is_rdna3 && !disable_wave32_enabled());
 
                 if use_wave32 {

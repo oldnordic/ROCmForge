@@ -494,13 +494,11 @@ pub fn gpu_safety_preflight() -> crate::error::RocmForgeResult<()> {
     let mut render_node_found = false;
     if std::path::Path::new("/dev/dri").exists() {
         if let Ok(entries) = std::fs::read_dir("/dev/dri") {
-            for entry in entries {
-                if let Ok(entry) = entry {
-                    let name = entry.file_name().to_string_lossy().into_owned();
-                    if name.starts_with("renderD") {
-                        render_node_found = true;
-                        break;
-                    }
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.starts_with("renderD") {
+                    render_node_found = true;
+                    break;
                 }
             }
         }

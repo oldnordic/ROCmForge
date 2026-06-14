@@ -98,7 +98,7 @@ fn gpu_shortconv_fallback(
     if let Some(ref mut gpu_conv_states) = kv.conv_state {
         if let Some(gpu_conv_buf) = gpu_conv_states.get_mut(layer_idx) {
             let cpu_conv = &cpu_kv.conv_state[layer_idx];
-            super::super::utils::upload_f32(gpu_conv_buf, &cpu_conv)?;
+            super::super::utils::upload_f32(gpu_conv_buf, cpu_conv)?;
         }
     }
 

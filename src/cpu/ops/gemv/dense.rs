@@ -11,7 +11,7 @@ pub fn gemv_f32(w: &[f32], x: &[f32], y: &mut [f32]) {
     // AVX2 feature detection (cached)
     let features = crate::cpu::features::CpuFeatures::get();
     #[cfg(target_arch = "x86_64")]
-    let use_avx2 = features.has_avx2 && features.has_fma && in_dim % 8 == 0;
+    let use_avx2 = features.has_avx2 && features.has_fma && in_dim.is_multiple_of(8);
     #[cfg(not(target_arch = "x86_64"))]
     let use_avx2 = false;
 

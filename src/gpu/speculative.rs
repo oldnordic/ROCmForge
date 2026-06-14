@@ -25,7 +25,7 @@ fn verify_cache_isolation(target_kv: &GpuKvCache, draft_kv: &GpuKvCache) -> GpuR
             let d_size = draft_kv.max_seq_len * draft_kv.kv_size * std::mem::size_of::<f32>();
 
             // Assert K caches do not overlap
-            let diff_k = (t_k as isize - d_k as isize).abs() as usize;
+            let diff_k = (t_k as isize - d_k as isize).unsigned_abs();
             if diff_k < std::cmp::max(t_size, d_size) {
                 return Err(GpuError::HipApiError {
                     code: -1,
@@ -37,7 +37,7 @@ fn verify_cache_isolation(target_kv: &GpuKvCache, draft_kv: &GpuKvCache) -> GpuR
             }
 
             // Assert V caches do not overlap
-            let diff_v = (t_v as isize - d_v as isize).abs() as usize;
+            let diff_v = (t_v as isize - d_v as isize).unsigned_abs();
             if diff_v < std::cmp::max(t_size, d_size) {
                 return Err(GpuError::HipApiError {
                     code: -1,

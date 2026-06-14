@@ -85,7 +85,7 @@ impl GpuKvCache {
                 neox,
                 dc,
                 bits as i32,
-                num_centroids as i32,
+                num_centroids,
                 centroids,
                 self.qjl_scale,
                 w_down_k,
