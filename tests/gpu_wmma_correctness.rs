@@ -2,8 +2,8 @@
 //! WMMA fused kernel correctness tests
 
 use rocmforge::gpu::device::GpuDevice;
-use rocmforge::gpu::kernels::gemv_norm_qkv_rope_kvwrite_q4_0_f32_wmma_on_stream;
 use rocmforge::gpu::error::GpuResult;
+use rocmforge::gpu::kernels::gemv_norm_qkv_rope_kvwrite_q4_0_f32_wmma_on_stream;
 
 #[cfg(feature = "gpu")]
 mod tests {
@@ -17,7 +17,10 @@ mod tests {
         let device_name = device.get_name().unwrap_or_default();
 
         if !device_name.contains("gfx1100") {
-            println!("Skipping: Test requires RDNA3 (gfx1100), got {}", device_name);
+            println!(
+                "Skipping: Test requires RDNA3 (gfx1100), got {}",
+                device_name
+            );
             return;
         }
 
