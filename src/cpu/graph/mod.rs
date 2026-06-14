@@ -2,22 +2,29 @@
 
 use crate::cpu::weights::WeightMeta;
 use crate::cpu::CpuError;
+#[cfg(feature = "cpu-graph")]
 use crate::loader::GgmlType;
 
 #[cfg(feature = "cpu-graph")]
 pub use geographdb_core::algorithms::four_d::{GraphNode4D, TemporalEdge, TemporalWindow};
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+#[cfg(feature = "cpu-graph")]
+pub mod map;
+#[cfg(feature = "cpu-graph")]
+pub use map::{GraphMap, GraphMapError};
+
 /// Stable handle to a contiguous f32 tensor inside a `CpuGraphArena`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct F32Handle {
     pub offset: usize,
     pub len: usize,
 }
 
 /// Stable handle to a contiguous u8 tensor inside a `CpuGraphArena`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct U8Handle {
     pub offset: usize,
     pub len: usize,
@@ -29,14 +36,15 @@ pub struct U8Handle {
 /// capture and replay, every captured op stores handles (offsets) into this
 /// arena.  The arena owns the bytes; handles remain valid as long as the arena
 /// itself is alive.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CpuGraphArena {
-    f32_data: Vec<f32>,
-    u8_data: Vec<u8>,
+    pub(crate) f32_data: Vec<f32>,
+    pub(crate) u8_data: Vec<u8>,
     /// Maps the original caller pointer to the current f32 handle for that slice.
     /// Used by `read_back` to copy replay results back to caller-owned buffers.
-    f32_bindings: HashMap<usize, F32Handle>,
+    pub(crate) f32_bindings: HashMap<usize, F32Handle>,
     /// Same, for u8 slices.
-    u8_bindings: HashMap<usize, U8Handle>,
+    pub(crate) u8_bindings: HashMap<usize, U8Handle>,
 }
 
 impl CpuGraphArena {
@@ -46,6 +54,22 @@ impl CpuGraphArena {
             u8_data: Vec::new(),
             f32_bindings: HashMap::new(),
             u8_bindings: HashMap::new(),
+        }
+    }
+
+    /// Reconstruct an arena from its raw parts.  Used by persistence.
+    #[cfg(feature = "cpu-graph")]
+    pub(crate) fn from_parts(
+        f32_data: Vec<f32>,
+        u8_data: Vec<u8>,
+        f32_bindings: HashMap<usize, F32Handle>,
+        u8_bindings: HashMap<usize, U8Handle>,
+    ) -> Self {
+        Self {
+            f32_data,
+            u8_data,
+            f32_bindings,
+            u8_bindings,
         }
     }
 
@@ -144,7 +168,7 @@ impl Default for CpuGraphArena {
 /// Each tensor is addressed by a stable handle into a `CpuGraphArena` rather
 /// than a raw pointer, so the graph remains valid after the original buffers
 /// are moved or dropped.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CpuOpNode {
     RmsNorm {
         hidden: F32Handle,
@@ -161,7 +185,9 @@ pub enum CpuOpNode {
         scratch: Option<U8Handle>,
         m: usize,
         n: usize,
-        wtype: GgmlType,
+        /// Integer code for `GgmlType`; stored as a code so the node is
+        /// serializable without depending on `GgmlType`'s exact enum layout.
+        wtype_code: u32,
         needs_transpose: bool,
     },
     RoPE {
@@ -202,7 +228,14 @@ pub enum CpuOpNode {
 pub struct CpuGraph {
     /// Temporal graph nodes.  Exposed so tests and tooling can inspect timestamps.
     pub nodes: Vec<GraphNode4D>,
-    ops: Vec<CpuOpNode>,
+    pub(crate) ops: Vec<CpuOpNode>,
+}
+
+#[cfg(feature = "cpu-graph")]
+impl CpuGraph {
+    pub(crate) fn from_parts(nodes: Vec<GraphNode4D>, ops: Vec<CpuOpNode>) -> Self {
+        Self { nodes, ops }
+    }
 }
 
 /// Abstract context for executing CPU operations.
@@ -407,7 +440,7 @@ impl CpuExecutionContext for CaptureContext {
             scratch,
             m: out_dim,
             n: in_dim,
-            wtype: meta.wtype,
+            wtype_code: meta.wtype as u32,
             needs_transpose: meta.needs_transpose,
         };
         self.graph
@@ -657,7 +690,7 @@ impl CpuGraph {
                 scratch,
                 m,
                 n,
-                wtype,
+                wtype_code,
                 needs_transpose,
                 weight_bytes: _,
             } => {
@@ -665,8 +698,11 @@ impl CpuGraph {
                 let x = f32_slice(*input);
                 let y = f32_slice_mut(*out);
                 let mut q8_scratch = scratch.map(|h| u8_slice_mut(h));
+                let wtype = GgmlType::from_u32(*wtype_code).map_err(|_| {
+                    CpuError::InvalidOperation(format!("invalid wtype code {}", wtype_code))
+                })?;
                 let meta = WeightMeta {
-                    wtype: *wtype,
+                    wtype,
                     dims: vec![*m as u64, *n as u64],
                     needs_transpose: *needs_transpose,
                     role: crate::config::TensorRole::Generic,

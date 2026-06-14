@@ -35,6 +35,7 @@ dirs = "5"
 geographdb-core = { version = "0.5.4", optional = true }
 sqlitegraph = { version = "3.2.5", optional = true }
 glam = { version = "0.27", optional = true }
+bincode = { version = "1.3.3", optional = true }
 # UUID for API responses
 uuid = { version = "1", optional = true, features = ["v4"] }
 # HTTP server (optional)
@@ -55,7 +56,7 @@ default = []
 # GPU support requires ROCm/HIP installation
 gpu = []
 # Graph-based execution for CPU path
-cpu-graph = ["dep:geographdb-core", "dep:sqlitegraph", "dep:glam"]
+cpu-graph = ["dep:geographdb-core", "dep:sqlitegraph", "dep:glam", "dep:bincode"]
 # HTTP server with OpenAI-compatible API
 server = ["dep:tokio", "dep:axum", "dep:tower", "dep:tower-http", "dep:tokio-stream", "dep:async-stream", "dep:tracing", "dep:tracing-subscriber", "dep:uuid"]
 

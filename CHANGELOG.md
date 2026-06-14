@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Features
+- **CPU Graph Persistence (`GraphMap`)** — Added `src/cpu/graph/map.rs` with `GraphMap::save`/`load`/`into_context`. Graph topology is stored via `geographdb_core::storage::save_graph4d`/`load_graph4d`; arena, ops, bindings, and output log live in a sectioned `arena.geodb` sidecar. Enables a captured CPU graph session to survive process restarts and be replayed from disk.
+
+### Tests
+- **CPU Graph Persistence Round-Trip** — Added `tests/test_cpu_graph_persistence.rs` which captures a layer, persists the `GraphMap`, drops the original context, reloads, and verifies replay matches direct execution with zero max error.
+
 ## [0.1.1] – 2026-06-14
 
 ### Features

@@ -2898,6 +2898,7 @@ dependencies = [
  "approx",
  "async-stream",
  "axum",
+ "bincode",
  "bytes",
  "cc",
  "chrono",
