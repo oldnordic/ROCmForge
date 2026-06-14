@@ -11,7 +11,9 @@
     unused_imports,
     unused_mut,
     unused_unsafe,
-    unused_must_use
+    unused_must_use,
+    clippy::all,
+    reason = "GPU module is a thin, unsafe wrapper around the ROCm/HIP C API. Many style lints (argument counts, raw-pointer signatures, unused bindings) are inherent to FFI wrappers and are addressed incrementally."
 )]
 
 pub mod arch;

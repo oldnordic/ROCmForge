@@ -44,8 +44,8 @@ fn test_cpu_graph_parity() {
 
     // 2. Reference Run (Imperative)
     let mut hidden_ref = vec![0.1f32; h];
-    for i in 0..h {
-        hidden_ref[i] = (i as f32).sin() * 0.1;
+    for (i, v) in hidden_ref.iter_mut().enumerate().take(h) {
+        *v = (i as f32).sin() * 0.1;
     }
     let mut kv_ref = CpuKvCache::new(&config, 1);
     let mut scratch_ref = CpuForwardScratch::new(&config);
@@ -77,8 +77,8 @@ fn test_cpu_graph_parity() {
 
     // 3. Graph Capture Run
     let mut hidden_graph = vec![0.1f32; h];
-    for i in 0..h {
-        hidden_graph[i] = (i as f32).sin() * 0.1;
+    for (i, v) in hidden_graph.iter_mut().enumerate().take(h) {
+        *v = (i as f32).sin() * 0.1;
     }
     let mut kv_graph = CpuKvCache::new(&config, 1);
     let mut scratch_graph = CpuForwardScratch::new(&config);
@@ -102,8 +102,8 @@ fn test_cpu_graph_parity() {
 
     // 4. Replay Run
     // Reset hidden state for replay
-    for i in 0..h {
-        hidden_graph[i] = (i as f32).sin() * 0.1;
+    for (i, v) in hidden_graph.iter_mut().enumerate().take(h) {
+        *v = (i as f32).sin() * 0.1;
     }
     // Replay the captured graph
     let window = rocmforge::cpu::graph::TemporalWindow {

@@ -2,8 +2,8 @@
 //! CPU Graph search / speculative rollback test.
 //!
 //! Demonstrates that a captured prefix can be shared across multiple
-//! speculative branches, each rolled back with `graph.regress()` and
-//! re-bound with `rebind_after_regress()` before a new branch is captured.
+//! speculative branches, each rolled back with `CaptureContext::regress_to()`
+//! before a new branch is captured.
 
 use rocmforge::config::ModelConfig;
 use rocmforge::cpu::cache::{CpuForwardScratch, CpuKvCache};
@@ -154,17 +154,13 @@ fn test_cpu_graph_search_rollback_and_branch() {
     assert!(err_a < 1e-6, "Branch A replay diverged! err={:.8}", err_a);
 
     // ------------------------------------------------------------------
-    // 5. Roll back to the prefix and restore the arena bindings.
+    // 5. Roll back to the prefix instantly via the T=0 shelf snapshot.
     // ------------------------------------------------------------------
-    capture_ctx.graph.regress(0);
-    capture_ctx.rebind_after_regress(0);
+    capture_ctx.regress_to(0);
 
-    // Replay only the prefix to restore caller hidden/KV to prefix state.
+    // The persistent shelf is restored from the snapshot; read_back gives the
+    // prefix state without replaying any prefix ops.
     let mut hidden_prefix_restore = vec![0.1f32; h];
-    capture_ctx
-        .graph
-        .execute_window(&mut capture_ctx.arena, TemporalWindow { start: 0, end: 2 })
-        .expect("Prefix restore replay failed");
     unsafe { capture_ctx.read_back() };
     hidden_prefix_restore.copy_from_slice(&hidden);
 

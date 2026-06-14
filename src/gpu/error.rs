@@ -45,6 +45,9 @@ pub enum GpuError {
     /// Operation not supported or not yet implemented
     UnsupportedOperation { operation: String, reason: String },
 
+    /// Forward pass produced an invalid numeric value (e.g., NaN)
+    InvalidOperation { message: String },
+
     /// Matrix weight metadata is invalid for GPU inference
     InvalidWeightLayout {
         tensor: String,
@@ -118,6 +121,9 @@ impl std::fmt::Display for GpuError {
             }
             GpuError::UnsupportedOperation { operation, reason } => {
                 write!(f, "operation not supported: {} - {}", operation, reason)
+            }
+            GpuError::InvalidOperation { message } => {
+                write!(f, "invalid GPU operation: {}", message)
             }
             GpuError::InvalidWeightLayout {
                 tensor,

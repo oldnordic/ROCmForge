@@ -4,9 +4,13 @@
 
 ### Features
 - **CPU Graph Persistence (`GraphMap`)** — Added `src/cpu/graph/map.rs` with `GraphMap::save`/`load`/`into_context`. Graph topology is stored via `geographdb_core::storage::save_graph4d`/`load_graph4d`; arena, ops, bindings, and output log live in a sectioned `arena.geodb` sidecar. Enables a captured CPU graph session to survive process restarts and be replayed from disk.
+- **Timestamped Persistent Shelves for Instant Rollback** — Split `CpuGraphArena` into `Constants`, `Persistent`, and `Ephemeral` shelves. `CaptureContext` snapshots the `Persistent` shelf on every timestamp boundary and restores it on `regress_to()`, making rollback O(1) in the number of captured ops. `CpuGraph::execute_window` now uses shelf-aware pointer selection, and `CpuGraph::regress` disables regressed nodes with `end_ts = 0` while newly captured nodes are alive until `u64::MAX`.
 
 ### Tests
 - **CPU Graph Persistence Round-Trip** — Added `tests/test_cpu_graph_persistence.rs` which captures a layer, persists the `GraphMap`, drops the original context, reloads, and verifies replay matches direct execution with zero max error.
+- **CPU Graph Instant Rollback** — Added `tests/test_cpu_graph_instant_rollback.rs` which proves that after `regress_to(0)` the prefix state is available from the shelf snapshot with no active nodes and no prefix replay.
+- **CPU Graph Search Validation Experiment (Step 2.5)** — Added `tests/test_cpu_graph_search_experiment.rs`. It encodes small grid mazes as one-hot state transitions via `CpuOpNode::Gemv`, solves them with structured-recurrence DFS using `regress_to()`, and compares against a linear random baseline under the same forward-op budget. The test asserts that structured recurrence achieves higher compute-normalized accuracy.
+- **Verification Gate Cleanup** — Replaced production `panic!` NaN guards in `src/cpu/forward.rs` and `src/gpu/forward/mod.rs` with proper error returns (`GpuError::InvalidOperation`). Added documented reasons to all `#[allow(...)]` attributes flagged by the pre-commit scan, and scoped a `clippy::all` allow (with reason) to the GPU FFI module.
 
 ## [0.1.1] – 2026-06-14
 

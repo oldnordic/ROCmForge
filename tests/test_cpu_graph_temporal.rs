@@ -3,7 +3,9 @@
 //!
 //! Verifies:
 //! 1. Multi-step capture with incrementing timestamps.
-//! 2. Temporal regression (rollback) invalidates nodes correctly.
+//! 2. `CaptureContext::regress_to()` restores the persistent shelf from the
+//!    snapshot taken at the target timestamp, giving instant rollback without
+//!    replaying the prefix.
 //! 3. Windowed execution only runs nodes within the specific time range.
 
 use rocmforge::config::ModelConfig;
@@ -112,34 +114,20 @@ fn test_cpu_graph_temporal_flow() {
 
     // 4. Test Regression: Rollback to T=0
     println!("--- Testing Regression to T=0 ---");
-    capture_ctx.graph.regress(0); // This should set end_ts=0 for all nodes where begin_ts > 0
-    capture_ctx.rebind_after_regress(0); // Restore arena bindings to the T=0 state
+    capture_ctx.regress_to(0); // Restore persistent shelf + bindings from the T=0 snapshot
     for (i, node) in capture_ctx.graph.nodes.iter().enumerate() {
         println!("Node {} begin={} end={}", i, node.begin_ts, node.end_ts);
     }
 
-    // Re-initialize hidden state
-    for i in 0..h {
-        hidden[i] = 0.1;
-    }
-
-    // Execute only Step 0
-    let window_0 = TemporalWindow { start: 0, end: 1 };
-    capture_ctx
-        .graph
-        .execute_window(&mut capture_ctx.arena, window_0)
-        .expect("Replay Step 0 failed");
+    // The persistent shelf was restored to the T=0 snapshot, so read_back
+    // reflects the prefix state without replaying any prefix ops.
     unsafe {
         capture_ctx.read_back();
     }
     let hidden_after_step_0 = hidden.clone();
 
-    // Re-initialize hidden state again
-    for i in 0..h {
-        hidden[i] = 0.1;
-    }
-
-    // Execute full window (0 to infinity) - should still only run Step 0 because Step 1 is regressed
+    // Execute full window (0 to infinity) - no active nodes should remain after
+    // regressing to T=0, but the shelf snapshot still provides the prefix state.
     let window_all = TemporalWindow { start: 0, end: 0 };
     capture_ctx
         .graph
@@ -169,8 +157,8 @@ fn test_cpu_graph_temporal_flow() {
     // 5. Test Windowing: Execute only Step 1 (Expect NO ops to run because Step 1 is regressed)
     println!("--- Testing Windowed Step 1 (should be empty) ---");
     // Reset hidden to a known value
-    for i in 0..h {
-        hidden[i] = 42.0;
+    for v in hidden.iter_mut().take(h) {
+        *v = 42.0;
     }
     let window_1 = TemporalWindow { start: 1, end: 2 };
     println!(

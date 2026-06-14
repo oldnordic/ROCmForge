@@ -6,8 +6,11 @@
 
 - `CpuGraphArena` stores captured CPU layer execution as stable `F32Handle` / `U8Handle` offsets.
 - Parity test: graph replay matches direct execution with max error `0.00000000`.
-- Temporal regression works: `graph.regress(t)` invalidates future nodes; `rebind_after_regress(t)` restores arena bindings so `read_back()` returns the rolled-back state.
+- Temporal regression works: `graph.regress(t)` invalidates future nodes; `CaptureContext::regress_to(t)` restores both the graph and the persistent shelf snapshot.
 - Search/rollback test: capture shared prefix, evaluate branch A, roll back, capture/evaluate branch B, both matching direct execution.
+- Step 1 (`GraphMap` persistence) committed: `GraphMap::save`/`load`/`into_context` round-trip through `geographdb-core` storage passes.
+- Step 2 (timestamp shelves) committed: arena split into `Constants` / `Persistent` / `Ephemeral` shelves; `regress_to(t)` restores the persistent shelf in O(shelf size) instead of replaying the prefix; instant-rollback test verifies zero active nodes and zero replay after rollback.
+- Step 2.5 (validation experiment) committed: `tests/test_cpu_graph_search_experiment.rs` encodes grid mazes as one-hot `Gemv` transitions and shows structured-recurrence DFS beats a linear random baseline in compute-normalized accuracy.
 
 ## Vision
 
@@ -49,7 +52,37 @@ Because `geographdb-core` already has storage primitives, traces should live the
 - On major timestamp boundaries, snapshot the `persistent` shelf.
 - `regress(t)` restores the shelf snapshot instead of replaying.
 
-**Success criterion:** Rollback latency is O(shelf size), not O(number of ops). Test shows a 100-op prefix can be rolled back in constant time.
+**Success criterion:**
+- Rollback latency is O(shelf size), not O(number of ops).
+- `tests/test_cpu_graph_instant_rollback.rs` proves that after `regress_to(0)` the prefix state is restored from the shelf snapshot with **zero active nodes** and no prefix replay.
+
+---
+
+### Step 2.5 — Validation experiment: structured recurrence vs linear CoT
+
+**Goal:** Prove (or refute) the central research bet *before* building introspection and training infrastructure on top of it.
+
+**What to build:**
+- A small, deterministic search task that requires branching and is solvable by the CPU graph engine without model changes:
+  - candidate: grid maze, constraint-satisfaction walk, or multi-hop reachability query on the 4D graph itself.
+- A ground-truth oracle so we know which branch reached the solution.
+- Two inference arms with the **same forward-pass compute budget**:
+  1. **Linear CoT baseline**: one chain, no branching, same number of forward steps.
+  2. **Structured-recurrence search**: fork branches with `regress_to()`, evaluate, discard dead ends, continue.
+- Instrumentation:
+  - steps to solution,
+  - accuracy (% tasks solved),
+  - number of branches evaluated,
+  - wall time,
+  - compute-normalized accuracy (correct solutions per forward op).
+
+**Success criterion (accept / reject):**
+- **Confirm thesis:** structured-recurrence search achieves higher compute-normalized accuracy than the linear baseline on a held-out task set.
+- **Refute thesis:** linear baseline matches or beats structured recurrence; in that case, stop the ladder here and do not proceed to Steps 4–8.
+
+**Implementation status:** `tests/test_cpu_graph_search_experiment.rs` is implemented and passing. It uses 3×3 grid mazes encoded as one-hot state transition matrices and `CpuOpNode::Gemv`. On 16 seeded trials, structured DFS solves 16/16 mazes with an average of ~31 forward ops, while the linear random baseline (same op budget) solves 2/16. Compute-normalized accuracy: search ≈ 0.0020, baseline ≈ 0.0004.
+
+**Why this gate exists:** Steps 4–8 assume that branching + rollback actually helps solve problems. Without this experiment, we risk building a polished introspection pipeline that answers a question nobody asked.
 
 ---
 
@@ -65,7 +98,9 @@ Because `geographdb-core` already has storage primitives, traces should live the
   - perplexity on the next token if available.
 - Store the score in `GraphMap` branch annotations.
 
-**Success criterion:** A test with a correct branch and an obviously broken branch (e.g., perturbed hidden) assigns a higher score to the correct one.
+**Success criterion:**
+- **Trivial separation:** a correct branch receives a higher score than an obviously broken branch (e.g., zeroed or heavily perturbed hidden).
+- **Blind ranking:** on a held-out set of *plausible* branches where neither branch is obviously broken, the divergence score reliably ranks the ground-truth better branch above the worse one. The score must be evaluated against the oracle from Step 2.5, not against perturbation severity.
 
 ---
 
@@ -148,4 +183,4 @@ Because `geographdb-core` already has storage primitives, traces should live the
 
 ## Next action
 
-The recommended first move is **Step 1**: persist a `GraphMap` through `geographdb-core`. It unlocks every later step and requires no model changes.
+Step 2.5 confirmed the thesis on the maze task. The recommended next move is **Step 3**: build branch-quality metrics that can rank plausible branches against ground truth. The trivial perturbation test is a sanity check; the real gate is blind ranking on held-out branch pairs from a task with a known oracle.

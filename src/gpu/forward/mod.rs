@@ -73,10 +73,12 @@ pub fn gpu_full_forward_hybrid(
         utils::download_f32(&scratch.hidden, &mut check_hidden)?;
         for (idx, &val) in check_hidden.iter().enumerate() {
             if val.is_nan() {
-                panic!(
-                    "NaN detected in scratch.hidden after layer {} at index {}",
-                    layer_idx, idx
-                );
+                return Err(GpuError::InvalidOperation {
+                    message: format!(
+                        "NaN detected in scratch.hidden after layer {} at index {}",
+                        layer_idx, idx
+                    ),
+                });
             }
         }
 
@@ -106,10 +108,12 @@ pub fn gpu_full_forward_hybrid(
                 utils::download_f32(&scratch.normed, &mut check_normed)?;
                 for (idx, &val) in check_normed.iter().enumerate() {
                     if val.is_nan() {
-                        panic!(
-                            "NaN detected in scratch.normed (after output norm) at index {}",
-                            idx
-                        );
+                        return Err(GpuError::InvalidOperation {
+                            message: format!(
+                                "NaN detected in scratch.normed (after output norm) at index {}",
+                                idx
+                            ),
+                        });
                     }
                 }
                 if let Some(dense) = gpu_weights.lm_head.as_dense() {
@@ -153,10 +157,12 @@ pub fn gpu_full_forward_hybrid(
                 utils::download_f32(&scratch.logits, &mut host_scratch.logits[..v])?;
                 for (idx, &val) in host_scratch.logits[..v].iter().enumerate() {
                     if val.is_nan() {
-                        panic!(
-                            "NaN detected in logits (after lm_head GEMV) at index {}",
-                            idx
-                        );
+                        return Err(GpuError::InvalidOperation {
+                            message: format!(
+                                "NaN detected in logits (after lm_head GEMV) at index {}",
+                                idx
+                            ),
+                        });
                     }
                 }
                 Ok(())

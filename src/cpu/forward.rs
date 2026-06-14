@@ -787,12 +787,6 @@ pub fn cpu_embed_token(
                 for i in 0..h {
                     let bits = u16::from_le_bytes([emb[i * 2], emb[i * 2 + 1]]);
                     let val = half::f16::from_bits(bits).to_f32();
-                    if val.is_nan() {
-                        panic!(
-                            "NaN detected in cpu_embed_token for token_id {} at index {}",
-                            token_id, i
-                        );
-                    }
                     hidden[i] = val;
                 }
             }

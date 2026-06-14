@@ -13,21 +13,55 @@ use std::collections::HashMap;
 
 #[cfg(feature = "cpu-graph")]
 pub mod map;
+
+/// Logical shelf where an arena handle lives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Shelf {
+    /// Weights and other immutable data captured once.
+    Constants,
+    /// State that survives across timestamps (hidden, KV cache).
+    Persistent,
+    /// Temporary scratch buffers reused within a timestamp.
+    Ephemeral,
+}
 #[cfg(feature = "cpu-graph")]
 pub use map::{GraphMap, GraphMapError};
 
 /// Stable handle to a contiguous f32 tensor inside a `CpuGraphArena`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct F32Handle {
+    pub shelf: Shelf,
     pub offset: usize,
     pub len: usize,
+}
+
+impl F32Handle {
+    pub fn new(shelf: Shelf, offset: usize, len: usize) -> Self {
+        Self { shelf, offset, len }
+    }
 }
 
 /// Stable handle to a contiguous u8 tensor inside a `CpuGraphArena`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct U8Handle {
+    pub shelf: Shelf,
     pub offset: usize,
     pub len: usize,
+}
+
+impl U8Handle {
+    pub fn new(shelf: Shelf, offset: usize, len: usize) -> Self {
+        Self { shelf, offset, len }
+    }
+}
+
+/// Snapshot of the persistent shelf at a single timestamp boundary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistentSnapshot {
+    pub f32_data: Vec<f32>,
+    pub u8_data: Vec<u8>,
+    pub f32_bindings: HashMap<usize, F32Handle>,
+    pub u8_bindings: HashMap<usize, U8Handle>,
 }
 
 /// Stable storage arena for all tensor data referenced by a captured CPU graph.
@@ -36,10 +70,19 @@ pub struct U8Handle {
 /// capture and replay, every captured op stores handles (offsets) into this
 /// arena.  The arena owns the bytes; handles remain valid as long as the arena
 /// itself is alive.
+///
+/// The arena is split into three shelves:
+/// - `Constants` — weights, sin/cos tables, and other immutable data.
+/// - `Persistent` — hidden state and KV cache; survives across timestamps.
+/// - `Ephemeral` — scratch buffers reused within a single timestamp.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CpuGraphArena {
-    pub(crate) f32_data: Vec<f32>,
-    pub(crate) u8_data: Vec<u8>,
+    pub(crate) f32_constants: Vec<f32>,
+    pub(crate) u8_constants: Vec<u8>,
+    pub(crate) f32_persistent: Vec<f32>,
+    pub(crate) u8_persistent: Vec<u8>,
+    pub(crate) f32_ephemeral: Vec<f32>,
+    pub(crate) u8_ephemeral: Vec<u8>,
     /// Maps the original caller pointer to the current f32 handle for that slice.
     /// Used by `read_back` to copy replay results back to caller-owned buffers.
     pub(crate) f32_bindings: HashMap<usize, F32Handle>,
@@ -50,47 +93,68 @@ pub struct CpuGraphArena {
 impl CpuGraphArena {
     pub fn new() -> Self {
         Self {
-            f32_data: Vec::new(),
-            u8_data: Vec::new(),
+            f32_constants: Vec::new(),
+            u8_constants: Vec::new(),
+            f32_persistent: Vec::new(),
+            u8_persistent: Vec::new(),
+            f32_ephemeral: Vec::new(),
+            u8_ephemeral: Vec::new(),
             f32_bindings: HashMap::new(),
             u8_bindings: HashMap::new(),
         }
     }
 
-    /// Reconstruct an arena from its raw parts.  Used by persistence.
-    #[cfg(feature = "cpu-graph")]
-    pub(crate) fn from_parts(
-        f32_data: Vec<f32>,
-        u8_data: Vec<u8>,
-        f32_bindings: HashMap<usize, F32Handle>,
-        u8_bindings: HashMap<usize, U8Handle>,
-    ) -> Self {
-        Self {
-            f32_data,
-            u8_data,
-            f32_bindings,
-            u8_bindings,
+    fn f32_vec(&self, shelf: Shelf) -> &[f32] {
+        match shelf {
+            Shelf::Constants => &self.f32_constants,
+            Shelf::Persistent => &self.f32_persistent,
+            Shelf::Ephemeral => &self.f32_ephemeral,
         }
     }
 
-    /// Allocate a new, zero-initialized f32 slot.
-    pub fn alloc_f32(&mut self, len: usize) -> F32Handle {
-        let offset = self.f32_data.len();
-        self.f32_data.resize(offset + len, 0.0f32);
-        F32Handle { offset, len }
+    fn f32_vec_mut(&mut self, shelf: Shelf) -> &mut Vec<f32> {
+        match shelf {
+            Shelf::Constants => &mut self.f32_constants,
+            Shelf::Persistent => &mut self.f32_persistent,
+            Shelf::Ephemeral => &mut self.f32_ephemeral,
+        }
     }
 
-    /// Copy an f32 slice into the arena and return its handle.
-    pub fn copy_f32(&mut self, src: &[f32]) -> F32Handle {
-        let handle = self.alloc_f32(src.len());
-        self.f32_data[handle.offset..handle.offset + handle.len].copy_from_slice(src);
+    fn u8_vec(&self, shelf: Shelf) -> &[u8] {
+        match shelf {
+            Shelf::Constants => &self.u8_constants,
+            Shelf::Persistent => &self.u8_persistent,
+            Shelf::Ephemeral => &self.u8_ephemeral,
+        }
+    }
+
+    fn u8_vec_mut(&mut self, shelf: Shelf) -> &mut Vec<u8> {
+        match shelf {
+            Shelf::Constants => &mut self.u8_constants,
+            Shelf::Persistent => &mut self.u8_persistent,
+            Shelf::Ephemeral => &mut self.u8_ephemeral,
+        }
+    }
+
+    /// Allocate a new, zero-initialized f32 slot on the given shelf.
+    pub fn alloc_f32(&mut self, shelf: Shelf, len: usize) -> F32Handle {
+        let vec = self.f32_vec_mut(shelf);
+        let offset = vec.len();
+        vec.resize(offset + len, 0.0f32);
+        F32Handle::new(shelf, offset, len)
+    }
+
+    /// Copy an f32 slice into the given shelf and return its handle.
+    pub fn copy_f32(&mut self, shelf: Shelf, src: &[f32]) -> F32Handle {
+        let handle = self.alloc_f32(shelf, src.len());
+        self.f32_vec_mut(shelf)[handle.offset..handle.offset + handle.len].copy_from_slice(src);
         handle
     }
 
-    /// Bind a caller-owned f32 slice to an arena slot.  The slot is initialized
+    /// Bind a caller-owned f32 slice to a shelf slot.  The slot is initialized
     /// from the current slice contents and registered for `read_back`.
-    pub fn bind_f32(&mut self, ptr: usize, src: &[f32]) -> F32Handle {
-        let handle = self.copy_f32(src);
+    pub fn bind_f32(&mut self, shelf: Shelf, ptr: usize, src: &[f32]) -> F32Handle {
+        let handle = self.copy_f32(shelf, src);
         self.f32_bindings.insert(ptr, handle);
         handle
     }
@@ -101,40 +165,43 @@ impl CpuGraphArena {
     }
 
     pub fn f32(&self, handle: F32Handle) -> &[f32] {
-        &self.f32_data[handle.offset..handle.offset + handle.len]
+        &self.f32_vec(handle.shelf)[handle.offset..handle.offset + handle.len]
     }
 
     pub fn f32_mut(&mut self, handle: F32Handle) -> &mut [f32] {
-        &mut self.f32_data[handle.offset..handle.offset + handle.len]
+        let shelf = handle.shelf;
+        &mut self.f32_vec_mut(shelf)[handle.offset..handle.offset + handle.len]
     }
 
-    /// Allocate a new, zero-initialized u8 slot.
-    pub fn alloc_u8(&mut self, len: usize) -> U8Handle {
-        let offset = self.u8_data.len();
-        self.u8_data.resize(offset + len, 0u8);
-        U8Handle { offset, len }
+    /// Allocate a new, zero-initialized u8 slot on the given shelf.
+    pub fn alloc_u8(&mut self, shelf: Shelf, len: usize) -> U8Handle {
+        let vec = self.u8_vec_mut(shelf);
+        let offset = vec.len();
+        vec.resize(offset + len, 0u8);
+        U8Handle::new(shelf, offset, len)
     }
 
-    /// Copy a u8 slice into the arena and return its handle.
-    pub fn copy_u8(&mut self, src: &[u8]) -> U8Handle {
-        let handle = self.alloc_u8(src.len());
-        self.u8_data[handle.offset..handle.offset + handle.len].copy_from_slice(src);
+    /// Copy a u8 slice into the given shelf and return its handle.
+    pub fn copy_u8(&mut self, shelf: Shelf, src: &[u8]) -> U8Handle {
+        let handle = self.alloc_u8(shelf, src.len());
+        self.u8_vec_mut(shelf)[handle.offset..handle.offset + handle.len].copy_from_slice(src);
         handle
     }
 
-    /// Bind a caller-owned u8 slice to an arena slot.
-    pub fn bind_u8(&mut self, ptr: usize, src: &[u8]) -> U8Handle {
-        let handle = self.copy_u8(src);
+    /// Bind a caller-owned u8 slice to a shelf slot.
+    pub fn bind_u8(&mut self, shelf: Shelf, ptr: usize, src: &[u8]) -> U8Handle {
+        let handle = self.copy_u8(shelf, src);
         self.u8_bindings.insert(ptr, handle);
         handle
     }
 
     pub fn u8(&self, handle: U8Handle) -> &[u8] {
-        &self.u8_data[handle.offset..handle.offset + handle.len]
+        &self.u8_vec(handle.shelf)[handle.offset..handle.offset + handle.len]
     }
 
     pub fn u8_mut(&mut self, handle: U8Handle) -> &mut [u8] {
-        &mut self.u8_data[handle.offset..handle.offset + handle.len]
+        let shelf = handle.shelf;
+        &mut self.u8_vec_mut(shelf)[handle.offset..handle.offset + handle.len]
     }
 
     /// Copy all current bindings back to the original caller slices.
@@ -154,6 +221,37 @@ impl CpuGraphArena {
             let dst = std::slice::from_raw_parts_mut(ptr as *mut u8, handle.len);
             dst.copy_from_slice(src);
         }
+    }
+
+    /// Capture the current persistent shelf state.
+    pub fn snapshot_persistent(&self) -> PersistentSnapshot {
+        PersistentSnapshot {
+            f32_data: self.f32_persistent.clone(),
+            u8_data: self.u8_persistent.clone(),
+            f32_bindings: self
+                .f32_bindings
+                .iter()
+                .filter(|(_, h)| h.shelf == Shelf::Persistent)
+                .map(|(&k, &v)| (k, v))
+                .collect(),
+            u8_bindings: self
+                .u8_bindings
+                .iter()
+                .filter(|(_, h)| h.shelf == Shelf::Persistent)
+                .map(|(&k, &v)| (k, v))
+                .collect(),
+        }
+    }
+
+    /// Restore the persistent shelf to a previously captured snapshot.
+    pub fn restore_persistent(&mut self, snapshot: &PersistentSnapshot) {
+        self.f32_persistent.clone_from(&snapshot.f32_data);
+        self.u8_persistent.clone_from(&snapshot.u8_data);
+        self.f32_bindings
+            .retain(|_, h| h.shelf != Shelf::Persistent);
+        self.u8_bindings.retain(|_, h| h.shelf != Shelf::Persistent);
+        self.f32_bindings.extend(&snapshot.f32_bindings);
+        self.u8_bindings.extend(&snapshot.u8_bindings);
     }
 }
 
@@ -362,11 +460,17 @@ pub struct CaptureContext {
     pub layer: usize,
     pub step: usize,
     pub timestamp: u64,
+    /// The timestamp of the last op that was added.  Used to detect timestamp
+    /// boundaries and snapshot the persistent shelf.
+    last_timestamp: u64,
     /// History of caller-pointer -> output-handle bindings, annotated with the
     /// timestamp at which they became valid.  Used by `rebind_after_regress` to
     /// restore the arena bindings that correspond to a rolled-back temporal
     /// state.
     pub output_log: Vec<(u64, usize, F32Handle)>,
+    /// Persistent-shelf snapshots keyed by timestamp.  Enables instant rollback
+    /// without replaying the prefix.
+    pub shelf_snapshots: HashMap<u64, PersistentSnapshot>,
 }
 
 #[cfg(feature = "cpu-graph")]
@@ -379,7 +483,9 @@ impl CaptureContext {
             layer,
             step: 0,
             timestamp,
+            last_timestamp: timestamp,
             output_log: Vec::new(),
+            shelf_snapshots: HashMap::new(),
         }
     }
 
@@ -387,10 +493,32 @@ impl CaptureContext {
     /// during capture.
     ///
     /// # Safety
-    /// The caller must ensure all bound slices are still alive with their
+    /// The caller must ensure all bound slices are still alive and have their
     /// original lengths.
     pub unsafe fn read_back(&self) {
         self.arena.read_back();
+    }
+
+    /// Snapshot the current persistent shelf if we have crossed a timestamp
+    /// boundary since the last op.
+    fn maybe_snapshot(&mut self) {
+        if self.timestamp != self.last_timestamp {
+            let snap = self.arena.snapshot_persistent();
+            self.shelf_snapshots.insert(self.last_timestamp, snap);
+            self.last_timestamp = self.timestamp;
+        }
+    }
+
+    /// Roll back the graph and persistent state to `timestamp`.  This restores
+    /// the persistent shelf from the snapshot taken at that boundary and fixes
+    /// the caller-pointer bindings so `read_back` reflects the rolled-back
+    /// state.
+    pub fn regress_to(&mut self, timestamp: u64) {
+        self.graph.regress(timestamp);
+        if let Some(snap) = self.shelf_snapshots.get(&timestamp).cloned() {
+            self.arena.restore_persistent(&snap);
+        }
+        self.rebind_after_regress(timestamp);
     }
 
     /// Restore the arena's caller-pointer bindings to the state that existed
@@ -424,13 +552,17 @@ impl CpuExecutionContext for CaptureContext {
         in_dim: usize,
         mut q8_scratch: Option<&mut [u8]>,
     ) -> Result<(), CpuError> {
-        let weight = self.arena.copy_u8(w);
-        let input = self.arena.copy_f32(x);
-        let out = self.arena.alloc_f32(y.len());
+        self.maybe_snapshot();
+
+        let weight = self.arena.copy_u8(Shelf::Constants, w);
+        let input = self.arena.copy_f32(Shelf::Ephemeral, x);
+        let out = self.arena.alloc_f32(Shelf::Ephemeral, y.len());
         self.arena.rebind_f32(y.as_ptr() as usize, out);
         self.output_log
             .push((self.timestamp, y.as_ptr() as usize, out));
-        let scratch = q8_scratch.as_ref().map(|s| self.arena.copy_u8(s));
+        let scratch = q8_scratch
+            .as_ref()
+            .map(|s| self.arena.copy_u8(Shelf::Ephemeral, s));
 
         let op = CpuOpNode::Gemv {
             weight,
@@ -456,9 +588,11 @@ impl CpuExecutionContext for CaptureContext {
     }
 
     fn execute_rms_norm(&mut self, x: &[f32], w: &[f32], out: &mut [f32], eps: f32) {
-        let hidden = self.arena.copy_f32(x);
-        let weight = self.arena.copy_f32(w);
-        let h_out = self.arena.alloc_f32(out.len());
+        self.maybe_snapshot();
+
+        let hidden = self.arena.copy_f32(Shelf::Persistent, x);
+        let weight = self.arena.copy_f32(Shelf::Constants, w);
+        let h_out = self.arena.alloc_f32(Shelf::Ephemeral, out.len());
         self.arena.rebind_f32(out.as_ptr() as usize, h_out);
         self.output_log
             .push((self.timestamp, out.as_ptr() as usize, h_out));
@@ -486,10 +620,12 @@ impl CpuExecutionContext for CaptureContext {
         cos: &[f32],
         neox: bool,
     ) {
-        let x_in = self.arena.copy_f32(x);
-        let sin_h = self.arena.copy_f32(sin);
-        let cos_h = self.arena.copy_f32(cos);
-        let h_out = self.arena.alloc_f32(x.len());
+        self.maybe_snapshot();
+
+        let x_in = self.arena.copy_f32(Shelf::Ephemeral, x);
+        let sin_h = self.arena.copy_f32(Shelf::Constants, sin);
+        let cos_h = self.arena.copy_f32(Shelf::Constants, cos);
+        let h_out = self.arena.alloc_f32(Shelf::Ephemeral, x.len());
         self.arena.rebind_f32(x.as_ptr() as usize, h_out);
         self.output_log
             .push((self.timestamp, x.as_ptr() as usize, h_out));
@@ -523,10 +659,12 @@ impl CpuExecutionContext for CaptureContext {
         head_dim: usize,
         max_seq_len: usize,
     ) {
-        let q_h = self.arena.copy_f32(q);
-        let k_h = self.arena.copy_f32(k);
-        let v_h = self.arena.copy_f32(v);
-        let h_out = self.arena.alloc_f32(out.len());
+        self.maybe_snapshot();
+
+        let q_h = self.arena.copy_f32(Shelf::Ephemeral, q);
+        let k_h = self.arena.copy_f32(Shelf::Persistent, k);
+        let v_h = self.arena.copy_f32(Shelf::Persistent, v);
+        let h_out = self.arena.alloc_f32(Shelf::Ephemeral, out.len());
         self.arena.rebind_f32(out.as_ptr() as usize, h_out);
         self.output_log
             .push((self.timestamp, out.as_ptr() as usize, h_out));
@@ -559,9 +697,11 @@ impl CpuExecutionContext for CaptureContext {
     }
 
     fn execute_silu(&mut self, gate: &[f32], up: &mut [f32]) {
-        let gate_h = self.arena.copy_f32(gate);
-        let up_in = self.arena.copy_f32(up);
-        let h_out = self.arena.alloc_f32(up.len());
+        self.maybe_snapshot();
+
+        let gate_h = self.arena.copy_f32(Shelf::Ephemeral, gate);
+        let up_in = self.arena.copy_f32(Shelf::Ephemeral, up);
+        let h_out = self.arena.alloc_f32(Shelf::Ephemeral, up.len());
         self.arena.rebind_f32(up.as_ptr() as usize, h_out);
         self.output_log
             .push((self.timestamp, up.as_ptr() as usize, h_out));
@@ -580,9 +720,11 @@ impl CpuExecutionContext for CaptureContext {
     }
 
     fn execute_residual_add(&mut self, a: &mut [f32], b: &[f32]) {
-        let a_in = self.arena.copy_f32(a);
-        let b_h = self.arena.copy_f32(b);
-        let h_out = self.arena.alloc_f32(a.len());
+        self.maybe_snapshot();
+
+        let a_in = self.arena.copy_f32(Shelf::Persistent, a);
+        let b_h = self.arena.copy_f32(Shelf::Ephemeral, b);
+        let h_out = self.arena.alloc_f32(Shelf::Persistent, a.len());
         self.arena.rebind_f32(a.as_ptr() as usize, h_out);
         self.output_log
             .push((self.timestamp, a.as_ptr() as usize, h_out));
@@ -598,6 +740,13 @@ impl CpuExecutionContext for CaptureContext {
         self.step += 1;
         crate::cpu::ops::residual_add(a, b);
         self.arena.f32_mut(h_out).copy_from_slice(a);
+    }
+}
+
+#[cfg(feature = "cpu-graph")]
+impl Default for CpuGraph {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -620,7 +769,9 @@ impl CpuGraph {
             y: step as f32,
             z: 0.0,
             begin_ts: timestamp,
-            end_ts: 0,
+            // `u64::MAX` means "alive until the end of time".  `0` is reserved
+            // for disabled/regressed nodes.
+            end_ts: u64::MAX,
             properties: std::collections::BTreeMap::new(),
             successors: Vec::new(),
         };
@@ -633,10 +784,28 @@ impl CpuGraph {
         arena: &mut CpuGraphArena,
         window: TemporalWindow,
     ) -> Result<(), CpuError> {
+        // Treat `window.end == 0` as "until the end of time".  A node is
+        // active when its (begin, end) interval overlaps the window.  A node
+        // with `end_ts == 0` has been disabled by `regress` and never runs.
+        let window_end = if window.end == 0 {
+            u64::MAX
+        } else {
+            window.end
+        };
         let mut active_nodes: Vec<&GraphNode4D> = self
             .nodes
             .iter()
-            .filter(|n| window.overlaps(n.begin_ts, n.end_ts))
+            .filter(|n| {
+                if n.end_ts == 0 {
+                    return false; // disabled by regress
+                }
+                let node_end = if n.end_ts == u64::MAX {
+                    u64::MAX
+                } else {
+                    n.end_ts
+                };
+                n.begin_ts < window_end && node_end > window.start
+            })
             .collect();
 
         // Sort by time first, then spatial coordinates (Layer -> Step)
@@ -658,17 +827,36 @@ impl CpuGraph {
         // Use raw base pointers so we can form slices for multiple disjoint
         // handles without fighting the borrow checker.  All handles are
         // non-overlapping offsets allocated by the arena, so this is sound.
-        let f32_base = arena.f32_data.as_mut_ptr();
-        let u8_base = arena.u8_data.as_mut_ptr();
+        let f32_const = arena.f32_constants.as_mut_ptr();
+        let f32_persist = arena.f32_persistent.as_mut_ptr();
+        let f32_ephem = arena.f32_ephemeral.as_mut_ptr();
+        let u8_const = arena.u8_constants.as_mut_ptr();
+        let u8_persist = arena.u8_persistent.as_mut_ptr();
+        let u8_ephem = arena.u8_ephemeral.as_mut_ptr();
 
-        let f32_slice =
-            |h: F32Handle| unsafe { std::slice::from_raw_parts(f32_base.add(h.offset), h.len) };
-        let f32_slice_mut =
-            |h: F32Handle| unsafe { std::slice::from_raw_parts_mut(f32_base.add(h.offset), h.len) };
-        let u8_slice =
-            |h: U8Handle| unsafe { std::slice::from_raw_parts(u8_base.add(h.offset), h.len) };
-        let u8_slice_mut =
-            |h: U8Handle| unsafe { std::slice::from_raw_parts_mut(u8_base.add(h.offset), h.len) };
+        let f32_base = |shelf: Shelf| match shelf {
+            Shelf::Constants => f32_const,
+            Shelf::Persistent => f32_persist,
+            Shelf::Ephemeral => f32_ephem,
+        };
+        let u8_base = |shelf: Shelf| match shelf {
+            Shelf::Constants => u8_const,
+            Shelf::Persistent => u8_persist,
+            Shelf::Ephemeral => u8_ephem,
+        };
+
+        let f32_slice = |h: F32Handle| unsafe {
+            std::slice::from_raw_parts(f32_base(h.shelf).add(h.offset), h.len)
+        };
+        let f32_slice_mut = |h: F32Handle| unsafe {
+            std::slice::from_raw_parts_mut(f32_base(h.shelf).add(h.offset), h.len)
+        };
+        let u8_slice = |h: U8Handle| unsafe {
+            std::slice::from_raw_parts(u8_base(h.shelf).add(h.offset), h.len)
+        };
+        let u8_slice_mut = |h: U8Handle| unsafe {
+            std::slice::from_raw_parts_mut(u8_base(h.shelf).add(h.offset), h.len)
+        };
 
         match op {
             CpuOpNode::RmsNorm {
@@ -697,7 +885,7 @@ impl CpuGraph {
                 let w = u8_slice(*weight);
                 let x = f32_slice(*input);
                 let y = f32_slice_mut(*out);
-                let mut q8_scratch = scratch.map(|h| u8_slice_mut(h));
+                let q8_scratch = scratch.map(u8_slice_mut);
                 let wtype = GgmlType::from_u32(*wtype_code).map_err(|_| {
                     CpuError::InvalidOperation(format!("invalid wtype code {}", wtype_code))
                 })?;
@@ -708,7 +896,7 @@ impl CpuGraph {
                     role: crate::config::TensorRole::Generic,
                     svd_k: None,
                 };
-                crate::cpu::ops::dispatch_gemv(w, &meta, x, y, *m, *n, q8_scratch.as_deref_mut())?;
+                crate::cpu::ops::dispatch_gemv(w, &meta, x, y, *m, *n, q8_scratch)?;
             }
             CpuOpNode::RoPE {
                 x,
@@ -786,13 +974,18 @@ impl CpuGraph {
     }
 
     /// Invalidate all nodes captured after the given timestamp.
+    ///
+    /// Nodes that began after `timestamp` are disabled (`end_ts = 0`).  Nodes
+    /// that were active across `timestamp` are capped so they no longer run in
+    /// windows that start after `timestamp`.  Newly added nodes use
+    /// `end_ts = u64::MAX` to mean "alive forever".
     pub fn regress(&mut self, timestamp: u64) {
         for node in self.nodes.iter_mut() {
             if node.begin_ts > timestamp {
-                // Fully invalidate nodes that started after the regression point
-                node.end_ts = node.begin_ts;
-            } else if node.end_ts == 0 || node.end_ts > timestamp {
-                // Cap nodes that were active across the regression point
+                // Fully invalidate nodes that started after the regression point.
+                node.end_ts = 0;
+            } else if node.end_ts != 0 && node.end_ts > timestamp {
+                // Cap nodes that were active across the regression point.
                 node.end_ts = timestamp;
             }
         }

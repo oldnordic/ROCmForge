@@ -2,23 +2,31 @@
 //!
 //! A `GraphMap` is the minimal serializable snapshot of a captured CPU graph
 //! session.  It uses `geographdb-core` for both the 4D graph topology and a
-//! sectioned sidecar file for the arena, ops, and binding metadata.
+//! sectioned sidecar file for the arena, ops, bindings, output log, and
+//! timestamp shelf snapshots.
 
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::cpu::graph::{CaptureContext, CpuGraph, CpuGraphArena, CpuOpNode, F32Handle, U8Handle};
+use crate::cpu::graph::{
+    CaptureContext, CpuGraph, CpuGraphArena, CpuOpNode, F32Handle, PersistentSnapshot, U8Handle,
+};
 use geographdb_core::algorithms::four_d::GraphNode4D;
 use geographdb_core::storage::{load_graph4d, save_graph4d, SectionedStorage};
 use thiserror::Error;
 
 const ARENA_SIDECAR: &str = "arena.geodb";
 const OPS_SECTION: &str = "ops";
-const ARENA_F32_SECTION: &str = "arena_f32";
-const ARENA_U8_SECTION: &str = "arena_u8";
+const ARENA_F32_CONSTANTS_SECTION: &str = "arena_f32_constants";
+const ARENA_U8_CONSTANTS_SECTION: &str = "arena_u8_constants";
+const ARENA_F32_PERSISTENT_SECTION: &str = "arena_f32_persistent";
+const ARENA_U8_PERSISTENT_SECTION: &str = "arena_u8_persistent";
+const ARENA_F32_EPHEMERAL_SECTION: &str = "arena_f32_ephemeral";
+const ARENA_U8_EPHEMERAL_SECTION: &str = "arena_u8_ephemeral";
 const F32_BINDINGS_SECTION: &str = "f32_bindings";
 const U8_BINDINGS_SECTION: &str = "u8_bindings";
 const OUTPUT_LOG_SECTION: &str = "output_log";
+const SHELF_SNAPSHOTS_SECTION: &str = "shelf_snapshots";
 const META_SECTION: &str = "meta";
 
 #[derive(Debug, Error)]
@@ -41,6 +49,7 @@ pub enum GraphMapError {
 struct GraphMapMeta {
     layer: usize,
     timestamp: u64,
+    last_timestamp: u64,
 }
 
 /// Persistent snapshot of a captured CPU graph session.
@@ -50,8 +59,10 @@ pub struct GraphMap {
     pub ops: Vec<CpuOpNode>,
     pub arena: CpuGraphArena,
     pub output_log: Vec<(u64, usize, F32Handle)>,
+    pub shelf_snapshots: HashMap<u64, PersistentSnapshot>,
     pub layer: usize,
     pub timestamp: u64,
+    pub last_timestamp: u64,
 }
 
 impl GraphMap {
@@ -62,8 +73,10 @@ impl GraphMap {
             ops: ctx.graph.ops.clone(),
             arena: ctx.arena.clone(),
             output_log: ctx.output_log.clone(),
+            shelf_snapshots: ctx.shelf_snapshots.clone(),
             layer: ctx.layer,
             timestamp: ctx.timestamp,
+            last_timestamp: ctx.last_timestamp,
         }
     }
 
@@ -80,8 +93,12 @@ impl GraphMap {
             .map_err(|e| GraphMapError::Geo(e.to_string()))?;
 
         let ops_bytes = bincode::serialize(&self.ops)?;
-        let f32_bytes = bincode::serialize(&self.arena.f32_data)?;
-        let u8_bytes = bincode::serialize(&self.arena.u8_data)?;
+        let f32_constants = bincode::serialize(&self.arena.f32_constants)?;
+        let u8_constants = bincode::serialize(&self.arena.u8_constants)?;
+        let f32_persistent = bincode::serialize(&self.arena.f32_persistent)?;
+        let u8_persistent = bincode::serialize(&self.arena.u8_persistent)?;
+        let f32_ephemeral = bincode::serialize(&self.arena.f32_ephemeral)?;
+        let u8_ephemeral = bincode::serialize(&self.arena.u8_ephemeral)?;
         let f32_bindings: Vec<(usize, F32Handle)> = self
             .arena
             .f32_bindings
@@ -95,15 +112,21 @@ impl GraphMap {
             .map(|(&k, &v)| (k, v))
             .collect();
         let output_log_bytes = bincode::serialize(&self.output_log)?;
+        let shelf_snapshots_bytes = bincode::serialize(&self.shelf_snapshots)?;
         let meta = GraphMapMeta {
             layer: self.layer,
             timestamp: self.timestamp,
+            last_timestamp: self.last_timestamp,
         };
         let meta_bytes = bincode::serialize(&meta)?;
 
         create_and_write(&mut storage, OPS_SECTION, &ops_bytes)?;
-        create_and_write(&mut storage, ARENA_F32_SECTION, &f32_bytes)?;
-        create_and_write(&mut storage, ARENA_U8_SECTION, &u8_bytes)?;
+        create_and_write(&mut storage, ARENA_F32_CONSTANTS_SECTION, &f32_constants)?;
+        create_and_write(&mut storage, ARENA_U8_CONSTANTS_SECTION, &u8_constants)?;
+        create_and_write(&mut storage, ARENA_F32_PERSISTENT_SECTION, &f32_persistent)?;
+        create_and_write(&mut storage, ARENA_U8_PERSISTENT_SECTION, &u8_persistent)?;
+        create_and_write(&mut storage, ARENA_F32_EPHEMERAL_SECTION, &f32_ephemeral)?;
+        create_and_write(&mut storage, ARENA_U8_EPHEMERAL_SECTION, &u8_ephemeral)?;
         create_and_write(
             &mut storage,
             F32_BINDINGS_SECTION,
@@ -115,6 +138,11 @@ impl GraphMap {
             &bincode::serialize(&u8_bindings)?,
         )?;
         create_and_write(&mut storage, OUTPUT_LOG_SECTION, &output_log_bytes)?;
+        create_and_write(
+            &mut storage,
+            SHELF_SNAPSHOTS_SECTION,
+            &shelf_snapshots_bytes,
+        )?;
         create_and_write(&mut storage, META_SECTION, &meta_bytes)?;
 
         storage
@@ -135,28 +163,49 @@ impl GraphMap {
             SectionedStorage::open(&sidecar_path).map_err(|e| GraphMapError::Geo(e.to_string()))?;
 
         let ops: Vec<CpuOpNode> = read_section_bincode(&mut storage, OPS_SECTION)?;
-        let f32_data: Vec<f32> = read_section_bincode(&mut storage, ARENA_F32_SECTION)?;
-        let u8_data: Vec<u8> = read_section_bincode(&mut storage, ARENA_U8_SECTION)?;
+        let f32_constants: Vec<f32> =
+            read_section_bincode(&mut storage, ARENA_F32_CONSTANTS_SECTION)?;
+        let u8_constants: Vec<u8> = read_section_bincode(&mut storage, ARENA_U8_CONSTANTS_SECTION)?;
+        let f32_persistent: Vec<f32> =
+            read_section_bincode(&mut storage, ARENA_F32_PERSISTENT_SECTION)?;
+        let u8_persistent: Vec<u8> =
+            read_section_bincode(&mut storage, ARENA_U8_PERSISTENT_SECTION)?;
+        let f32_ephemeral: Vec<f32> =
+            read_section_bincode(&mut storage, ARENA_F32_EPHEMERAL_SECTION)?;
+        let u8_ephemeral: Vec<u8> = read_section_bincode(&mut storage, ARENA_U8_EPHEMERAL_SECTION)?;
         let f32_bindings_vec: Vec<(usize, F32Handle)> =
             read_section_bincode(&mut storage, F32_BINDINGS_SECTION)?;
         let u8_bindings_vec: Vec<(usize, U8Handle)> =
             read_section_bincode(&mut storage, U8_BINDINGS_SECTION)?;
         let output_log: Vec<(u64, usize, F32Handle)> =
             read_section_bincode(&mut storage, OUTPUT_LOG_SECTION)?;
+        let shelf_snapshots: HashMap<u64, PersistentSnapshot> =
+            read_section_bincode(&mut storage, SHELF_SNAPSHOTS_SECTION)?;
         let meta: GraphMapMeta = read_section_bincode(&mut storage, META_SECTION)?;
 
         let f32_bindings: HashMap<usize, F32Handle> = f32_bindings_vec.into_iter().collect();
         let u8_bindings: HashMap<usize, U8Handle> = u8_bindings_vec.into_iter().collect();
 
-        let arena = CpuGraphArena::from_parts(f32_data, u8_data, f32_bindings, u8_bindings);
+        let arena = CpuGraphArena {
+            f32_constants,
+            u8_constants,
+            f32_persistent,
+            u8_persistent,
+            f32_ephemeral,
+            u8_ephemeral,
+            f32_bindings,
+            u8_bindings,
+        };
 
         Ok(Self {
             nodes,
             ops,
             arena,
             output_log,
+            shelf_snapshots,
             layer: meta.layer,
             timestamp: meta.timestamp,
+            last_timestamp: meta.last_timestamp,
         })
     }
 
@@ -168,7 +217,9 @@ impl GraphMap {
             layer: self.layer,
             step: 0,
             timestamp: self.timestamp,
+            last_timestamp: self.last_timestamp,
             output_log: self.output_log,
+            shelf_snapshots: self.shelf_snapshots,
         }
     }
 }
