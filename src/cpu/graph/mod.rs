@@ -200,7 +200,8 @@ pub enum CpuOpNode {
 
 #[cfg(feature = "cpu-graph")]
 pub struct CpuGraph {
-    nodes: Vec<GraphNode4D>,
+    /// Temporal graph nodes.  Exposed so tests and tooling can inspect timestamps.
+    pub nodes: Vec<GraphNode4D>,
     ops: Vec<CpuOpNode>,
 }
 
@@ -360,7 +361,7 @@ impl CpuExecutionContext for CaptureContext {
         y: &mut [f32],
         out_dim: usize,
         in_dim: usize,
-        q8_scratch: Option<&mut [u8]>,
+        mut q8_scratch: Option<&mut [u8]>,
     ) -> Result<(), CpuError> {
         let weight = self.arena.copy_u8(w);
         let input = self.arena.copy_f32(x);
@@ -382,9 +383,10 @@ impl CpuExecutionContext for CaptureContext {
         self.graph
             .add_node(op, self.layer, self.step, self.timestamp);
         self.step += 1;
-        crate::cpu::ops::dispatch_gemv(w, meta, x, y, out_dim, in_dim, q8_scratch)?;
+        let scratch_borrow = q8_scratch.as_deref_mut();
+        crate::cpu::ops::dispatch_gemv(w, meta, x, y, out_dim, in_dim, scratch_borrow)?;
         self.arena.f32_mut(out).copy_from_slice(y);
-        if let (Some(h), Some(s)) = (op.scratch, q8_scratch) {
+        if let (Some(h), Some(s)) = (scratch, q8_scratch.as_mut()) {
             self.arena.u8_mut(h).copy_from_slice(s);
         }
         Ok(())
@@ -554,8 +556,8 @@ impl CpuGraph {
     /// Execute nodes valid within the given temporal window.
     pub fn execute_window(
         &self,
+        arena: &mut CpuGraphArena,
         window: TemporalWindow,
-        mut q8_scratch: Option<&mut [u8]>,
     ) -> Result<(), CpuError> {
         let mut active_nodes: Vec<&GraphNode4D> = self
             .nodes
@@ -573,43 +575,55 @@ impl CpuGraph {
 
         for node in active_nodes {
             let op = &self.ops[node.id as usize];
-            self.execute_op(op, q8_scratch.as_deref_mut())?;
+            self.execute_op(op, arena)?;
         }
         Ok(())
     }
 
-    fn execute_op(
-        &self,
-        op: &CpuOpNode,
-        mut q8_scratch: Option<&mut [u8]>,
-    ) -> Result<(), CpuError> {
+    fn execute_op(&self, op: &CpuOpNode, arena: &mut CpuGraphArena) -> Result<(), CpuError> {
+        // Use raw base pointers so we can form slices for multiple disjoint
+        // handles without fighting the borrow checker.  All handles are
+        // non-overlapping offsets allocated by the arena, so this is sound.
+        let f32_base = arena.f32_data.as_mut_ptr();
+        let u8_base = arena.u8_data.as_mut_ptr();
+
+        let f32_slice =
+            |h: F32Handle| unsafe { std::slice::from_raw_parts(f32_base.add(h.offset), h.len) };
+        let f32_slice_mut =
+            |h: F32Handle| unsafe { std::slice::from_raw_parts_mut(f32_base.add(h.offset), h.len) };
+        let u8_slice =
+            |h: U8Handle| unsafe { std::slice::from_raw_parts(u8_base.add(h.offset), h.len) };
+        let u8_slice_mut =
+            |h: U8Handle| unsafe { std::slice::from_raw_parts_mut(u8_base.add(h.offset), h.len) };
+
         match op {
             CpuOpNode::RmsNorm {
-                hidden_ptr,
-                weight_ptr,
-                out_ptr,
-                n,
+                hidden,
+                weight,
+                out,
                 eps,
+                n: _,
             } => {
-                let hidden = unsafe { std::slice::from_raw_parts(*hidden_ptr as *const f32, *n) };
-                let weight = unsafe { std::slice::from_raw_parts(*weight_ptr as *const f32, *n) };
-                let out = unsafe { std::slice::from_raw_parts_mut(*out_ptr as *mut f32, *n) };
+                let hidden = f32_slice(*hidden);
+                let weight = f32_slice(*weight);
+                let out = f32_slice_mut(*out);
                 crate::cpu::ops::rms_norm(hidden, weight, out, *eps);
             }
             CpuOpNode::Gemv {
-                weight_ptr,
-                weight_bytes,
-                input_ptr,
-                out_ptr,
+                weight,
+                input,
+                out,
+                scratch,
                 m,
                 n,
                 wtype,
                 needs_transpose,
+                weight_bytes: _,
             } => {
-                let w =
-                    unsafe { std::slice::from_raw_parts(*weight_ptr as *const u8, *weight_bytes) };
-                let x = unsafe { std::slice::from_raw_parts(*input_ptr as *const f32, *n) };
-                let y = unsafe { std::slice::from_raw_parts_mut(*out_ptr as *mut f32, *m) };
+                let w = u8_slice(*weight);
+                let x = f32_slice(*input);
+                let y = f32_slice_mut(*out);
+                let mut q8_scratch = scratch.map(|h| u8_slice_mut(h));
                 let meta = WeightMeta {
                     wtype: *wtype,
                     dims: vec![*m as u64, *n as u64],
@@ -620,45 +634,40 @@ impl CpuGraph {
                 crate::cpu::ops::dispatch_gemv(w, &meta, x, y, *m, *n, q8_scratch.as_deref_mut())?;
             }
             CpuOpNode::RoPE {
-                ptr,
-                sin_ptr,
-                cos_ptr,
+                x,
+                sin,
+                cos,
+                out,
                 n_heads,
                 head_dim,
                 neox,
             } => {
-                let x =
-                    unsafe { std::slice::from_raw_parts_mut(*ptr as *mut f32, n_heads * head_dim) };
-                let sin =
-                    unsafe { std::slice::from_raw_parts(*sin_ptr as *const f32, *head_dim / 2) };
-                let cos =
-                    unsafe { std::slice::from_raw_parts(*cos_ptr as *const f32, *head_dim / 2) };
-                crate::cpu::ops::rope(x, *n_heads, *head_dim, sin, cos, *neox);
+                let x_out = f32_slice_mut(*out);
+                // RoPE is an in-place rotation; copy the source values into the
+                // output slot first so the kernel can read and write the same buffer.
+                // If x and out share a handle this is a no-op.
+                if *x != *out {
+                    x_out.copy_from_slice(f32_slice(*x));
+                }
+                let sin = f32_slice(*sin);
+                let cos = f32_slice(*cos);
+                crate::cpu::ops::rope(x_out, *n_heads, *head_dim, sin, cos, *neox);
             }
             CpuOpNode::Attention {
-                q_ptr,
-                k_ptr,
-                v_ptr,
-                out_ptr,
+                q,
+                k,
+                v,
+                out,
                 seq_len,
                 num_heads,
                 num_kv_heads,
                 head_dim,
-                max_seq_len,
+                max_seq_len: _,
             } => {
-                let q = unsafe {
-                    std::slice::from_raw_parts(*q_ptr as *const f32, num_heads * head_dim)
-                };
-                let kv_size = num_kv_heads * head_dim;
-                let k = unsafe {
-                    std::slice::from_raw_parts(*k_ptr as *const f32, max_seq_len * kv_size)
-                };
-                let v = unsafe {
-                    std::slice::from_raw_parts(*v_ptr as *const f32, max_seq_len * kv_size)
-                };
-                let out = unsafe {
-                    std::slice::from_raw_parts_mut(*out_ptr as *mut f32, num_heads * head_dim)
-                };
+                let q = f32_slice(*q);
+                let k = f32_slice(*k);
+                let v = f32_slice(*v);
+                let out = f32_slice_mut(*out);
                 crate::cpu::ops::flash_attn_decode(
                     q,
                     k,
@@ -671,18 +680,29 @@ impl CpuGraph {
                 );
             }
             CpuOpNode::SiLU {
-                gate_ptr,
-                up_ptr,
-                h,
+                gate,
+                up,
+                out,
+                h: _,
             } => {
-                let gate = unsafe { std::slice::from_raw_parts(*gate_ptr as *const f32, *h) };
-                let up = unsafe { std::slice::from_raw_parts_mut(*up_ptr as *mut f32, *h) };
-                crate::cpu::ops::silu_fuse(gate, up);
+                let gate = f32_slice(*gate);
+                let up_in = f32_slice(*up);
+                let out_handle = *out;
+                let out = f32_slice_mut(out_handle);
+                if *up != out_handle {
+                    out.copy_from_slice(up_in);
+                }
+                crate::cpu::ops::silu_fuse(gate, out);
             }
-            CpuOpNode::ResidualAdd { a_ptr, b_ptr, h } => {
-                let a = unsafe { std::slice::from_raw_parts_mut(*a_ptr as *mut f32, *h) };
-                let b = unsafe { std::slice::from_raw_parts(*b_ptr as *const f32, *h) };
-                crate::cpu::ops::residual_add(a, b);
+            CpuOpNode::ResidualAdd { a, b, out, h: _ } => {
+                let a_in = f32_slice(*a);
+                let out_handle = *out;
+                let out = f32_slice_mut(out_handle);
+                if *a != out_handle {
+                    out.copy_from_slice(a_in);
+                }
+                let b = f32_slice(*b);
+                crate::cpu::ops::residual_add(out, b);
             }
         }
         Ok(())

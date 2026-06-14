@@ -1333,6 +1333,8 @@ dependencies = [
 [[package]]
 name = "geographdb-core"
 version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13dd952b7ac40297501e6b95aa979509f267f3ea4bf0320e7135eaa102307187"
 dependencies = [
  "anyhow",
  "arrow",
@@ -3278,6 +3280,8 @@ dependencies = [
 [[package]]
 name = "sqlitegraph"
 version = "3.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3f56315955acdcc7ca1e76b48cb55b20be8a6aa696b017000c77e17f91682e8"
 dependencies = [
  "ahash",
  "arc-swap",

@@ -6,7 +6,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rocmforge::config::ModelConfig;
 use rocmforge::cpu::cache::{CpuForwardScratch, CpuKvCache};
 use rocmforge::cpu::forward::{cpu_layer_forward, cpu_layer_forward_with_ctx};
-use rocmforge::cpu::graph::{CaptureContext, CpuGraph, DirectContext};
+use rocmforge::cpu::graph::CaptureContext;
 use rocmforge::cpu::weights::CpuModelWeights;
 use rocmforge::loader::GgufFile;
 
@@ -39,11 +39,7 @@ fn bench_cpu_graph_vs_direct(c: &mut Criterion) {
     }
 
     // Capture the graph once
-    let mut capture_ctx = CaptureContext {
-        graph: CpuGraph::new(),
-        layer: layer_idx,
-        step: 0,
-    };
+    let mut capture_ctx = CaptureContext::new(layer_idx, 0);
     cpu_layer_forward_with_ctx(
         &mut capture_ctx,
         &mut hidden,
@@ -58,7 +54,10 @@ fn bench_cpu_graph_vs_direct(c: &mut Criterion) {
         false,
     )
     .expect("bench error");
-    let graph = capture_ctx.graph;
+    let window = rocmforge::cpu::graph::TemporalWindow {
+        start: 0,
+        end: u64::MAX,
+    };
 
     let mut group = c.benchmark_group("cpu_forward_comparison");
 
@@ -82,8 +81,9 @@ fn bench_cpu_graph_vs_direct(c: &mut Criterion) {
 
     group.bench_function("geograph_replay", |b| {
         b.iter(|| {
-            graph
-                .execute(Some(black_box(&mut scratch.q8_scratch)))
+            capture_ctx
+                .graph
+                .execute_window(black_box(&mut capture_ctx.arena), window)
                 .expect("bench error");
         });
     });

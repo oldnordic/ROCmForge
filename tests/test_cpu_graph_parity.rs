@@ -1,3 +1,4 @@
+#![cfg(feature = "cpu-graph")]
 //! CPU Graph vs CPU Direct parity tests
 //!
 //! Verifies that the GeoGraph-backed execution engine produces
@@ -6,7 +7,7 @@
 use rocmforge::config::ModelConfig;
 use rocmforge::cpu::cache::{CpuForwardScratch, CpuKvCache};
 use rocmforge::cpu::forward::{cpu_layer_forward, cpu_layer_forward_with_ctx};
-use rocmforge::cpu::graph::{CaptureContext, CpuGraph};
+use rocmforge::cpu::graph::CaptureContext;
 use rocmforge::cpu::weights::CpuModelWeights;
 use rocmforge::loader::GgufFile;
 use serial_test::serial;
@@ -82,13 +83,7 @@ fn test_cpu_graph_parity() {
     let mut kv_graph = CpuKvCache::new(&config, 1);
     let mut scratch_graph = CpuForwardScratch::new(&config);
 
-    let graph = CpuGraph::new();
-    let mut capture_ctx = CaptureContext {
-        graph,
-        layer: layer_idx,
-        step: 0,
-        timestamp: 0,
-    };
+    let mut capture_ctx = CaptureContext::new(layer_idx, 0);
 
     cpu_layer_forward_with_ctx(
         &mut capture_ctx,
@@ -117,8 +112,11 @@ fn test_cpu_graph_parity() {
     };
     capture_ctx
         .graph
-        .execute_window(window, Some(&mut scratch_graph.q8_scratch))
+        .execute_window(&mut capture_ctx.arena, window)
         .expect("Graph replay failed");
+    unsafe {
+        capture_ctx.read_back();
+    }
 
     // 5. Compare
     let err = max_abs_error(&hidden_ref, &hidden_graph);

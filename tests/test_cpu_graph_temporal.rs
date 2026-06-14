@@ -1,3 +1,4 @@
+#![cfg(feature = "cpu-graph")]
 //! CPU Graph Temporal Regression and Windowed Execution Tests
 //!
 //! Verifies:
@@ -7,8 +8,8 @@
 
 use rocmforge::config::ModelConfig;
 use rocmforge::cpu::cache::{CpuForwardScratch, CpuKvCache};
-use rocmforge::cpu::forward::{cpu_layer_forward, cpu_layer_forward_with_ctx};
-use rocmforge::cpu::graph::{CaptureContext, CpuGraph, TemporalWindow};
+use rocmforge::cpu::forward::cpu_layer_forward_with_ctx;
+use rocmforge::cpu::graph::{CaptureContext, TemporalWindow};
 use rocmforge::cpu::weights::CpuModelWeights;
 use rocmforge::loader::GgufFile;
 use serial_test::serial;
@@ -46,19 +47,12 @@ fn test_cpu_graph_temporal_flow() {
     let mut scratch = CpuForwardScratch::new(&config);
     let mut hidden = vec![0.1f32; h];
 
-    let mut graph = CpuGraph::new();
-
     // 2. Capture Step 0 (Timestamp 0)
     println!("--- Capturing Step 0 ---");
-    let mut sin_0 = vec![0.0f32; config.head_dim / 2];
-    let mut cos_0 = vec![1.0f32; config.head_dim / 2]; // Simplified for test
+    let sin_0 = vec![0.0f32; config.head_dim / 2];
+    let cos_0 = vec![1.0f32; config.head_dim / 2]; // Simplified for test
 
-    let mut capture_ctx = CaptureContext {
-        graph,
-        layer: layer_idx,
-        step: 0,
-        timestamp: 0,
-    };
+    let mut capture_ctx = CaptureContext::new(layer_idx, 0);
 
     cpu_layer_forward_with_ctx(
         &mut capture_ctx,
@@ -95,12 +89,10 @@ fn test_cpu_graph_temporal_flow() {
     )
     .expect("Capture Step 1 failed");
 
-    let mut graph = capture_ctx.graph;
-
     // 4. Test Regression: Rollback to T=0
     println!("--- Testing Regression to T=0 ---");
-    graph.regress(0); // This should set end_ts=0 for all nodes where begin_ts > 0
-    for (i, node) in graph.nodes.iter().enumerate() {
+    capture_ctx.graph.regress(0); // This should set end_ts=0 for all nodes where begin_ts > 0
+    for (i, node) in capture_ctx.graph.nodes.iter().enumerate() {
         println!("Node {} begin={} end={}", i, node.begin_ts, node.end_ts);
     }
 
@@ -111,9 +103,13 @@ fn test_cpu_graph_temporal_flow() {
 
     // Execute only Step 0
     let window_0 = TemporalWindow { start: 0, end: 1 };
-    graph
-        .execute_window(window_0, Some(&mut scratch.q8_scratch))
+    capture_ctx
+        .graph
+        .execute_window(&mut capture_ctx.arena, window_0)
         .expect("Replay Step 0 failed");
+    unsafe {
+        capture_ctx.read_back();
+    }
     let hidden_after_step_0 = hidden.clone();
 
     // Re-initialize hidden state again
@@ -123,9 +119,13 @@ fn test_cpu_graph_temporal_flow() {
 
     // Execute full window (0 to infinity) - should still only run Step 0 because Step 1 is regressed
     let window_all = TemporalWindow { start: 0, end: 0 };
-    graph
-        .execute_window(window_all, Some(&mut scratch.q8_scratch))
+    capture_ctx
+        .graph
+        .execute_window(&mut capture_ctx.arena, window_all)
         .expect("Replay all failed");
+    unsafe {
+        capture_ctx.read_back();
+    }
     let hidden_after_rollback_all = hidden.clone();
 
     let regression_err = max_abs_error(&hidden_after_step_0, &hidden_after_rollback_all);
@@ -145,11 +145,13 @@ fn test_cpu_graph_temporal_flow() {
     let window_1 = TemporalWindow { start: 1, end: 2 };
     println!(
         "DEBUG: graph.nodes[0].end_ts = {}, graph.nodes[10].end_ts = {}",
-        graph.nodes[0].end_ts, graph.nodes[10].end_ts
+        capture_ctx.graph.nodes[0].end_ts, capture_ctx.graph.nodes[10].end_ts
     );
-    graph
-        .execute_window(window_1, Some(&mut scratch.q8_scratch))
+    capture_ctx
+        .graph
+        .execute_window(&mut capture_ctx.arena, window_1)
         .expect("Replay Step 1 failed");
+    // No read_back: the window is empty, so caller buffers must stay untouched.
 
     assert_eq!(
         hidden[0], 42.0,
