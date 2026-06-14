@@ -1,8 +1,9 @@
 //! GEMV (matrix-vector multiply for decode).
 
 use crate::cpu::quant::{
-    load_f16_scale, Q4_1_BLOCK_BYTES, Q4_1_BLOCK_ELEMS, Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS,
-    Q5_0_BLOCK_BYTES, Q5_0_BLOCK_ELEMS, Q8_0_MAX, Q8_BLOCK_BYTES, Q8_BLOCK_ELEMS,
+    load_f16_scale, validate_block_size, Q4_1_BLOCK_BYTES, Q4_1_BLOCK_ELEMS, Q4_BLOCK_BYTES,
+    Q4_BLOCK_ELEMS, Q5_0_BLOCK_BYTES, Q5_0_BLOCK_ELEMS, Q6_K_BLOCK_ELEMS, Q8_0_MAX, Q8_BLOCK_BYTES,
+    Q8_BLOCK_ELEMS,
 };
 use crate::cpu::weights::{try_as_f32_slice, WeightMeta};
 use crate::loader::GgmlType;
@@ -267,6 +268,15 @@ pub fn dispatch_gemv(
     in_dim: usize,
     q8_scratch: Option<&mut [u8]>,
 ) -> Result<(), crate::cpu::CpuError> {
+    // Validate block size for quantized types
+    match meta.wtype {
+        GgmlType::Q4_0 | GgmlType::Q4_1 => validate_block_size(in_dim, Q4_BLOCK_ELEMS, "in_dim")
+            .map_err(|e| crate::cpu::CpuError::InvalidOperation(e.to_string()))?,
+        GgmlType::Q6_K => validate_block_size(in_dim, Q6_K_BLOCK_ELEMS, "in_dim")
+            .map_err(|e| crate::cpu::CpuError::InvalidOperation(e.to_string()))?,
+        _ => {}
+    }
+
     match meta.wtype {
         GgmlType::F32 => {
             if let Some(w_f32) = try_as_f32_slice(w) {
