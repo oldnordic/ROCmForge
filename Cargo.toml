@@ -1,6 +1,6 @@
 [package]
 name = "rocmforge"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "AMD-first LLM inference engine for Qwen2.5"
 license = "GPL-3.0-only"
@@ -31,6 +31,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Cache directory
 dirs = "5"
+# Graph Execution (optional)
+geographdb-core = { path = "../geographdb-core", version = "0.5.4", optional = true }
+sqlitegraph = { path = "../sqlitegraph/sqlitegraph-core", optional = true }
+glam = { version = "0.27", optional = true }
 # UUID for API responses
 uuid = { version = "1", optional = true, features = ["v4"] }
 # HTTP server (optional)
@@ -43,10 +47,15 @@ async-stream = { version = "0.2", optional = true }
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", optional = true }
 
+[patch.crates-io]
+alloc-no-stdlib = { git = "https://github.com/dropbox/rust-alloc-no-stdlib", branch = "master" }
+
 [features]
 default = []
 # GPU support requires ROCm/HIP installation
 gpu = []
+# Graph-based execution for CPU path
+cpu-graph = ["dep:geographdb-core", "dep:sqlitegraph", "dep:glam"]
 # HTTP server with OpenAI-compatible API
 server = ["dep:tokio", "dep:axum", "dep:tower", "dep:tower-http", "dep:tokio-stream", "dep:async-stream", "dep:tracing", "dep:tracing-subscriber", "dep:uuid"]
 
@@ -111,6 +120,11 @@ required-features = ["gpu"]
 name = "q6_k_decode"
 harness = false
 required-features = ["gpu"]
+
+[[bench]]
+name = "cpu_graph"
+harness = false
+required-features = ["cpu-graph"]
 
 [profile.release]
 opt-level = 3

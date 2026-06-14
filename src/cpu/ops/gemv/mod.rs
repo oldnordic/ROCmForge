@@ -23,7 +23,13 @@ pub use k_quant::*;
 /// Quantize a single f32 vector to Q8_0 (one block per Q8_BLOCK_ELEMS).
 fn quantize_q8_0_single(x: &[f32], out: &mut [u8], in_dim: usize) {
     let num_blocks = in_dim / Q8_BLOCK_ELEMS;
-    debug_assert_eq!(out.len(), num_blocks * Q8_BLOCK_BYTES);
+    if out.len() < num_blocks * Q8_BLOCK_BYTES {
+        panic!(
+            "BLOCK SIZE TOO SMALL: out.len={} expected={}",
+            out.len(),
+            num_blocks * Q8_BLOCK_BYTES
+        );
+    }
 
     for b in 0..num_blocks {
         let xb = &x[b * Q8_BLOCK_ELEMS..(b + 1) * Q8_BLOCK_ELEMS];

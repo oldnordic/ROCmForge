@@ -11,6 +11,7 @@
 //! Uses KV cache for efficient attention computation.
 
 use super::cache::{CpuForwardScratch, CpuKvCache};
+use super::graph::{CpuExecutionContext, DirectContext};
 use super::ops::{
     dispatch_gemv, flash_attn_decode, gelu_inplace, residual_add, rms_norm, rope, silu_fuse,
 };
@@ -160,7 +161,8 @@ fn shortconv_forward(
 }
 
 /// Decode-time MoE FFN: top-k expert selection + weighted sum.
-fn moe_forward_decode(
+fn moe_forward_decode<C: CpuExecutionContext>(
+    ctx: &mut C,
     normed: &[f32],
     moe: &CpuMoeWeights,
     gate: &mut [f32],
@@ -168,6 +170,7 @@ fn moe_forward_decode(
     tmp: &mut [f32],
     layer_out: &mut [f32],
     config: &ModelConfig,
+    mut q8_scratch: Option<&mut [u8]>,
 ) -> Result<(), CpuError> {
     let h = config.hidden_size;
     let num_experts = moe.num_experts;
@@ -179,14 +182,14 @@ fn moe_forward_decode(
     if router_meta.dims.len() == 2 {
         router_meta.dims.truncate(1);
     }
-    dispatch_gemv(
+    ctx.execute_gemv(
         &moe.gate_inp,
         &router_meta,
         normed,
         gate,
         num_experts,
         h,
-        None,
+        q8_scratch.as_deref_mut(),
     )?;
 
     // 2. Optional bias
@@ -247,10 +250,34 @@ fn moe_forward_decode(
         let up_slice = &moe.up_exps[up_off..up_off + up_stride];
         let down_slice = &moe.down_exps[down_off..down_off + down_stride];
 
-        dispatch_gemv(gate_slice, &gate_meta_2d, normed, gate, ff_size, h, None)?;
-        dispatch_gemv(up_slice, &up_meta_2d, normed, swiglu, ff_size, h, None)?;
-        silu_fuse(gate, swiglu);
-        dispatch_gemv(down_slice, &down_meta_2d, swiglu, tmp, h, ff_size, None)?;
+        ctx.execute_gemv(
+            gate_slice,
+            &gate_meta_2d,
+            normed,
+            gate,
+            ff_size,
+            h,
+            q8_scratch.as_deref_mut(),
+        )?;
+        ctx.execute_gemv(
+            up_slice,
+            &up_meta_2d,
+            normed,
+            swiglu,
+            ff_size,
+            h,
+            q8_scratch.as_deref_mut(),
+        )?;
+        ctx.execute_silu(gate, swiglu);
+        ctx.execute_gemv(
+            down_slice,
+            &down_meta_2d,
+            swiglu,
+            tmp,
+            h,
+            ff_size,
+            q8_scratch.as_deref_mut(),
+        )?;
 
         for i in 0..h {
             layer_out[i] += weight * tmp[i];
@@ -286,6 +313,27 @@ pub fn cpu_layer_forward(
     config: &ModelConfig,
     debug: bool,
 ) -> Result<(), CpuError> {
+    let mut ctx = DirectContext;
+    cpu_layer_forward_with_ctx(
+        &mut ctx, hidden, weights, kv, scratch, layer, pos, rope_sin, rope_cos, config, debug,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+/// Internal forward pass using abstract context.
+pub fn cpu_layer_forward_with_ctx<C: CpuExecutionContext>(
+    ctx: &mut C,
+    hidden: &mut [f32],
+    weights: &CpuLayerWeights,
+    kv: &mut CpuKvCache,
+    scratch: &mut CpuForwardScratch,
+    layer: usize,
+    pos: usize,
+    rope_sin: &[f32],
+    rope_cos: &[f32],
+    config: &ModelConfig,
+    debug: bool,
+) -> Result<(), CpuError> {
     // Legacy qwen35 SSM still rejected; everything else now supported.
     if config.architecture == "qwen35" || weights.ssm.is_some() {
         return Err(CpuError::InvalidOperation(
@@ -300,7 +348,7 @@ pub fn cpu_layer_forward(
     let eps = config.rms_norm_eps;
 
     // 1. Attention RMS norm
-    rms_norm(hidden, &weights.attn_norm, &mut scratch.normed, eps);
+    ctx.execute_rms_norm(hidden, &weights.attn_norm, &mut scratch.normed, eps);
 
     if debug && layer == 0 {
         let norm_mean: f32 = scratch.normed.iter().copied().sum::<f32>() / h as f32;
@@ -318,14 +366,14 @@ pub fn cpu_layer_forward(
         // 2a. QKV projections
         if let (Some(ref qkv_w), Some(ref qkv_m)) = (&weights.attn_qkv, &weights.attn_qkv_meta) {
             let qkv_total = q_size + 2 * kv_size;
-            dispatch_gemv(
+            ctx.execute_gemv(
                 qkv_w,
                 qkv_m,
                 &scratch.normed,
                 &mut scratch.qkv,
                 qkv_total,
                 h,
-                None,
+                Some(&mut scratch.q8_scratch),
             )?;
             scratch.q.copy_from_slice(&scratch.qkv[0..q_size]);
             scratch
@@ -339,48 +387,34 @@ pub fn cpu_layer_forward(
             let q = &mut *scratch.q;
             let k = &mut *scratch.k;
             let v = &mut *scratch.v;
-            let (q_res, (k_res, v_res)) = rayon::join(
-                || {
-                    dispatch_gemv(
-                        &weights.attn_q,
-                        &weights.attn_q_meta,
-                        normed,
-                        q,
-                        q_size,
-                        h,
-                        None,
-                    )
-                },
-                || {
-                    rayon::join(
-                        || {
-                            dispatch_gemv(
-                                &weights.attn_k,
-                                &weights.attn_k_meta,
-                                normed,
-                                k,
-                                kv_size,
-                                h,
-                                None,
-                            )
-                        },
-                        || {
-                            dispatch_gemv(
-                                &weights.attn_v,
-                                &weights.attn_v_meta,
-                                normed,
-                                v,
-                                kv_size,
-                                h,
-                                None,
-                            )
-                        },
-                    )
-                },
-            );
-            q_res?;
-            k_res?;
-            v_res?;
+
+            ctx.execute_gemv(
+                &weights.attn_q,
+                &weights.attn_q_meta,
+                normed,
+                q,
+                q_size,
+                h,
+                Some(&mut scratch.q8_scratch),
+            )?;
+            ctx.execute_gemv(
+                &weights.attn_k,
+                &weights.attn_k_meta,
+                normed,
+                k,
+                kv_size,
+                h,
+                Some(&mut scratch.q8_scratch),
+            )?;
+            ctx.execute_gemv(
+                &weights.attn_v,
+                &weights.attn_v_meta,
+                normed,
+                v,
+                kv_size,
+                h,
+                Some(&mut scratch.q8_scratch),
+            )?;
         }
 
         // Optional biases
@@ -408,8 +442,8 @@ pub fn cpu_layer_forward(
             );
         }
 
-        // RoPE
-        rope(
+        // 2c. RoPE
+        ctx.execute_rope(
             &mut scratch.q,
             config.num_heads,
             config.head_dim,
@@ -417,7 +451,7 @@ pub fn cpu_layer_forward(
             rope_cos,
             config.rope_neox,
         );
-        rope(
+        ctx.execute_rope(
             &mut scratch.k,
             config.num_kv_heads,
             config.head_dim,
@@ -432,7 +466,8 @@ pub fn cpu_layer_forward(
 
         // Flash attention
         let seq_len = pos + 1;
-        flash_attn_decode(
+        // 2e. Attention
+        ctx.execute_attention(
             &scratch.q,
             kv.k_buf(layer),
             kv.v_buf(layer),
@@ -441,10 +476,11 @@ pub fn cpu_layer_forward(
             config.num_heads,
             config.num_kv_heads,
             config.head_dim,
+            kv.max_seq_len,
         );
 
         // Output projection
-        dispatch_gemv(
+        ctx.execute_gemv(
             &weights.attn_o,
             &weights.attn_o_meta,
             &scratch.attn_out,
@@ -468,14 +504,15 @@ pub fn cpu_layer_forward(
     }
 
     // 3. Residual after attention/shortconv
-    residual_add(hidden, &scratch.layer_out);
+    ctx.execute_residual_add(hidden, &scratch.layer_out);
 
     // 4. FFN RMS norm
-    rms_norm(hidden, &weights.ffn_norm, &mut scratch.normed, eps);
+    ctx.execute_rms_norm(hidden, &weights.ffn_norm, &mut scratch.normed, eps);
 
     // 5. FFN (dense or MoE)
     if let Some(ref moe) = weights.moe {
         moe_forward_decode(
+            ctx,
             &scratch.normed,
             moe,
             &mut scratch.gate,
@@ -483,42 +520,45 @@ pub fn cpu_layer_forward(
             &mut scratch.shortconv_tmp,
             &mut scratch.layer_out,
             config,
+            Some(&mut scratch.q8_scratch),
         )?;
     } else {
         let normed = &*scratch.normed;
         let swiglu = &mut *scratch.swiglu;
         if let (Some(ref gate_w), Some(ref gate_m)) = (&weights.ffn_gate, &weights.ffn_gate_meta) {
             let gate = &mut *scratch.gate;
-            let (gate_res, up_res) = rayon::join(
-                || dispatch_gemv(gate_w, gate_m, normed, gate, ff_size, h, None),
-                || {
-                    dispatch_gemv(
-                        &weights.ffn_up,
-                        &weights.ffn_up_meta,
-                        normed,
-                        swiglu,
-                        ff_size,
-                        h,
-                        None,
-                    )
-                },
-            );
-            gate_res?;
-            up_res?;
-            silu_fuse(&scratch.gate, &mut scratch.swiglu);
-        } else {
-            dispatch_gemv(
+            ctx.execute_gemv(
+                gate_w,
+                gate_m,
+                normed,
+                gate,
+                ff_size,
+                h,
+                Some(&mut scratch.q8_scratch),
+            )?;
+            ctx.execute_gemv(
                 &weights.ffn_up,
                 &weights.ffn_up_meta,
                 normed,
                 swiglu,
                 ff_size,
                 h,
-                None,
+                Some(&mut scratch.q8_scratch),
+            )?;
+            ctx.execute_silu(&scratch.gate, &mut scratch.swiglu);
+        } else {
+            ctx.execute_gemv(
+                &weights.ffn_up,
+                &weights.ffn_up_meta,
+                normed,
+                swiglu,
+                ff_size,
+                h,
+                Some(&mut scratch.q8_scratch),
             )?;
             gelu_inplace(swiglu);
         }
-        super::ops::dispatch_gemv(
+        ctx.execute_gemv(
             &weights.ffn_down,
             &weights.ffn_down_meta,
             &scratch.swiglu,
@@ -530,7 +570,7 @@ pub fn cpu_layer_forward(
     }
 
     // 6. Residual after FFN
-    residual_add(hidden, &scratch.layer_out);
+    ctx.execute_residual_add(hidden, &scratch.layer_out);
 
     Ok(())
 }

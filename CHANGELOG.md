@@ -3,6 +3,14 @@
 ## [Unreleased]
 
 ### Features
+- **CPU Graph Execution Engine** — Implemented a `geographdb-core` backed execution engine for the CPU path, enabling 4D causal graph captures and replays.
+
+### Fixed
+- **CPU Graph Temporal Logic** — Fixed a logic error where regressed execution nodes were unintentionally treated as "forever" nodes, causing them to be replayed incorrectly.
+- **Dependency Versioning** — Bumped `geographdb-core` to 0.5.4 to pull in stricter temporal validity checks.
+
+
+### Features
 - **LFM2.5 Hybrid Support** — Implemented full support for Liquid Foundation Model 2.5 architecture, including mixed Attention/Shortconv layers and MoE FFNs.
 - **Layer Type Detection** — Added automatic detection of Shortconv layers in GGUF/RFM loaders by checking for the absence of standard attention tensors.
 - **Shortconv HIP Launchers** — Added C-compatible launchers (`gpu_shortconv_f32`, `gpu_shortconv_sequence_f32`) to the shortconv HIP kernel suite, fixing linker errors in GPU builds.
