@@ -32,8 +32,8 @@ serde_json = "1"
 # Cache directory
 dirs = "5"
 # Graph Execution (optional)
-geographdb-core = { path = "../geographdb-core", version = "0.5.4", optional = true }
-sqlitegraph = { path = "../sqlitegraph/sqlitegraph-core", optional = true }
+geographdb-core = { version = "0.5.4", optional = true }
+sqlitegraph = { version = "3.2.5", optional = true }
 glam = { version = "0.27", optional = true }
 # UUID for API responses
 uuid = { version = "1", optional = true, features = ["v4"] }
