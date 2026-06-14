@@ -325,6 +325,11 @@ pub struct CaptureContext {
     pub layer: usize,
     pub step: usize,
     pub timestamp: u64,
+    /// History of caller-pointer -> output-handle bindings, annotated with the
+    /// timestamp at which they became valid.  Used by `rebind_after_regress` to
+    /// restore the arena bindings that correspond to a rolled-back temporal
+    /// state.
+    pub output_log: Vec<(u64, usize, F32Handle)>,
 }
 
 #[cfg(feature = "cpu-graph")]
@@ -337,6 +342,7 @@ impl CaptureContext {
             layer,
             step: 0,
             timestamp,
+            output_log: Vec::new(),
         }
     }
 
@@ -348,6 +354,23 @@ impl CaptureContext {
     /// original lengths.
     pub unsafe fn read_back(&self) {
         self.arena.read_back();
+    }
+
+    /// Restore the arena's caller-pointer bindings to the state that existed
+    /// just after `timestamp`.  This must be called after `graph.regress` so
+    /// that `read_back` reflects the rolled-back computation rather than the
+    /// most-recently-captured branch.
+    pub fn rebind_after_regress(&mut self, timestamp: u64) {
+        let mut surviving: std::collections::HashMap<usize, F32Handle> =
+            std::collections::HashMap::new();
+        for (ts, ptr, handle) in &self.output_log {
+            if *ts <= timestamp {
+                surviving.insert(*ptr, *handle);
+            }
+        }
+        for (ptr, handle) in surviving {
+            self.arena.rebind_f32(ptr, handle);
+        }
     }
 }
 
@@ -367,6 +390,8 @@ impl CpuExecutionContext for CaptureContext {
         let input = self.arena.copy_f32(x);
         let out = self.arena.alloc_f32(y.len());
         self.arena.rebind_f32(y.as_ptr() as usize, out);
+        self.output_log
+            .push((self.timestamp, y.as_ptr() as usize, out));
         let scratch = q8_scratch.as_ref().map(|s| self.arena.copy_u8(s));
 
         let op = CpuOpNode::Gemv {
@@ -397,6 +422,8 @@ impl CpuExecutionContext for CaptureContext {
         let weight = self.arena.copy_f32(w);
         let h_out = self.arena.alloc_f32(out.len());
         self.arena.rebind_f32(out.as_ptr() as usize, h_out);
+        self.output_log
+            .push((self.timestamp, out.as_ptr() as usize, h_out));
 
         let op = CpuOpNode::RmsNorm {
             hidden,
@@ -426,6 +453,8 @@ impl CpuExecutionContext for CaptureContext {
         let cos_h = self.arena.copy_f32(cos);
         let h_out = self.arena.alloc_f32(x.len());
         self.arena.rebind_f32(x.as_ptr() as usize, h_out);
+        self.output_log
+            .push((self.timestamp, x.as_ptr() as usize, h_out));
 
         let op = CpuOpNode::RoPE {
             x: x_in,
@@ -460,6 +489,8 @@ impl CpuExecutionContext for CaptureContext {
         let v_h = self.arena.copy_f32(v);
         let h_out = self.arena.alloc_f32(out.len());
         self.arena.rebind_f32(out.as_ptr() as usize, h_out);
+        self.output_log
+            .push((self.timestamp, out.as_ptr() as usize, h_out));
 
         let op = CpuOpNode::Attention {
             q: q_h,
@@ -493,6 +524,8 @@ impl CpuExecutionContext for CaptureContext {
         let up_in = self.arena.copy_f32(up);
         let h_out = self.arena.alloc_f32(up.len());
         self.arena.rebind_f32(up.as_ptr() as usize, h_out);
+        self.output_log
+            .push((self.timestamp, up.as_ptr() as usize, h_out));
 
         let op = CpuOpNode::SiLU {
             gate: gate_h,
@@ -512,6 +545,8 @@ impl CpuExecutionContext for CaptureContext {
         let b_h = self.arena.copy_f32(b);
         let h_out = self.arena.alloc_f32(a.len());
         self.arena.rebind_f32(a.as_ptr() as usize, h_out);
+        self.output_log
+            .push((self.timestamp, a.as_ptr() as usize, h_out));
 
         let op = CpuOpNode::ResidualAdd {
             a: a_in,

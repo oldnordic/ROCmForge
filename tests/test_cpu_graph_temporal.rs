@@ -47,10 +47,31 @@ fn test_cpu_graph_temporal_flow() {
     let mut scratch = CpuForwardScratch::new(&config);
     let mut hidden = vec![0.1f32; h];
 
+    // Simplified RoPE inputs (constant across positions for this test).
+    let sin_0 = vec![0.0f32; config.head_dim / 2];
+    let cos_0 = vec![1.0f32; config.head_dim / 2];
+
+    // Direct reference: run only Step 0 from the initial state.
+    let mut hidden_prefix_ref = vec![0.1f32; h];
+    let mut kv_prefix_ref = CpuKvCache::new(&config, 10);
+    let mut scratch_prefix_ref = CpuForwardScratch::new(&config);
+    cpu_layer_forward_with_ctx(
+        &mut rocmforge::cpu::graph::DirectContext,
+        &mut hidden_prefix_ref,
+        weights.layer(layer_idx),
+        &mut kv_prefix_ref,
+        &mut scratch_prefix_ref,
+        layer_idx,
+        0,
+        &sin_0,
+        &cos_0,
+        &config,
+        false,
+    )
+    .expect("Direct prefix reference failed");
+
     // 2. Capture Step 0 (Timestamp 0)
     println!("--- Capturing Step 0 ---");
-    let sin_0 = vec![0.0f32; config.head_dim / 2];
-    let cos_0 = vec![1.0f32; config.head_dim / 2]; // Simplified for test
 
     let mut capture_ctx = CaptureContext::new(layer_idx, 0);
 
@@ -92,6 +113,7 @@ fn test_cpu_graph_temporal_flow() {
     // 4. Test Regression: Rollback to T=0
     println!("--- Testing Regression to T=0 ---");
     capture_ctx.graph.regress(0); // This should set end_ts=0 for all nodes where begin_ts > 0
+    capture_ctx.rebind_after_regress(0); // Restore arena bindings to the T=0 state
     for (i, node) in capture_ctx.graph.nodes.iter().enumerate() {
         println!("Node {} begin={} end={}", i, node.begin_ts, node.end_ts);
     }
@@ -130,6 +152,14 @@ fn test_cpu_graph_temporal_flow() {
 
     let regression_err = max_abs_error(&hidden_after_step_0, &hidden_after_rollback_all);
     println!("ERROR:  {:.8}", regression_err);
+
+    let prefix_err = max_abs_error(&hidden_after_rollback_all, &hidden_prefix_ref);
+    println!("PREFIX ERROR: {:.8}", prefix_err);
+    assert!(
+        prefix_err < 1e-6,
+        "Rollback did not restore the prefix state! err={:.8}",
+        prefix_err
+    );
 
     println!(
         "DEBUG: hidden_after_step_0[0] = {}, hidden_after_rollback_all[0] = {}",
