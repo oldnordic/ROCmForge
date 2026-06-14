@@ -56,16 +56,17 @@ impl CpuLayerWeights {
                 .map_err(WeightError::Load)?
                 .ok_or_else(|| WeightError::TensorNotFound(name.to_string()))?;
             let role = TensorRole::from_name(&name, false, false);
-            let needs_transpose =
-                compute_transpose_flag(role, t.dims, t.ggml_type, config);
-            Ok((t.data.to_vec(), WeightMeta::from_view_with_role(&t, needs_transpose, role)))
+            let needs_transpose = compute_transpose_flag(role, t.dims, t.ggml_type, config);
+            Ok((
+                t.data.to_vec(),
+                WeightMeta::from_view_with_role(&t, needs_transpose, role),
+            ))
         };
 
         let load_opt_name = |name: &str| -> Result<Option<(Vec<u8>, WeightMeta)>, WeightError> {
             if let Some(t) = file.tensor(name).map_err(WeightError::Load)? {
                 let role = TensorRole::from_name(name, false, false);
-                let needs_transpose =
-                    compute_transpose_flag(role, t.dims, t.ggml_type, config);
+                let needs_transpose = compute_transpose_flag(role, t.dims, t.ggml_type, config);
                 Ok(Some((
                     t.data.to_vec(),
                     WeightMeta::from_view_with_role(&t, needs_transpose, role),
@@ -75,10 +76,11 @@ impl CpuLayerWeights {
             }
         };
 
-        let load_opt = |name_enum: TensorName| -> Result<Option<(Vec<u8>, WeightMeta)>, WeightError> {
-            let name = config.tensor_registry.resolve(name_enum, layer);
-            load_opt_name(&name)
-        };
+        let load_opt =
+            |name_enum: TensorName| -> Result<Option<(Vec<u8>, WeightMeta)>, WeightError> {
+                let name = config.tensor_registry.resolve(name_enum, layer);
+                load_opt_name(&name)
+            };
 
         let copy_f32_opt = |name_enum: TensorName| -> Result<Option<Vec<f32>>, WeightError> {
             let name_opt = config.tensor_registry.resolve_optional(name_enum, layer);
@@ -115,9 +117,10 @@ impl CpuLayerWeights {
             shortconv,
         ) = if is_attention_layer {
             let qkv_name = format!("blk.{}.attn_qkv.weight", layer);
-            let layer_has_fused_qkv =
-                matches!(config.attention_layout, crate::config::AttentionLayout::FusedQkv)
-                    && file.has_tensor(&qkv_name);
+            let layer_has_fused_qkv = matches!(
+                config.attention_layout,
+                crate::config::AttentionLayout::FusedQkv
+            ) && file.has_tensor(&qkv_name);
 
             if layer_has_fused_qkv {
                 let (qkv_buf, qkv_meta) = load_opt_name(&qkv_name)?.ok_or_else(|| {
@@ -149,14 +152,25 @@ impl CpuLayerWeights {
                 )
             }
         } else {
-            (vec![], WeightMeta::default(), vec![], WeightMeta::default(),
-             vec![], WeightMeta::default(), None, None, vec![], WeightMeta::default(),
-             Some(load_shortconv_gguf(file, layer)?))
+            (
+                vec![],
+                WeightMeta::default(),
+                vec![],
+                WeightMeta::default(),
+                vec![],
+                WeightMeta::default(),
+                None,
+                None,
+                vec![],
+                WeightMeta::default(),
+                Some(load_shortconv_gguf(file, layer)?),
+            )
         };
 
         // ── FFN weights (dense vs MoE) ────────────────────────────────────────────
-        let is_moe_layer = if let Some(name) =
-            config.tensor_registry.resolve_optional(TensorName::FfnGateExps, layer)
+        let is_moe_layer = if let Some(name) = config
+            .tensor_registry
+            .resolve_optional(TensorName::FfnGateExps, layer)
         {
             file.tensor(&name).map_err(WeightError::Load)?.is_some()
         } else {
@@ -166,7 +180,15 @@ impl CpuLayerWeights {
         let (ffn_gate, ffn_gate_meta, ffn_up, ffn_up_meta, ffn_down, ffn_down_meta, moe) =
             if is_moe_layer {
                 let moe_weights = load_moe_gguf(file, layer, config)?;
-                (None, None, vec![], WeightMeta::default(), vec![], WeightMeta::default(), Some(moe_weights))
+                (
+                    None,
+                    None,
+                    vec![],
+                    WeightMeta::default(),
+                    vec![],
+                    WeightMeta::default(),
+                    Some(moe_weights),
+                )
             } else {
                 let ffn_gate_opt = load_opt(TensorName::FfnGate)?;
                 let (fu, fu_meta) = load_weight(TensorName::FfnUp)?;
@@ -274,7 +296,8 @@ impl CpuLayerWeights {
             };
 
             let role = TensorRole::from_name(t.name, false, false);
-            let needs_transpose = compute_transpose_flag(role, t.dims, rfm_type_to_ggml(&t.wtype), config);
+            let needs_transpose =
+                compute_transpose_flag(role, t.dims, rfm_type_to_ggml(&t.wtype), config);
             let mut meta = rfm_weight_meta(&t, needs_transpose);
             meta.role = role;
             Ok((data, meta))
@@ -347,20 +370,38 @@ impl CpuLayerWeights {
             )?;
             let qkv = load_rfm_opt(&format!("blk.{}.attn_qkv.weight", layer))?;
             (
-                aq, aq_meta, ak, ak_meta, av, av_meta,
+                aq,
+                aq_meta,
+                ak,
+                ak_meta,
+                av,
+                av_meta,
                 qkv.as_ref().map(|(d, _)| d.clone()),
                 qkv.as_ref().map(|(_, m)| m.clone()),
-                ao, ao_meta, None,
+                ao,
+                ao_meta,
+                None,
             )
         } else {
-            (vec![], WeightMeta::default(), vec![], WeightMeta::default(),
-             vec![], WeightMeta::default(), None, None, vec![], WeightMeta::default(),
-             Some(load_shortconv_rfm(file, layer)?))
+            (
+                vec![],
+                WeightMeta::default(),
+                vec![],
+                WeightMeta::default(),
+                vec![],
+                WeightMeta::default(),
+                None,
+                None,
+                vec![],
+                WeightMeta::default(),
+                Some(load_shortconv_rfm(file, layer)?),
+            )
         };
 
         // ── FFN weights (dense vs MoE) ──────────────────────────────────────────
-        let is_moe_layer = if let Some(name) =
-            config.tensor_registry.resolve_optional(TensorName::FfnGateExps, layer)
+        let is_moe_layer = if let Some(name) = config
+            .tensor_registry
+            .resolve_optional(TensorName::FfnGateExps, layer)
         {
             file.tensor(&name).map_err(WeightError::Load)?.is_some()
         } else {
@@ -370,7 +411,15 @@ impl CpuLayerWeights {
         let (ffn_gate, ffn_gate_meta, ffn_up, ffn_up_meta, ffn_down, ffn_down_meta, moe) =
             if is_moe_layer {
                 let moe_weights = load_moe_rfm(file, layer, config)?;
-                (None, None, vec![], WeightMeta::default(), vec![], WeightMeta::default(), Some(moe_weights))
+                (
+                    None,
+                    None,
+                    vec![],
+                    WeightMeta::default(),
+                    vec![],
+                    WeightMeta::default(),
+                    Some(moe_weights),
+                )
             } else {
                 let ffn_gate_opt =
                     load_rfm_opt(&config.tensor_registry.resolve(TensorName::FfnGate, layer))?;

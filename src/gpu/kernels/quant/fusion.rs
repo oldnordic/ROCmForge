@@ -546,6 +546,89 @@ pub fn gemv_norm_qkv_rope_kvwrite_q4_0_f32_dp4a_on_stream(
     Ok(())
 }
 
+/// RDNA3 WMMA-optimized fused QKV+RoPE+KV-write kernel for Q4_0 quantized weights.
+pub fn gemv_norm_qkv_rope_kvwrite_q4_0_f32_wmma_on_stream(
+    raw_hidden: *const f32,
+    norm_weight: *const f32,
+    eps: f32,
+    w_q: *const u8,
+    w_k: *const u8,
+    w_v: *const u8,
+    bias_q: Option<*const f32>,
+    bias_k: Option<*const f32>,
+    bias_v: Option<*const f32>,
+    out_q: *mut f32,
+    k_cache: *mut f32,
+    v_cache: *mut f32,
+    n_rows: usize,
+    n_q: usize,
+    n_kv: usize,
+    pos_ptr: *const c_int,
+    head_dim: usize,
+    theta_base: f32,
+    neox: bool,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    if raw_hidden.is_null()
+        || norm_weight.is_null()
+        || w_q.is_null()
+        || w_k.is_null()
+        || w_v.is_null()
+        || out_q.is_null()
+        || k_cache.is_null()
+        || v_cache.is_null()
+        || pos_ptr.is_null()
+    {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description:
+                "gemv_norm_qkv_rope_kvwrite_q4_0_f32_wmma: required pointers must be non-null"
+                    .to_string(),
+        });
+    }
+
+    let bias_q_ptr = bias_q.unwrap_or(std::ptr::null());
+    let bias_k_ptr = bias_k.unwrap_or(std::ptr::null());
+    let bias_v_ptr = bias_v.unwrap_or(std::ptr::null());
+
+    let result = unsafe {
+        gemv_norm_qkv_rope_kvwrite_q4_0_f32_wmma_launch(
+            raw_hidden,
+            norm_weight,
+            eps,
+            w_q,
+            w_k,
+            w_v,
+            bias_q_ptr,
+            bias_k_ptr,
+            bias_v_ptr,
+            out_q,
+            k_cache,
+            v_cache,
+            n_rows as c_int,
+            n_q as c_int,
+            n_kv as c_int,
+            pos_ptr,
+            head_dim as c_int,
+            theta_base,
+            if neox { 1 } else { 0 },
+            stream,
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!(
+                "gemv_norm_qkv_rope_kvwrite_q4_0_f32_wmma kernel failed: {:?}",
+                result
+            ),
+        });
+    }
+
+    Ok(())
+}
+
 // ── FFI Declarations ───────────────────────────────────────────────────────────────
 
 unsafe extern "C" {
@@ -799,6 +882,30 @@ unsafe extern "C" {
 
     // DP4A-optimized fusion kernel
     fn gemv_norm_qkv_rope_kvwrite_q4_0_f32_dp4a_launch(
+        raw_hidden: *const f32,
+        norm_weight: *const f32,
+        eps: f32,
+        w_q: *const u8,
+        w_k: *const u8,
+        w_v: *const u8,
+        bias_q: *const f32,
+        bias_k: *const f32,
+        bias_v: *const f32,
+        out_q: *mut f32,
+        k_cache: *mut f32,
+        v_cache: *mut f32,
+        n_rows: c_int,
+        n_q: c_int,
+        n_kv: c_int,
+        pos_ptr: *const c_int,
+        head_dim: c_int,
+        theta_base: f32,
+        neox: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
+    // RDNA3 WMMA-optimized fusion kernel
+    fn gemv_norm_qkv_rope_kvwrite_q4_0_f32_wmma_launch(
         raw_hidden: *const f32,
         norm_weight: *const f32,
         eps: f32,

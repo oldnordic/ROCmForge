@@ -78,7 +78,11 @@ fn transpose_f32_2d(data: &[u8], dim0: usize, dim1: usize) -> GpuResult<Vec<u8>>
         return Err(GpuError::InvalidWeightLayout {
             tensor: "transpose_f32_2d".to_string(),
             dims: vec![dim0 as u64, dim1 as u64],
-            reason: format!("size mismatch: expected {} bytes, got {}", expected, data.len()),
+            reason: format!(
+                "size mismatch: expected {} bytes, got {}",
+                expected,
+                data.len()
+            ),
         });
     }
     let src = unsafe { std::slice::from_raw_parts(data.as_ptr() as *const f32, elems) };
@@ -102,16 +106,12 @@ fn transpose_f32_2d(data: &[u8], dim0: usize, dim1: usize) -> GpuResult<Vec<u8>>
 /// for F32 weights before GPU upload.  Mutates `meta` in-place so that
 /// `dims` and `needs_transpose` reflect the post-transpose layout.
 /// Returns the (possibly transposed) bytes.
-pub(super) fn normalize_f32_for_gpu(
-    data: &[u8],
-    meta: &mut WeightMeta,
-) -> GpuResult<Vec<u8>> {
+pub(super) fn normalize_f32_for_gpu(data: &[u8], meta: &mut WeightMeta) -> GpuResult<Vec<u8>> {
     if meta.wtype != GgmlType::F32 || meta.dims.len() != 2 {
         return Ok(data.to_vec());
     }
 
-    let needs_transpose = meta.needs_transpose
-        || matches!(meta.role, TensorRole::SsmConv1d);
+    let needs_transpose = meta.needs_transpose || matches!(meta.role, TensorRole::SsmConv1d);
 
     if needs_transpose {
         let dim0 = meta.dims[0] as usize;

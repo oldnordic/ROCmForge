@@ -223,6 +223,22 @@ set_target_properties(q4_0_fused_norm_qkv_rope_dp4a PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
 
+# Q4_0 fused norm QKV RoPE WMMA kernel (RDNA3-optimized)
+add_library(q4_0_fused_norm_qkv_rope_wmma STATIC
+    q4_0_fused_norm_qkv_rope_wmma.hip
+)
+
+# Link common library to WMMA kernel
+target_link_libraries(q4_0_fused_norm_qkv_rope_wmma
+    quant_common
+)
+
+# Set output directory to match Cargo expectations
+set_target_properties(q4_0_fused_norm_qkv_rope_wmma PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
 # Q4_1 GEMV kernel (Q4_1 × f32 matrix-vector multiplication)
 add_library(q4_1_gemv STATIC
     q4_1_gemv.hip

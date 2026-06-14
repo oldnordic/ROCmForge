@@ -59,6 +59,7 @@ pub use quant::{
     gemm_q8_0_f32_on_stream, gemv_gate_up_q4_0_f32, gemv_gate_up_q4_0_f32_on_stream,
     gemv_gate_up_swiglu_q4_0_f32, gemv_gate_up_swiglu_q4_0_f32_on_stream,
     gemv_norm_qkv_rope_kvwrite_q4_0_f32_dp4a_on_stream,
+    gemv_norm_qkv_rope_kvwrite_q4_0_f32_wmma_on_stream,
     /* DISABLED: gemv_q4_k_f32 and gemv_q4_k_f32_on_stream not available */
     gemv_q2_k_f32, gemv_q2_k_f32_on_stream, gemv_q3_k_f32, gemv_q3_k_f32_on_stream, gemv_q4_0_f32,
     gemv_q4_0_f32_on_stream, gemv_q4_0_f32_on_stream_unchecked, gemv_q4_0_f32_residual_on_stream,

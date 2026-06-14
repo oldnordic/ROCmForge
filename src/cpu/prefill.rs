@@ -109,17 +109,13 @@ fn prefill_layer_forward(
     }
 
     // 2. QKV GEMM (fused or split)
-    if let (Some(ref qkv_w), Some(ref qkv_m)) = (&weights.attn_qkv,
-        &weights.attn_qkv_meta,
-    ) {
+    if let (Some(ref qkv_w), Some(ref qkv_m)) = (&weights.attn_qkv, &weights.attn_qkv_meta) {
         let qkv_total = q_s + 2 * kv_s;
         dispatch_gemm(qkv_w, qkv_m, &ps.normed, &mut ps.qkv, qkv_total, h)?;
         for s in 0..batch_len {
             let base = s * qkv_total;
-            ps.q[s * q_s..(s + 1) * q_s]
-                .copy_from_slice(&ps.qkv[base..base + q_s]);
-            ps.k[s * kv_s..(s + 1) * kv_s]
-                .copy_from_slice(&ps.qkv[base + q_s..base + q_s + kv_s]);
+            ps.q[s * q_s..(s + 1) * q_s].copy_from_slice(&ps.qkv[base..base + q_s]);
+            ps.k[s * kv_s..(s + 1) * kv_s].copy_from_slice(&ps.qkv[base + q_s..base + q_s + kv_s]);
             ps.v[s * kv_s..(s + 1) * kv_s]
                 .copy_from_slice(&ps.qkv[base + q_s + kv_s..base + qkv_total]);
         }
@@ -232,14 +228,7 @@ fn prefill_layer_forward(
 
     // 10. MLP: gate + up projections (SwiGLU) or up only (standard FFN)
     if let (Some(ref gate_w), Some(ref gate_m)) = (&weights.ffn_gate, &weights.ffn_gate_meta) {
-        dispatch_gemm(
-            gate_w,
-            gate_m,
-            &ps.normed,
-            &mut ps.gate,
-            ff,
-            h,
-        )?;
+        dispatch_gemm(gate_w, gate_m, &ps.normed, &mut ps.gate, ff, h)?;
         dispatch_gemm(
             &weights.ffn_up,
             &weights.ffn_up_meta,

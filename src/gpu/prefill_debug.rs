@@ -224,10 +224,9 @@ pub(crate) fn compute_layer0_cpu_reference(
         // 8. FFN Gate + Up (SwiGLU) or Up only (Standard)
         let mut t_gate = vec![0.0f32; ff_size];
         let mut t_swiglu = vec![0.0f32; ff_size];
-        if let (Some(ref gate_w), Some(ref gate_m)) = (
-            &layer_weights.ffn_gate,
-            &layer_weights.ffn_gate_meta,
-        ) {
+        if let (Some(ref gate_w), Some(ref gate_m)) =
+            (&layer_weights.ffn_gate, &layer_weights.ffn_gate_meta)
+        {
             cpu_dispatch_gemv(
                 gate_w,
                 gate_m,

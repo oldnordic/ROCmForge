@@ -563,12 +563,7 @@ pub fn gpu_batched_prefill_forward(
                             t_scratch,
                             device.stream(),
                         )?;
-                        silu_on_stream(
-                            gate_row as *const f32,
-                            gate_row,
-                            ff_size,
-                            device.stream(),
-                        )?;
+                        silu_on_stream(gate_row as *const f32, gate_row, ff_size, device.stream())?;
                         mul_on_stream(
                             gate_row as *const f32,
                             swiglu_row as *const f32,
@@ -602,7 +597,10 @@ pub fn gpu_batched_prefill_forward(
             }
         } else {
             // Standard FFN (non-SwiGLU)
-            if gpu_layer.ffn_up_svd.is_none() && gpu_layer.ffn_up_sparse.is_none() && gpu_layer.ffn_up_mpo.is_none() {
+            if gpu_layer.ffn_up_svd.is_none()
+                && gpu_layer.ffn_up_sparse.is_none()
+                && gpu_layer.ffn_up_mpo.is_none()
+            {
                 crate::gpu::ops::gpu_dispatch_gemm(
                     device,
                     &gpu_layer.ffn_up,
@@ -700,8 +698,11 @@ pub fn gpu_batched_prefill_forward(
         }
 
         // FFN down projection
-        if gpu_layer.ffn_down_svd.is_none() && gpu_layer.ffn_down_sparse.is_none() && gpu_layer.ffn_down_mpo.is_none() {
-             crate::gpu::ops::gpu_dispatch_gemm(
+        if gpu_layer.ffn_down_svd.is_none()
+            && gpu_layer.ffn_down_sparse.is_none()
+            && gpu_layer.ffn_down_mpo.is_none()
+        {
+            crate::gpu::ops::gpu_dispatch_gemm(
                 device,
                 &gpu_layer.ffn_down,
                 &gpu_layer.ffn_down_meta,
@@ -714,7 +715,8 @@ pub fn gpu_batched_prefill_forward(
         } else {
             // Fallback to loop for complex layouts
             for pos in 0..seq_len {
-                let swiglu_row = unsafe { (scratch.swiglu.as_ptr() as *const f32).add(pos * ff_size) };
+                let swiglu_row =
+                    unsafe { (scratch.swiglu.as_ptr() as *const f32).add(pos * ff_size) };
                 let layer_out_row = scratch.layer_out_row_mut_ptr(pos, h);
                 let t_scratch = unsafe { (scratch.svd_scratch.as_ptr() as *mut f32).add(pos * 32) };
                 gpu_dispatch_gemv_with_fallback_on_stream(

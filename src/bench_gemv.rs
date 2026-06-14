@@ -33,8 +33,15 @@ fn main() {
     // For simplicity, we just use a helper here or call dispatch_gemv
     use rocmforge::cpu::weights::WeightMeta;
     use rocmforge::loader::GgmlType;
-    let meta = WeightMeta { wtype: GgmlType::Q4_0, dims: vec![OUT_DIM as u64, H as u64], needs_transpose: false, role: rocmforge::config::TensorRole::Generic, svd_k: None };
-    rocmforge::cpu::ops::dispatch_gemv(&w, &meta, &x, &mut y_q8, OUT_DIM, H, Some(&mut scratch)).expect("bench failure");
+    let meta = WeightMeta {
+        wtype: GgmlType::Q4_0,
+        dims: vec![OUT_DIM as u64, H as u64],
+        needs_transpose: false,
+        role: rocmforge::config::TensorRole::Generic,
+        svd_k: None,
+    };
+    rocmforge::cpu::ops::dispatch_gemv(&w, &meta, &x, &mut y_q8, OUT_DIM, H, Some(&mut scratch))
+        .expect("bench failure");
 
     // Benchmark Q4_0 × f32
     let start = std::time::Instant::now();
@@ -48,7 +55,16 @@ fn main() {
     // Benchmark Q4_0 × Q8_0
     let start = std::time::Instant::now();
     for _ in 0..iterations {
-        rocmforge::cpu::ops::dispatch_gemv(&w, &meta, &x, &mut y_q8, OUT_DIM, H, Some(&mut scratch)).expect("bench failure");
+        rocmforge::cpu::ops::dispatch_gemv(
+            &w,
+            &meta,
+            &x,
+            &mut y_q8,
+            OUT_DIM,
+            H,
+            Some(&mut scratch),
+        )
+        .expect("bench failure");
     }
     let elapsed_q8 = start.elapsed();
     let tps_q8 = (iterations as f64 * 1000.0) / elapsed_q8.as_secs_f64();

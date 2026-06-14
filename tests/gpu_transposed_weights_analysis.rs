@@ -47,8 +47,16 @@ fn test_transposed_weights_analysis() {
     );
     eprintln!(
         "  ffn_gate: needs_transpose={} type={:?}",
-        gpu_layer.ffn_gate_meta.as_ref().map(|m| m.needs_transpose).unwrap_or(false),
-        gpu_layer.ffn_gate_meta.as_ref().map(|m| m.wtype).unwrap_or(rocmforge::loader::GgmlType::F32)
+        gpu_layer
+            .ffn_gate_meta
+            .as_ref()
+            .map(|m| m.needs_transpose)
+            .unwrap_or(false),
+        gpu_layer
+            .ffn_gate_meta
+            .as_ref()
+            .map(|m| m.wtype)
+            .unwrap_or(rocmforge::loader::GgmlType::F32)
     );
     eprintln!(
         "  ffn_up: needs_transpose={} type={:?}",

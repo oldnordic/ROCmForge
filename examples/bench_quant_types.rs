@@ -3,12 +3,12 @@
 //! Comprehensive benchmark comparing all quantization types.
 //! Tests GEMV (decode) and GEMM (prefill) performance with realistic model dimensions.
 
+use rocmforge::config::TensorRole;
 use rocmforge::cpu::ops::{dispatch_gemm, dispatch_gemv};
 use rocmforge::cpu::quant::{
     Q4_1_BLOCK_BYTES, Q4_1_BLOCK_ELEMS, Q4_BLOCK_BYTES, Q4_BLOCK_ELEMS, Q5_0_BLOCK_BYTES,
     Q5_0_BLOCK_ELEMS, Q6_K_BLOCK_BYTES, Q6_K_BLOCK_ELEMS, Q8_BLOCK_BYTES, Q8_BLOCK_ELEMS,
 };
-use rocmforge::config::TensorRole;
 use rocmforge::cpu::weights::WeightMeta;
 use rocmforge::loader::GgmlType;
 use std::time::Instant;

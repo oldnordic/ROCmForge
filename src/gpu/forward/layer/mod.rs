@@ -7,8 +7,8 @@ mod ssm;
 
 // Private re-imports make cross-sibling functions available to all layer/* children.
 use moe::gpu_dispatch_moe_ffn_on_stream;
-use ssm::gpu_layer_forward_ssm_on_stream;
 use shortconv::gpu_shortconv_native_on_stream;
+use ssm::gpu_layer_forward_ssm_on_stream;
 
 pub(in crate::gpu::forward) use attention::{
     gpu_attention_decode, gpu_attention_decode_from_state,

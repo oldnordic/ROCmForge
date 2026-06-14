@@ -1,19 +1,19 @@
 mod arithmetic;
 mod quant;
 mod sampling;
-mod svd;
 mod state;
+mod svd;
 
 pub use arithmetic::*;
 pub use quant::*;
 pub use sampling::*;
-pub use svd::*;
 pub use state::*;
+pub use svd::*;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::super::ffi::hipStream_t;
+    use super::*;
 
     #[test]
     fn add_rejects_zero_n() {

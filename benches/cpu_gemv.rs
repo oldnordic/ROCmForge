@@ -34,14 +34,38 @@ fn bench_q4_0_q8_0(c: &mut Criterion) {
     let mut scratch = vec![0u8; hidden_size / 32 * 34];
     use rocmforge::cpu::weights::WeightMeta;
     use rocmforge::loader::GgmlType;
-    let meta = WeightMeta { wtype: GgmlType::Q4_0, dims: vec![out_dim as u64, hidden_size as u64], needs_transpose: false, role: rocmforge::config::TensorRole::Generic, svd_k: None };
+    let meta = WeightMeta {
+        wtype: GgmlType::Q4_0,
+        dims: vec![out_dim as u64, hidden_size as u64],
+        needs_transpose: false,
+        role: rocmforge::config::TensorRole::Generic,
+        svd_k: None,
+    };
 
     // Warmup
-    rocmforge::cpu::ops::dispatch_gemv(&w, &meta, &x, &mut output, out_dim, hidden_size, Some(&mut scratch)).expect("bench failure");
+    rocmforge::cpu::ops::dispatch_gemv(
+        &w,
+        &meta,
+        &x,
+        &mut output,
+        out_dim,
+        hidden_size,
+        Some(&mut scratch),
+    )
+    .expect("bench failure");
 
     group.bench_function("Q4_0×Q8_0", |b| {
         b.iter(|| {
-            rocmforge::cpu::ops::dispatch_gemv(&w, &meta, &x, &mut output, out_dim, hidden_size, Some(&mut scratch)).expect("bench failure");
+            rocmforge::cpu::ops::dispatch_gemv(
+                &w,
+                &meta,
+                &x,
+                &mut output,
+                out_dim,
+                hidden_size,
+                Some(&mut scratch),
+            )
+            .expect("bench failure");
             black_box(&output);
         })
     });

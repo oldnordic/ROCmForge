@@ -1,9 +1,7 @@
 use rocmforge::loader::{GgmlType, TensorView};
 use std::io::Write;
 
-use super::super::quant::{
-    bytes_to_f32, dequantize_q4_0_to_f32, dequantize_q6_k_to_f32,
-};
+use super::super::quant::{bytes_to_f32, dequantize_q4_0_to_f32, dequantize_q6_k_to_f32};
 
 pub(crate) fn should_compress_tensor(name: &str, tensor: &TensorView) -> bool {
     if tensor.dims.len() != 2 {

@@ -6,12 +6,17 @@
 mod common;
 
 use common::helpers::*;
-use rocmforge::config::{AttentionLayout, FfnLayout, ModelConfig, TensorNameRegistry, TensorNamingScheme, TensorRole};
+use rocmforge::config::{
+    AttentionLayout, FfnLayout, ModelConfig, TensorNameRegistry, TensorNamingScheme, TensorRole,
+};
 use rocmforge::cpu::cache::{CpuForwardScratch, CpuKvCache};
 use rocmforge::cpu::forward::cpu_layer_forward;
 use rocmforge::cpu::weights::{CpuLayerWeights, CpuShortconvWeights};
-use rocmforge::gpu::{GpuBuffer, GpuDevice, GpuForwardScratch, GpuKvCache, GpuLayerWeights, WeightMeta, GpuPrefillScratch};
 use rocmforge::gpu::weights::{GpuLayerType, GpuShortconvWeights};
+use rocmforge::gpu::{
+    GpuBuffer, GpuDevice, GpuForwardScratch, GpuKvCache, GpuLayerWeights, GpuPrefillScratch,
+    WeightMeta,
+};
 use rocmforge::loader::GgmlType;
 use serial_test::serial;
 use std::sync::Arc;
@@ -67,17 +72,32 @@ fn test_gpu_shortconv_decode_parity() {
         moe: None,
         weight_type: GgmlType::F32,
     };
-    
-    let in_proj_data = (0..3*h*h).map(|i| (i as f32).sin() * 0.1).collect::<Vec<f32>>();
-    let conv_data = (0..l_cache*h).map(|i| (i as f32).cos() * 0.5).collect::<Vec<f32>>();
-    let out_proj_data = (0..h*h).map(|i| (i as f32).tan() * 0.2).collect::<Vec<f32>>();
+
+    let in_proj_data = (0..3 * h * h)
+        .map(|i| (i as f32).sin() * 0.1)
+        .collect::<Vec<f32>>();
+    let conv_data = (0..l_cache * h)
+        .map(|i| (i as f32).cos() * 0.5)
+        .collect::<Vec<f32>>();
+    let out_proj_data = (0..h * h)
+        .map(|i| (i as f32).tan() * 0.2)
+        .collect::<Vec<f32>>();
 
     cpu_layer.shortconv = Some(CpuShortconvWeights {
-        in_proj: in_proj_data.iter().flat_map(|&f| f.to_le_bytes().to_vec()).collect(),
+        in_proj: in_proj_data
+            .iter()
+            .flat_map(|&f| f.to_le_bytes().to_vec())
+            .collect(),
         in_proj_meta: mock_cpu_meta(3 * h, h, GgmlType::F32, TensorRole::Generic),
-        conv: conv_data.iter().flat_map(|&f| f.to_le_bytes().to_vec()).collect(),
+        conv: conv_data
+            .iter()
+            .flat_map(|&f| f.to_le_bytes().to_vec())
+            .collect(),
         conv_meta: mock_cpu_meta(l_cache, h, GgmlType::F32, TensorRole::Generic),
-        out_proj: out_proj_data.iter().flat_map(|&f| f.to_le_bytes().to_vec()).collect(),
+        out_proj: out_proj_data
+            .iter()
+            .flat_map(|&f| f.to_le_bytes().to_vec())
+            .collect(),
         out_proj_meta: mock_cpu_meta(h, h, GgmlType::F32, TensorRole::Generic),
     });
 
@@ -144,7 +164,7 @@ fn test_gpu_shortconv_decode_parity() {
         ffn_up_compressed: None,
         ffn_down_compressed: None,
     };
-    
+
     // 3. Setup input
     let mut x_cpu = vec![0.5f32; h];
     let mut gpu_scratch = GpuForwardScratch::new(&config).expect("alloc scratch");
@@ -158,8 +178,19 @@ fn test_gpu_shortconv_decode_parity() {
     // 4. Run CPU
     let rope_sin = Vec::new();
     let rope_cos = Vec::new();
-    cpu_layer_forward(&mut x_cpu, &cpu_layer, &mut cpu_kv, &mut cpu_scratch, 0, 0, &rope_sin, &rope_cos, &config, false)
-        .expect("cpu forward");
+    cpu_layer_forward(
+        &mut x_cpu,
+        &cpu_layer,
+        &mut cpu_kv,
+        &mut cpu_scratch,
+        0,
+        0,
+        &rope_sin,
+        &rope_cos,
+        &config,
+        false,
+    )
+    .expect("cpu forward");
 
     // 5. Run GPU
     rocmforge::gpu::forward::gpu_layer_forward_hybrid(
@@ -172,15 +203,23 @@ fn test_gpu_shortconv_decode_parity() {
         0,
         0,
         &config,
-    ).expect("gpu forward");
+    )
+    .expect("gpu forward");
     device.synchronize().expect("sync");
 
     // 6. Compare
     let gpu_out = download_f32(&gpu_scratch.hidden, h);
-    
+
     for i in 0..h {
         let diff = (x_cpu[i] - gpu_out[i]).abs();
-        assert!(diff < 1e-3, "Mismatch at index {}: CPU={}, GPU={}, diff={}", i, x_cpu[i], gpu_out[i], diff);
+        assert!(
+            diff < 1e-3,
+            "Mismatch at index {}: CPU={}, GPU={}, diff={}",
+            i,
+            x_cpu[i],
+            gpu_out[i],
+            diff
+        );
     }
     println!("Decode parity test passed!");
 }
@@ -230,7 +269,7 @@ fn test_gpu_shortconv_prefill_parity() {
         moe: None,
         weight_type: GgmlType::Q4_0,
     };
-    
+
     cpu_layer.shortconv = Some(CpuShortconvWeights {
         in_proj: q4_0_zero_bytes_local(3 * h * h),
         in_proj_meta: mock_cpu_meta(3 * h, h, GgmlType::Q4_0, TensorRole::Generic),
@@ -267,11 +306,20 @@ fn test_gpu_shortconv_prefill_parity() {
         is_attention_layer: false,
         layer_type: GpuLayerType::Shortconv,
         shortconv: Some(GpuShortconvWeights {
-            in_proj: upload_raw(dev_id, &cpu_layer.shortconv.as_ref().expect("sc missing").in_proj),
+            in_proj: upload_raw(
+                dev_id,
+                &cpu_layer.shortconv.as_ref().expect("sc missing").in_proj,
+            ),
             in_proj_meta: mock_gpu_meta(3 * h, h, GgmlType::Q4_0, TensorRole::Generic),
-            conv: upload_raw(dev_id, &cpu_layer.shortconv.as_ref().expect("sc missing").conv),
+            conv: upload_raw(
+                dev_id,
+                &cpu_layer.shortconv.as_ref().expect("sc missing").conv,
+            ),
             conv_meta: mock_gpu_meta(l_cache, h, GgmlType::F32, TensorRole::Generic),
-            out_proj: upload_raw(dev_id, &cpu_layer.shortconv.as_ref().expect("sc missing").out_proj),
+            out_proj: upload_raw(
+                dev_id,
+                &cpu_layer.shortconv.as_ref().expect("sc missing").out_proj,
+            ),
             out_proj_meta: mock_gpu_meta(h, h, GgmlType::Q4_0, TensorRole::Generic),
         }),
         attn_o: GpuBuffer::empty(),
@@ -303,13 +351,21 @@ fn test_gpu_shortconv_prefill_parity() {
         ffn_up_compressed: None,
         ffn_down_compressed: None,
     };
-    
+
     // 3. Setup input sequence
-    let x_cpu_seq = (0..seq_len*h).map(|i| (i as f32).cos() * 0.5).collect::<Vec<f32>>();
+    let x_cpu_seq = (0..seq_len * h)
+        .map(|i| (i as f32).cos() * 0.5)
+        .collect::<Vec<f32>>();
     let mut gpu_scratch = GpuPrefillScratch::new(&config, seq_len).expect("alloc prefill scratch");
-    
-    let x_bytes: Vec<u8> = x_cpu_seq.iter().flat_map(|&f| f.to_le_bytes().to_vec()).collect();
-    gpu_scratch.hidden.copy_from_host(&x_bytes).expect("upload seq");
+
+    let x_bytes: Vec<u8> = x_cpu_seq
+        .iter()
+        .flat_map(|&f| f.to_le_bytes().to_vec())
+        .collect();
+    gpu_scratch
+        .hidden
+        .copy_from_host(&x_bytes)
+        .expect("upload seq");
 
     let mut cpu_kv = CpuKvCache::new(&config, seq_len);
     let mut gpu_kv = GpuKvCache::new(&config, seq_len).expect("alloc gpu kv");
@@ -321,10 +377,21 @@ fn test_gpu_shortconv_prefill_parity() {
     let rope_sin = Vec::new();
     let rope_cos = Vec::new();
     for t in 0..seq_len {
-        let mut x_token = x_cpu_ref[t*h..(t+1)*h].to_vec();
-        cpu_layer_forward(&mut x_token, &cpu_layer, &mut cpu_kv, &mut cpu_scratch, 0, t, &rope_sin, &rope_cos, &config, false)
-            .expect("cpu forward");
-        x_cpu_ref[t*h..(t+1)*h].copy_from_slice(&x_token);
+        let mut x_token = x_cpu_ref[t * h..(t + 1) * h].to_vec();
+        cpu_layer_forward(
+            &mut x_token,
+            &cpu_layer,
+            &mut cpu_kv,
+            &mut cpu_scratch,
+            0,
+            t,
+            &rope_sin,
+            &rope_cos,
+            &config,
+            false,
+        )
+        .expect("cpu forward");
+        x_cpu_ref[t * h..(t + 1) * h].copy_from_slice(&x_token);
     }
 
     // 5. Run GPU (whole sequence)
@@ -336,23 +403,37 @@ fn test_gpu_shortconv_prefill_parity() {
         0,
         0,
         &config,
-    ).expect("gpu prefill");
+    )
+    .expect("gpu prefill");
     device.synchronize().expect("sync");
 
     // 6. Compare
     let gpu_out = download_f32(&gpu_scratch.hidden, seq_len * h);
-    
+
     for t in 0..seq_len {
         for i in 0..h {
             let idx = t * h + i;
             let diff = (x_cpu_ref[idx] - gpu_out[idx]).abs();
-            assert!(diff < 1e-3, "Mismatch at token {}, index {}: CPU={}, GPU={}, diff={}", t, i, x_cpu_ref[idx], gpu_out[idx], diff);
+            assert!(
+                diff < 1e-3,
+                "Mismatch at token {}, index {}: CPU={}, GPU={}, diff={}",
+                t,
+                i,
+                x_cpu_ref[idx],
+                gpu_out[idx],
+                diff
+            );
         }
     }
     println!("Prefill parity test passed!");
 }
 
-fn mock_cpu_meta(rows: usize, cols: usize, wtype: GgmlType, role: TensorRole) -> rocmforge::cpu::weights::WeightMeta {
+fn mock_cpu_meta(
+    rows: usize,
+    cols: usize,
+    wtype: GgmlType,
+    role: TensorRole,
+) -> rocmforge::cpu::weights::WeightMeta {
     rocmforge::cpu::weights::WeightMeta {
         wtype,
         dims: vec![rows as u64, cols as u64],
@@ -375,7 +456,13 @@ fn q4_0_zero_bytes_local(elements: usize) -> Vec<u8> {
     bytes
 }
 
-fn upload_f32_to_gpu(buf: &mut GpuBuffer, data: &[f32]) -> Result<(), rocmforge::gpu::error::GpuError> {
-    let bytes: Vec<u8> = data.iter().flat_map(|&f| f.to_le_bytes().to_vec()).collect();
+fn upload_f32_to_gpu(
+    buf: &mut GpuBuffer,
+    data: &[f32],
+) -> Result<(), rocmforge::gpu::error::GpuError> {
+    let bytes: Vec<u8> = data
+        .iter()
+        .flat_map(|&f| f.to_le_bytes().to_vec())
+        .collect();
     buf.copy_from_host(&bytes)
 }

@@ -239,14 +239,27 @@ __device__ inline int dot4_manual(int a_packed, int b_packed, int acc) {
     return acc + dot;
 }
 
+// ROCm device library intrinsic for 4-way int8 dot product
+extern "C" __device__ int __ockl_sdot4(int a, int b, int c, bool saturate);
+
 /// Architecture-aware dot4 dispatcher
-/// Uses hardware DP4A on RDNA2 (gfx1030), software fallback elsewhere
-#if defined(__AMDGPU__) && defined(__gfx1030__)
-    // RDNA2: Use hardware DP4A (dot1-insts feature available)
-    #define DOT4(a, b, acc) __builtin_amdgcn_sdot4((a), (b), (acc), false)
+/// Uses hardware DP4A on RDNA2 (gfx1030) and RDNA3 (gfx1100), software fallback elsewhere
+#if defined(__AMDGPU__) && (defined(__gfx1030__) || defined(__gfx1100__) || defined(__gfx1101__) || defined(__gfx1102__))
+    // RDNA2/3: Use hardware DP4A via device library
+    #define DOT4(a, b, acc) __ockl_sdot4((a), (b), (acc), false)
 #else
-    // RDNA1, RDNA3, CDNA: Use portable software fallback
+    // RDNA1, CDNA: Use portable software fallback
     #define DOT4(a, b, acc) dot4_manual((a), (b), (acc))
+#endif
+
+// ── WMMA (Wave Matrix Multiply Accumulate) for RDNA3 (gfx1100+) ─────
+#if defined(__AMDGPU__) && (defined(__gfx1100__) || defined(__gfx1101__) || defined(__gfx1102__))
+    typedef _Float16 half16_t __attribute__((ext_vector_type(16)));
+    typedef float float8_t __attribute__((ext_vector_type(8)));
+
+    // RDNA3 WMMA intrinsic for f32 = 16x16x16 f16
+    // Computes C = A * B + C where A, B are 16x16 f16 matrices and C is f32
+    #define WMMA_F32_16X16X16_F16(a, b, c) __builtin_amdgcn_wmma_f32_16x16x16_f16_w32((a), (b), (c))
 #endif
 
 #endif // ROCMFORGE_QUANT_COMMON_HIP

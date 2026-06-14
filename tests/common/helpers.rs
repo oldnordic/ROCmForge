@@ -1,9 +1,11 @@
-use rocmforge::config::{AttentionLayout, FfnLayout, ModelConfig, TensorNameRegistry, TensorNamingScheme, TensorRole};
-use rocmforge::gpu::{GpuBuffer, WeightMeta, GpuLayerWeights};
-use rocmforge::gpu::weights::{GpuLayerType, GpuShortconvWeights};
-use rocmforge::loader::GgmlType;
-use rocmforge::gpu::error::GpuResult;
 use half::f16;
+use rocmforge::config::{
+    AttentionLayout, FfnLayout, ModelConfig, TensorNameRegistry, TensorNamingScheme, TensorRole,
+};
+use rocmforge::gpu::error::GpuResult;
+use rocmforge::gpu::weights::{GpuLayerType, GpuShortconvWeights};
+use rocmforge::gpu::{GpuBuffer, GpuLayerWeights, WeightMeta};
+use rocmforge::loader::GgmlType;
 
 pub fn mock_model_config() -> ModelConfig {
     ModelConfig {
@@ -48,7 +50,12 @@ pub fn mock_gpu_meta(rows: usize, cols: usize, wtype: GgmlType, role: TensorRole
     }
 }
 
-pub fn mock_cpu_meta(rows: usize, cols: usize, wtype: GgmlType, role: TensorRole) -> rocmforge::cpu::weights::WeightMeta {
+pub fn mock_cpu_meta(
+    rows: usize,
+    cols: usize,
+    wtype: GgmlType,
+    role: TensorRole,
+) -> rocmforge::cpu::weights::WeightMeta {
     rocmforge::cpu::weights::WeightMeta {
         wtype,
         dims: vec![rows as u64, cols as u64],
@@ -59,8 +66,12 @@ pub fn mock_cpu_meta(rows: usize, cols: usize, wtype: GgmlType, role: TensorRole
 }
 
 pub fn upload_f32(device_id: i32, data: &[f32]) -> GpuBuffer {
-    let bytes: Vec<u8> = data.iter().flat_map(|&f| f.to_le_bytes().to_vec()).collect();
-    let mut buf = GpuBuffer::alloc_for_device(bytes.len(), device_id).expect("helper: alloc_for_device");
+    let bytes: Vec<u8> = data
+        .iter()
+        .flat_map(|&f| f.to_le_bytes().to_vec())
+        .collect();
+    let mut buf =
+        GpuBuffer::alloc_for_device(bytes.len(), device_id).expect("helper: alloc_for_device");
     buf.copy_from_host(&bytes).expect("helper: copy_from_host");
     buf
 }
@@ -70,13 +81,19 @@ pub fn download_f32(buf: &GpuBuffer, count: usize) -> Vec<f32> {
     buf.copy_to_host(&mut bytes).expect("helper: copy_to_host");
     let mut out = vec![0.0f32; count];
     for i in 0..count {
-        out[i] = f32::from_le_bytes([bytes[i*4], bytes[i*4+1], bytes[i*4+2], bytes[i*4+3]]);
+        out[i] = f32::from_le_bytes([
+            bytes[i * 4],
+            bytes[i * 4 + 1],
+            bytes[i * 4 + 2],
+            bytes[i * 4 + 3],
+        ]);
     }
     out
 }
 
 pub fn upload_raw(device_id: i32, bytes: &[u8]) -> GpuBuffer {
-    let mut buf = GpuBuffer::alloc_for_device(bytes.len(), device_id).expect("helper: upload_raw alloc");
+    let mut buf =
+        GpuBuffer::alloc_for_device(bytes.len(), device_id).expect("helper: upload_raw alloc");
     buf.copy_from_host(bytes).expect("helper: upload_raw copy");
     buf
 }
@@ -94,13 +111,13 @@ pub fn quantize_q4_0(data: &[f32]) -> Vec<u8> {
         }
         let d = amax / 7.0;
         let id = if d > 0.0 { 1.0 / d } else { 0.0 };
-        
+
         // Scale as f16
         let d_f16 = f16::from_f32(d);
         let d_bytes = d_f16.to_le_bytes();
         out[b * 18] = d_bytes[0];
         out[b * 18 + 1] = d_bytes[1];
-        
+
         for i in 0..16 {
             let x0 = block_data[i];
             let x1 = block_data[i + 16];
@@ -113,5 +130,8 @@ pub fn quantize_q4_0(data: &[f32]) -> Vec<u8> {
 }
 
 pub fn max_abs_error(a: &[f32], b: &[f32]) -> f32 {
-    a.iter().zip(b.iter()).map(|(&x, &y)| (x - y).abs()).fold(0.0, f32::max)
+    a.iter()
+        .zip(b.iter())
+        .map(|(&x, &y)| (x - y).abs())
+        .fold(0.0, f32::max)
 }

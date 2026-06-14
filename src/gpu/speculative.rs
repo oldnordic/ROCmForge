@@ -115,40 +115,52 @@ impl SpeculativeEngine {
         }
 
         // 1. Load target model config and weights
-        let target_file = crate::loader::ModelFile::open(target_path).map_err(|e| GpuError::HipApiError {
-            code: -1,
-            description: format!("Failed to open target model: {}", e),
-        })?;
+        let target_file =
+            crate::loader::ModelFile::open(target_path).map_err(|e| GpuError::HipApiError {
+                code: -1,
+                description: format!("Failed to open target model: {}", e),
+            })?;
         let target_config = target_file.config().map_err(|e| GpuError::HipApiError {
             code: -1,
             description: format!("Target config error: {}", e),
         })?;
-        let target_cpu_weights = target_file.load_cpu_weights(&target_config).map_err(|e| GpuError::HipApiError {
-            code: -1,
-            description: format!("Target CPU weights error: {}", e),
-        })?;
-        let target_model = target_file.load_gpu_weights(&target_config, device_id).map_err(|e| GpuError::HipApiError {
-            code: -1,
-            description: format!("Target GPU weights error: {}", e),
-        })?;
+        let target_cpu_weights =
+            target_file
+                .load_cpu_weights(&target_config)
+                .map_err(|e| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("Target CPU weights error: {}", e),
+                })?;
+        let target_model = target_file
+            .load_gpu_weights(&target_config, device_id)
+            .map_err(|e| GpuError::HipApiError {
+                code: -1,
+                description: format!("Target GPU weights error: {}", e),
+            })?;
 
         // 2. Load draft model config and weights
-        let draft_file = crate::loader::ModelFile::open(draft_path).map_err(|e| GpuError::HipApiError {
-            code: -1,
-            description: format!("Failed to open draft model: {}", e),
-        })?;
+        let draft_file =
+            crate::loader::ModelFile::open(draft_path).map_err(|e| GpuError::HipApiError {
+                code: -1,
+                description: format!("Failed to open draft model: {}", e),
+            })?;
         let draft_config = draft_file.config().map_err(|e| GpuError::HipApiError {
             code: -1,
             description: format!("Draft config error: {}", e),
         })?;
-        let draft_cpu_weights = draft_file.load_cpu_weights(&draft_config).map_err(|e| GpuError::HipApiError {
-            code: -1,
-            description: format!("Draft CPU weights error: {}", e),
-        })?;
-        let draft_model = draft_file.load_gpu_weights(&draft_config, device_id).map_err(|e| GpuError::HipApiError {
-            code: -1,
-            description: format!("Draft GPU weights error: {}", e),
-        })?;
+        let draft_cpu_weights =
+            draft_file
+                .load_cpu_weights(&draft_config)
+                .map_err(|e| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("Draft CPU weights error: {}", e),
+                })?;
+        let draft_model = draft_file
+            .load_gpu_weights(&draft_config, device_id)
+            .map_err(|e| GpuError::HipApiError {
+                code: -1,
+                description: format!("Draft GPU weights error: {}", e),
+            })?;
 
         // 3. Allocate KV Caches
         let target_kv = GpuKvCache::new(&target_config, max_seq_len)?;

@@ -26,15 +26,19 @@ fn test_ffn_performance_synthetic() {
     eprintln!("h={}, ff={}", h, ff);
 
     // 1. Setup synthetic weights (Q4_0)
-    let up_data = (0..ff*h).map(|i| (i as f32).sin() * 0.1).collect::<Vec<f32>>();
-    let down_data = (0..h*ff).map(|i| (i as f32).cos() * 0.1).collect::<Vec<f32>>();
-    
+    let up_data = (0..ff * h)
+        .map(|i| (i as f32).sin() * 0.1)
+        .collect::<Vec<f32>>();
+    let down_data = (0..h * ff)
+        .map(|i| (i as f32).cos() * 0.1)
+        .collect::<Vec<f32>>();
+
     let up_q4 = quantize_q4_0(&up_data);
     let down_q4 = quantize_q4_0(&down_data);
-    
+
     let up_gpu = upload_raw(dev_id, &up_q4);
     let down_gpu = upload_raw(dev_id, &down_q4);
-    
+
     let up_meta = mock_gpu_meta(ff, h, GgmlType::Q4_0, rocmforge::gpu::TensorRole::Generic);
     let down_meta = mock_gpu_meta(h, ff, GgmlType::Q4_0, rocmforge::gpu::TensorRole::Generic);
 
@@ -57,8 +61,9 @@ fn test_ffn_performance_synthetic() {
             ff,
             h,
             device.stream(),
-        ).expect("gemv up");
-        
+        )
+        .expect("gemv up");
+
         rocmforge::gpu::ops::gpu_dispatch_gemv_on_stream(
             &device,
             &down_gpu,
@@ -68,16 +73,21 @@ fn test_ffn_performance_synthetic() {
             h,
             ff,
             device.stream(),
-        ).expect("gemv down");
+        )
+        .expect("gemv down");
     }
     device.synchronize().expect("sync");
     let elapsed = start.elapsed();
-    
-    eprintln!("Avg FFN (up+down) time: {:?} / iter", elapsed / (iters as u32));
+
+    eprintln!(
+        "Avg FFN (up+down) time: {:?} / iter",
+        elapsed / (iters as u32)
+    );
 }
 
 fn upload_raw(device_id: i32, bytes: &[u8]) -> GpuBuffer {
-    let mut buf = GpuBuffer::alloc_for_device(bytes.len(), device_id).expect("helper: upload_raw alloc");
+    let mut buf =
+        GpuBuffer::alloc_for_device(bytes.len(), device_id).expect("helper: upload_raw alloc");
     buf.copy_from_host(bytes).expect("helper: upload_raw copy");
     buf
 }

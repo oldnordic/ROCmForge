@@ -6,7 +6,9 @@
 mod common;
 
 use common::helpers::*;
-use rocmforge::config::{AttentionLayout, FfnLayout, ModelConfig, TensorNameRegistry, TensorNamingScheme, TensorRole};
+use rocmforge::config::{
+    AttentionLayout, FfnLayout, ModelConfig, TensorNameRegistry, TensorNamingScheme, TensorRole,
+};
 use rocmforge::cpu::ops::dispatch_gemv as cpu_dispatch_gemv;
 use rocmforge::gpu::{GpuBuffer, GpuDevice, GpuForwardScratch, WeightMeta};
 use rocmforge::loader::GgmlType;
@@ -25,15 +27,19 @@ fn test_gate_up_operation_correctness_synthetic() {
     eprintln!("=== Gate_Up Operation Correctness (Synthetic) ===");
 
     // 1. Setup synthetic weights (Q4_0)
-    let gate_data_f32 = (0..ff*h).map(|i| (i as f32).sin() * 0.1).collect::<Vec<f32>>();
-    let up_data_f32 = (0..ff*h).map(|i| (i as f32).cos() * 0.1).collect::<Vec<f32>>();
-    
+    let gate_data_f32 = (0..ff * h)
+        .map(|i| (i as f32).sin() * 0.1)
+        .collect::<Vec<f32>>();
+    let up_data_f32 = (0..ff * h)
+        .map(|i| (i as f32).cos() * 0.1)
+        .collect::<Vec<f32>>();
+
     let gate_q4 = quantize_q4_0(&gate_data_f32);
     let up_q4 = quantize_q4_0(&up_data_f32);
-    
+
     let gate_gpu = upload_raw(dev_id, &gate_q4);
     let up_gpu = upload_raw(dev_id, &up_q4);
-    
+
     let meta = mock_gpu_meta(ff, h, GgmlType::Q4_0, TensorRole::Generic);
     let cpu_meta = mock_cpu_meta(ff, h, GgmlType::Q4_0, TensorRole::Generic);
 
@@ -44,10 +50,12 @@ fn test_gate_up_operation_correctness_synthetic() {
     // 3. Run CPU reference
     let mut cpu_gate = vec![0.0f32; ff];
     let mut cpu_up = vec![0.0f32; ff];
-    
-    cpu_dispatch_gemv(&gate_q4, &cpu_meta, &input_f32, &mut cpu_gate, ff, h, None).expect("cpu gate gemv");
-    cpu_dispatch_gemv(&up_q4, &cpu_meta, &input_f32, &mut cpu_up, ff, h, None).expect("cpu up gemv");
-    
+
+    cpu_dispatch_gemv(&gate_q4, &cpu_meta, &input_f32, &mut cpu_gate, ff, h, None)
+        .expect("cpu gate gemv");
+    cpu_dispatch_gemv(&up_q4, &cpu_meta, &input_f32, &mut cpu_up, ff, h, None)
+        .expect("cpu up gemv");
+
     let mut cpu_swiglu = vec![0.0f32; ff];
     for i in 0..ff {
         let silu = cpu_gate[i] / (1.0 + (-cpu_gate[i]).exp());
@@ -72,12 +80,13 @@ fn test_gate_up_operation_correctness_synthetic() {
         ff,
         h,
         device.stream(),
-    ).expect("gpu dispatch gate_up");
+    )
+    .expect("gpu dispatch gate_up");
     device.synchronize().expect("sync");
 
     // 5. Compare
     let gpu_swiglu_res = download_f32(&gpu_swiglu, ff);
-    
+
     let err = max_abs_error(&cpu_swiglu, &gpu_swiglu_res);
     eprintln!("Max abs error: {:.6}", err);
     assert!(err < 1e-3, "FFN fused gate_up parity failed: err={}", err);

@@ -56,13 +56,17 @@ pub fn gemv_q4_0(w: &[u8], x: &[f32], y: &mut [f32], _out_dim: usize, in_dim: us
             let xb = &x[b * Q4_BLOCK_ELEMS..];
             if use_avx2 {
                 #[cfg(target_arch = "x86_64")]
-                { acc += unsafe { dot_q4_0_block_avx2(qs, xb, scale) }; }
+                {
+                    acc += unsafe { dot_q4_0_block_avx2(qs, xb, scale) };
+                }
                 #[cfg(not(target_arch = "x86_64"))]
-                { for i in 0..16 {
-                    let q0 = (qs[i] & 0x0F) as i32 - 8;
-                    let q1 = (qs[i] >> 4) as i32 - 8;
-                    acc += scale * (q0 as f32) * xb[i] + scale * (q1 as f32) * xb[i + 16];
-                }}
+                {
+                    for i in 0..16 {
+                        let q0 = (qs[i] & 0x0F) as i32 - 8;
+                        let q1 = (qs[i] >> 4) as i32 - 8;
+                        acc += scale * (q0 as f32) * xb[i] + scale * (q1 as f32) * xb[i + 16];
+                    }
+                }
             } else {
                 for i in 0..16 {
                     let q0 = (qs[i] & 0x0F) as i32 - 8;
@@ -93,9 +97,13 @@ pub fn gemv_q4_0_q8_0(w: &[u8], x_q8: &[u8], y: &mut [f32], _out_dim: usize, in_
             let q8 = &x_q8[b * Q8_BLOCK_BYTES + 2..][..Q8_BLOCK_ELEMS];
             if use_avx2 {
                 #[cfg(target_arch = "x86_64")]
-                { acc += unsafe { dot_q4_0_q8_0_block_avx2(qs, q8, combined_scale) }; }
+                {
+                    acc += unsafe { dot_q4_0_q8_0_block_avx2(qs, q8, combined_scale) };
+                }
                 #[cfg(not(target_arch = "x86_64"))]
-                { acc += dot_q4_0_q8_0_block_scalar(qs, q8, combined_scale); }
+                {
+                    acc += dot_q4_0_q8_0_block_scalar(qs, q8, combined_scale);
+                }
             } else {
                 acc += dot_q4_0_q8_0_block_scalar(qs, q8, combined_scale);
             }
@@ -123,9 +131,15 @@ pub fn gemv_q4_1_q8_0(w: &[u8], x_q8: &[u8], y: &mut [f32], _out_dim: usize, in_
             let q8 = &x_q8[b * Q8_BLOCK_BYTES + 2..][..Q8_BLOCK_ELEMS];
             if use_avx2 {
                 #[cfg(target_arch = "x86_64")]
-                { acc += unsafe { dot_q4_1_q8_0_block_avx2(qs, q8, combined_scale, w_min * x_scale) }; }
+                {
+                    acc += unsafe {
+                        dot_q4_1_q8_0_block_avx2(qs, q8, combined_scale, w_min * x_scale)
+                    };
+                }
                 #[cfg(not(target_arch = "x86_64"))]
-                { acc += dot_q4_1_q8_0_block_scalar(qs, q8, combined_scale, w_min * x_scale); }
+                {
+                    acc += dot_q4_1_q8_0_block_scalar(qs, q8, combined_scale, w_min * x_scale);
+                }
             } else {
                 acc += dot_q4_1_q8_0_block_scalar(qs, q8, combined_scale, w_min * x_scale);
             }
@@ -221,7 +235,13 @@ pub fn gemv_q4_0_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, 
     let _ = out_dim;
 }
 
-pub fn gemv_q4_1_transposed(_w: &[u8], _x: &[f32], _y: &mut [f32], _out_dim: usize, _in_dim: usize) {
+pub fn gemv_q4_1_transposed(
+    _w: &[u8],
+    _x: &[f32],
+    _y: &mut [f32],
+    _out_dim: usize,
+    _in_dim: usize,
+) {
     // Placeholder for symmetry, usually not needed for tied embeddings
 }
 
@@ -250,58 +270,100 @@ pub fn dispatch_gemv(
     match meta.wtype {
         GgmlType::F32 => {
             if let Some(w_f32) = try_as_f32_slice(w) {
-                if meta.needs_transpose { gemv_f32_transposed(w_f32, x, y, out_dim, in_dim); }
-                else { gemv_f32(w_f32, x, y); }
+                if meta.needs_transpose {
+                    gemv_f32_transposed(w_f32, x, y, out_dim, in_dim);
+                } else {
+                    gemv_f32(w_f32, x, y);
+                }
             } else {
-                if meta.needs_transpose { gemv_f32_transposed_bytes(w, x, y, out_dim, in_dim); }
-                else { gemv_f32_bytes(w, x, y, out_dim, in_dim); }
+                if meta.needs_transpose {
+                    gemv_f32_transposed_bytes(w, x, y, out_dim, in_dim);
+                } else {
+                    gemv_f32_bytes(w, x, y, out_dim, in_dim);
+                }
             }
         }
         GgmlType::F16 => {
-            if meta.needs_transpose { gemv_f16_transposed(w, x, y, out_dim, in_dim); }
-            else { gemv_f16(w, x, y); }
+            if meta.needs_transpose {
+                gemv_f16_transposed(w, x, y, out_dim, in_dim);
+            } else {
+                gemv_f16(w, x, y);
+            }
         }
         GgmlType::Q4_0 => {
-            if meta.needs_transpose { gemv_q4_0_transposed(w, x, y, out_dim, in_dim); }
-            else if let Some(scratch) = q8_scratch {
+            if meta.needs_transpose {
+                gemv_q4_0_transposed(w, x, y, out_dim, in_dim);
+            } else if let Some(scratch) = q8_scratch {
                 let required = in_dim / Q8_BLOCK_ELEMS * Q8_BLOCK_BYTES;
-                if scratch.len() < required { return Err(crate::cpu::CpuError::InvalidOperation("scratch too small".to_string())); }
+                if scratch.len() < required {
+                    return Err(crate::cpu::CpuError::InvalidOperation(
+                        "scratch too small".to_string(),
+                    ));
+                }
                 quantize_q8_0_single(x, scratch, in_dim);
                 gemv_q4_0_q8_0(w, scratch, y, out_dim, in_dim);
-            } else { gemv_q4_0(w, x, y, out_dim, in_dim); }
+            } else {
+                gemv_q4_0(w, x, y, out_dim, in_dim);
+            }
         }
         GgmlType::Q4_1 => {
             if let Some(scratch) = q8_scratch {
                 let required = in_dim / Q8_BLOCK_ELEMS * Q8_BLOCK_BYTES;
-                if scratch.len() < required { return Err(crate::cpu::CpuError::InvalidOperation("scratch too small".to_string())); }
+                if scratch.len() < required {
+                    return Err(crate::cpu::CpuError::InvalidOperation(
+                        "scratch too small".to_string(),
+                    ));
+                }
                 quantize_q8_0_single(x, scratch, in_dim);
                 gemv_q4_1_q8_0(w, scratch, y, out_dim, in_dim);
-            } else { return Err(crate::cpu::CpuError::UnsupportedWeightType(GgmlType::Q4_1)); }
+            } else {
+                return Err(crate::cpu::CpuError::UnsupportedWeightType(GgmlType::Q4_1));
+            }
         }
-        GgmlType::Q5_0 => { gemv_q5_0(w, x, y, out_dim, in_dim); }
+        GgmlType::Q5_0 => {
+            gemv_q5_0(w, x, y, out_dim, in_dim);
+        }
         GgmlType::Q3_K => {
-            if meta.needs_transpose { gemv_q3_k_transposed(w, x, y, out_dim, in_dim); }
-            else { gemv_q3_k(w, x, y, out_dim, in_dim); }
+            if meta.needs_transpose {
+                gemv_q3_k_transposed(w, x, y, out_dim, in_dim);
+            } else {
+                gemv_q3_k(w, x, y, out_dim, in_dim);
+            }
         }
         GgmlType::Q2_K => {
-            if meta.needs_transpose { gemv_q2_k_transposed(w, x, y, out_dim, in_dim); }
-            else { gemv_q2_k(w, x, y, out_dim, in_dim); }
+            if meta.needs_transpose {
+                gemv_q2_k_transposed(w, x, y, out_dim, in_dim);
+            } else {
+                gemv_q2_k(w, x, y, out_dim, in_dim);
+            }
         }
         GgmlType::Q8_0 => {
-            if meta.needs_transpose { gemv_q8_0_transposed(w, x, y, out_dim, in_dim); }
-            else { gemv_q8_0(w, x, y, out_dim, in_dim); }
+            if meta.needs_transpose {
+                gemv_q8_0_transposed(w, x, y, out_dim, in_dim);
+            } else {
+                gemv_q8_0(w, x, y, out_dim, in_dim);
+            }
         }
         GgmlType::Q4_K => {
-            if meta.needs_transpose { gemv_q4_k_transposed_fallback(w, x, y, out_dim, in_dim); }
-            else { crate::cpu::kernels::gemm_q4k_q8::gemv_q4_k_q8_k_dispatch(w, x, y, out_dim, in_dim); }
+            if meta.needs_transpose {
+                gemv_q4_k_transposed_fallback(w, x, y, out_dim, in_dim);
+            } else {
+                crate::cpu::kernels::gemm_q4k_q8::gemv_q4_k_q8_k_dispatch(w, x, y, out_dim, in_dim);
+            }
         }
         GgmlType::Q6_K => {
-            if meta.needs_transpose { gemv_q6_k_transposed(w, x, y, out_dim, in_dim); }
-            else { gemv_q6_k(w, x, y, out_dim, in_dim); }
+            if meta.needs_transpose {
+                gemv_q6_k_transposed(w, x, y, out_dim, in_dim);
+            } else {
+                gemv_q6_k(w, x, y, out_dim, in_dim);
+            }
         }
         GgmlType::Q5_K => {
-            if meta.needs_transpose { gemv_q5_k_transposed(w, x, y, out_dim, in_dim); }
-            else { gemv_q5_k(w, x, y, out_dim, in_dim); }
+            if meta.needs_transpose {
+                gemv_q5_k_transposed(w, x, y, out_dim, in_dim);
+            } else {
+                gemv_q5_k(w, x, y, out_dim, in_dim);
+            }
         }
         other => return Err(crate::cpu::CpuError::UnsupportedWeightType(other)),
     }

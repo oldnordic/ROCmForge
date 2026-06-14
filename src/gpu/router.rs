@@ -52,7 +52,7 @@ pub struct HotpathCapabilities {
     pub is_graph_eligible: bool,
     /// Whether the model is eligible for batched prefill kernels.
     pub is_prefill_eligible: bool,
-    
+
     // Sizing hints for VRAM checks
     pub hidden_size: usize,
     pub intermediate_size: usize,
@@ -70,41 +70,74 @@ impl HotpathCapabilities {
         let mut has_moe = false;
         let mut has_ssm = false;
         let mut has_shortconv = false;
-        
+
         let mut all_q4_0 = true;
         let mut all_q4_1 = true;
         let mut all_q8_0 = true;
 
         for layer in &weights.layers {
-            if layer.attn_q_svd.is_some() || layer.attn_k_svd.is_some() || layer.attn_v_svd.is_some() ||
-               layer.attn_o_svd.is_some() || layer.ffn_gate_svd.is_some() || layer.ffn_up_svd.is_some() || 
-               layer.ffn_down_svd.is_some() {
+            if layer.attn_q_svd.is_some()
+                || layer.attn_k_svd.is_some()
+                || layer.attn_v_svd.is_some()
+                || layer.attn_o_svd.is_some()
+                || layer.ffn_gate_svd.is_some()
+                || layer.ffn_up_svd.is_some()
+                || layer.ffn_down_svd.is_some()
+            {
                 has_svd = true;
             }
-            if layer.ffn_gate_sparse.is_some() || layer.ffn_up_sparse.is_some() || layer.ffn_down_sparse.is_some() {
+            if layer.ffn_gate_sparse.is_some()
+                || layer.ffn_up_sparse.is_some()
+                || layer.ffn_down_sparse.is_some()
+            {
                 has_sparse = true;
             }
-            if layer.ffn_gate_mpo.is_some() || layer.ffn_up_mpo.is_some() || layer.ffn_down_mpo.is_some() {
+            if layer.ffn_gate_mpo.is_some()
+                || layer.ffn_up_mpo.is_some()
+                || layer.ffn_down_mpo.is_some()
+            {
                 has_mpo = true;
             }
-            if layer.moe.is_some() { has_moe = true; }
-            if layer.ssm.is_some() { has_ssm = true; }
-            if layer.shortconv.is_some() { has_shortconv = true; }
+            if layer.moe.is_some() {
+                has_moe = true;
+            }
+            if layer.ssm.is_some() {
+                has_ssm = true;
+            }
+            if layer.shortconv.is_some() {
+                has_shortconv = true;
+            }
 
             // Quantization check (all projection weights)
             let q_types = [
-                layer.attn_q_meta.wtype, layer.attn_k_meta.wtype, layer.attn_v_meta.wtype,
-                layer.attn_o_meta.wtype, layer.ffn_up_meta.wtype, layer.ffn_down_meta.wtype
+                layer.attn_q_meta.wtype,
+                layer.attn_k_meta.wtype,
+                layer.attn_v_meta.wtype,
+                layer.attn_o_meta.wtype,
+                layer.ffn_up_meta.wtype,
+                layer.ffn_down_meta.wtype,
             ];
             for &t in &q_types {
-                if t != GgmlType::Q4_0 { all_q4_0 = false; }
-                if t != GgmlType::Q4_1 { all_q4_1 = false; }
-                if t != GgmlType::Q8_0 { all_q8_0 = false; }
+                if t != GgmlType::Q4_0 {
+                    all_q4_0 = false;
+                }
+                if t != GgmlType::Q4_1 {
+                    all_q4_1 = false;
+                }
+                if t != GgmlType::Q8_0 {
+                    all_q8_0 = false;
+                }
             }
             if let Some(ref m) = layer.ffn_gate_meta {
-                if m.wtype != GgmlType::Q4_0 { all_q4_0 = false; }
-                if m.wtype != GgmlType::Q4_1 { all_q4_1 = false; }
-                if m.wtype != GgmlType::Q8_0 { all_q8_0 = false; }
+                if m.wtype != GgmlType::Q4_0 {
+                    all_q4_0 = false;
+                }
+                if m.wtype != GgmlType::Q4_1 {
+                    all_q4_1 = false;
+                }
+                if m.wtype != GgmlType::Q8_0 {
+                    all_q8_0 = false;
+                }
             }
         }
 
@@ -120,12 +153,12 @@ impl HotpathCapabilities {
 
         // Graph eligibility
         let is_graph_eligible = !has_sparse && !has_mpo;
-        
+
         // Prefill eligibility: requires batched kernels
         let is_prefill_eligible = match quant_class {
-            QuantizationClass::PureQ4_0 | QuantizationClass::PureQ4_1 | QuantizationClass::PureQ8_0 => {
-                !has_sparse && !has_mpo
-            }
+            QuantizationClass::PureQ4_0
+            | QuantizationClass::PureQ4_1
+            | QuantizationClass::PureQ8_0 => !has_sparse && !has_mpo,
             _ => false,
         };
 
@@ -155,12 +188,24 @@ impl HotpathCapabilities {
         let mut parts = Vec::new();
         parts.push(format!("arch={}", self.architecture));
         parts.push(format!("quant={:?}", self.quant_class));
-        if self.has_svd { parts.push("svd".to_string()); }
-        if self.has_sparse { parts.push("sparse".to_string()); }
-        if self.has_mpo { parts.push("mpo".to_string()); }
-        if self.has_moe { parts.push("moe".to_string()); }
-        if self.has_ssm { parts.push("ssm".to_string()); }
-        if self.has_shortconv { parts.push("shortconv".to_string()); }
+        if self.has_svd {
+            parts.push("svd".to_string());
+        }
+        if self.has_sparse {
+            parts.push("sparse".to_string());
+        }
+        if self.has_mpo {
+            parts.push("mpo".to_string());
+        }
+        if self.has_moe {
+            parts.push("moe".to_string());
+        }
+        if self.has_ssm {
+            parts.push("ssm".to_string());
+        }
+        if self.has_shortconv {
+            parts.push("shortconv".to_string());
+        }
         parts.join(", ")
     }
 }
@@ -173,23 +218,21 @@ pub type ModelProfile = HotpathCapabilities;
 #[derive(Debug, Clone)]
 pub enum InferencePath {
     /// Batched prefill with optimized kernels.
-    BatchedPrefill {
-        max_seq_len: usize,
-    },
+    BatchedPrefill { max_seq_len: usize },
     /// Token-by-token decode-style processing.
     DecodeStyle,
     /// SVD-optimized path.
     SvdOptimized,
     /// CPU fallback.
-    CpuFallback {
-        reason: String,
-    },
+    CpuFallback { reason: String },
 }
 
 impl std::fmt::Display for InferencePath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            InferencePath::BatchedPrefill { max_seq_len } => write!(f, "BatchedPrefill(max_seq={})", max_seq_len),
+            InferencePath::BatchedPrefill { max_seq_len } => {
+                write!(f, "BatchedPrefill(max_seq={})", max_seq_len)
+            }
             InferencePath::DecodeStyle => write!(f, "DecodeStyle"),
             InferencePath::SvdOptimized => write!(f, "SvdOptimized"),
             InferencePath::CpuFallback { reason } => write!(f, "CpuFallback({})", reason),
@@ -288,9 +331,9 @@ mod tests {
             num_kv_heads: 4,
             head_dim: 64,
         };
-        
+
         let vram = VramSession::mock();
-        
+
         // Long prompt -> BatchedPrefill
         let path = select_path(&caps, 10, &vram);
         assert!(matches!(path, InferencePath::BatchedPrefill { .. }));

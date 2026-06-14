@@ -262,15 +262,19 @@ mod tests {
         // First 28 layers should be Ssm
         for i in 0..ssm_layers {
             assert_eq!(
-                types[i], GpuLayerType::Ssm,
-                "Layer {} expected Ssm in Qwen35 hybrid", i
+                types[i],
+                GpuLayerType::Ssm,
+                "Layer {} expected Ssm in Qwen35 hybrid",
+                i
             );
         }
         // Remaining 12 layers should be AttentionFusedQkv
         for i in ssm_layers..num_layers {
             assert_eq!(
-                types[i], GpuLayerType::AttentionFusedQkv,
-                "Layer {} expected AttentionFusedQkv in Qwen35 hybrid", i
+                types[i],
+                GpuLayerType::AttentionFusedQkv,
+                "Layer {} expected AttentionFusedQkv in Qwen35 hybrid",
+                i
             );
         }
     }
@@ -292,15 +296,19 @@ mod tests {
         // First 8 layers should be Shortconv
         for i in 0..shortconv_layers {
             assert_eq!(
-                types[i], GpuLayerType::Shortconv,
-                "Layer {} expected Shortconv in LFM2 hybrid", i
+                types[i],
+                GpuLayerType::Shortconv,
+                "Layer {} expected Shortconv in LFM2 hybrid",
+                i
             );
         }
         // Remaining 24 layers should be Attention
         for i in shortconv_layers..num_layers {
             assert_eq!(
-                types[i], GpuLayerType::Attention,
-                "Layer {} expected Attention in LFM2 hybrid", i
+                types[i],
+                GpuLayerType::Attention,
+                "Layer {} expected Attention in LFM2 hybrid",
+                i
             );
         }
     }

@@ -1,16 +1,16 @@
-use std::io::Write;
-use rocmforge::loader::{GgufFile, RfmTensorEntry};
 use super::cli::ConvertOptions;
 use super::layout::{pack_tensor, rfm_type_for_tensor};
+use rocmforge::loader::{GgufFile, RfmTensorEntry};
+use std::io::Write;
 
-#[path = "pipeline/utils.rs"]
-mod utils;
 #[path = "pipeline/conversion.rs"]
 pub(crate) mod conversion;
+#[path = "pipeline/utils.rs"]
+mod utils;
 
+use conversion::*;
 pub(super) use conversion::{convert_mpo_tensor, convert_sparse_csr_tensor};
 use utils::*;
-use conversion::*;
 
 /// Convert all tensors from `gguf` and write their payloads into `out_file`.
 ///

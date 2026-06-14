@@ -4,8 +4,10 @@
 //! Uses KV cache for efficient attention computation.
 
 use super::cache::{CpuForwardScratch, CpuKvCache};
-use super::ops::{dispatch_gemv, flash_attn_decode, gelu_inplace, residual_add, rms_norm, rope, silu_fuse};
-use super::weights::{CpuLayerWeights, CpuMoeWeights, CpuModelWeights};
+use super::ops::{
+    dispatch_gemv, flash_attn_decode, gelu_inplace, residual_add, rms_norm, rope, silu_fuse,
+};
+use super::weights::{CpuLayerWeights, CpuModelWeights, CpuMoeWeights};
 use super::CpuError;
 use crate::config::ModelConfig;
 use crate::loader::GgmlType;
@@ -205,11 +207,7 @@ fn moe_forward_decode(
         }
     }
 
-    let mut indexed: Vec<(usize, f32)> = gate[..num_experts]
-        .iter()
-        .copied()
-        .enumerate()
-        .collect();
+    let mut indexed: Vec<(usize, f32)> = gate[..num_experts].iter().copied().enumerate().collect();
     indexed.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     indexed.truncate(top_k);
 
@@ -313,21 +311,63 @@ pub fn cpu_layer_forward(
         // 2a. QKV projections
         if let (Some(ref qkv_w), Some(ref qkv_m)) = (&weights.attn_qkv, &weights.attn_qkv_meta) {
             let qkv_total = q_size + 2 * kv_size;
-            dispatch_gemv(qkv_w, qkv_m, &scratch.normed, &mut scratch.qkv, qkv_total, h, None)?;
+            dispatch_gemv(
+                qkv_w,
+                qkv_m,
+                &scratch.normed,
+                &mut scratch.qkv,
+                qkv_total,
+                h,
+                None,
+            )?;
             scratch.q.copy_from_slice(&scratch.qkv[0..q_size]);
-            scratch.k.copy_from_slice(&scratch.qkv[q_size..q_size + kv_size]);
-            scratch.v.copy_from_slice(&scratch.qkv[q_size + kv_size..qkv_total]);
+            scratch
+                .k
+                .copy_from_slice(&scratch.qkv[q_size..q_size + kv_size]);
+            scratch
+                .v
+                .copy_from_slice(&scratch.qkv[q_size + kv_size..qkv_total]);
         } else {
             let normed = &*scratch.normed;
             let q = &mut *scratch.q;
             let k = &mut *scratch.k;
             let v = &mut *scratch.v;
             let (q_res, (k_res, v_res)) = rayon::join(
-                || dispatch_gemv(&weights.attn_q, &weights.attn_q_meta, normed, q, q_size, h, None),
+                || {
+                    dispatch_gemv(
+                        &weights.attn_q,
+                        &weights.attn_q_meta,
+                        normed,
+                        q,
+                        q_size,
+                        h,
+                        None,
+                    )
+                },
                 || {
                     rayon::join(
-                        || dispatch_gemv(&weights.attn_k, &weights.attn_k_meta, normed, k, kv_size, h, None),
-                        || dispatch_gemv(&weights.attn_v, &weights.attn_v_meta, normed, v, kv_size, h, None),
+                        || {
+                            dispatch_gemv(
+                                &weights.attn_k,
+                                &weights.attn_k_meta,
+                                normed,
+                                k,
+                                kv_size,
+                                h,
+                                None,
+                            )
+                        },
+                        || {
+                            dispatch_gemv(
+                                &weights.attn_v,
+                                &weights.attn_v_meta,
+                                normed,
+                                v,
+                                kv_size,
+                                h,
+                                None,
+                            )
+                        },
                     )
                 },
             );
@@ -337,9 +377,15 @@ pub fn cpu_layer_forward(
         }
 
         // Optional biases
-        if let Some(bq) = &weights.attn_q_bias { super::ops::add_bias(&mut scratch.q, bq); }
-        if let Some(bk) = &weights.attn_k_bias { super::ops::add_bias(&mut scratch.k, bk); }
-        if let Some(bv) = &weights.attn_v_bias { super::ops::add_bias(&mut scratch.v, bv); }
+        if let Some(bq) = &weights.attn_q_bias {
+            super::ops::add_bias(&mut scratch.q, bq);
+        }
+        if let Some(bk) = &weights.attn_k_bias {
+            super::ops::add_bias(&mut scratch.k, bk);
+        }
+        if let Some(bv) = &weights.attn_v_bias {
+            super::ops::add_bias(&mut scratch.v, bv);
+        }
 
         // QK-Norm (if present)
         if weights.attn_q_norm.is_some() || weights.attn_k_norm.is_some() {
@@ -356,8 +402,22 @@ pub fn cpu_layer_forward(
         }
 
         // RoPE
-        rope(&mut scratch.q, config.num_heads, config.head_dim, rope_sin, rope_cos, config.rope_neox);
-        rope(&mut scratch.k, config.num_kv_heads, config.head_dim, rope_sin, rope_cos, config.rope_neox);
+        rope(
+            &mut scratch.q,
+            config.num_heads,
+            config.head_dim,
+            rope_sin,
+            rope_cos,
+            config.rope_neox,
+        );
+        rope(
+            &mut scratch.k,
+            config.num_kv_heads,
+            config.head_dim,
+            rope_sin,
+            rope_cos,
+            config.rope_neox,
+        );
 
         // Write K, V cache
         kv.write_k(layer, pos, &scratch.k);
@@ -389,8 +449,14 @@ pub fn cpu_layer_forward(
     } else {
         // Shortconv path
         shortconv_forward(
-            &scratch.normed, weights, kv, &mut scratch.shortconv_bcx,
-            &mut scratch.shortconv_tmp, &mut scratch.layer_out, layer, config,
+            &scratch.normed,
+            weights,
+            kv,
+            &mut scratch.shortconv_bcx,
+            &mut scratch.shortconv_tmp,
+            &mut scratch.layer_out,
+            layer,
+            config,
         )?;
     }
 
@@ -403,8 +469,13 @@ pub fn cpu_layer_forward(
     // 5. FFN (dense or MoE)
     if let Some(ref moe) = weights.moe {
         moe_forward_decode(
-            &scratch.normed, moe, &mut scratch.gate, &mut scratch.swiglu,
-            &mut scratch.shortconv_tmp, &mut scratch.layer_out, config,
+            &scratch.normed,
+            moe,
+            &mut scratch.gate,
+            &mut scratch.swiglu,
+            &mut scratch.shortconv_tmp,
+            &mut scratch.layer_out,
+            config,
         )?;
     } else {
         let normed = &*scratch.normed;
@@ -413,13 +484,31 @@ pub fn cpu_layer_forward(
             let gate = &mut *scratch.gate;
             let (gate_res, up_res) = rayon::join(
                 || dispatch_gemv(gate_w, gate_m, normed, gate, ff_size, h, None),
-                || dispatch_gemv(&weights.ffn_up, &weights.ffn_up_meta, normed, swiglu, ff_size, h, None),
+                || {
+                    dispatch_gemv(
+                        &weights.ffn_up,
+                        &weights.ffn_up_meta,
+                        normed,
+                        swiglu,
+                        ff_size,
+                        h,
+                        None,
+                    )
+                },
             );
             gate_res?;
             up_res?;
             silu_fuse(&scratch.gate, &mut scratch.swiglu);
         } else {
-            dispatch_gemv(&weights.ffn_up, &weights.ffn_up_meta, normed, swiglu, ff_size, h, None)?;
+            dispatch_gemv(
+                &weights.ffn_up,
+                &weights.ffn_up_meta,
+                normed,
+                swiglu,
+                ff_size,
+                h,
+                None,
+            )?;
             gelu_inplace(swiglu);
         }
         super::ops::dispatch_gemv(

@@ -1,6 +1,8 @@
+use super::super::gemm::{
+    gemm_q2_k_fallback, gemm_q3_k_fallback, gemm_q5_k_fallback, gemm_q6_k_fallback,
+};
 use crate::cpu::quant::load_f16_scale;
 use rayon::prelude::*;
-use super::super::gemm::{gemm_q2_k_fallback, gemm_q3_k_fallback, gemm_q5_k_fallback, gemm_q6_k_fallback};
 
 /// Q3_K GEMV: dequant on-the-fly (fallback, slower but works).
 pub fn gemv_q3_k(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
@@ -23,7 +25,13 @@ pub fn gemv_q5_k(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usi
 }
 
 /// Q2_K GEMV transposed for tied embeddings.
-pub(crate) fn gemv_q2_k_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+pub(crate) fn gemv_q2_k_transposed(
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    in_dim: usize,
+) {
     use crate::cpu::kernels::BlockQ2K;
     use crate::cpu::quant::{Q2_K_BLOCK_BYTES, Q2_K_BLOCK_ELEMS};
 
@@ -47,7 +55,13 @@ pub(crate) fn gemv_q2_k_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: 
 }
 
 /// Q3_K GEMV transposed for tied embeddings.
-pub(crate) fn gemv_q3_k_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+pub(crate) fn gemv_q3_k_transposed(
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    in_dim: usize,
+) {
     use crate::cpu::kernels::BlockQ3K;
     use crate::cpu::quant::{Q3_K_BLOCK_BYTES, Q3_K_BLOCK_ELEMS};
 
@@ -71,7 +85,13 @@ pub(crate) fn gemv_q3_k_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: 
 }
 
 /// Q5_K GEMV transposed for tied embeddings.
-pub(crate) fn gemv_q5_k_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+pub(crate) fn gemv_q5_k_transposed(
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    in_dim: usize,
+) {
     use crate::cpu::kernels::BlockQ5K;
     use crate::cpu::quant::{Q5_K_BLOCK_BYTES, Q5_K_BLOCK_ELEMS};
 
@@ -95,7 +115,13 @@ pub(crate) fn gemv_q5_k_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: 
 }
 
 /// Q6_K GEMV transposed for tied embeddings.
-pub(crate) fn gemv_q6_k_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+pub(crate) fn gemv_q6_k_transposed(
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    in_dim: usize,
+) {
     use crate::cpu::kernels::BlockQ6K;
     use crate::cpu::quant::{Q6_K_BLOCK_BYTES, Q6_K_BLOCK_ELEMS};
 
@@ -150,14 +176,14 @@ pub(crate) fn gemv_q4_k_transposed_fallback(
                     } else {
                         (block.qs[64 + (i - 128) / 2] >> (4 * ((i - 128) % 2))) & 0x0F
                     };
-                    
+
                     let d = load_f16_scale(&block.d);
                     let m = load_f16_scale(&block.dmin);
-                    
+
                     let is_scale = i / 64;
                     let is_group = (i % 64) / 32;
                     let sc_val = (block.scales[is_scale] >> (4 * is_group)) & 0x0F;
-                    
+
                     let val = d * (sc_val as f32) * ((q4_value as i32 - 8) as f32) + m;
                     acc += val * x[block_start + i];
                 }

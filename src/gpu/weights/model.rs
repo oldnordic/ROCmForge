@@ -463,10 +463,12 @@ impl GpuModelWeights {
 
         // Output norm (fallback to token_embd_norm.weight for LFM-style models)
         let output_norm_name = "output_norm.weight";
-        let output_norm_view = if let Some(v) = file.tensor(output_norm_name).map_err(|e| GpuError::HipApiError {
-            code: -1,
-            description: format!("tensor error: {}", e),
-        })? {
+        let output_norm_view = if let Some(v) =
+            file.tensor(output_norm_name)
+                .map_err(|e| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor error: {}", e),
+                })? {
             v
         } else {
             file.tensor("token_embd_norm.weight")

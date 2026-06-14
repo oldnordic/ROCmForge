@@ -1,12 +1,15 @@
+use super::gpu_dispatch_moe_ffn_on_stream;
 use crate::config::ModelConfig;
 use crate::gpu::cache::{GpuForwardScratch, GpuKvCache};
 use crate::gpu::device::GpuDevice;
 use crate::gpu::error::{GpuError, GpuResult};
-use crate::gpu::kernels::{gelu_on_stream, silu_on_stream, mul_on_stream};
-use crate::gpu::ops::{gpu_dispatch_fused_gate_up_on_stream, gpu_dispatch_gemv_on_stream, gpu_dispatch_gemv_with_fallback_on_stream, gpu_dispatch_rms_norm};
-use crate::gpu::weights::GpuLayerWeights;
-use super::gpu_dispatch_moe_ffn_on_stream;
 use crate::gpu::forward::utils::residual_add_inplace;
+use crate::gpu::kernels::{gelu_on_stream, mul_on_stream, silu_on_stream};
+use crate::gpu::ops::{
+    gpu_dispatch_fused_gate_up_on_stream, gpu_dispatch_gemv_on_stream,
+    gpu_dispatch_gemv_with_fallback_on_stream, gpu_dispatch_rms_norm,
+};
+use crate::gpu::weights::GpuLayerWeights;
 
 /// Native GPU forward pass for shortconv layers.
 pub(crate) fn gpu_shortconv_native_on_stream(
@@ -48,7 +51,11 @@ pub(crate) fn gpu_shortconv_native_on_stream(
     if ff_size < 3 * h {
         return Err(GpuError::HipApiError {
             code: -1,
-            description: format!("intermediate_size {} too small for shortconv in_proj 3*h {}", ff_size, 3 * h),
+            description: format!(
+                "intermediate_size {} too small for shortconv in_proj 3*h {}",
+                ff_size,
+                3 * h
+            ),
         });
     }
 
@@ -64,7 +71,8 @@ pub(crate) fn gpu_shortconv_native_on_stream(
     )?;
 
     // 3. Shortconv logic: B*x, causal conv1d, C*out
-    let conv_state_ptr = kv.conv_state_ptr(layer_idx)?
+    let conv_state_ptr = kv
+        .conv_state_ptr(layer_idx)?
         .ok_or_else(|| GpuError::HipApiError {
             code: -1,
             description: "shortconv state not allocated".to_string(),

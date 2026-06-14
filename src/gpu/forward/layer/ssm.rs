@@ -515,10 +515,9 @@ pub(super) fn gpu_layer_forward_ssm_on_stream(
             } else if let (Some(cpu_l), Some(cpu_s)) = (cpu_layer, cpu_scratch.as_mut()) {
                 ensure_size(&mut cpu_s.normed, h);
                 ensure_size(&mut cpu_s.gate, ff_size);
-                if let (Some(gate_w), Some(gate_m)) = (
-                    cpu_l.ffn_gate.as_ref(),
-                    cpu_l.ffn_gate_meta.as_ref(),
-                ) {
+                if let (Some(gate_w), Some(gate_m)) =
+                    (cpu_l.ffn_gate.as_ref(), cpu_l.ffn_gate_meta.as_ref())
+                {
                     cpu_fallback_gemv_and_upload(
                         "ffn_gate",
                         gate_w,

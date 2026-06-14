@@ -12,6 +12,7 @@ use crate::gpu::kernels::attention::{
     kv_write_rope_from_state_on_stream,
 };
 use crate::gpu::kernels::gemv_norm_qkv_rope_kvwrite_q4_0_f32_dp4a_on_stream;
+use crate::gpu::kernels::gemv_norm_qkv_rope_kvwrite_q4_0_f32_wmma_on_stream;
 use crate::gpu::kernels::rope::rope_heads_from_state_on_stream;
 use crate::gpu::kernels::{gelu_on_stream, mul_on_stream, rms_norm_batched, silu_on_stream};
 use crate::gpu::ops::{
@@ -21,6 +22,7 @@ use crate::gpu::ops::{
     gpu_dispatch_gemv_with_fallback_on_stream, gpu_dispatch_rms_norm,
 };
 use crate::gpu::weights::{GpuLayerType, GpuLayerWeights};
+use crate::loader::GgmlType;
 
 pub(in crate::gpu::forward) fn gpu_layer_forward_from_state_on_stream(
     device: &GpuDevice,
@@ -64,14 +66,15 @@ pub(in crate::gpu::forward) fn gpu_layer_forward_from_state_on_stream(
             )?;
 
             // 2. Fused QKV GEMV → [Q|K|V] concatenated output
-            let wqkv = gpu_layer
-                .attn_qkv
-                .as_ref()
-                .ok_or_else(|| GpuError::InvalidWeightLayout {
-                    tensor: "attn_qkv".to_string(),
-                    dims: vec![],
-                    reason: "fused QKV buffer missing".to_string(),
-                })?;
+            let wqkv =
+                gpu_layer
+                    .attn_qkv
+                    .as_ref()
+                    .ok_or_else(|| GpuError::InvalidWeightLayout {
+                        tensor: "attn_qkv".to_string(),
+                        dims: vec![],
+                        reason: "fused QKV buffer missing".to_string(),
+                    })?;
             let wqkv_meta =
                 gpu_layer
                     .attn_qkv_meta
@@ -307,45 +310,84 @@ pub(in crate::gpu::forward) fn gpu_layer_forward_from_state_on_stream(
     let ff_size = config.intermediate_size;
     let eps = config.rms_norm_eps;
 
-    // Check GPU features for DP4A support and check Q4_0 layout compatibility
-    let _features = crate::gpu::features::GpuFeatures::detect(device)?;
-    let use_dp4a = false;
+    // Check GPU features for DP4A/WMMA support and check Q4_0 layout compatibility
+    let features = crate::gpu::features::GpuFeatures::detect(device)?;
+    let use_fused = (gpu_layer.attn_q_meta.wtype == GgmlType::Q4_0)
+        && (gpu_layer.attn_k_meta.wtype == GgmlType::Q4_0)
+        && (gpu_layer.attn_v_meta.wtype == GgmlType::Q4_0)
+        && (features.has_dp4a || features.has_wmma)
+        && crate::gpu::safety::use_dp4a_enabled();
 
-    if use_dp4a {
+    if use_fused {
         let k_cache = kv.k_ptr(layer_idx)?;
         let v_cache = kv.v_ptr(layer_idx)?;
-        gemv_norm_qkv_rope_kvwrite_q4_0_f32_dp4a_on_stream(
-            device,
-            scratch.hidden.as_ptr() as *const f32,
-            gpu_layer.attn_norm.as_ptr() as *const f32,
-            eps,
-            gpu_layer.attn_q.as_ptr() as *const u8,
-            gpu_layer.attn_k.as_ptr() as *const u8,
-            gpu_layer.attn_v.as_ptr() as *const u8,
-            gpu_layer
-                .attn_q_bias
-                .as_ref()
-                .map(|b| b.as_ptr() as *const f32),
-            gpu_layer
-                .attn_k_bias
-                .as_ref()
-                .map(|b| b.as_ptr() as *const f32),
-            gpu_layer
-                .attn_v_bias
-                .as_ref()
-                .map(|b| b.as_ptr() as *const f32),
-            scratch.q.as_ptr() as *mut f32,
-            k_cache,
-            v_cache,
-            h,
-            config.num_heads,
-            config.num_kv_heads,
-            scratch.decode_pos_ptr(),
-            config.head_dim,
-            config.rope_theta,
-            config.rope_neox,
-            device.stream(),
-        )?;
+
+        if features.has_wmma {
+            crate::gpu::kernels::gemv_norm_qkv_rope_kvwrite_q4_0_f32_wmma_on_stream(
+                scratch.hidden.as_ptr() as *const f32,
+                gpu_layer.attn_norm.as_ptr() as *const f32,
+                eps,
+                gpu_layer.attn_q.as_ptr() as *const u8,
+                gpu_layer.attn_k.as_ptr() as *const u8,
+                gpu_layer.attn_v.as_ptr() as *const u8,
+                gpu_layer
+                    .attn_q_bias
+                    .as_ref()
+                    .map(|b| b.as_ptr() as *const f32),
+                gpu_layer
+                    .attn_k_bias
+                    .as_ref()
+                    .map(|b| b.as_ptr() as *const f32),
+                gpu_layer
+                    .attn_v_bias
+                    .as_ref()
+                    .map(|b| b.as_ptr() as *const f32),
+                scratch.q.as_ptr() as *mut f32,
+                k_cache,
+                v_cache,
+                h,
+                config.num_heads,
+                config.num_kv_heads,
+                scratch.decode_pos_ptr(),
+                config.head_dim,
+                config.rope_theta,
+                config.rope_neox,
+                device.stream(),
+            )?;
+        } else {
+            gemv_norm_qkv_rope_kvwrite_q4_0_f32_dp4a_on_stream(
+                device,
+                scratch.hidden.as_ptr() as *const f32,
+                gpu_layer.attn_norm.as_ptr() as *const f32,
+                eps,
+                gpu_layer.attn_q.as_ptr() as *const u8,
+                gpu_layer.attn_k.as_ptr() as *const u8,
+                gpu_layer.attn_v.as_ptr() as *const u8,
+                gpu_layer
+                    .attn_q_bias
+                    .as_ref()
+                    .map(|b| b.as_ptr() as *const f32),
+                gpu_layer
+                    .attn_k_bias
+                    .as_ref()
+                    .map(|b| b.as_ptr() as *const f32),
+                gpu_layer
+                    .attn_v_bias
+                    .as_ref()
+                    .map(|b| b.as_ptr() as *const f32),
+                scratch.q.as_ptr() as *mut f32,
+                k_cache,
+                v_cache,
+                h,
+                config.num_heads,
+                config.num_kv_heads,
+                scratch.decode_pos_ptr(),
+                config.head_dim,
+                config.rope_theta,
+                config.rope_neox,
+                device.stream(),
+            )?;
+        }
     } else {
         gpu_dispatch_rms_norm(
             device,

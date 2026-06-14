@@ -30,10 +30,7 @@ pub struct ModelEntry {
 }
 
 impl ModelEntry {
-    pub fn load(
-        model_path: &str,
-        draft_path: Option<&str>,
-    ) -> crate::error::RocmForgeResult<Self> {
+    pub fn load(model_path: &str, draft_path: Option<&str>) -> crate::error::RocmForgeResult<Self> {
         let file = ModelFile::open(model_path)?;
         let config = file.config()?;
         let tokenizer = file.tokenizer();

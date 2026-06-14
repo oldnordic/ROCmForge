@@ -287,9 +287,7 @@ impl GpuKvCache {
         let (pos_bytes, block_size_tokens, block_allocator, block_table, paged_k, paged_v) =
             init_paged_state(config.num_layers, layout.layer_bytes, max_seq_len);
 
-        let conv_state = if config.shortconv_l_cache.is_some()
-            || config.architecture == "lfm2moe"
-        {
+        let conv_state = if config.shortconv_l_cache.is_some() || config.architecture == "lfm2moe" {
             let l_cache = config.shortconv_l_cache.unwrap_or(3);
             let conv_bytes = l_cache * config.hidden_size * std::mem::size_of::<f32>();
             let mut states = Vec::with_capacity(config.num_layers);

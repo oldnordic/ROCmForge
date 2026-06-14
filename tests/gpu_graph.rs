@@ -2,7 +2,9 @@
 
 mod common;
 
-use rocmforge::config::{AttentionLayout, FfnLayout, ModelConfig, TensorNameRegistry, TensorNamingScheme};
+use rocmforge::config::{
+    AttentionLayout, FfnLayout, ModelConfig, TensorNameRegistry, TensorNamingScheme,
+};
 use rocmforge::gpu::{
     CapturedDecodeGraph, DecodeGraphKey, GpuBuffer, GpuDevice, GpuForwardScratch, GpuLogitsMode,
     HipGraph, TensorRole,

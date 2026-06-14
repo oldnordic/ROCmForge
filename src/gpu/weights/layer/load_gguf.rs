@@ -117,36 +117,68 @@ pub(super) fn load_for_device(
     let attn_norm = load_f32(&config.tensor_registry.resolve(TensorName::AttnNorm, layer))?;
 
     let (
-        attn_q, attn_q_meta, attn_k, attn_k_meta, attn_v, attn_v_meta,
-        attn_qkv, attn_qkv_meta, attn_o, attn_o_meta,
-        attn_q_norm, attn_k_norm, attn_q_bias, attn_k_bias, attn_v_bias,
-        attn_gate, attn_gate_meta, ssm, shortconv,
+        attn_q,
+        attn_q_meta,
+        attn_k,
+        attn_k_meta,
+        attn_v,
+        attn_v_meta,
+        attn_qkv,
+        attn_qkv_meta,
+        attn_o,
+        attn_o_meta,
+        attn_q_norm,
+        attn_k_norm,
+        attn_q_bias,
+        attn_k_bias,
+        attn_v_bias,
+        attn_gate,
+        attn_gate_meta,
+        ssm,
+        shortconv,
     ) = if is_attention_layer {
         let qkv_name = format!("blk.{}.attn_qkv.weight", layer);
-        let layer_has_fused_qkv =
-            matches!(config.attention_layout, AttentionLayout::FusedQkv)
-                && file.has_tensor(&qkv_name);
-        let (attn_q, attn_q_meta, attn_k, attn_k_meta, attn_v, attn_v_meta, attn_qkv, attn_qkv_meta) =
-            if layer_has_fused_qkv {
-                let (qkv, qkv_meta) = load_weight(&qkv_name)?;
-                (
-                    GpuBuffer::empty(), qkv_meta.clone(),
-                    GpuBuffer::empty(), qkv_meta.clone(),
-                    GpuBuffer::empty(), qkv_meta.clone(),
-                    Some(qkv), Some(qkv_meta),
-                )
-            } else {
-                let (attn_q, attn_q_meta) =
-                    load_weight(&config.tensor_registry.resolve(TensorName::AttnQ, layer))?;
-                let (attn_k, attn_k_meta) =
-                    load_weight(&config.tensor_registry.resolve(TensorName::AttnK, layer))?;
-                let (attn_v, attn_v_meta) =
-                    load_weight(&config.tensor_registry.resolve(TensorName::AttnV, layer))?;
-                (
-                    attn_q, attn_q_meta, attn_k, attn_k_meta,
-                    attn_v, attn_v_meta, None, None,
-                )
-            };
+        let layer_has_fused_qkv = matches!(config.attention_layout, AttentionLayout::FusedQkv)
+            && file.has_tensor(&qkv_name);
+        let (
+            attn_q,
+            attn_q_meta,
+            attn_k,
+            attn_k_meta,
+            attn_v,
+            attn_v_meta,
+            attn_qkv,
+            attn_qkv_meta,
+        ) = if layer_has_fused_qkv {
+            let (qkv, qkv_meta) = load_weight(&qkv_name)?;
+            (
+                GpuBuffer::empty(),
+                qkv_meta.clone(),
+                GpuBuffer::empty(),
+                qkv_meta.clone(),
+                GpuBuffer::empty(),
+                qkv_meta.clone(),
+                Some(qkv),
+                Some(qkv_meta),
+            )
+        } else {
+            let (attn_q, attn_q_meta) =
+                load_weight(&config.tensor_registry.resolve(TensorName::AttnQ, layer))?;
+            let (attn_k, attn_k_meta) =
+                load_weight(&config.tensor_registry.resolve(TensorName::AttnK, layer))?;
+            let (attn_v, attn_v_meta) =
+                load_weight(&config.tensor_registry.resolve(TensorName::AttnV, layer))?;
+            (
+                attn_q,
+                attn_q_meta,
+                attn_k,
+                attn_k_meta,
+                attn_v,
+                attn_v_meta,
+                None,
+                None,
+            )
+        };
         let attn_q_norm = load_f32_opt(&format!("blk.{}.attn_q_norm.weight", layer))?;
         let attn_k_norm = load_f32_opt(&format!("blk.{}.attn_k_norm.weight", layer))?;
         let attn_q_bias = load_f32_opt(
@@ -168,10 +200,12 @@ pub(super) fn load_for_device(
                 .unwrap_or_default(),
         )?;
         let (attn_o, attn_o_meta) = if layer_has_fused_qkv {
-            let meta = attn_qkv_meta.as_ref().ok_or_else(|| GpuError::HipApiError {
-                code: -1,
-                description: "attn_qkv_meta missing for fused QKV layer".to_string(),
-            })?;
+            let meta = attn_qkv_meta
+                .as_ref()
+                .ok_or_else(|| GpuError::HipApiError {
+                    code: -1,
+                    description: "attn_qkv_meta missing for fused QKV layer".to_string(),
+                })?;
             (GpuBuffer::empty(), meta.clone())
         } else {
             load_weight(
@@ -193,10 +227,25 @@ pub(super) fn load_for_device(
             (None, None, None)
         };
         (
-            attn_q, attn_q_meta, attn_k, attn_k_meta, attn_v, attn_v_meta,
-            attn_qkv, attn_qkv_meta, attn_o, attn_o_meta,
-            attn_q_norm, attn_k_norm, attn_q_bias, attn_k_bias, attn_v_bias,
-            attn_gate, attn_gate_meta, ssm, None,
+            attn_q,
+            attn_q_meta,
+            attn_k,
+            attn_k_meta,
+            attn_v,
+            attn_v_meta,
+            attn_qkv,
+            attn_qkv_meta,
+            attn_o,
+            attn_o_meta,
+            attn_q_norm,
+            attn_k_norm,
+            attn_q_bias,
+            attn_k_bias,
+            attn_v_bias,
+            attn_gate,
+            attn_gate_meta,
+            ssm,
+            None,
         )
     } else {
         // Shortconv layer
@@ -212,13 +261,25 @@ pub(super) fn load_for_device(
             out_proj_meta: sc_out_proj.1,
         });
         (
-            GpuBuffer::empty(), WeightMeta::default(),
-            GpuBuffer::empty(), WeightMeta::default(),
-            GpuBuffer::empty(), WeightMeta::default(),
-            None, None,
-            GpuBuffer::empty(), WeightMeta::default(),
-            None, None, None, None, None,
-            None, None, None, shortconv,
+            GpuBuffer::empty(),
+            WeightMeta::default(),
+            GpuBuffer::empty(),
+            WeightMeta::default(),
+            GpuBuffer::empty(),
+            WeightMeta::default(),
+            None,
+            None,
+            GpuBuffer::empty(),
+            WeightMeta::default(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            shortconv,
         )
     };
     let ffn_norm_name = qwen35_post_attention_norm_name(config, layer)

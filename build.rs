@@ -223,6 +223,10 @@ mod gpu_build {
                                 "libq4_0_fused_norm_qkv_rope_dp4a.a",
                                 "q4_0_fused_norm_qkv_rope_dp4a",
                             ),
+                            (
+                                "libq4_0_fused_norm_qkv_rope_wmma.a",
+                                "q4_0_fused_norm_qkv_rope_wmma",
+                            ),
                             // Q4_1 libraries
                             ("libq4_1_quantize.a", "q4_1_quantize"),
                             ("libq4_1_dequantize.a", "q4_1_dequantize"),

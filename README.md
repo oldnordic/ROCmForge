@@ -20,7 +20,7 @@ rocmforge - LLM inference on AMD GPUs (HIP) with a CPU fallback path.
 
 | Quantization | Status | Notes |
 |--------------|--------|-------|
-| Q4_0 | Supported | Baseline quantization |
+| Q4_0 | Supported | Optimized with DP4A (RDNA2) and WMMA (RDNA3) |
 | Q4_K | Supported | Mixed quantization |
 | Q6_K | Supported | Works with graph capture |
 | Q8_0 | Supported | 8-bit quantization |

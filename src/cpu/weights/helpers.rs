@@ -58,7 +58,10 @@ pub(crate) fn copy_tensor_with_meta(
         .map_err(WeightError::Load)?
         .ok_or_else(|| WeightError::TensorNotFound(name.to_string()))?;
     let role = TensorRole::from_name(name, false, false);
-    Ok((t.data.to_vec(), WeightMeta::from_view_with_role(&t, needs_transpose, role)))
+    Ok((
+        t.data.to_vec(),
+        WeightMeta::from_view_with_role(&t, needs_transpose, role),
+    ))
 }
 
 pub(crate) fn rfm_type_to_ggml(rfm: &RfmType) -> GgmlType {

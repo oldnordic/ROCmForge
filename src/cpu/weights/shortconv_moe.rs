@@ -97,7 +97,11 @@ pub(crate) fn load_moe_gguf(
     let ff_size = gate_exps.1.dims[1] as usize;
 
     let exp_probs_b_name = format!("blk.{}.exp_probs_b.bias", layer);
-    let exp_probs_b_bias = if file.tensor(&exp_probs_b_name).map_err(WeightError::Load)?.is_some() {
+    let exp_probs_b_bias = if file
+        .tensor(&exp_probs_b_name)
+        .map_err(WeightError::Load)?
+        .is_some()
+    {
         Some(copy_f32(file, &exp_probs_b_name)?)
     } else {
         None
@@ -151,7 +155,11 @@ pub(crate) fn load_moe_rfm(
     let ff_size = gate_exps.1.dims[1] as usize;
 
     let exp_probs_b_name = format!("blk.{}.exp_probs_b.bias", layer);
-    let exp_probs_b_bias = if file.tensor(&exp_probs_b_name).map_err(WeightError::Load)?.is_some() {
+    let exp_probs_b_bias = if file
+        .tensor(&exp_probs_b_name)
+        .map_err(WeightError::Load)?
+        .is_some()
+    {
         Some(load_f32(&exp_probs_b_name)?)
     } else {
         None

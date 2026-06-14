@@ -3,15 +3,61 @@ use super::super::super::ffi::{hipError_t, hipStream_t};
 use std::os::raw::c_int;
 
 extern "C" {
-    fn gpu_add(x: *const f32, y: *const f32, out: *mut f32, n: c_int, stream: hipStream_t) -> hipError_t;
-    fn gpu_mul_on_stream(x: *const f32, y: *const f32, out: *mut f32, n: c_int, stream: hipStream_t) -> hipError_t;
-    fn gpu_weighted_add_on_stream(src: *const f32, dst: *mut f32, weight: f32, n: c_int, stream: hipStream_t) -> hipError_t;
-    fn gpu_dot_f16_f32_on_stream(weights: *const u8, input: *const f32, output: *mut f32, n: c_int, stream: hipStream_t) -> hipError_t;
+    fn gpu_add(
+        x: *const f32,
+        y: *const f32,
+        out: *mut f32,
+        n: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+    fn gpu_mul_on_stream(
+        x: *const f32,
+        y: *const f32,
+        out: *mut f32,
+        n: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+    fn gpu_weighted_add_on_stream(
+        src: *const f32,
+        dst: *mut f32,
+        weight: f32,
+        n: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+    fn gpu_dot_f16_f32_on_stream(
+        weights: *const u8,
+        input: *const f32,
+        output: *mut f32,
+        n: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
     fn gpu_scale(x: *const f32, out: *mut f32, scale: f32, n: c_int) -> hipError_t;
-    fn gpu_gelu_on_stream(x: *const f32, out: *mut f32, n: c_int, stream: hipStream_t) -> hipError_t;
-    fn gpu_silu_on_stream(x: *const f32, out: *mut f32, n: c_int, stream: hipStream_t) -> hipError_t;
-    fn gpu_add_batched(x: *const f32, y: *const f32, out: *mut f32, n: c_int, seq_len: c_int) -> hipError_t;
-    fn gpu_mul_batched(x: *const f32, y: *const f32, out: *mut f32, n: c_int, seq_len: c_int) -> hipError_t;
+    fn gpu_gelu_on_stream(
+        x: *const f32,
+        out: *mut f32,
+        n: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+    fn gpu_silu_on_stream(
+        x: *const f32,
+        out: *mut f32,
+        n: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+    fn gpu_add_batched(
+        x: *const f32,
+        y: *const f32,
+        out: *mut f32,
+        n: c_int,
+        seq_len: c_int,
+    ) -> hipError_t;
+    fn gpu_mul_batched(
+        x: *const f32,
+        y: *const f32,
+        out: *mut f32,
+        n: c_int,
+        seq_len: c_int,
+    ) -> hipError_t;
 }
 
 /// Element-wise add: out = x + y

@@ -220,25 +220,24 @@ pub(super) fn load_qwen35_ssm_gguf(
             })?;
         upload_tensor_bytes_for_device(tensor.data, device_id)
     };
-    let load_weight =
-        |suffix: &str, role: TensorRole| -> GpuResult<(GpuBuffer, WeightMeta)> {
-            let name = format!("blk.{}.{}", layer, suffix);
-            let tensor = file
-                .tensor(&name)
-                .map_err(|e| GpuError::HipApiError {
-                    code: -1,
-                    description: format!("tensor lookup failed: {}", e),
-                })?
-                .ok_or_else(|| GpuError::HipApiError {
-                    code: -1,
-                    description: format!("tensor not found: {}", name),
-                })?;
-            let mut meta = qwen35_ssm_meta(&name, tensor.dims, tensor.ggml_type, config);
-            meta.role = role;
-            let bytes = normalize_f32_for_gpu(tensor.data, &mut meta)?;
-            let buffer = upload_tensor_bytes_for_device(&bytes, device_id)?;
-            Ok((buffer, meta))
-        };
+    let load_weight = |suffix: &str, role: TensorRole| -> GpuResult<(GpuBuffer, WeightMeta)> {
+        let name = format!("blk.{}.{}", layer, suffix);
+        let tensor = file
+            .tensor(&name)
+            .map_err(|e| GpuError::HipApiError {
+                code: -1,
+                description: format!("tensor lookup failed: {}", e),
+            })?
+            .ok_or_else(|| GpuError::HipApiError {
+                code: -1,
+                description: format!("tensor not found: {}", name),
+            })?;
+        let mut meta = qwen35_ssm_meta(&name, tensor.dims, tensor.ggml_type, config);
+        meta.role = role;
+        let bytes = normalize_f32_for_gpu(tensor.data, &mut meta)?;
+        let buffer = upload_tensor_bytes_for_device(&bytes, device_id)?;
+        Ok((buffer, meta))
+    };
 
     let (alpha, alpha_meta) = load_weight("ssm_alpha.weight", TensorRole::SsmAlpha)?;
     let (beta, beta_meta) = load_weight("ssm_beta.weight", TensorRole::SsmBeta)?;
@@ -338,20 +337,16 @@ pub(super) fn load_qwen35_ssm_rfm(
         Ok((buffer, meta, svd_corr))
     };
 
-    let (alpha, alpha_meta, alpha_svd) =
-        load_weight_svd("ssm_alpha.weight", TensorRole::SsmAlpha)?;
-    let (beta, beta_meta, beta_svd) =
-        load_weight_svd("ssm_beta.weight", TensorRole::SsmBeta)?;
-    let (out, out_meta, out_svd) =
-        load_weight_svd("ssm_out.weight", TensorRole::SsmOut)?;
+    let (alpha, alpha_meta, alpha_svd) = load_weight_svd("ssm_alpha.weight", TensorRole::SsmAlpha)?;
+    let (beta, beta_meta, beta_svd) = load_weight_svd("ssm_beta.weight", TensorRole::SsmBeta)?;
+    let (out, out_meta, out_svd) = load_weight_svd("ssm_out.weight", TensorRole::SsmOut)?;
 
     Ok(GpuSsmWeights {
         a: load_f32("ssm_a")?,
         dt: load_f32("ssm_dt")?,
         norm: load_f32("ssm_norm.weight")?,
         conv1d: {
-            let (buf, _, _) =
-                load_weight_svd("ssm_conv1d.weight", TensorRole::SsmConv1d)?;
+            let (buf, _, _) = load_weight_svd("ssm_conv1d.weight", TensorRole::SsmConv1d)?;
             buf
         },
         alpha,

@@ -3,7 +3,9 @@
 use super::cache::GpuPrefillScratch;
 use super::device::GpuDevice;
 use super::error::{GpuError, GpuResult};
-use super::kernels::{add_on_stream, gelu_on_stream, mul_on_stream, rms_norm_batched, silu_on_stream};
+use super::kernels::{
+    add_on_stream, gelu_on_stream, mul_on_stream, rms_norm_batched, silu_on_stream,
+};
 use super::ops::{
     gpu_dispatch_fused_gate_up_on_stream, gpu_dispatch_gemv_on_stream,
     gpu_dispatch_gemv_with_fallback_on_stream,
@@ -234,10 +236,9 @@ pub fn gpu_prefill_ssm_layer_on_stream(
         }
         (q_exp_ptr as *const f32, k_exp_ptr as *const f32)
     } else {
-        (
-            scratch.swiglu.as_ptr() as *const f32,
-            unsafe { (scratch.swiglu.as_ptr() as *const f32).add(k_dim) },
-        )
+        (scratch.swiglu.as_ptr() as *const f32, unsafe {
+            (scratch.swiglu.as_ptr() as *const f32).add(k_dim)
+        })
     };
 
     // 10. Gated selective scan matrix update (batched)
@@ -405,8 +406,7 @@ pub fn gpu_prefill_ssm_layer_on_stream(
             let normed_row = scratch.normed_row_ptr(pos, h);
             let swiglu_row = scratch.swiglu_row_mut_ptr(pos, ff_size);
             if gpu_layer.ffn_up_svd.is_some() {
-                let t_scratch =
-                    unsafe { (scratch.svd_scratch.as_ptr() as *mut f32).add(pos * 32) };
+                let t_scratch = unsafe { (scratch.svd_scratch.as_ptr() as *mut f32).add(pos * 32) };
                 gpu_dispatch_gemv_with_fallback_on_stream(
                     device,
                     &gpu_layer.ffn_up,
@@ -498,13 +498,17 @@ pub fn gpu_prefill_shortconv_layer_on_stream(
     )?;
 
     // 2. in_proj batched GEMM: [seq_len, h] x [h, 3h] -> [seq_len, 3h]
-    // We use scratch.gate as temporary for [seq_len, 3h]. 
+    // We use scratch.gate as temporary for [seq_len, 3h].
     // Ensure ff_size is at least 3*h.
     let ff_size = config.intermediate_size;
     if ff_size < 3 * h {
         return Err(GpuError::HipApiError {
             code: -1,
-            description: format!("intermediate_size {} too small for shortconv in_proj 3*h {}", ff_size, 3*h),
+            description: format!(
+                "intermediate_size {} too small for shortconv in_proj 3*h {}",
+                ff_size,
+                3 * h
+            ),
         });
     }
 
@@ -521,7 +525,8 @@ pub fn gpu_prefill_shortconv_layer_on_stream(
     )?;
 
     // 3. Shortconv logic: B*x, causal conv1d, C*out
-    let conv_state_ptr = kv.conv_state_ptr(layer_idx)?
+    let conv_state_ptr = kv
+        .conv_state_ptr(layer_idx)?
         .ok_or_else(|| GpuError::HipApiError {
             code: -1,
             description: "shortconv state not allocated".to_string(),

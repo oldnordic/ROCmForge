@@ -1,6 +1,6 @@
+use super::super::avx2::dot_f32_avx2;
 use crate::cpu::quant::load_f16_scale;
 use rayon::prelude::*;
-use super::super::avx2::dot_f32_avx2;
 
 /// F32 GEMV: y[row] = dot(W[row, :], x)
 ///
@@ -47,7 +47,13 @@ pub(crate) fn gemv_f32_bytes(w: &[u8], x: &[f32], y: &mut [f32], _out_dim: usize
 }
 
 /// F32 GEMV transposed for tied embeddings.
-pub(crate) fn gemv_f32_transposed(w: &[f32], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+pub(crate) fn gemv_f32_transposed(
+    w: &[f32],
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    in_dim: usize,
+) {
     y.par_iter_mut().enumerate().for_each(|(v, out)| {
         let mut acc = 0.0f32;
         for i in 0..in_dim {
@@ -58,7 +64,13 @@ pub(crate) fn gemv_f32_transposed(w: &[f32], x: &[f32], y: &mut [f32], out_dim: 
 }
 
 /// F32 GEMV transposed for unaligned byte slices.
-pub(crate) fn gemv_f32_transposed_bytes(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+pub(crate) fn gemv_f32_transposed_bytes(
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    in_dim: usize,
+) {
     y.par_iter_mut().enumerate().for_each(|(v, out)| {
         let mut acc = 0.0f32;
         for i in 0..in_dim {
@@ -86,7 +98,13 @@ pub(crate) fn gemv_f16(w: &[u8], x: &[f32], y: &mut [f32]) {
 }
 
 /// F16 GEMV transposed for tied embeddings.
-pub(crate) fn gemv_f16_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, _in_dim: usize) {
+pub(crate) fn gemv_f16_transposed(
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    _in_dim: usize,
+) {
     y.par_iter_mut().enumerate().for_each(|(v, out)| {
         let mut acc = 0.0f32;
         for (i, x_val) in x.iter().enumerate() {

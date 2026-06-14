@@ -154,7 +154,10 @@ pub use quant::{
     QK4_0, QK4_1, QK8_0, QK_K,
 };
 pub use quant_wrapper::GpuQuant;
-pub use router::{check_path_vram, select_path, HotpathCapabilities, InferencePath, ModelProfile, QuantizationClass};
+pub use router::{
+    check_path_vram, select_path, HotpathCapabilities, InferencePath, ModelProfile,
+    QuantizationClass,
+};
 pub use safety::{
     decode_graph_enabled, experimental_ffn_fastpath_enabled, experimental_gpu_kernels_enabled,
     experimental_q8_activation_fastpath_enabled, gpu_safe_mode_enabled, gpu_safety_preflight,

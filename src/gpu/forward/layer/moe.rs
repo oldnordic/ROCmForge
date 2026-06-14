@@ -21,7 +21,12 @@ pub(super) fn moe_expert_count(meta: &WeightMeta) -> Option<usize> {
     }
 }
 
-fn moe_expert_stride_bytes(meta: &WeightMeta, num_experts: usize, in_dim: usize, out_dim: usize) -> Option<usize> {
+fn moe_expert_stride_bytes(
+    meta: &WeightMeta,
+    num_experts: usize,
+    in_dim: usize,
+    out_dim: usize,
+) -> Option<usize> {
     if num_experts == 0 {
         return None;
     }
@@ -299,13 +304,11 @@ pub(super) fn gpu_dispatch_moe_ffn_on_stream(
     let (exp_in, exp_out) = (gate_meta.dims[0] as usize, gate_meta.dims[1] as usize);
     let (down_in, down_out) = (down_meta.dims[0] as usize, down_meta.dims[1] as usize);
 
-    let gate_stride =
-        moe_expert_stride_bytes(&gate_meta, num_experts, exp_in, exp_out).ok_or_else(|| {
-            GpuError::InvalidWeightLayout {
-                tensor: "ffn_gate_exps".to_string(),
-                dims: gate_meta.dims.clone(),
-                reason: "invalid MoE gate expert tensor shape".to_string(),
-            }
+    let gate_stride = moe_expert_stride_bytes(&gate_meta, num_experts, exp_in, exp_out)
+        .ok_or_else(|| GpuError::InvalidWeightLayout {
+            tensor: "ffn_gate_exps".to_string(),
+            dims: gate_meta.dims.clone(),
+            reason: "invalid MoE gate expert tensor shape".to_string(),
         })?;
     let up_stride =
         moe_expert_stride_bytes(&up_meta, num_experts, exp_in, exp_out).ok_or_else(|| {
@@ -315,13 +318,11 @@ pub(super) fn gpu_dispatch_moe_ffn_on_stream(
                 reason: "invalid MoE up expert tensor shape".to_string(),
             }
         })?;
-    let down_stride =
-        moe_expert_stride_bytes(&down_meta, num_experts, down_in, down_out).ok_or_else(|| {
-            GpuError::InvalidWeightLayout {
-                tensor: "ffn_down_exps".to_string(),
-                dims: down_meta.dims.clone(),
-                reason: "invalid MoE down expert tensor shape".to_string(),
-            }
+    let down_stride = moe_expert_stride_bytes(&down_meta, num_experts, down_in, down_out)
+        .ok_or_else(|| GpuError::InvalidWeightLayout {
+            tensor: "ffn_down_exps".to_string(),
+            dims: down_meta.dims.clone(),
+            reason: "invalid MoE down expert tensor shape".to_string(),
         })?;
 
     // Check if this layer has compressed (SVD+sparse) expert weights.

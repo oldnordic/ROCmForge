@@ -347,7 +347,9 @@ pub fn run_gpu_sync_inference(
                 if use_gpu_greedy_fastpath {
                     let token = gpu_scratch.argmax_result_index.as_slice::<i32>()[0];
                     if token < 0 || (token as usize) >= config.vocab_size {
-                        return Err(format!("gpu argmax returned out-of-range index {}", token).into());
+                        return Err(
+                            format!("gpu argmax returned out-of-range index {}", token).into()
+                        );
                     }
                     token as u32
                 } else {
@@ -697,7 +699,9 @@ pub fn run_gpu_stream_inference(
                 if use_gpu_greedy_fastpath {
                     let token = gpu_scratch.argmax_result_index.as_slice::<i32>()[0];
                     if token < 0 || (token as usize) >= config.vocab_size {
-                        return Err(format!("gpu argmax returned out-of-range index {}", token).into());
+                        return Err(
+                            format!("gpu argmax returned out-of-range index {}", token).into()
+                        );
                     }
                     token as u32
                 } else {

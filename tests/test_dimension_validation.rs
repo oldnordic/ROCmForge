@@ -1,7 +1,7 @@
 // Test dimension validation for edge cases
 
-use rocmforge::cpu::ops::{dispatch_gemm, dispatch_gemv};
 use rocmforge::config::TensorRole;
+use rocmforge::cpu::ops::{dispatch_gemm, dispatch_gemv};
 use rocmforge::cpu::weights::WeightMeta;
 use rocmforge::loader::GgmlType;
 

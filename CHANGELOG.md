@@ -18,6 +18,9 @@
 - **GPU VRAM Reporting** — Implemented `GpuLayerWeights::estimate_vram_usage` for accurate instance-level memory usage tracking.
 
 ### Performance
+- **RDNA3 WMMA Optimization** — Implemented a dedicated WMMA variant for the fused QKV projection kernel, providing hardware acceleration for Q4_0 models on RDNA3 (gfx1100+) GPUs.
+- **Portable DOT4 Dispatcher** — Updated the `DOT4` macro to use the ROCm device library (`__ockl_sdot4`), enabling portable hardware acceleration on both RDNA2 and RDNA3 architectures while avoiding generation-specific compiler feature flags.
+- **Fused QKV Dispatch** — Enabled the high-performance fused QKV kernel path for Q4_0 models, significantly reducing launch overhead and improving end-to-end token throughput.
 - **Prefill Hotpath Optimization** — Replaced high-latency Rust loops over `seq_len` with unified `gpu_dispatch_gemm` calls for Q4_0, Q4_1, and Q8_0 weights. This significantly improves prefill throughput for long prompts on these quantization types.
 - **Batched Element-wise Ops** — Optimized Q8_0 batched fused gate-up by replacing per-row kernel launches with single large-batch launches for SiLU and multiplication.
 - **Format-Agnostic `ModelFile` Abstraction** — Refactored `speculative.rs`, `app/inspect.rs`, and `main/inspect.rs` to use `ModelFile` for all loading and inspection tasks, eliminating repeated `path.ends_with(".rfm")` branching logic.
