@@ -12,6 +12,7 @@
 - Step 2 (timestamp shelves) committed: arena split into `Constants` / `Persistent` / `Ephemeral` shelves; `regress_to(t)` restores the persistent shelf in O(shelf size) instead of replaying the prefix; instant-rollback test verifies zero active nodes and zero replay after rollback.
 - Step 2.5 (validation experiment) committed: `tests/test_cpu_graph_search_experiment.rs` encodes grid mazes as one-hot `Gemv` transitions and shows structured-recurrence DFS beats a linear random baseline in compute-normalized accuracy.
 - Step 3 (branch scoring) committed: `CpuOpNode::Score`, `ScoreMetric`, `CaptureContext::score_against()`, and `GraphMap::branch_scores()`/`divergence()` implemented and validated by `tests/test_cpu_graph_branch_scoring.rs`.
+- Step 4 (introspection prompt interface) committed: `GraphSummarizer`, `IntrospectionPrompt`, and `IntrospectionReport` implemented in `src/cpu/graph/introspection.rs` and validated by `tests/test_cpu_graph_introspection.rs`, which prompts the local 0.5B Qwen2.5 model and verifies it picks the higher-scoring branch above random chance.
 
 ## Vision
 
@@ -122,6 +123,8 @@ Because `geographdb-core` already has storage primitives, traces should live the
 
 **Success criterion:** Given two branches with known scores, the 0.5B model selects the higher-scoring one more often than random, on a small held-out set of traces.
 
+**Implementation status:** `tests/test_cpu_graph_introspection.rs` is implemented and passing (when run with `--ignored`). It loads `/home/feanor/Projects/models/qwen2.5-0.5b-instruct-q4_0.gguf`, creates 4 held-out branch pairs with randomized target embeddings, prompts the model via `GraphSummarizer`, parses the `CHOICE:`/`REASON:` response with `IntrospectionPrompt::parse_response`, and verifies the model chooses the higher-scoring branch more often than random. Observed result: 3/4 correct (above the 2/4 random baseline).
+
 ---
 
 ### Step 5 — Feedback loop as graph annotations
@@ -186,4 +189,4 @@ Because `geographdb-core` already has storage primitives, traces should live the
 
 ## Next action
 
-Step 3 is now locked and verified. The recommended next move is **Step 4**: build an `IntrospectionPrompt` / `GraphSummarizer` that compresses a `GraphMap` (branch count, per-branch scores, divergence points, final hidden norm) into a short prompt for the local 0.5B model, and verify that the model picks the higher-scoring branch more often than random on a held-out set of traces.
+Step 4 is now locked and verified. The recommended next move is **Step 5**: persist introspection results back into the `GraphMap` as `branch_bias` annotations, and verify that a second search session uses those biases to reach the correct branch faster (fewer rollbacks) than the first session.

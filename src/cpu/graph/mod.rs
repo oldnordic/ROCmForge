@@ -14,6 +14,9 @@ use std::collections::HashMap;
 #[cfg(feature = "cpu-graph")]
 pub mod map;
 
+#[cfg(feature = "cpu-graph")]
+pub mod introspection;
+
 /// Logical shelf where an arena handle lives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Shelf {
