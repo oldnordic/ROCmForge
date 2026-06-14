@@ -15,8 +15,8 @@ use crate::loader::GgmlType;
 
 // ── Layer forward ────────────────────────────────────────────────────────────────
 
+#[allow(clippy::all, unused_parens)]
 /// Apply RMS norm to Q/K heads when `attn_q_norm` / `attn_k_norm` are present.
-#[allow(clippy::all)]
 fn apply_qk_norm(
     q: &mut [f32],
     k: &mut [f32],
@@ -58,8 +58,8 @@ fn apply_qk_norm(
         }
     }
 }
+#[allow(clippy::all, unused_parens)]
 
-#[allow(clippy::all)]
 /// Single-token shortconv forward (depthwise causal conv1d with double gating).
 fn shortconv_forward(
     normed: &[f32],
@@ -181,12 +181,12 @@ fn moe_forward_decode(
         gate,
         num_experts,
         h,
-        #[allow(clippy::all)]
         None,
     )?;
 
     // 2. Optional bias
     if let Some(ref bias) = moe.exp_probs_b_bias {
+        #[allow(clippy::all, unused_parens)]
         for i in 0..num_experts {
             gate[i] += bias[i];
         }
