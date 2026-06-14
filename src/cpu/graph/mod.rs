@@ -211,6 +211,7 @@ pub struct CpuGraph {
 pub mod tests;
 
 pub trait CpuExecutionContext {
+    #[allow(clippy::too_many_arguments)]
     fn execute_gemv(
         &mut self,
         w: &[u8],
@@ -234,6 +235,7 @@ pub trait CpuExecutionContext {
         neox: bool,
     );
 
+    #[allow(clippy::too_many_arguments)]
     fn execute_attention(
         &mut self,
         q: &[f32],
@@ -256,6 +258,7 @@ pub trait CpuExecutionContext {
 pub struct DirectContext;
 
 impl CpuExecutionContext for DirectContext {
+    #[allow(clippy::too_many_arguments)]
     fn execute_gemv(
         &mut self,
         w: &[u8],
@@ -285,6 +288,7 @@ impl CpuExecutionContext for DirectContext {
         crate::cpu::ops::rope(x, n_heads, head_dim, sin, cos, neox);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn execute_attention(
         &mut self,
         q: &[f32],
@@ -376,6 +380,7 @@ impl CaptureContext {
 
 #[cfg(feature = "cpu-graph")]
 impl CpuExecutionContext for CaptureContext {
+    #[allow(clippy::too_many_arguments)]
     fn execute_gemv(
         &mut self,
         w: &[u8],
@@ -472,6 +477,7 @@ impl CpuExecutionContext for CaptureContext {
         self.arena.f32_mut(h_out).copy_from_slice(x);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn execute_attention(
         &mut self,
         q: &[f32],
