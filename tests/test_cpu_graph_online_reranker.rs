@@ -6,7 +6,8 @@
 //! without `--value-head-path`.  It asserts the mechanical property that the
 //! reranker evaluates top-k candidates and that the biased distribution can
 //! change the generated token stream.  Latency per token is printed for both
-//! runs so the N-forward-pass cost is visible.
+//! runs so the reduced N-forward-pass cost (one less forward per token after
+//! reusing the chosen candidate's state) is visible.
 //!
 //! Marked `#[ignore]` because it loads the 0.5B model and runs real CPU
 //! inference.

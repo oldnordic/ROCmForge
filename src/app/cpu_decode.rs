@@ -125,39 +125,81 @@ fn top_k_token_ids(logits: &[f32], k: usize) -> Vec<u32> {
     indexed.into_iter().take(k).map(|(i, _)| i as u32).collect()
 }
 
-/// Score a single candidate next token using `head`.
-///
-/// This runs a speculative decode step: it embeds `candidate`, runs one forward
-/// pass from a clone of the current KV cache, and returns the value-head score
-/// for the resulting hidden state.  The original `kv` and `hidden` are left
-/// untouched.
+/// Delta of a single speculative forward step: the K/V slices written at the
+/// candidate position plus any conv-state changes.  This is far smaller than a
+/// full KV clone and is enough to reconstruct the chosen candidate's state.
 #[cfg(feature = "cpu-graph")]
-fn score_candidate_value(
-    candidate: u32,
-    hidden: &[f32],
-    kv: &CpuKvCache,
-    scratch: &mut CpuForwardScratch,
-    weights: &CpuModelWeights,
-    config: &ModelConfig,
-    pos: usize,
-    head: &BranchValueHead,
-) -> f32 {
-    let mut hidden_candidate = hidden.to_vec();
-    cpu_embed_token(candidate, weights, &mut hidden_candidate, config);
-    let mut kv_candidate = kv.clone();
-    if cpu_full_forward(
-        &mut hidden_candidate,
-        weights,
-        &mut kv_candidate,
-        scratch,
-        pos,
-        config,
-    )
-    .is_err()
-    {
-        return 0.0f32;
+struct KvCacheDelta {
+    k_slices: Vec<Vec<f32>>,
+    v_slices: Vec<Vec<f32>>,
+    conv_state: Vec<Vec<f32>>,
+}
+
+#[cfg(feature = "cpu-graph")]
+fn capture_kv_delta(child_kv: &CpuKvCache, pos: usize) -> KvCacheDelta {
+    let mut k_slices = Vec::with_capacity(child_kv.num_layers);
+    let mut v_slices = Vec::with_capacity(child_kv.num_layers);
+    for layer in 0..child_kv.num_layers {
+        k_slices.push(child_kv.k_at(layer, pos).to_vec());
+        v_slices.push(child_kv.v_at(layer, pos).to_vec());
     }
-    head.predict(&scratch.normed)
+    let conv_state = if child_kv.shortconv_l_cache > 1 {
+        child_kv.conv_state.iter().map(|v| v.to_vec()).collect()
+    } else {
+        Vec::new()
+    };
+    KvCacheDelta {
+        k_slices,
+        v_slices,
+        conv_state,
+    }
+}
+
+#[cfg(feature = "cpu-graph")]
+fn apply_kv_delta(kv: &mut CpuKvCache, delta: &KvCacheDelta, pos: usize) {
+    for (layer, (k, v)) in delta.k_slices.iter().zip(delta.v_slices.iter()).enumerate() {
+        kv.write_k(layer, pos, k);
+        kv.write_v(layer, pos, v);
+    }
+    if kv.shortconv_l_cache > 1 {
+        for (layer, state) in delta.conv_state.iter().enumerate() {
+            kv.conv_state[layer].copy_from_slice(state);
+        }
+    }
+}
+
+/// Reset the speculative KV scratch to the parent state at the candidate
+/// position so the next candidate starts from an identical parent.
+#[cfg(feature = "cpu-graph")]
+fn reset_kv_to_parent(child_kv: &mut CpuKvCache, parent_kv: &CpuKvCache, pos: usize) {
+    for layer in 0..parent_kv.num_layers {
+        child_kv.write_k(layer, pos, parent_kv.k_at(layer, pos));
+        child_kv.write_v(layer, pos, parent_kv.v_at(layer, pos));
+    }
+    if parent_kv.shortconv_l_cache > 1 {
+        for layer in 0..parent_kv.num_layers {
+            child_kv.conv_state[layer].copy_from_slice(&parent_kv.conv_state[layer]);
+        }
+    }
+}
+
+#[cfg(feature = "cpu-graph")]
+struct CandidateState {
+    token_id: u32,
+    hidden: Vec<f32>,
+    logits: Vec<f32>,
+    kv_delta: KvCacheDelta,
+}
+
+/// State after a chosen candidate token has already been forwarded.  Applying
+/// this on the next iteration skips the embed + main forward for that token.
+#[cfg(feature = "cpu-graph")]
+struct ReusableState {
+    token_id: u32,
+    hidden: Vec<f32>,
+    kv: CpuKvCache,
+    logits: Vec<f32>,
+    pos_after: usize,
 }
 
 #[cfg(feature = "cpu-graph")]
@@ -192,6 +234,7 @@ pub(crate) fn run_cpu_decode_loop_with_ctx(
         &mut seed,
     );
     let mut hidden = vec![0.0f32; config.hidden_size];
+    let mut pending_state: Option<ReusableState> = None;
 
     println!();
 
@@ -208,25 +251,45 @@ pub(crate) fn run_cpu_decode_loop_with_ctx(
         std::io::stdout().flush().ok();
         n_generated += 1;
 
-        cpu_embed_token(next_token, weights, &mut hidden, config);
-
-        if args.debug && n_generated <= 3 {
-            print_hidden_stats(n_generated, next_token, &hidden);
-        }
-
         // Each generated token becomes its own branch/timestamp in the graph.
         ctx.timestamp = n_generated as u64;
-        cpu_full_forward_with_ctx(ctx, &mut hidden, weights, kv, scratch, pos, config)
-            .map_err(|e: CpuError| format!("decode: {}", e))?;
 
-        // Record a scalar score for this branch from the output distribution.
-        ctx.score_against(&scratch.logits, None, score_metric);
+        // Advance hidden/KV/logits for this token.  If the previous iteration
+        // already ran the speculative forward for this token via the reranker,
+        // reuse that state instead of recomputing it.
+        if let Some(state) = pending_state.take() {
+            assert_eq!(
+                state.token_id, next_token,
+                "pending reusable state must match the token about to be emitted"
+            );
+            hidden = state.hidden;
+            *kv = state.kv;
+            scratch.logits.copy_from_slice(&state.logits);
+            pos = state.pos_after;
 
-        pos += 1;
+            if args.debug && n_generated <= 3 {
+                print_logits_stats(n_generated, &scratch.logits);
+                print_top_logits_debug(n_generated, &scratch.logits, tok, 5);
+            }
+        } else {
+            cpu_embed_token(next_token, weights, &mut hidden, config);
 
-        if args.debug && n_generated <= 3 {
-            print_logits_stats(n_generated, &scratch.logits);
-            print_top_logits_debug(n_generated, &scratch.logits, tok, 5);
+            if args.debug && n_generated <= 3 {
+                print_hidden_stats(n_generated, next_token, &hidden);
+            }
+
+            cpu_full_forward_with_ctx(ctx, &mut hidden, weights, kv, scratch, pos, config)
+                .map_err(|e: CpuError| format!("decode: {}", e))?;
+
+            // Record a scalar score for this branch from the output distribution.
+            ctx.score_against(&scratch.logits, None, score_metric);
+
+            pos += 1;
+
+            if args.debug && n_generated <= 3 {
+                print_logits_stats(n_generated, &scratch.logits);
+                print_top_logits_debug(n_generated, &scratch.logits, tok, 5);
+            }
         }
 
         next_token = if let Some(head) = value_head {
@@ -242,25 +305,43 @@ pub(crate) fn run_cpu_decode_loop_with_ctx(
                     &mut seed,
                 )
             } else {
-                // Evaluate each candidate with the value head and bias the
-                // original logits by the speculative score.
+                // Evaluate each candidate with the value head, capture the full
+                // state of each candidate, and bias the original logits by the
+                // speculative score.  Only the chosen candidate's state is kept.
                 let mut rerank_scratch = CpuForwardScratch::new(config);
+                let mut kv_scratch = kv.clone();
                 let mut biased_logits = scratch.logits[..config.vocab_size].to_vec();
+                let mut candidate_states: Vec<CandidateState> =
+                    Vec::with_capacity(candidates.len());
                 let mut candidate_entries: Vec<rocmforge::cpu::graph::CandidateBranch> =
                     Vec::with_capacity(candidates.len());
                 for &candidate in &candidates {
-                    let score = score_candidate_value(
-                        candidate,
-                        &hidden,
-                        kv,
-                        &mut rerank_scratch,
+                    let mut hidden_candidate = hidden.to_vec();
+                    cpu_embed_token(candidate, weights, &mut hidden_candidate, config);
+                    let forward_ok = cpu_full_forward(
+                        &mut hidden_candidate,
                         weights,
-                        config,
+                        &mut kv_scratch,
+                        &mut rerank_scratch,
                         pos,
-                        head,
-                    );
+                        config,
+                    )
+                    .is_ok();
+                    let score = if forward_ok {
+                        head.predict(&rerank_scratch.normed)
+                    } else {
+                        0.0f32
+                    };
                     let original_logit = scratch.logits[candidate as usize];
                     biased_logits[candidate as usize] += rerank_scale * score;
+                    let logits = rerank_scratch.logits[..config.vocab_size].to_vec();
+                    let kv_delta = capture_kv_delta(&kv_scratch, pos);
+                    candidate_states.push(CandidateState {
+                        token_id: candidate,
+                        hidden: hidden_candidate,
+                        logits,
+                        kv_delta,
+                    });
                     candidate_entries.push(rocmforge::cpu::graph::CandidateBranch {
                         parent_timestamp: ctx.timestamp,
                         token_id: candidate,
@@ -278,6 +359,7 @@ pub(crate) fn run_cpu_decode_loop_with_ctx(
                             biased_logits[candidate as usize]
                         );
                     }
+                    reset_kv_to_parent(&mut kv_scratch, kv, pos);
                 }
                 let chosen = sample_next_token(
                     &biased_logits,
@@ -292,6 +374,27 @@ pub(crate) fn run_cpu_decode_loop_with_ctx(
                     }
                 }
                 ctx.candidate_branches.extend(candidate_entries);
+
+                // Reconstruct the chosen candidate's full KV and stash the post-
+                // token state so the next iteration can skip the main forward.
+                let chosen_state = candidate_states
+                    .into_iter()
+                    .find(|s| s.token_id == chosen)
+                    .ok_or_else(|| {
+                        format!(
+                            "internal error: chosen candidate {} not found in candidate_states",
+                            chosen
+                        )
+                    })?;
+                let mut kv_chosen = kv.clone();
+                apply_kv_delta(&mut kv_chosen, &chosen_state.kv_delta, pos);
+                pending_state = Some(ReusableState {
+                    token_id: chosen,
+                    hidden: chosen_state.hidden,
+                    kv: kv_chosen,
+                    logits: chosen_state.logits,
+                    pos_after: pos + 1,
+                });
                 chosen
             }
         } else {
