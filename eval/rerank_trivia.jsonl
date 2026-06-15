@@ -1,0 +1,10 @@
+{"prompt": "The capital of France is", "expected_first": " Paris", "expected_continuation": " Paris"}
+{"prompt": "The color of the sky on a clear day is", "expected_first": " blue", "expected_continuation": " blue"}
+{"prompt": "2 + 2 equals", "expected_first": " 4", "expected_continuation": " 4"}
+{"prompt": "The first month of the year is", "expected_first": " January", "expected_continuation": " January"}
+{"prompt": "The opposite of hot is", "expected_first": " cold", "expected_continuation": " cold"}
+{"prompt": "A circle has 360", "expected_first": " degrees", "expected_continuation": " degrees"}
+{"prompt": "Count: one two three four five six seven eight nine", "expected_first": " ten", "expected_continuation": " ten"}
+{"prompt": "The largest planet in our solar system is", "expected_first": " Jupiter", "expected_continuation": " Jupiter"}
+{"prompt": "The chemical symbol for water is H2", "expected_first": "O", "expected_continuation": "O"}
+{"prompt": "The freezing point of water is 0 degrees", "expected_first": " Celsius", "expected_continuation": " Celsius"}
