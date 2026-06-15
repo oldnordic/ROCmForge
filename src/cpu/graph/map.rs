@@ -9,8 +9,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::cpu::graph::{
-    CaptureContext, CpuGraph, CpuGraphArena, CpuOpNode, F32Handle, PersistentSnapshot, ScoreMetric,
-    U8Handle,
+    BranchAnnotation, CaptureContext, CpuGraph, CpuGraphArena, CpuOpNode, F32Handle,
+    PersistentSnapshot, ScoreMetric, U8Handle,
 };
 use geographdb_core::algorithms::four_d::GraphNode4D;
 use geographdb_core::storage::{load_graph4d, save_graph4d, SectionedStorage};
@@ -29,6 +29,7 @@ const U8_BINDINGS_SECTION: &str = "u8_bindings";
 const OUTPUT_LOG_SECTION: &str = "output_log";
 const SHELF_SNAPSHOTS_SECTION: &str = "shelf_snapshots";
 const SCORE_LOG_SECTION: &str = "score_log";
+const BRANCH_ANNOTATIONS_SECTION: &str = "branch_annotations";
 const META_SECTION: &str = "meta";
 
 #[derive(Debug, Error)]
@@ -63,6 +64,7 @@ pub struct GraphMap {
     pub output_log: Vec<(u64, usize, F32Handle)>,
     pub shelf_snapshots: HashMap<u64, PersistentSnapshot>,
     pub score_log: Vec<(u64, ScoreMetric, f32)>,
+    pub branch_annotations: HashMap<u64, BranchAnnotation>,
     pub layer: usize,
     pub timestamp: u64,
     pub last_timestamp: u64,
@@ -78,6 +80,7 @@ impl GraphMap {
             output_log: ctx.output_log.clone(),
             shelf_snapshots: ctx.shelf_snapshots.clone(),
             score_log: ctx.score_log.clone(),
+            branch_annotations: ctx.branch_annotations.clone(),
             layer: ctx.layer,
             timestamp: ctx.timestamp,
             last_timestamp: ctx.last_timestamp,
@@ -118,6 +121,7 @@ impl GraphMap {
         let output_log_bytes = bincode::serialize(&self.output_log)?;
         let shelf_snapshots_bytes = bincode::serialize(&self.shelf_snapshots)?;
         let score_log_bytes = bincode::serialize(&self.score_log)?;
+        let branch_annotations_bytes = bincode::serialize(&self.branch_annotations)?;
         let meta = GraphMapMeta {
             layer: self.layer,
             timestamp: self.timestamp,
@@ -149,6 +153,11 @@ impl GraphMap {
             &shelf_snapshots_bytes,
         )?;
         create_and_write(&mut storage, SCORE_LOG_SECTION, &score_log_bytes)?;
+        create_and_write(
+            &mut storage,
+            BRANCH_ANNOTATIONS_SECTION,
+            &branch_annotations_bytes,
+        )?;
         create_and_write(&mut storage, META_SECTION, &meta_bytes)?;
 
         storage
@@ -189,6 +198,8 @@ impl GraphMap {
             read_section_bincode(&mut storage, SHELF_SNAPSHOTS_SECTION)?;
         let score_log: Vec<(u64, ScoreMetric, f32)> =
             read_section_bincode(&mut storage, SCORE_LOG_SECTION)?;
+        let branch_annotations: HashMap<u64, BranchAnnotation> =
+            read_section_bincode(&mut storage, BRANCH_ANNOTATIONS_SECTION)?;
         let meta: GraphMapMeta = read_section_bincode(&mut storage, META_SECTION)?;
 
         let f32_bindings: HashMap<usize, F32Handle> = f32_bindings_vec.into_iter().collect();
@@ -212,6 +223,7 @@ impl GraphMap {
             output_log,
             shelf_snapshots,
             score_log,
+            branch_annotations,
             layer: meta.layer,
             timestamp: meta.timestamp,
             last_timestamp: meta.last_timestamp,
@@ -230,7 +242,43 @@ impl GraphMap {
             output_log: self.output_log,
             shelf_snapshots: self.shelf_snapshots,
             score_log: self.score_log,
+            branch_annotations: self.branch_annotations,
         }
+    }
+
+    /// Return the bias for each annotated timestamp.
+    pub fn branch_biases(&self) -> HashMap<u64, f32> {
+        self.branch_annotations
+            .iter()
+            .map(|(&ts, a)| (ts, a.bias))
+            .collect()
+    }
+
+    /// Return the bias for the branch annotated with `key`, if any.
+    pub fn branch_bias_by_key(&self, key: &str) -> Option<f32> {
+        self.branch_annotations
+            .values()
+            .find(|a| a.key.as_deref() == Some(key))
+            .map(|a| a.bias)
+    }
+
+    /// Aggregate all annotations by key, keeping the maximum bias per key.
+    pub fn biases_by_key(&self) -> HashMap<String, f32> {
+        let mut out = HashMap::new();
+        for a in self.branch_annotations.values() {
+            if let Some(ref key) = a.key {
+                out.entry(key.clone())
+                    .and_modify(|b: &mut f32| *b = b.max(a.bias))
+                    .or_insert(a.bias);
+            }
+        }
+        out
+    }
+
+    /// Attach or overwrite an annotation for a branch timestamp.
+    pub fn annotate_branch(&mut self, annotation: BranchAnnotation) {
+        self.branch_annotations
+            .insert(annotation.timestamp, annotation);
     }
 
     /// Return the last recorded score for each timestamp.

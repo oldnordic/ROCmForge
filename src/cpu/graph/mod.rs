@@ -17,6 +17,12 @@ pub mod map;
 #[cfg(feature = "cpu-graph")]
 pub mod introspection;
 
+#[cfg(feature = "cpu-graph")]
+pub use introspection::{
+    BranchAnnotation, BranchSummary, GraphSummarizer, GraphSummary, IntrospectionPrompt,
+    IntrospectionReport,
+};
+
 /// Logical shelf where an arena handle lives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Shelf {
@@ -579,6 +585,9 @@ pub struct CaptureContext {
     pub shelf_snapshots: HashMap<u64, PersistentSnapshot>,
     /// Recorded branch scores keyed by timestamp.
     pub score_log: Vec<(u64, ScoreMetric, f32)>,
+    /// Human or model-generated annotations (bias, report, semantic key) keyed
+    /// by branch timestamp.
+    pub branch_annotations: HashMap<u64, BranchAnnotation>,
 }
 
 #[cfg(feature = "cpu-graph")]
@@ -595,6 +604,7 @@ impl CaptureContext {
             output_log: Vec::new(),
             shelf_snapshots: HashMap::new(),
             score_log: Vec::new(),
+            branch_annotations: HashMap::new(),
         }
     }
 
@@ -679,6 +689,26 @@ impl CaptureContext {
         self.arena.f32_mut(out)[0] = score;
         self.score_log.push((self.timestamp, metric, score));
         score
+    }
+
+    /// Attach a bias/report annotation to the branch captured at `timestamp`.
+    ///
+    /// `key` is an optional semantic label (e.g. the action name) that lets a
+    /// later session match this annotation even when timestamps differ.
+    pub fn annotate_branch(
+        &mut self,
+        timestamp: u64,
+        bias: f32,
+        key: Option<&str>,
+        report: Option<IntrospectionReport>,
+    ) {
+        let annotation = BranchAnnotation {
+            timestamp,
+            bias,
+            report,
+            key: key.map(|s| s.to_string()),
+        };
+        self.branch_annotations.insert(timestamp, annotation);
     }
 }
 

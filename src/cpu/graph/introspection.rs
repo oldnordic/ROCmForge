@@ -4,6 +4,7 @@
 //! the model's structured response back into an `IntrospectionReport`.
 
 use crate::cpu::graph::{GraphMap, Shelf};
+use serde::{Deserialize, Serialize};
 
 /// Summary of a single captured branch.
 #[derive(Debug, Clone)]
@@ -30,10 +31,23 @@ pub struct IntrospectionPrompt {
 }
 
 /// Structured result parsed from a model response.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntrospectionReport {
     pub chosen_branch: u64,
     pub explanation: String,
+}
+
+/// Persistent annotation attached to a branch/timestamp in a `GraphMap`.
+///
+/// Bias is a scalar preference (higher = prefer this branch). The optional
+/// `key` lets a later session match the annotation by semantic content (e.g.
+/// the action name) even when timestamps differ between sessions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BranchAnnotation {
+    pub timestamp: u64,
+    pub bias: f32,
+    pub report: Option<IntrospectionReport>,
+    pub key: Option<String>,
 }
 
 /// Builds summaries and prompts from `GraphMap` snapshots.

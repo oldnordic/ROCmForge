@@ -13,6 +13,7 @@
 - Step 2.5 (validation experiment) committed: `tests/test_cpu_graph_search_experiment.rs` encodes grid mazes as one-hot `Gemv` transitions and shows structured-recurrence DFS beats a linear random baseline in compute-normalized accuracy.
 - Step 3 (branch scoring) committed: `CpuOpNode::Score`, `ScoreMetric`, `CaptureContext::score_against()`, and `GraphMap::branch_scores()`/`divergence()` implemented and validated by `tests/test_cpu_graph_branch_scoring.rs`.
 - Step 4 (introspection prompt interface) committed: `GraphSummarizer`, `IntrospectionPrompt`, and `IntrospectionReport` implemented in `src/cpu/graph/introspection.rs` and validated by `tests/test_cpu_graph_introspection.rs`, which prompts the local 0.5B Qwen2.5 model and verifies it picks the higher-scoring branch above random chance.
+- Step 5 (feedback loop) committed: `BranchAnnotation` and `branch_bias` persistence implemented in `CaptureContext`/`GraphMap`, with key-based bias lookup and ordering validated by `tests/test_cpu_graph_feedback_loop.rs`.
 
 ## Vision
 
@@ -138,6 +139,8 @@ Because `geographdb-core` already has storage primitives, traces should live the
 
 **Success criterion:** A second search session, using biases from the first session, reaches the correct branch faster (fewer rollbacks) than the first session.
 
+**Implementation status:** `tests/test_cpu_graph_feedback_loop.rs` is implemented and passing. A first session scores four `ResidualAdd` branches and stores each score as a `BranchAnnotation` bias keyed by branch name in the `GraphMap`. After persistence round-trip, a second session loads the biases via `GraphMap::biases_by_key()` and evaluates branches in descending-bias order, reaching the best branch in 1 evaluation versus 3 in the default order.
+
 ---
 
 ### Step 6 — Trace dataset for training
@@ -189,4 +192,4 @@ Because `geographdb-core` already has storage primitives, traces should live the
 
 ## Next action
 
-Step 4 is now locked and verified. The recommended next move is **Step 5**: persist introspection results back into the `GraphMap` as `branch_bias` annotations, and verify that a second search session uses those biases to reach the correct branch faster (fewer rollbacks) than the first session.
+Step 5 is now locked and verified. The recommended next move is **Step 6**: build a `GraphTraceDataset` reader over `geographdb-core` storage that converts one or more persisted `GraphMap`s into training examples for process supervision (per-step labels), rejection sampling (accepted vs rejected branches), and preference pairs (branch A worse than branch B), and verify the conversion is lossless.
