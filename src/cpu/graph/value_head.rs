@@ -21,7 +21,7 @@ pub struct BranchValueExample {
 /// deviation computed from the training set. Standardization keeps the small
 /// SGD updates numerically stable across the natural scale of model
 /// activations.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BranchValueHead {
     weights: Vec<f32>,
     bias: f32,
@@ -43,6 +43,13 @@ impl BranchValueHead {
     /// Return the hidden-size expected by this head.
     pub fn hidden_size(&self) -> usize {
         self.weights.len()
+    }
+
+    /// Set a single weight for testing or manual initialization.
+    pub fn set_weight(&mut self, index: usize, value: f32) {
+        if let Some(w) = self.weights.get_mut(index) {
+            *w = value;
+        }
     }
 
     /// Predict a scalar quality score for `hidden`.
@@ -134,6 +141,20 @@ impl BranchValueHead {
                 self.bias -= lr * 2.0f32 * err / n;
             }
         }
+    }
+
+    /// Persist the value head to `path` using bincode.
+    pub fn save(&self, path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+        let bytes = bincode::serialize(self)?;
+        std::fs::write(path, bytes)?;
+        Ok(())
+    }
+
+    /// Load a value head from `path`.
+    pub fn load(path: &std::path::Path) -> Result<Self, Box<dyn std::error::Error>> {
+        let bytes = std::fs::read(path)?;
+        let head = bincode::deserialize(&bytes)?;
+        Ok(head)
     }
 
     fn compute_statistics(&mut self, examples: &[BranchValueExample]) {

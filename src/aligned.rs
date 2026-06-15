@@ -111,6 +111,16 @@ impl<T> DerefMut for AlignedVec<T> {
     }
 }
 
+impl<T: Copy> Clone for AlignedVec<T> {
+    fn clone(&self) -> Self {
+        let new = Self::new_zeroed(self.len, self.layout.align());
+        unsafe {
+            std::ptr::copy_nonoverlapping(self.ptr, new.ptr, self.len);
+        }
+        new
+    }
+}
+
 impl<T> Drop for AlignedVec<T> {
     fn drop(&mut self) {
         if !self.ptr.is_null() {

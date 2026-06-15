@@ -19,6 +19,11 @@ pub(crate) struct Args {
     pub graph_map_dir: Option<String>,
     pub load_graph_map_dir: Option<String>,
     pub graph_score_metric: String,
+    pub value_head_path: Option<String>,
+    pub rerank_top_k: usize,
+    pub rerank_scale: f32,
+    pub train_value_head_from_traces: Option<String>,
+    pub save_value_head: Option<String>,
 }
 
 fn usage() -> ! {
@@ -50,6 +55,19 @@ fn usage() -> ! {
     eprintln!(
         "  --graph-score-metric <name> Score metric for captured branches [default: neg-entropy]"
     );
+    eprintln!(
+        "  --value-head-path <path>  Load a trained BranchValueHead for token-level reranking"
+    );
+    eprintln!(
+        "  --rerank-top-k <N>        Number of top candidates to score with the value head [default: 3]"
+    );
+    eprintln!(
+        "  --rerank-scale <F>        Scale factor applied to value-head scores before biasing logits [default: 1.0]"
+    );
+    eprintln!(
+        "  --train-value-head-from-traces <dir> Train a BranchValueHead from persisted GraphMap traces"
+    );
+    eprintln!("  --save-value-head <path>  Destination file for --train-value-head-from-traces");
     eprintln!("  --prefill-only-validate Run prefill only, exit with validation status");
     eprintln!("  --kv-dump <path>       Dump post-prefill KV cache to binary file");
     eprintln!(
@@ -93,6 +111,11 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Args {
     let mut graph_map_dir: Option<String> = None;
     let mut load_graph_map_dir: Option<String> = None;
     let mut graph_score_metric = "neg-entropy".to_string();
+    let mut value_head_path: Option<String> = None;
+    let mut rerank_top_k = 3usize;
+    let mut rerank_scale = 1.0f32;
+    let mut train_value_head_from_traces: Option<String> = None;
+    let mut save_value_head: Option<String> = None;
 
     while let Some(flag) = args.next() {
         match flag.as_str() {
@@ -153,6 +176,29 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Args {
                 load_graph_map_dir = Some(args.next().unwrap_or_else(|| usage()))
             }
             "--graph-score-metric" => graph_score_metric = args.next().unwrap_or_else(|| usage()),
+            "--value-head-path" => value_head_path = Some(args.next().unwrap_or_else(|| usage())),
+            "--rerank-top-k" => {
+                rerank_top_k = args
+                    .next()
+                    .unwrap_or_else(|| usage())
+                    .parse()
+                    .unwrap_or_else(|_| usage());
+                if rerank_top_k == 0 {
+                    eprintln!("--rerank-top-k must be > 0");
+                    usage();
+                }
+            }
+            "--rerank-scale" => {
+                rerank_scale = args
+                    .next()
+                    .unwrap_or_else(|| usage())
+                    .parse()
+                    .unwrap_or_else(|_| usage());
+            }
+            "--train-value-head-from-traces" => {
+                train_value_head_from_traces = Some(args.next().unwrap_or_else(|| usage()))
+            }
+            "--save-value-head" => save_value_head = Some(args.next().unwrap_or_else(|| usage())),
             "--kv-dump" => kv_dump = Some(args.next().unwrap_or_else(|| usage())),
             "--draft-model" => draft_model = Some(args.next().unwrap_or_else(|| usage())),
             "--speculative-tokens" => {
@@ -191,6 +237,11 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Args {
         graph_map_dir,
         load_graph_map_dir,
         graph_score_metric,
+        value_head_path,
+        rerank_top_k,
+        rerank_scale,
+        train_value_head_from_traces,
+        save_value_head,
     };
 
     // Touch fields used only in gpu/server code paths to keep clippy happy
@@ -207,6 +258,11 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Args {
         let _ = result.graph_map_dir;
         let _ = result.load_graph_map_dir;
         let _ = result.graph_score_metric;
+        let _ = result.value_head_path;
+        let _ = result.rerank_top_k;
+        let _ = result.rerank_scale;
+        let _ = result.train_value_head_from_traces;
+        let _ = result.save_value_head;
     }
 
     result

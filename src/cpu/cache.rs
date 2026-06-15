@@ -32,6 +32,21 @@ pub struct CpuKvCache {
     pub shortconv_l_cache: usize,
 }
 
+impl Clone for CpuKvCache {
+    fn clone(&self) -> Self {
+        Self {
+            k: self.k.to_vec(),
+            v: self.v.to_vec(),
+            conv_state: self.conv_state.to_vec(),
+            max_seq_len: self.max_seq_len,
+            kv_size: self.kv_size,
+            num_layers: self.num_layers,
+            hidden_size: self.hidden_size,
+            shortconv_l_cache: self.shortconv_l_cache,
+        }
+    }
+}
+
 impl CpuKvCache {
     /// Allocate a new KV cache.
     ///

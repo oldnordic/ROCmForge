@@ -19,6 +19,7 @@
 - Step 8 (open-weight experiment) committed: `BranchValueHead` implemented in `src/cpu/graph/value_head.rs`, hidden-state extraction from the frozen 0.5B model implemented in `src/cpu/graph/open_weight.rs`, validated by `tests/test_cpu_graph_value_head.rs` (synthetic) and `tests/test_cpu_graph_open_weight.rs` (real model, `#[ignored]`).
 - Step 9 (real-session capture/reload) committed: `CaptureContext` is now wired into the live CLI inference path via `src/app/cpu_decode.rs` and `src/app/cpu_inference.rs`, allowing a real decode session to be captured, persisted with `GraphMap::save`, reloaded with `GraphMap::load`, and resumed. Validated by `tests/test_cpu_graph_real_session.rs` (real model, `#[ignored]`).
 - Step 10 (GPU decode trace capture) committed: the live GPU inference path in `src/app/gpu_inference.rs` records a metadata-only token-level trace (`GpuTraceEntry`) into the `GraphMap` sidecar. Each decode step is scored with the same `ScoreMetric` used on CPU. Validated by `tests/test_gpu_graph_trace.rs` (real GPU + 0.5B model, `#[ignored]`).
+- Step 11 (online value-head reranker) committed: `BranchValueHead` can be saved/loaded; a training utility converts persisted `GraphMap` traces into a value head; and CPU decode reranks the top-k next-token candidates using speculative forward passes and a loaded value head. Validated by `tests/test_cpu_graph_online_reranker.rs` (0.5B model, `#[ignored]`).
 
 ## Vision
 
@@ -231,6 +232,37 @@ Because `geographdb-core` already has storage primitives, traces should live the
 
 ---
 
+### Step 11 — Online value-head reranker during CPU decode
+
+**Goal:** Close the capture → train → rerank loop: use a `BranchValueHead` trained on persisted traces to bias next-token selection during live CPU inference.
+
+**What to build:**
+- Serialization for `BranchValueHead` (`save`/`load`) so a trained head survives process restart.
+- CLI flags:
+  - `--value-head-path <file>` — load a saved head for inference.
+  - `--rerank-top-k <N>` — number of top candidates to score.
+  - `--rerank-scale <F>` — scale factor for value-head scores before biasing logits.
+  - `--train-value-head-from-traces <dir>` + `--save-value-head <path>` — train a head from persisted `GraphMap`s.
+- In CPU decode (`src/app/cpu_decode.rs`), when a value head is loaded:
+  - Take the top-k candidates from the output logits.
+  - For each candidate, run a speculative decode step by cloning the KV cache, embedding the candidate, and running one forward pass.
+  - Score the resulting hidden state with the value head.
+  - Add the scaled score to the candidate's logit and sample from the biased distribution.
+  - Skip reranking when the KV cache is at its last valid position to avoid out-of-bounds writes.
+- Training utility (`src/cpu/graph/open_weight.rs`) that loads a `GraphTraceDataset`, extracts hidden states for each branch summary, and trains the head with MSE against recorded branch scores.
+
+**Success criterion:**
+- `rocmforge --value-head-path <head> --rerank-top-k 5` runs without crashing and produces a different token trajectory than greedy on a 0.5B model.
+- Latency per token is measured and reported; the cost is N+1 forward passes per generated token.
+- Training from traces produces a loadable value-head file.
+
+**Implementation status:** Implemented in `src/cpu/graph/value_head.rs`, `src/cpu/graph/open_weight.rs`, `src/app/cli.rs`, `src/app/cpu_decode.rs`, and `src/app/cpu_inference.rs`. Validated by `tests/test_cpu_graph_online_reranker.rs` (marked `#[ignore]`). Measured overhead on the 0.5B Qwen model: ~5.9× baseline CPU decode time for top-5 reranking (37 ms/token → 220 ms/token).
+
+**Hard constraint surfaced by this step:**
+- Token-level reranking requires N extra forward passes per token. On CPU this is expensive; on GPU it would need hidden-state extraction from the GPU path, which is not yet implemented. The current MVP is CPU-only.
+
+---
+
 ## Hard constraints
 
 - The 0.5B Qwen weights are fixed in GGUF unless a training step is explicitly added.
@@ -239,12 +271,13 @@ Because `geographdb-core` already has storage primitives, traces should live the
 
 ## Next action
 
-Steps 1–10 are now locked and verified. The CPU-graph introspection ladder has reached a working closed loop: capture, persist, score, introspect, annotate, dataset, lightweight adapter, open-weight value head, real-session persistence, and GPU decode trace capture.
+Steps 1–11 are now locked and verified. The CPU-graph introspection ladder has reached a working closed loop: capture, persist, score, introspect, annotate, dataset, lightweight adapter, open-weight value head, real-session persistence, GPU decode trace capture, and online value-head reranking.
 
 Recommended follow-ups (outside the current ladder):
 - Reduce `GraphMap` size by storing weight pointers/hashes instead of full weight tensors, or by referencing a separate model-manifest file.
 - Capture the prefill phase (not just decode) into `CaptureContext` so the entire session is graph-replayable.
 - Add richer per-token snapshots to the GPU trace (final hidden state, top-k logits) when training signal demands it.
+- Bring the online reranker to the GPU path: extract hidden states from GPU decode for value-head scoring without round-tripping through CPU.
 - Convert the frozen 0.5B base into a fully differentiable graph and run real gradient steps on base weights.
 - Hide numeric scores from the branch prompt to force the value head to learn from structural state rather than read numbers.
-- Use `BranchValueHead` as an online reranker during inference, applying its score as a `branch_bias` in future `CaptureContext` sessions.
+- Extend token-level reranking to multi-token beam search: evaluate candidate continuations several tokens deep before selecting a branch.

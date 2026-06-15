@@ -17,7 +17,7 @@ use crate::cpu::weights::CpuModelWeights;
 use crate::cpu::CpuError;
 use crate::tokenizer::BpeTokenizer;
 
-use super::value_head::BranchValueExample;
+use super::value_head::{BranchValueExample, BranchValueHead};
 use super::{GraphMap, GraphSummarizer};
 use std::collections::HashMap;
 
@@ -405,6 +405,53 @@ pub fn build_label_choice_prompt(summary: &super::GraphSummary) -> (String, Vec<
 
 fn branch_label_letter(index: usize) -> char {
     (b'A' + (index % 26) as u8) as char
+}
+
+/// Train a `BranchValueHead` on branch hidden states extracted from persisted
+/// `GraphMap` traces in `trace_dir` and save it to `save_path`.
+///
+/// Each branch is converted to the standard one-branch prompt, its final hidden
+/// state is extracted with `extract_hidden_state`, and the head is trained with
+/// MSE against the branch's recorded score.
+pub fn train_value_head_from_trace_dir(
+    trace_dir: &std::path::Path,
+    weights: &CpuModelWeights,
+    config: &ModelConfig,
+    tokenizer: &BpeTokenizer,
+    epochs: usize,
+    lr: f32,
+    save_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use super::dataset::GraphTraceDataset;
+
+    let dataset = GraphTraceDataset::from_dir(trace_dir)?;
+    let summarizer = GraphSummarizer::new(1.0);
+
+    let maps: Vec<(String, GraphMap)> = dataset
+        .traces
+        .into_iter()
+        .map(|(id, map)| (id, map))
+        .collect();
+
+    let hidden_states =
+        collect_branch_hidden_states(weights, config, tokenizer, &maps, &summarizer, 256)?;
+
+    let examples: Vec<BranchValueExample> = hidden_states.into_values().collect();
+    if examples.is_empty() {
+        return Err("No branch examples found in trace directory".into());
+    }
+
+    let hidden_size = examples[0].hidden.len();
+    let mut head = BranchValueHead::new(hidden_size);
+    head.fit_mse(&examples, epochs, lr);
+    head.save(save_path)?;
+
+    eprintln!(
+        "Trained value head on {} branch examples, saved to {}",
+        examples.len(),
+        save_path.display()
+    );
+    Ok(())
 }
 
 /// Extract the summed logits for each label letter in `prompt`.

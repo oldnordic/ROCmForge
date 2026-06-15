@@ -59,6 +59,11 @@ mod main_tests {
             graph_map_dir: None,
             load_graph_map_dir: None,
             graph_score_metric: String::new(),
+            value_head_path: None,
+            rerank_top_k: 3,
+            rerank_scale: 1.0,
+            train_value_head_from_traces: None,
+            save_value_head: None,
         };
         assert!(!args.prefill_only_validate);
         assert!(args.draft_model.is_none());
