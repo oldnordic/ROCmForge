@@ -2020,3 +2020,52 @@ Phase 1 COMPLETE ✅
   - Same fix applied to AVX2 version `dot_q4_1_q8_0_block_avx2`
 - **Impact:** Fixes incorrect output values (was exploding to mean=-185, std=29; now normal mean≈0, std≈0.2)
 - **Files Changed:** `src/cpu/ops.rs`
+
+
+## [Unreleased] - Next steps for value-head reranker quality signal
+
+### Research direction
+
+The current token-level benchmark (`eval/rerank_trivia.jsonl`) uses a synthetic value head (`score = hidden[0]`), so it only measures the *mechanical* effect of the reranker/beam, not a real quality improvement. The next iteration needs a trained verifier/critic and verifiable tasks.
+
+### Concrete additions to the arena
+
+1. **Labeled value-head training pipeline**
+   - Run the base model multiple times per prompt.
+   - Capture hidden states at each candidate branch.
+   - Label each final branch by exact-match or executable correctness.
+   - Train `BranchValueHead` with the existing `fit()` or `fit_mse()` instead of the manual `set_weight(0, 1.0)` initialization.
+
+2. **Verifiable benchmarks**
+   - Math: GSM8K, MATH — exact-match the final numeric answer.
+   - Code: HumanEval, MBPP — execute generated code and check unit tests.
+   - Fact QA: TriviaQA, Natural Questions — compare to reference answers.
+
+3. **Reward-model / model-as-judge evaluator**
+   - For open-ended tasks without a single correct answer, score outputs with a trained reward model or a stronger model acting as judge.
+
+4. **Outcome vs. process supervision**
+   - **Outcome Reward Model (ORM)**: scores only the final answer; simple but sparse.
+   - **Process Reward Model (PRM)**: scores each reasoning step; harder to train but better for beam search guidance.
+
+5. **Baselines and metrics**
+   - Greedy, best-of-N sampling, beam search, PRM-guided beam search.
+   - Metrics: exact-match accuracy, pass@k, win rate vs. greedy, per-step correctness, token acceptance rate.
+
+### Key references
+
+- Lightman et al., *“Let’s Verify Step by Step”* (2023) — foundational PRM work; PRM800K dataset.
+- Uesato et al., *“Solving math word problems with process- and outcome-based feedback”* (2022) — ORM vs PRM comparison.
+- Snell et al., *“Scaling Language-Model Test-Time Compute Optimally can be More Effective than Scaling Model Parameters”* (2024) — PRM-guided beam search vs best-of-N.
+- Brown et al., *“Large Language Monkeys”* (2024) — scaling inference compute via repeated sampling.
+- Yao et al., *“Tree of Thoughts”* (2023) — multi-state reasoning search.
+- Ma et al., *“Let’s Reward Step by Step”* (2023) — step-level reward models as reasoning navigators.
+- Chen et al., *“AlphaMath Almost Zero”* (2024) — process supervision from MCTS without human annotations.
+- *“A Lightweight Ranking framework for Language-Model Decoding”* (2025) — tiny hidden-feature rankers matching larger reward models.
+- *“Value-Guided Search for Efficient Chain-of-Thought Reasoning”* (2025) — value model training for CoT search.
+- *“Reward-Guided Speculative Decoding”* (RSD) — reward function for speculative candidate steps.
+- *“DeGRe: Dense-supervised Generative Reranking”* (2026) — offline lookahead evaluator + online lightweight generator.
+
+### Recommended first experiment
+
+Use a small math subset (e.g., GSM8K), generate many completions per problem, extract reranker hidden states, label by exact-match final answer, train `BranchValueHead`, then re-run the existing `test_cpu_graph_reranker_eval.rs` with the trained head. This replaces the arbitrary synthetic signal with a learned quality signal.
