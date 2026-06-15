@@ -11,6 +11,9 @@ use super::gpu_prompt_decode::run_decode_style_prompt_path;
 use super::gpu_runtime::prepare_gpu_runtime;
 use super::gpu_setup::prepare_gpu_prompt;
 
+#[cfg(feature = "cpu-graph")]
+use rocmforge::cpu::graph::{compute_score, GpuTraceEntry, GraphMap, ScoreMetric};
+
 /// Estimate bytes that will actually reside on the GPU for this model.
 pub(crate) fn estimate_gpu_resident_model_bytes(
     model_path: &str,
@@ -67,6 +70,13 @@ pub(crate) fn estimate_gpu_resident_model_bytes(
 }
 
 pub(crate) fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(not(feature = "cpu-graph"))]
+    if args.graph_map_dir.is_some() || args.load_graph_map_dir.is_some() {
+        return Err(
+            "--graph-map-dir and --load-graph-map-dir require the cpu-graph feature".into(),
+        );
+    }
+
     let runtime = prepare_gpu_runtime(true)?;
     let gpu_caps = runtime.gpu_caps;
     let vram_session = runtime.vram_session;
@@ -116,6 +126,26 @@ pub(crate) fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::E
     let use_gpu_greedy_fastpath = setup_state.use_gpu_greedy_fastpath;
     let final_prompt_logits_mode = setup_state.final_prompt_logits_mode;
     let t_prefill = Instant::now();
+
+    #[cfg(feature = "cpu-graph")]
+    if let Some(load_dir) = &args.load_graph_map_dir {
+        let map = GraphMap::load(std::path::Path::new(load_dir))?;
+        eprintln!("Loaded GraphMap from {}", load_dir);
+        eprintln!("  branches: {}", map.branch_scores().len());
+        eprintln!("  gpu trace tokens: {}", map.gpu_trace().len());
+    }
+
+    // When capturing a GraphMap we need logits on the host, so disable the GPU
+    // greedy fastpath for the decode loop.  Prefill may still use it.
+    #[cfg(feature = "cpu-graph")]
+    let use_gpu_greedy_fastpath = use_gpu_greedy_fastpath && args.graph_map_dir.is_none();
+
+    #[cfg(feature = "cpu-graph")]
+    let score_metric = ScoreMetric::from_name(&args.graph_score_metric);
+    #[cfg(feature = "cpu-graph")]
+    let mut gpu_trace: Vec<GpuTraceEntry> = Vec::new();
+    #[cfg(feature = "cpu-graph")]
+    let mut gpu_score_log: Vec<(u64, ScoreMetric, f32)> = Vec::new();
 
     // ── Hotpath Router ────────────────────────────────────────────────────────────
     let profile = gpu::ModelProfile::from_weights(&gpu_weights, &config);
@@ -319,6 +349,11 @@ pub(crate) fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::E
             break;
         }
 
+        #[cfg(feature = "cpu-graph")]
+        let trace_input_token = next_token;
+        #[cfg(feature = "cpu-graph")]
+        let trace_pos = pos;
+
         let text = tok.decode_token(next_token);
         if args.debug {
             eprintln!("[Generated] token_id={} text={:?}", next_token, text);
@@ -356,12 +391,19 @@ pub(crate) fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::E
         .map_err(|e| format!("gpu decode: {}", e))?;
         pos += 1;
 
+        #[cfg(feature = "cpu-graph")]
+        if args.graph_map_dir.is_some() {
+            let logits = &host_scratch.logits[..config.vocab_size];
+            let score = compute_score(score_metric, logits, None);
+            gpu_score_log.push((n_generated as u64, score_metric, score));
+        }
+
         if args.debug && n_generated <= 3 {
             eprintln!("\n[Token {} logits]", n_generated);
             print_top_k_tokens(&host_scratch.logits, &tok, 5);
         }
 
-        next_token = if let Some(token) = decode_next_token {
+        let sampled_token = if let Some(token) = decode_next_token {
             token
         } else {
             device
@@ -385,9 +427,32 @@ pub(crate) fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::E
                 cpu_sample_top_p(&host_scratch.logits, args.temperature, args.top_p, seed)
             }
         };
+
+        #[cfg(feature = "cpu-graph")]
+        if args.graph_map_dir.is_some() {
+            let score = gpu_score_log.last().map(|(_, _, s)| *s).unwrap_or(0.0);
+            gpu_trace.push(GpuTraceEntry {
+                timestamp: n_generated as u64,
+                pos: trace_pos,
+                input_token_id: trace_input_token,
+                sampled_token_id: sampled_token,
+                score,
+            });
+        }
+
+        next_token = sampled_token;
     }
 
     println!();
+
+    #[cfg(feature = "cpu-graph")]
+    if let Some(save_dir) = &args.graph_map_dir {
+        let map = GraphMap::from_gpu_trace(gpu_score_log, gpu_trace);
+        map.save(std::path::Path::new(save_dir))?;
+        eprintln!("Saved GraphMap to {}", save_dir);
+        eprintln!("  gpu trace tokens: {}", map.gpu_trace().len());
+        eprintln!("  branch scores: {}", map.branch_scores().len());
+    }
 
     if n_generated > 0 {
         let gen_ms = t_gen.elapsed().as_secs_f64() * 1000.0;
@@ -408,6 +473,13 @@ pub(crate) fn run_gpu_speculative_inference(
     args: &Args,
     draft_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(not(feature = "cpu-graph"))]
+    if args.graph_map_dir.is_some() || args.load_graph_map_dir.is_some() {
+        return Err(
+            "--graph-map-dir and --load-graph-map-dir require the cpu-graph feature".into(),
+        );
+    }
+
     let runtime = prepare_gpu_runtime(false)?;
     let vram_session = runtime.vram_session;
     let device = runtime.device;

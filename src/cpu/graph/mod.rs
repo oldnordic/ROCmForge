@@ -82,8 +82,23 @@ pub enum ScoreMetric {
     /// a better match).
     CrossEntropy,
 }
+
+impl ScoreMetric {
+    /// Parse a human-readable metric name into a `ScoreMetric`.
+    pub fn from_name(name: &str) -> Self {
+        match name.to_lowercase().as_str() {
+            "cosine" | "cosine-similarity" => ScoreMetric::CosineSimilarity,
+            "l2" | "l2-similarity" => ScoreMetric::L2Similarity,
+            "mean" | "mean-activation" => ScoreMetric::MeanActivation,
+            "cross-entropy" => ScoreMetric::CrossEntropy,
+            "entropy" | "neg-entropy" => ScoreMetric::NegEntropy,
+            _ => ScoreMetric::NegEntropy,
+        }
+    }
+}
+
 #[cfg(feature = "cpu-graph")]
-pub use map::{GraphMap, GraphMapError};
+pub use map::{GpuTraceEntry, GraphMap, GraphMapError};
 
 /// Stable handle to a contiguous f32 tensor inside a `CpuGraphArena`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -415,7 +430,7 @@ pub mod tests;
 
 /// Compute a scalar `metric` from tensor `a` and an optional reference `b`.
 #[cfg(feature = "cpu-graph")]
-fn compute_score(metric: ScoreMetric, a: &[f32], b: Option<&[f32]>) -> f32 {
+pub fn compute_score(metric: ScoreMetric, a: &[f32], b: Option<&[f32]>) -> f32 {
     const EPS: f32 = 1e-8;
     match metric {
         ScoreMetric::CosineSimilarity => {

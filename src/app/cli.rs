@@ -44,7 +44,7 @@ fn usage() -> ! {
         "  --ctx-size N, -c N     Override maximum context window size [default: model default]"
     );
     eprintln!(
-        "  --graph-map-dir <path> Save session GraphMap to directory (requires cpu-graph feature)"
+        "  --graph-map-dir <path> Save session GraphMap to directory (requires cpu-graph feature; GPU capture records token-level trace)"
     );
     eprintln!("  --load-graph-map-dir <path> Load a previous session GraphMap from directory");
     eprintln!(

@@ -1,12 +1,12 @@
-#![cfg(feature = "cpu-graph")]
-//! End-to-end test for real-session GraphMap capture and reload.
+#![cfg(all(feature = "gpu", feature = "cpu-graph"))]
+//! End-to-end test for GPU decode GraphMap trace capture and reload.
 //!
-//! This test runs the `rocmforge` CLI binary with `--graph-map-dir`, verifies
-//! that a GraphMap is persisted, then runs a second invocation with
-//! `--load-graph-map-dir` and verifies the previous session is loaded.
+//! This test runs the `rocmforge` CLI binary with `--gpu --graph-map-dir`,
+//! verifies that a GPU trace is persisted, then loads the map and checks the
+//! recorded token entries.
 //!
-//! It is marked `#[ignore]` because it loads the 0.5B model and runs real CPU
-//! inference.
+//! It is marked `#[ignore]` because it requires an AMD GPU and loads the 0.5B
+//! model.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -18,9 +18,6 @@ fn model_exists() -> bool {
 }
 
 fn rocmforge_binary() -> PathBuf {
-    // The test binary lives in target/{profile}/deps/; the rocmforge binary is
-    // in target/{profile}/rocmforge. Fall back to `cargo run` if the binary is
-    // not already built.
     if let Ok(mut exe) = std::env::current_exe() {
         exe.pop(); // deps
         exe.pop(); // release or debug
@@ -40,7 +37,7 @@ fn build_command() -> Command {
             "run",
             "--release",
             "--features",
-            "cpu-graph",
+            "gpu,cpu-graph",
             "--bin",
             "rocmforge",
             "--",
@@ -61,12 +58,9 @@ fn run_rocmforge(args: &[&str]) -> std::io::Result<std::process::Output> {
 
 #[ignore]
 #[test]
-fn test_cli_captures_and_reloads_graphmap() -> Result<(), Box<dyn std::error::Error>> {
+fn test_gpu_captures_and_reloads_decode_trace() -> Result<(), Box<dyn std::error::Error>> {
     if !model_exists() {
-        eprintln!(
-            "Skipping real-session test: model not found at {}",
-            MODEL_PATH
-        );
+        eprintln!("Skipping GPU trace test: model not found at {}", MODEL_PATH);
         return Ok(());
     }
 
@@ -82,7 +76,8 @@ fn test_cli_captures_and_reloads_graphmap() -> Result<(), Box<dyn std::error::Er
         "--prompt",
         "Hi",
         "--max-tokens",
-        "2",
+        "3",
+        "--gpu",
         "--graph-map-dir",
         capture_path,
         "--no-template",
@@ -91,7 +86,7 @@ fn test_cli_captures_and_reloads_graphmap() -> Result<(), Box<dyn std::error::Er
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         out.status.success(),
-        "capture run failed with stderr:\n{}",
+        "GPU capture run failed with stderr:\n{}",
         stderr
     );
     assert!(
@@ -99,9 +94,16 @@ fn test_cli_captures_and_reloads_graphmap() -> Result<(), Box<dyn std::error::Er
         "expected 'Saved GraphMap' in stderr, got:\n{}",
         stderr
     );
+
+    let map = rocmforge::cpu::graph::GraphMap::load(std::path::Path::new(capture_path))?;
     assert!(
-        capture_dir.path().join("arena.geodb").exists(),
-        "GraphMap arena file was not persisted"
+        !map.gpu_trace().is_empty(),
+        "GPU trace should contain at least one decode entry"
+    );
+    assert_eq!(
+        map.gpu_trace().len(),
+        map.branch_scores().len(),
+        "every trace entry should have a corresponding branch score"
     );
 
     let reload_dir = tempfile::tempdir()?;
@@ -117,6 +119,7 @@ fn test_cli_captures_and_reloads_graphmap() -> Result<(), Box<dyn std::error::Er
         "Hi",
         "--max-tokens",
         "1",
+        "--gpu",
         "--load-graph-map-dir",
         capture_path,
         "--graph-map-dir",
@@ -127,7 +130,7 @@ fn test_cli_captures_and_reloads_graphmap() -> Result<(), Box<dyn std::error::Er
     let stderr2 = String::from_utf8_lossy(&out2.stderr);
     assert!(
         out2.status.success(),
-        "reload run failed with stderr:\n{}",
+        "GPU reload run failed with stderr:\n{}",
         stderr2
     );
     assert!(
@@ -139,6 +142,12 @@ fn test_cli_captures_and_reloads_graphmap() -> Result<(), Box<dyn std::error::Er
         stderr2.contains("Saved GraphMap"),
         "expected 'Saved GraphMap' in stderr after reload, got:\n{}",
         stderr2
+    );
+
+    let map2 = rocmforge::cpu::graph::GraphMap::load(std::path::Path::new(reload_path))?;
+    assert!(
+        !map2.gpu_trace().is_empty(),
+        "reloaded GPU session should also produce a trace"
     );
 
     Ok(())

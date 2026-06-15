@@ -31,6 +31,22 @@ const SHELF_SNAPSHOTS_SECTION: &str = "shelf_snapshots";
 const SCORE_LOG_SECTION: &str = "score_log";
 const BRANCH_ANNOTATIONS_SECTION: &str = "branch_annotations";
 const META_SECTION: &str = "meta";
+const GPU_TRACE_SECTION: &str = "gpu_trace";
+
+/// A single decode-step entry for a GPU-captured session.
+///
+/// Unlike the CPU `GraphMap`, the GPU trace does not record full layer-by-layer
+/// operations or tensor data.  It captures the token-level trajectory and a
+/// scalar branch score so that larger GPU-resident models can still produce a
+/// persistent reasoning trace.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct GpuTraceEntry {
+    pub timestamp: u64,
+    pub pos: usize,
+    pub input_token_id: u32,
+    pub sampled_token_id: u32,
+    pub score: f32,
+}
 
 #[derive(Debug, Error)]
 pub enum GraphMapError {
@@ -65,6 +81,7 @@ pub struct GraphMap {
     pub shelf_snapshots: HashMap<u64, PersistentSnapshot>,
     pub score_log: Vec<(u64, ScoreMetric, f32)>,
     pub branch_annotations: HashMap<u64, BranchAnnotation>,
+    pub gpu_trace: Vec<GpuTraceEntry>,
     pub layer: usize,
     pub timestamp: u64,
     pub last_timestamp: u64,
@@ -81,9 +98,30 @@ impl GraphMap {
             shelf_snapshots: ctx.shelf_snapshots.clone(),
             score_log: ctx.score_log.clone(),
             branch_annotations: ctx.branch_annotations.clone(),
+            gpu_trace: Vec::new(),
             layer: ctx.layer,
             timestamp: ctx.timestamp,
             last_timestamp: ctx.last_timestamp,
+        }
+    }
+
+    /// Build a GPU-only trace map with empty CPU graph/arena fields.
+    pub fn from_gpu_trace(
+        score_log: Vec<(u64, ScoreMetric, f32)>,
+        gpu_trace: Vec<GpuTraceEntry>,
+    ) -> Self {
+        Self {
+            nodes: Vec::new(),
+            ops: Vec::new(),
+            arena: CpuGraphArena::new(),
+            output_log: Vec::new(),
+            shelf_snapshots: HashMap::new(),
+            score_log,
+            branch_annotations: HashMap::new(),
+            gpu_trace,
+            layer: 0,
+            timestamp: 0,
+            last_timestamp: 0,
         }
     }
 
@@ -122,6 +160,7 @@ impl GraphMap {
         let shelf_snapshots_bytes = bincode::serialize(&self.shelf_snapshots)?;
         let score_log_bytes = bincode::serialize(&self.score_log)?;
         let branch_annotations_bytes = bincode::serialize(&self.branch_annotations)?;
+        let gpu_trace_bytes = bincode::serialize(&self.gpu_trace)?;
         let meta = GraphMapMeta {
             layer: self.layer,
             timestamp: self.timestamp,
@@ -158,6 +197,7 @@ impl GraphMap {
             BRANCH_ANNOTATIONS_SECTION,
             &branch_annotations_bytes,
         )?;
+        create_and_write(&mut storage, GPU_TRACE_SECTION, &gpu_trace_bytes)?;
         create_and_write(&mut storage, META_SECTION, &meta_bytes)?;
 
         storage
@@ -200,6 +240,11 @@ impl GraphMap {
             read_section_bincode(&mut storage, SCORE_LOG_SECTION)?;
         let branch_annotations: HashMap<u64, BranchAnnotation> =
             read_section_bincode(&mut storage, BRANCH_ANNOTATIONS_SECTION)?;
+        let gpu_trace: Vec<GpuTraceEntry> = if storage.get_section(GPU_TRACE_SECTION).is_some() {
+            read_section_bincode(&mut storage, GPU_TRACE_SECTION)?
+        } else {
+            Vec::new()
+        };
         let meta: GraphMapMeta = read_section_bincode(&mut storage, META_SECTION)?;
 
         let f32_bindings: HashMap<usize, F32Handle> = f32_bindings_vec.into_iter().collect();
@@ -224,6 +269,7 @@ impl GraphMap {
             shelf_snapshots,
             score_log,
             branch_annotations,
+            gpu_trace,
             layer: meta.layer,
             timestamp: meta.timestamp,
             last_timestamp: meta.last_timestamp,
@@ -244,6 +290,11 @@ impl GraphMap {
             score_log: self.score_log,
             branch_annotations: self.branch_annotations,
         }
+    }
+
+    /// Return the GPU decode trace, if any.
+    pub fn gpu_trace(&self) -> &[GpuTraceEntry] {
+        &self.gpu_trace
     }
 
     /// Return the bias for each annotated timestamp.

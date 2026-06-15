@@ -18,6 +18,7 @@
 - Step 7 (mistake-driven adapter) committed: `BranchAdapter` implemented in `src/cpu/graph/adapter.rs` and validated by `tests/test_cpu_graph_adapter.rs`, which trains a tiny MLP on preference pairs and reaches 12/12 branch-selection accuracy on held-out traces versus 4/12 for random.
 - Step 8 (open-weight experiment) committed: `BranchValueHead` implemented in `src/cpu/graph/value_head.rs`, hidden-state extraction from the frozen 0.5B model implemented in `src/cpu/graph/open_weight.rs`, validated by `tests/test_cpu_graph_value_head.rs` (synthetic) and `tests/test_cpu_graph_open_weight.rs` (real model, `#[ignored]`).
 - Step 9 (real-session capture/reload) committed: `CaptureContext` is now wired into the live CLI inference path via `src/app/cpu_decode.rs` and `src/app/cpu_inference.rs`, allowing a real decode session to be captured, persisted with `GraphMap::save`, reloaded with `GraphMap::load`, and resumed. Validated by `tests/test_cpu_graph_real_session.rs` (real model, `#[ignored]`).
+- Step 10 (GPU decode trace capture) committed: the live GPU inference path in `src/app/gpu_inference.rs` records a metadata-only token-level trace (`GpuTraceEntry`) into the `GraphMap` sidecar. Each decode step is scored with the same `ScoreMetric` used on CPU. Validated by `tests/test_gpu_graph_trace.rs` (real GPU + 0.5B model, `#[ignored]`).
 
 ## Vision
 
@@ -210,6 +211,26 @@ Because `geographdb-core` already has storage primitives, traces should live the
 
 ---
 
+### Step 10 — GPU decode trace capture
+
+**Goal:** Capture a persistent reasoning trace from GPU inference without copying full activation tensors, so larger models can feed the same trace-training pipeline as CPU sessions.
+
+**What to build:**
+- A GPU-side hook in the per-token decode loop (`src/app/gpu_inference.rs`) that records:
+  - timestamp (generated token index),
+  - cache position,
+  - input token id and sampled token id,
+  - a scalar `ScoreMetric` score computed from the downloaded logits.
+- A new `GpuTraceEntry` type and a `gpu_trace` section in the existing `GraphMap` sidecar.
+- When `--graph-map-dir` is active, disable the GPU greedy fastpath during decode so logits are available on the host.
+- Load a previous `GraphMap` before generation and print summary statistics.
+
+**Success criterion:** `rocmforge --gpu --graph-map-dir <dir>` produces a reloadable `GraphMap` whose `gpu_trace` length equals the number of generated tokens and whose branch scores match the score log. The HIP graph fastpath remains available when capture is not requested.
+
+**Implementation status:** Implemented in `src/app/gpu_inference.rs` and `src/cpu/graph/map.rs`. The test `tests/test_gpu_graph_trace.rs` (marked `#[ignore]`) invokes the binary with `--gpu` and verifies persistence, reload, and trace/score consistency. The trace is intentionally metadata-only; full GPU tensor capture is left for future work.
+
+---
+
 ## Hard constraints
 
 - The 0.5B Qwen weights are fixed in GGUF unless a training step is explicitly added.
@@ -218,11 +239,12 @@ Because `geographdb-core` already has storage primitives, traces should live the
 
 ## Next action
 
-Steps 1–9 are now locked and verified. The CPU-graph introspection ladder has reached a working closed loop: capture, persist, score, introspect, annotate, dataset, lightweight adapter, open-weight value head, and real-session persistence.
+Steps 1–10 are now locked and verified. The CPU-graph introspection ladder has reached a working closed loop: capture, persist, score, introspect, annotate, dataset, lightweight adapter, open-weight value head, real-session persistence, and GPU decode trace capture.
 
 Recommended follow-ups (outside the current ladder):
 - Reduce `GraphMap` size by storing weight pointers/hashes instead of full weight tensors, or by referencing a separate model-manifest file.
 - Capture the prefill phase (not just decode) into `CaptureContext` so the entire session is graph-replayable.
+- Add richer per-token snapshots to the GPU trace (final hidden state, top-k logits) when training signal demands it.
 - Convert the frozen 0.5B base into a fully differentiable graph and run real gradient steps on base weights.
 - Hide numeric scores from the branch prompt to force the value head to learn from structural state rather than read numbers.
 - Use `BranchValueHead` as an online reranker during inference, applying its score as a `branch_bias` in future `CaptureContext` sessions.

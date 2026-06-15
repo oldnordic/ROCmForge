@@ -10,18 +10,6 @@ use super::cpu_decode::run_cpu_decode_loop_with_ctx;
 #[cfg(feature = "cpu-graph")]
 use rocmforge::cpu::graph::{CaptureContext, GraphMap, ScoreMetric};
 
-#[cfg(feature = "cpu-graph")]
-fn parse_score_metric(name: &str) -> ScoreMetric {
-    match name.to_lowercase().as_str() {
-        "cosine" | "cosine-similarity" => ScoreMetric::CosineSimilarity,
-        "l2" | "l2-similarity" => ScoreMetric::L2Similarity,
-        "mean" | "mean-activation" => ScoreMetric::MeanActivation,
-        "cross-entropy" => ScoreMetric::CrossEntropy,
-        "entropy" | "neg-entropy" => ScoreMetric::NegEntropy,
-        _ => ScoreMetric::NegEntropy,
-    }
-}
-
 pub(crate) fn run_cpu_inference(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = prepare_cpu_runtime(args)?;
     let caps = runtime.caps;
@@ -59,7 +47,7 @@ pub(crate) fn run_cpu_inference(args: &Args) -> Result<(), Box<dyn std::error::E
     #[cfg(feature = "cpu-graph")]
     {
         if let Some(save_dir) = &args.graph_map_dir {
-            let score_metric = parse_score_metric(&args.graph_score_metric);
+            let score_metric = ScoreMetric::from_name(&args.graph_score_metric);
             let mut ctx = CaptureContext::new(0, 0);
             run_cpu_decode_loop_with_ctx(
                 args,
