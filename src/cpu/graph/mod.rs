@@ -18,9 +18,17 @@ pub mod map;
 pub mod introspection;
 
 #[cfg(feature = "cpu-graph")]
+pub mod dataset;
+
+#[cfg(feature = "cpu-graph")]
 pub use introspection::{
     BranchAnnotation, BranchSummary, GraphSummarizer, GraphSummary, IntrospectionPrompt,
     IntrospectionReport,
+};
+
+#[cfg(feature = "cpu-graph")]
+pub use dataset::{
+    GraphTraceDataset, PreferencePair, ProcessSupervisionExample, RejectionSamplingExample,
 };
 
 /// Logical shelf where an arena handle lives.

@@ -14,6 +14,7 @@
 - Step 3 (branch scoring) committed: `CpuOpNode::Score`, `ScoreMetric`, `CaptureContext::score_against()`, and `GraphMap::branch_scores()`/`divergence()` implemented and validated by `tests/test_cpu_graph_branch_scoring.rs`.
 - Step 4 (introspection prompt interface) committed: `GraphSummarizer`, `IntrospectionPrompt`, and `IntrospectionReport` implemented in `src/cpu/graph/introspection.rs` and validated by `tests/test_cpu_graph_introspection.rs`, which prompts the local 0.5B Qwen2.5 model and verifies it picks the higher-scoring branch above random chance.
 - Step 5 (feedback loop) committed: `BranchAnnotation` and `branch_bias` persistence implemented in `CaptureContext`/`GraphMap`, with key-based bias lookup and ordering validated by `tests/test_cpu_graph_feedback_loop.rs`.
+- Step 6 (trace dataset) committed: `GraphTraceDataset` implemented in `src/cpu/graph/dataset.rs` and validated by `tests/test_cpu_graph_trace_dataset.rs`, which loads persisted `GraphMap`s and exports them into process-supervision, rejection-sampling, and preference-pair formats without loss.
 
 ## Vision
 
@@ -156,6 +157,8 @@ Because `geographdb-core` already has storage primitives, traces should live the
 
 **Success criterion:** A small number of stored traces can be converted into each format without loss.
 
+**Implementation status:** `tests/test_cpu_graph_trace_dataset.rs` is implemented and passing. It creates three `GraphMap`s with known branch scores, persists each into a separate subdirectory, loads them with `GraphTraceDataset::from_dir`, and verifies: (1) `process_supervision_examples` preserves every `(trace_id, timestamp, score)` and normalizes labels to `[0, 1]`; (2) `rejection_sampling_examples` marks exactly the highest-scoring branch per trace as accepted; (3) `preference_pairs` emits all `n*(n-1)/2` ordered pairs for distinct scores; (4) all example structs round-trip through `bincode`.
+
 ---
 
 ### Step 7 — Mistake-driven LoRA adapter (optional, CPU)
@@ -192,4 +195,4 @@ Because `geographdb-core` already has storage primitives, traces should live the
 
 ## Next action
 
-Step 5 is now locked and verified. The recommended next move is **Step 6**: build a `GraphTraceDataset` reader over `geographdb-core` storage that converts one or more persisted `GraphMap`s into training examples for process supervision (per-step labels), rejection sampling (accepted vs rejected branches), and preference pairs (branch A worse than branch B), and verify the conversion is lossless.
+Step 6 is now locked and verified. The recommended next move is **Step 7**: train a tiny LoRA adapter on top of the frozen 0.5B GGUF base that predicts the better branch given a graph summary, and verify the adapter improves branch-selection accuracy on a held-out test set of traces compared to the base model alone.
