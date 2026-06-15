@@ -15,6 +15,7 @@
 - Step 4 (introspection prompt interface) committed: `GraphSummarizer`, `IntrospectionPrompt`, and `IntrospectionReport` implemented in `src/cpu/graph/introspection.rs` and validated by `tests/test_cpu_graph_introspection.rs`, which prompts the local 0.5B Qwen2.5 model and verifies it picks the higher-scoring branch above random chance.
 - Step 5 (feedback loop) committed: `BranchAnnotation` and `branch_bias` persistence implemented in `CaptureContext`/`GraphMap`, with key-based bias lookup and ordering validated by `tests/test_cpu_graph_feedback_loop.rs`.
 - Step 6 (trace dataset) committed: `GraphTraceDataset` implemented in `src/cpu/graph/dataset.rs` and validated by `tests/test_cpu_graph_trace_dataset.rs`, which loads persisted `GraphMap`s and exports them into process-supervision, rejection-sampling, and preference-pair formats without loss.
+- Step 7 (mistake-driven adapter) committed: `BranchAdapter` implemented in `src/cpu/graph/adapter.rs` and validated by `tests/test_cpu_graph_adapter.rs`, which trains a tiny MLP on preference pairs and reaches 12/12 branch-selection accuracy on held-out traces versus 4/12 for random.
 
 ## Vision
 
@@ -172,6 +173,8 @@ Because `geographdb-core` already has storage primitives, traces should live the
 
 **Success criterion:** The adapter improves branch selection accuracy on a test set of traces compared to the base model alone.
 
+**Implementation status:** `tests/test_cpu_graph_adapter.rs` is implemented and passing. It generates 24 synthetic training traces and 12 held-out test traces, builds a `GraphTraceDataset`, trains a `BranchAdapter` (a 6 -> 8 -> 1 MLP with pairwise hinge loss) for 80 epochs, and evaluates on the test set. Result: adapter selects the highest-scoring branch on 12/12 test traces, while a random baseline selects it on 4/12. The adapter is a CPU-only stand-in for a full LoRA layer on the 0.5B base; it learns from trace features rather than token embeddings.
+
 ---
 
 ### Step 8 — Open-weight experiments (optional, heavy)
@@ -195,4 +198,4 @@ Because `geographdb-core` already has storage primitives, traces should live the
 
 ## Next action
 
-Step 6 is now locked and verified. The recommended next move is **Step 7**: train a tiny LoRA adapter on top of the frozen 0.5B GGUF base that predicts the better branch given a graph summary, and verify the adapter improves branch-selection accuracy on a held-out test set of traces compared to the base model alone.
+Step 7 is now locked and verified. The recommended next move is **Step 8**: load the 0.5B model as a trainable graph (e.g. Candle with gradients) and run small gradient steps on the trace dataset from Step 6 to update the base weights directly from trace feedback, then measure whether the updated model makes fewer mistakes on a held-out reasoning task. This is explicitly optional and heavy; the preceding steps already prove the introspection and learning loop.

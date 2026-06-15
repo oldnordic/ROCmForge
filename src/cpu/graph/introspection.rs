@@ -187,7 +187,9 @@ fn final_hidden_norm(map: &GraphMap) -> f32 {
     let last_persistent = map
         .output_log
         .iter()
-        .filter(|(_, _, handle)| handle.shelf == Shelf::Persistent)
+        .filter(|(_, _, handle)| {
+            handle.shelf == Shelf::Persistent && map.arena.is_f32_handle_valid(*handle)
+        })
         .max_by_key(|(ts, _, _)| *ts)
         .map(|(_, _, handle)| *handle);
 

@@ -21,6 +21,9 @@ pub mod introspection;
 pub mod dataset;
 
 #[cfg(feature = "cpu-graph")]
+pub mod adapter;
+
+#[cfg(feature = "cpu-graph")]
 pub use introspection::{
     BranchAnnotation, BranchSummary, GraphSummarizer, GraphSummary, IntrospectionPrompt,
     IntrospectionReport,
@@ -30,6 +33,9 @@ pub use introspection::{
 pub use dataset::{
     GraphTraceDataset, PreferencePair, ProcessSupervisionExample, RejectionSamplingExample,
 };
+
+#[cfg(feature = "cpu-graph")]
+pub use adapter::BranchAdapter;
 
 /// Logical shelf where an arena handle lives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -205,6 +211,12 @@ impl CpuGraphArena {
     pub fn f32_mut(&mut self, handle: F32Handle) -> &mut [f32] {
         let shelf = handle.shelf;
         &mut self.f32_vec_mut(shelf)[handle.offset..handle.offset + handle.len]
+    }
+
+    /// Check whether `handle` still points inside the current shelf data.
+    pub fn is_f32_handle_valid(&self, handle: F32Handle) -> bool {
+        let len = self.f32_vec(handle.shelf).len();
+        handle.offset + handle.len <= len
     }
 
     /// Allocate a new, zero-initialized u8 slot on the given shelf.
