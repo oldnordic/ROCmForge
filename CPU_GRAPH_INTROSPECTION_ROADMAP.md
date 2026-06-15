@@ -22,6 +22,7 @@
 - Step 11 (online value-head reranker) committed: `BranchValueHead` can be saved/loaded; a training utility converts persisted `GraphMap` traces into a value head; and CPU decode reranks the top-k next-token candidates using speculative forward passes and a loaded value head. Validated by `tests/test_cpu_graph_online_reranker.rs` (0.5B model, `#[ignored]`).
 - Step 11.5/B (speculative candidate branch recording) committed: every top-k candidate evaluated by the online reranker is now persisted as a `CandidateBranch` inside the `GraphMap` sidecar, including parent timestamp, token id, value score, biased logit, and a chosen flag. The sidecar section is optional and backward-compatible.
 - Step 11.5/C (reranker chosen-state reuse) committed: the chosen candidate's speculative forward state is now reused on the next decode iteration, eliminating the redundant main forward pass. Candidate scoring uses a single shared KV scratch and captures only small KV deltas, keeping memory overhead low.
+- Step 11.5/D (multi-token beam/lookahead reranking) committed: added `--rerank-beam-depth <D>` so each top-k candidate is scored over a short greedy continuation. The cumulative beam score biases the logits and is persisted in the `CandidateBranch` entries. Depth `1` preserves single-token behavior.
 
 ## Vision
 
@@ -272,6 +273,12 @@ Because `geographdb-core` already has storage primitives, traces should live the
 - Graph capture for reused tokens is skipped; the `CandidateBranch` tree still records the decision.
 - On the 0.5B Qwen model with top-5 reranking, this reduced measured per-token overhead from ~5.9× to ~4.2× baseline CPU decode time.
 
+**Multi-token beam/lookahead (Step 11.5/D):**
+- Added `--rerank-beam-depth <D>` to the CLI.  Depth `1` is the existing single-token score; depth `D>1` runs each candidate forward plus up to `D-1` greedy continuation tokens.
+- The value-head score is summed over the continuation and used as the candidate's `value_score` for biasing logits and for the persisted `CandidateBranch`.
+- The first-token state is still captured for chosen-state reuse, so the optimization from Step 11.5/C still applies to the first speculative step.
+- On the 0.5B Qwen model, top-5 depth-2 reranking costs ~7.1× baseline CPU decode time and produces a different trajectory than depth-1.
+
 **Hard constraint surfaced by this step:**
 - Token-level reranking still requires N speculative forward passes per token. On CPU this remains expensive; on GPU it would need hidden-state extraction from the GPU path, which is not yet implemented. The current MVP is CPU-only.
 
@@ -285,7 +292,7 @@ Because `geographdb-core` already has storage primitives, traces should live the
 
 ## Next action
 
-Steps 1–11 are now locked and verified, Step 11.5/B records the reranker’s speculative search tree in the persisted `GraphMap`, and Step 11.5/C reuses the chosen candidate’s forward state to cut reranker overhead. The CPU-graph introspection ladder has reached a working closed loop: capture, persist, score, introspect, annotate, dataset, lightweight adapter, open-weight value head, real-session persistence, GPU decode trace capture, online value-head reranking, searchable candidate branches, and state reuse.
+Steps 1–11 are now locked and verified, and Steps 11.5/B–D add candidate-branch recording, chosen-state reuse, and multi-token beam lookahead to the online reranker. The CPU-graph introspection ladder has reached a working closed loop: capture, persist, score, introspect, annotate, dataset, lightweight adapter, open-weight value head, real-session persistence, GPU decode trace capture, online value-head reranking, searchable candidate branches, state reuse, and short beam lookahead.
 
 Recommended follow-ups (outside the current ladder):
 - Reduce `GraphMap` size by storing weight pointers/hashes instead of full weight tensors, or by referencing a separate model-manifest file.
@@ -294,4 +301,4 @@ Recommended follow-ups (outside the current ladder):
 - Bring the online reranker to the GPU path: extract hidden states from GPU decode for value-head scoring without round-tripping through CPU.
 - Convert the frozen 0.5B base into a fully differentiable graph and run real gradient steps on base weights.
 - Hide numeric scores from the branch prompt to force the value head to learn from structural state rather than read numbers.
-- Extend token-level reranking to multi-token beam search: evaluate candidate continuations several tokens deep before selecting a branch.
+- Widen the beam to keep multiple candidates alive across steps instead of collapsing to one per token.

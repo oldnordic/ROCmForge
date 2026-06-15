@@ -22,6 +22,7 @@ pub(crate) struct Args {
     pub value_head_path: Option<String>,
     pub rerank_top_k: usize,
     pub rerank_scale: f32,
+    pub rerank_beam_depth: usize,
     pub train_value_head_from_traces: Option<String>,
     pub save_value_head: Option<String>,
 }
@@ -63,6 +64,9 @@ fn usage() -> ! {
     );
     eprintln!(
         "  --rerank-scale <F>        Scale factor applied to value-head scores before biasing logits [default: 1.0]"
+    );
+    eprintln!(
+        "  --rerank-beam-depth <D>   Number of tokens to lookahead when scoring each candidate [default: 1]"
     );
     eprintln!(
         "  --train-value-head-from-traces <dir> Train a BranchValueHead from persisted GraphMap traces"
@@ -114,6 +118,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Args {
     let mut value_head_path: Option<String> = None;
     let mut rerank_top_k = 3usize;
     let mut rerank_scale = 1.0f32;
+    let mut rerank_beam_depth = 1usize;
     let mut train_value_head_from_traces: Option<String> = None;
     let mut save_value_head: Option<String> = None;
 
@@ -195,6 +200,16 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Args {
                     .parse()
                     .unwrap_or_else(|_| usage());
             }
+            "--rerank-beam-depth" => {
+                rerank_beam_depth = args
+                    .next()
+                    .unwrap_or_else(|| usage())
+                    .parse()
+                    .unwrap_or_else(|_| usage());
+                if rerank_beam_depth == 0 {
+                    rerank_beam_depth = 1;
+                }
+            }
             "--train-value-head-from-traces" => {
                 train_value_head_from_traces = Some(args.next().unwrap_or_else(|| usage()))
             }
@@ -240,6 +255,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Args {
         value_head_path,
         rerank_top_k,
         rerank_scale,
+        rerank_beam_depth,
         train_value_head_from_traces,
         save_value_head,
     };
@@ -261,6 +277,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Args {
         let _ = result.value_head_path;
         let _ = result.rerank_top_k;
         let _ = result.rerank_scale;
+        let _ = result.rerank_beam_depth;
         let _ = result.train_value_head_from_traces;
         let _ = result.save_value_head;
     }

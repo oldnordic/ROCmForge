@@ -202,6 +202,82 @@ struct ReusableState {
     pos_after: usize,
 }
 
+/// Evaluate a single candidate token plus a short greedy continuation.
+///
+/// Returns the cumulative value-head score over `beam_depth` tokens and the
+/// first-token state (post-token hidden vector, output logits, KV delta) that
+/// can be reused if this candidate is selected.  The shared `kv_scratch` is
+/// reset to `kv_parent` before returning so the next candidate starts clean.
+#[cfg(feature = "cpu-graph")]
+fn evaluate_candidate_beam(
+    candidate: u32,
+    hidden: &[f32],
+    kv_parent: &CpuKvCache,
+    kv_scratch: &mut CpuKvCache,
+    rerank_scratch: &mut CpuForwardScratch,
+    tok: &BpeTokenizer,
+    weights: &CpuModelWeights,
+    config: &ModelConfig,
+    pos: usize,
+    head: &BranchValueHead,
+    beam_depth: usize,
+) -> Option<(f32, CandidateState)> {
+    let mut hidden_candidate = hidden.to_vec();
+    cpu_embed_token(candidate, weights, &mut hidden_candidate, config);
+    cpu_full_forward(
+        &mut hidden_candidate,
+        weights,
+        kv_scratch,
+        rerank_scratch,
+        pos,
+        config,
+    )
+    .ok()?;
+
+    let first_score = head.predict(&rerank_scratch.normed);
+    let hidden_first = hidden_candidate.clone();
+    let first_logits = rerank_scratch.logits[..config.vocab_size].to_vec();
+    let first_kv_delta = capture_kv_delta(kv_scratch, pos);
+
+    let mut beam_score = first_score;
+    let mut cont_pos = pos + 1;
+    for _ in 1..beam_depth {
+        if cont_pos >= kv_scratch.max_seq_len {
+            break;
+        }
+        let cont_token = cpu_sample_greedy(&rerank_scratch.logits[..config.vocab_size]);
+        if tok.is_eog(cont_token) {
+            break;
+        }
+        cpu_embed_token(cont_token, weights, &mut hidden_candidate, config);
+        if cpu_full_forward(
+            &mut hidden_candidate,
+            weights,
+            kv_scratch,
+            rerank_scratch,
+            cont_pos,
+            config,
+        )
+        .is_err()
+        {
+            break;
+        }
+        beam_score += head.predict(&rerank_scratch.normed);
+        cont_pos += 1;
+    }
+
+    reset_kv_to_parent(kv_scratch, kv_parent, pos);
+    Some((
+        beam_score,
+        CandidateState {
+            token_id: candidate,
+            hidden: hidden_first,
+            logits: first_logits,
+            kv_delta: first_kv_delta,
+        },
+    ))
+}
+
 #[cfg(feature = "cpu-graph")]
 #[expect(
     clippy::too_many_arguments,
@@ -221,6 +297,7 @@ pub(crate) fn run_cpu_decode_loop_with_ctx(
     value_head: Option<&BranchValueHead>,
     rerank_top_k: usize,
     rerank_scale: f32,
+    rerank_beam_depth: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut pos = n_prompt;
     let mut n_generated = 0usize;
@@ -316,32 +393,31 @@ pub(crate) fn run_cpu_decode_loop_with_ctx(
                 let mut candidate_entries: Vec<rocmforge::cpu::graph::CandidateBranch> =
                     Vec::with_capacity(candidates.len());
                 for &candidate in &candidates {
-                    let mut hidden_candidate = hidden.to_vec();
-                    cpu_embed_token(candidate, weights, &mut hidden_candidate, config);
-                    let forward_ok = cpu_full_forward(
-                        &mut hidden_candidate,
-                        weights,
+                    let Some((score, state)) = evaluate_candidate_beam(
+                        candidate,
+                        &hidden,
+                        kv,
                         &mut kv_scratch,
                         &mut rerank_scratch,
-                        pos,
+                        tok,
+                        weights,
                         config,
-                    )
-                    .is_ok();
-                    let score = if forward_ok {
-                        head.predict(&rerank_scratch.normed)
-                    } else {
-                        0.0f32
+                        pos,
+                        head,
+                        rerank_beam_depth,
+                    ) else {
+                        let original_logit = scratch.logits[candidate as usize];
+                        if args.debug {
+                            eprintln!(
+                                "[Rerank] step={} candidate={} forward_failed logit_before={:.4}",
+                                n_generated, candidate, original_logit
+                            );
+                        }
+                        continue;
                     };
                     let original_logit = scratch.logits[candidate as usize];
                     biased_logits[candidate as usize] += rerank_scale * score;
-                    let logits = rerank_scratch.logits[..config.vocab_size].to_vec();
-                    let kv_delta = capture_kv_delta(&kv_scratch, pos);
-                    candidate_states.push(CandidateState {
-                        token_id: candidate,
-                        hidden: hidden_candidate,
-                        logits,
-                        kv_delta,
-                    });
+                    candidate_states.push(state);
                     candidate_entries.push(rocmforge::cpu::graph::CandidateBranch {
                         parent_timestamp: ctx.timestamp,
                         token_id: candidate,
@@ -359,7 +435,6 @@ pub(crate) fn run_cpu_decode_loop_with_ctx(
                             biased_logits[candidate as usize]
                         );
                     }
-                    reset_kv_to_parent(&mut kv_scratch, kv, pos);
                 }
                 let chosen = sample_next_token(
                     &biased_logits,

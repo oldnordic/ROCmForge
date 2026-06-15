@@ -94,6 +94,7 @@ pub(crate) fn run_cpu_inference(args: &Args) -> Result<(), Box<dyn std::error::E
                 value_head.as_ref(),
                 args.rerank_top_k,
                 args.rerank_scale,
+                args.rerank_beam_depth,
             )?;
             let map = GraphMap::from_context(&ctx);
             map.save(std::path::Path::new(save_dir))?;

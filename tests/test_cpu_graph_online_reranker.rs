@@ -6,8 +6,8 @@
 //! without `--value-head-path`.  It asserts the mechanical property that the
 //! reranker evaluates top-k candidates and that the biased distribution can
 //! change the generated token stream.  Latency per token is printed for both
-//! runs so the reduced N-forward-pass cost (one less forward per token after
-//! reusing the chosen candidate's state) is visible.
+//! runs so the cost of single-token reranking and deeper beam lookahead is
+//! visible.  Set `ROCMFORGE_TEST_RERANK_BEAM_DEPTH` to exercise depth > 1.
 //!
 //! Marked `#[ignore]` because it loads the 0.5B model and runs real CPU
 //! inference.
@@ -126,6 +126,11 @@ fn test_online_value_head_reranker() -> Result<(), Box<dyn std::error::Error>> {
         .to_str()
         .ok_or("capture temp dir path is not UTF-8")?;
 
+    let beam_depth: usize = std::env::var("ROCMFORGE_TEST_RERANK_BEAM_DEPTH")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+
     let rerank = run_rocmforge(&[
         "--model",
         MODEL_PATH,
@@ -142,6 +147,8 @@ fn test_online_value_head_reranker() -> Result<(), Box<dyn std::error::Error>> {
         "5",
         "--rerank-scale",
         "10.0",
+        "--rerank-beam-depth",
+        &beam_depth.to_string(),
         "--debug",
     ])?;
     let rerank_stderr = String::from_utf8_lossy(&rerank.stderr);
