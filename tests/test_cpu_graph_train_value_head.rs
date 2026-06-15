@@ -1,12 +1,14 @@
 #![cfg(feature = "cpu-graph")]
-//! Train a value head on sampled completions for the trivia dataset.
+//! Train a process reward model on trivia prefixes.
 //!
 //! This test loads the local Qwen2.5-0.5B-instruct GGUF, generates several
 //! temperature-sampled completions for each prompt in `eval/rerank_trivia.jsonl`,
 //! labels each completion by exact-match prefix against the expected answer, and
-//! trains a `BranchValueHead` on the hidden state of the last generated token.
+//! creates one training example for every prefix hidden state. The resulting
+//! `BranchValueHead` is a tiny process reward model: it scores a partial
+//! sequence by how likely it is to lead to a correct final answer.
 //!
-//! The trained head is saved to `target/trivia_value_head.bin` so the reranker
+//! The trained head is saved to `target/trivia_prm_head.bin` so the reranker
 //! eval can load it via `ROCMFORGE_TEST_VALUE_HEAD_PATH`.
 //!
 //! Marked `#[ignore]` because it loads the 0.5B model and generates many
@@ -53,12 +55,12 @@ fn generate_completion(
     tok: &BpeTokenizer,
     config: &rocmforge::config::ModelConfig,
     seed: u64,
-) -> (String, Vec<f32>) {
+) -> (String, Vec<Vec<f32>>) {
     let mut hidden = vec![0.0f32; config.hidden_size];
     let mut pos = prompt_tokens.len();
     let mut n_generated = 0usize;
     let mut generated_tokens: Vec<u32> = Vec::new();
-    let mut first_hidden: Vec<f32> = Vec::new();
+    let mut prefix_hiddens: Vec<Vec<f32>> = Vec::new();
 
     let mut next_token = cpu_sample_top_p(
         &scratch.logits[..config.vocab_size],
@@ -78,11 +80,10 @@ fn generate_completion(
         cpu_full_forward(&mut hidden, weights, kv, scratch, pos, config).ok();
         pos += 1;
 
-        if n_generated == 1 {
-            // The reranker scores candidate branches after the first generated token,
-            // so we capture the hidden state at that checkpoint for training.
-            first_hidden = scratch.normed.to_vec();
-        }
+        // Capture the hidden state after every generated token. The reranker can
+        // score any partial prefix online, so the value head should learn a
+        // process reward: is this prefix on track toward a correct answer?
+        prefix_hiddens.push(scratch.normed.to_vec());
 
         next_token = cpu_sample_top_p(
             &scratch.logits[..config.vocab_size],
@@ -92,12 +93,12 @@ fn generate_completion(
         );
     }
 
-    (tok.decode(&generated_tokens, true), first_hidden)
+    (tok.decode(&generated_tokens, true), prefix_hiddens)
 }
 
 #[ignore]
 #[test]
-fn train_value_head_on_trivia_sample() -> Result<(), Box<dyn std::error::Error>> {
+fn train_process_reward_head_on_trivia_sample() -> Result<(), Box<dyn std::error::Error>> {
     if !model_exists() {
         eprintln!(
             "Skipping value-head training: model not found at {}",
@@ -149,7 +150,7 @@ fn train_value_head_on_trivia_sample() -> Result<(), Box<dyn std::error::Error>>
             let seed = rng_seed;
             rng_seed = rng_seed.wrapping_add(1);
 
-            let (text, hidden) = generate_completion(
+            let (text, prefix_hiddens) = generate_completion(
                 &prompt_tokens,
                 &weights,
                 &mut kv,
@@ -159,19 +160,21 @@ fn train_value_head_on_trivia_sample() -> Result<(), Box<dyn std::error::Error>>
                 seed,
             );
 
-            if hidden.is_empty() {
+            if prefix_hiddens.is_empty() {
                 continue;
             }
 
             let correct = normalize(&text).starts_with(&normalize(&sample.expected_continuation));
             let score = if correct { 1.0f32 } else { 0.0f32 };
 
-            examples.push(BranchValueExample {
-                trace_id: format!("trivia-{}", idx),
-                timestamp: sample_idx as u64,
-                hidden,
-                score,
-            });
+            for (token_pos, hidden) in prefix_hiddens.into_iter().enumerate() {
+                examples.push(BranchValueExample {
+                    trace_id: format!("trivia-{}-{}", idx, sample_idx),
+                    timestamp: token_pos as u64,
+                    hidden,
+                    score,
+                });
+            }
 
             eprintln!(
                 "[prompt {} sample {}] correct={} expected={:?} generated={:.60}",
@@ -198,13 +201,16 @@ fn train_value_head_on_trivia_sample() -> Result<(), Box<dyn std::error::Error>>
     );
 
     let mut head = BranchValueHead::new(config.hidden_size);
-    head.fit(&examples, 60, 0.005, 0.1);
+    head.fit_mse(&examples, 40, 0.005);
 
     let head_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("target")
-        .join("trivia_value_head.bin");
+        .join("trivia_prm_head.bin");
     head.save(&head_path)?;
-    eprintln!("Saved trained value head to {}", head_path.display());
+    eprintln!(
+        "Saved trained process-reward head to {}",
+        head_path.display()
+    );
 
     // Quick sanity check: score distribution on training examples.
     let (mut min_score, mut max_score) = (f32::INFINITY, f32::NEG_INFINITY);

@@ -2121,3 +2121,47 @@ Ran the first real-signal experiment using the trivia dataset.
 5. **Compare head architectures**
    - Current head is a linear projection of the final hidden state.
    - Try a small MLP head, or extract hidden states from intermediate layers instead of the final layer.
+
+
+### Process Reward Model experiment (2026-06-13)
+
+Extended the training harness in `tests/test_cpu_graph_train_value_head.rs` to
+build a tiny process reward model (PRM):
+
+- For every generated completion, capture the hidden state after **each** token.
+- Label every prefix hidden state with the final correctness of the full
+  completion (rollout label).
+- Train `BranchValueHead` on these prefix examples.
+- Saved head: `target/trivia_prm_head.bin`
+- Training data: 960 prefix examples, 480 correct (50.0%).
+- Learned score range: [-0.61, 1.08].
+
+**PRM eval results**
+
+| config | first-token accuracy |
+|---|---|
+| baseline | 20.0% |
+| rerank-d1 | 20.0% |
+| rerank-d2 | 20.0% |
+| beam-w2-d1 | 20.0% |
+| beam-w2-d2 | 20.0% |
+| beam-w2-d1-lp0.5 | 20.0% |
+
+The PRM did not improve over greedy on this tiny setup. Likely reasons:
+- Prefix hidden states of a 0.5B model may not be linearly separable into
+  "on-track" vs "off-track" with only 960 examples.
+- The prefixes come from temperature-sampled rollouts, while the reranker
+  scores a fixed top-k candidate set at test time; the distributions differ.
+- A single linear head may be too weak for per-step value prediction.
+
+The first-token outcome head (`target/trivia_value_head.bin`) still gives the
+best result so far: beam width 2 reaches 30.0% vs. greedy 20.0%.
+
+### Open questions after the PRM attempt
+
+1. Does a small MLP head work better than the linear `BranchValueHead` for
+   prefix scoring?
+2. Would training the PRM on prefixes produced by the reranker's own top-k
+   candidates (instead of sampled rollouts) close the train/test distribution gap?
+3. Is the 0.5B model simply too small for meaningful per-step value estimates,
+   and should the experiment move to a larger base model?
