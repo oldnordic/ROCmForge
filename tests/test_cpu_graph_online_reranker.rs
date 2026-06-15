@@ -6,9 +6,10 @@
 //! without `--value-head-path`.  It asserts the mechanical property that the
 //! reranker evaluates top-k candidates and that the biased distribution can
 //! change the generated token stream.  Latency per token is printed for both
-//! runs so the cost of single-token reranking, beam lookahead, and multi-
-//! hypothesis beam search is visible.  Set `ROCMFORGE_TEST_RERANK_BEAM_DEPTH`
-//! and/or `ROCMFORGE_TEST_RERANK_BEAM_WIDTH` to exercise depth/width > 1.
+//! runs so the cost of single-token reranking, beam lookahead, multi-
+//! hypothesis beam search, and length-penalty tuning is visible.  Set
+//! `ROCMFORGE_TEST_RERANK_BEAM_DEPTH`, `ROCMFORGE_TEST_RERANK_BEAM_WIDTH`,
+//! and/or `ROCMFORGE_TEST_RERANK_BEAM_LENGTH_PENALTY` to exercise variants.
 //!
 //! Marked `#[ignore]` because it loads the 0.5B model and runs real CPU
 //! inference.
@@ -135,6 +136,10 @@ fn test_online_value_head_reranker() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(1);
+    let beam_length_penalty: f32 = std::env::var("ROCMFORGE_TEST_RERANK_BEAM_LENGTH_PENALTY")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1.0);
 
     let rerank = run_rocmforge(&[
         "--model",
@@ -156,6 +161,8 @@ fn test_online_value_head_reranker() -> Result<(), Box<dyn std::error::Error>> {
         &beam_depth.to_string(),
         "--rerank-beam-width",
         &beam_width.to_string(),
+        "--rerank-beam-length-penalty",
+        &beam_length_penalty.to_string(),
         "--debug",
     ])?;
     let rerank_stderr = String::from_utf8_lossy(&rerank.stderr);

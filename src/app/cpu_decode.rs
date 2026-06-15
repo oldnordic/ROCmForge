@@ -1,6 +1,9 @@
 use std::io::Write;
 use std::time::Instant;
 
+#[cfg(feature = "cpu-graph")]
+use std::collections::HashMap;
+
 use rocmforge::config::ModelConfig;
 use rocmforge::cpu::{
     cache::{CpuForwardScratch, CpuKvCache},
@@ -200,6 +203,16 @@ struct ReusableState {
     kv: CpuKvCache,
     logits: Vec<f32>,
     pos_after: usize,
+}
+
+/// Normalized beam score used for pruning and final selection.
+#[cfg(feature = "cpu-graph")]
+fn beam_normalized_score(total_score: f32, len: usize, alpha: f32) -> f32 {
+    if len == 0 {
+        f32::NEG_INFINITY
+    } else {
+        total_score / (len as f32).powf(alpha)
+    }
 }
 
 /// Evaluate a single candidate token plus a short greedy continuation.
@@ -545,6 +558,7 @@ pub(crate) fn run_cpu_decode_beam_loop_with_ctx(
     rerank_scale: f32,
     rerank_beam_depth: usize,
     rerank_beam_width: usize,
+    rerank_beam_length_penalty: f32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let initial_state = BeamState {
         hidden: vec![0.0f32; config.hidden_size],
@@ -626,11 +640,43 @@ pub(crate) fn run_cpu_decode_beam_loop_with_ctx(
             break;
         }
 
+        // Recombine hypotheses that end with the same token, keeping the best
+        // normalized score for each group.
+        let mut best_by_last: HashMap<u32, BeamExpansion> = HashMap::new();
+        for expansion in expansions {
+            let last = *expansion
+                .tokens
+                .last()
+                .expect("beam expansion must contain at least one token");
+            let score = beam_normalized_score(
+                expansion.total_score,
+                expansion.tokens.len(),
+                rerank_beam_length_penalty,
+            );
+            let keep = best_by_last
+                .get(&last)
+                .map(|existing| {
+                    score
+                        > beam_normalized_score(
+                            existing.total_score,
+                            existing.tokens.len(),
+                            rerank_beam_length_penalty,
+                        )
+                })
+                .unwrap_or(true);
+            if keep {
+                best_by_last.insert(last, expansion);
+            }
+        }
+        let mut expansions: Vec<BeamExpansion> = best_by_last.into_values().collect();
+
         expansions.sort_by(|a, b| {
-            let a_mean = a.total_score / a.tokens.len() as f32;
-            let b_mean = b.total_score / b.tokens.len() as f32;
-            b_mean
-                .partial_cmp(&a_mean)
+            let a_score =
+                beam_normalized_score(a.total_score, a.tokens.len(), rerank_beam_length_penalty);
+            let b_score =
+                beam_normalized_score(b.total_score, b.tokens.len(), rerank_beam_length_penalty);
+            b_score
+                .partial_cmp(&a_score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
@@ -692,10 +738,18 @@ pub(crate) fn run_cpu_decode_beam_loop_with_ctx(
         finished
             .into_iter()
             .max_by(|a, b| {
-                let a_mean = a.total_score / a.tokens.len() as f32;
-                let b_mean = b.total_score / b.tokens.len() as f32;
-                a_mean
-                    .partial_cmp(&b_mean)
+                let a_score = beam_normalized_score(
+                    a.total_score,
+                    a.tokens.len(),
+                    rerank_beam_length_penalty,
+                );
+                let b_score = beam_normalized_score(
+                    b.total_score,
+                    b.tokens.len(),
+                    rerank_beam_length_penalty,
+                );
+                a_score
+                    .partial_cmp(&b_score)
                     .unwrap_or(std::cmp::Ordering::Equal)
             })
             .ok_or("no finished beam hypothesis")?
@@ -703,18 +757,18 @@ pub(crate) fn run_cpu_decode_beam_loop_with_ctx(
         active
             .into_iter()
             .max_by(|a, b| {
-                let a_mean = if a.tokens.is_empty() {
-                    f32::NEG_INFINITY
-                } else {
-                    a.total_score / a.tokens.len() as f32
-                };
-                let b_mean = if b.tokens.is_empty() {
-                    f32::NEG_INFINITY
-                } else {
-                    b.total_score / b.tokens.len() as f32
-                };
-                a_mean
-                    .partial_cmp(&b_mean)
+                let a_score = beam_normalized_score(
+                    a.total_score,
+                    a.tokens.len(),
+                    rerank_beam_length_penalty,
+                );
+                let b_score = beam_normalized_score(
+                    b.total_score,
+                    b.tokens.len(),
+                    rerank_beam_length_penalty,
+                );
+                a_score
+                    .partial_cmp(&b_score)
                     .unwrap_or(std::cmp::Ordering::Equal)
             })
             .ok_or("no beam hypothesis survived")?

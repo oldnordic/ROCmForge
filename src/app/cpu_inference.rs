@@ -95,6 +95,7 @@ pub(crate) fn run_cpu_inference(args: &Args) -> Result<(), Box<dyn std::error::E
                 args.rerank_scale,
                 args.rerank_beam_depth,
                 args.rerank_beam_width,
+                args.rerank_beam_length_penalty,
             )?;
             if let Some(save_dir) = &args.graph_map_dir {
                 let map = GraphMap::from_context(&ctx);

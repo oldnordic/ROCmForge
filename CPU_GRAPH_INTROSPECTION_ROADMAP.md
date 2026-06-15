@@ -24,6 +24,7 @@
 - Step 11.5/C (reranker chosen-state reuse) committed: the chosen candidate's speculative forward state is now reused on the next decode iteration, eliminating the redundant main forward pass. Candidate scoring uses a single shared KV scratch and captures only small KV deltas, keeping memory overhead low.
 - Step 11.5/D (multi-token beam/lookahead reranking) committed: added `--rerank-beam-depth <D>` so each top-k candidate is scored over a short greedy continuation. The cumulative beam score biases the logits and is persisted in the `CandidateBranch` entries. Depth `1` preserves single-token behavior.
 - Step 11.5/E (multi-hypothesis beam search) committed: added `--rerank-beam-width <B>`. When `B > 1` the decode loop keeps `B` hypotheses alive across steps, expands each by its top-k candidates, and prunes back to the top `B` by mean cumulative beam score. The full winning sequence is printed after generation and the search tree is persisted as `CandidateBranch` entries.
+- Step 11.5/F (beam search quality improvements) committed: added `--rerank-beam-length-penalty <alpha>` for configurable length normalization and hypothesis recombination that merges expansions ending with the same token before pruning.
 
 ## Vision
 
@@ -287,6 +288,10 @@ Because `geographdb-core` already has storage primitives, traces should live the
 - The winning sequence is decoded and printed after generation rather than token-by-token.
 - On the 0.5B Qwen model, top-5 width-2 reranking costs ~7.9× baseline CPU decode time and chooses a different sequence than width-1.
 
+**Beam search quality improvements (Step 11.5/F):**
+- Added `--rerank-beam-length-penalty <alpha>` to control length normalization during pruning.  `alpha = 1.0` is the previous mean-score behavior; `alpha = 0.0` uses raw cumulative score; larger values prefer shorter sequences.
+- Added hypothesis recombination: before sorting/pruning, expansions that end with the same token are merged and only the best normalized score is kept, so the beam is not consumed by near-duplicate endings.
+
 **Hard constraint surfaced by this step:**
 - Token-level reranking still requires N speculative forward passes per token. On CPU this remains expensive; on GPU it would need hidden-state extraction from the GPU path, which is not yet implemented. The current MVP is CPU-only.
 
@@ -300,7 +305,7 @@ Because `geographdb-core` already has storage primitives, traces should live the
 
 ## Next action
 
-Steps 1–11 are now locked and verified, and Steps 11.5/B–E add candidate-branch recording, chosen-state reuse, multi-token beam lookahead, and multi-hypothesis beam search to the online reranker. The CPU-graph introspection ladder has reached a working closed loop: capture, persist, score, introspect, annotate, dataset, lightweight adapter, open-weight value head, real-session persistence, GPU decode trace capture, online value-head reranking, searchable candidate branches, state reuse, beam lookahead, and beam search.
+Steps 1–11 are now locked and verified, and Steps 11.5/B–F add candidate-branch recording, chosen-state reuse, multi-token beam lookahead, multi-hypothesis beam search, and beam-quality improvements to the online reranker. The CPU-graph introspection ladder has reached a working closed loop: capture, persist, score, introspect, annotate, dataset, lightweight adapter, open-weight value head, real-session persistence, GPU decode trace capture, online value-head reranking, searchable candidate branches, state reuse, beam lookahead, beam search, and beam-quality tuning.
 
 Recommended follow-ups (outside the current ladder):
 - Reduce `GraphMap` size by storing weight pointers/hashes instead of full weight tensors, or by referencing a separate model-manifest file.
@@ -309,4 +314,4 @@ Recommended follow-ups (outside the current ladder):
 - Bring the online reranker to the GPU path: extract hidden states from GPU decode for value-head scoring without round-tripping through CPU.
 - Convert the frozen 0.5B base into a fully differentiable graph and run real gradient steps on base weights.
 - Hide numeric scores from the branch prompt to force the value head to learn from structural state rather than read numbers.
-- Add length normalization and hypothesis recombination to the beam search for higher-quality generation.
+- Add n-gram blocking or coverage penalties to the beam search to reduce repetition.
