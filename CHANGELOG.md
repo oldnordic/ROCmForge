@@ -2069,3 +2069,55 @@ The current token-level benchmark (`eval/rerank_trivia.jsonl`) uses a synthetic 
 ### Recommended first experiment
 
 Use a small math subset (e.g., GSM8K), generate many completions per problem, extract reranker hidden states, label by exact-match final answer, train `BranchValueHead`, then re-run the existing `test_cpu_graph_reranker_eval.rs` with the trained head. This replaces the arbitrary synthetic signal with a learned quality signal.
+
+
+### Results (2026-06-13)
+
+Ran the first real-signal experiment using the trivia dataset.
+
+**Training**
+- Test: `tests/test_cpu_graph_train_value_head.rs`
+- Dataset: `eval/rerank_trivia.jsonl` (10 prompts, 4 temperature samples each)
+- Collected 40 hidden-state examples at the first generated token.
+- Labels: exact-match correctness against expected continuation.
+- Class balance: 20 correct / 20 incorrect (50.0%).
+- Trained head saved to: `target/trivia_value_head.bin`
+- Learned score range on training data: [-9.56, 5.48]
+
+**Synthetic-head baseline eval**
+- Test: `tests/test_cpu_graph_reranker_eval.rs` (no env var)
+- All configs: 20.0% first-token accuracy.
+- Confirms the reranker/beam machinery has no quality signal of its own.
+
+**Trained-head eval**
+- Command: `ROCMFORGE_TEST_VALUE_HEAD_PATH=/home/feanor/Projects/rocmforge/target/trivia_value_head.bin cargo test --release --features cpu-graph --test test_cpu_graph_reranker_eval test_reranker_token_level_accuracy -- --ignored --test-threads=1`
+- Baseline: 20.0%
+- rerank-d1 / rerank-d2: 20.0%
+- beam-w2-d1 / beam-w2-d2 / beam-w2-d1-lp0.5: 30.0%
+
+**Interpretation**
+- Beam width 2 with a trained value head improves first-token accuracy from 20% to 30% on this tiny set.
+- Single-token reranker (width 1) does not help here; the gain comes from exploring multiple candidates.
+- This is a real quality signal, not just mechanical effect.
+
+### Suggested next experiments
+
+1. **Best-of-N baseline**
+   - Generate N independent samples per prompt and pick the best by exact match.
+   - Compare beam search at the same compute budget (N forward passes).
+
+2. **Process-level supervision**
+   - Instead of scoring the whole completion, label and train on hidden states after every token.
+   - This should help the single-token reranker (`rerank-d1/d2`) and make beam pruning more reliable.
+
+3. **Ablate beam depth/width/length penalty**
+   - Sweep `rerank-beam-width` 2,4,8 and `rerank-beam-depth` 1,2,4 with the trained head.
+   - Measure where accuracy stops improving and latency starts dominating.
+
+4. **Better datasets / judges**
+   - For the 0.5B model: use more trivia/fact QA samples where it has partial competence.
+   - For harder tasks (GSM8K, code): switch to a larger base model or use a separate reward/model-as-judge to label completions.
+
+5. **Compare head architectures**
+   - Current head is a linear projection of the final hidden state.
+   - Try a small MLP head, or extract hidden states from intermediate layers instead of the final layer.
