@@ -2165,3 +2165,69 @@ best result so far: beam width 2 reaches 30.0% vs. greedy 20.0%.
    candidates (instead of sampled rollouts) close the train/test distribution gap?
 3. Is the 0.5B model simply too small for meaningful per-step value estimates,
    and should the experiment move to a larger base model?
+
+
+### CPU loader/prefill fixes (2026-06-15)
+
+Fixed two dispatch bugs that prevented non-Qwen models from running on the
+CPU path:
+
+1. **Fused-QKV detection in `src/cpu/weights/layer.rs`**
+   - The loader classified a layer as attention only if `attn_k.weight` exists.
+   - Phi-3 is a fused-QKV model (`attn_qkv.weight` only), so every layer was
+     mis-classified as shortconv and the loader tried to read
+     `shortconv.in_proj.weight`.
+   - Fix: when `config.attention_layout == FusedQkv`, also accept layers that
+     have `attn_qkv.weight`.
+   - Also load `attn_output.weight` for fused-QKV layers; the previous code
+     left it empty, causing a later GEMM panic.
+
+2. **Decode-path fallback for shortconv/MoE layers in `src/cpu/prefill.rs`**
+   - The batched prefill kernel only handles standard attention + dense FFN.
+   - LFM2.5 layers use shortconv and MoE, so prefill crashed with empty weight
+     buffers.
+   - Fix: if any layer is non-attention or has MoE weights, fall back to
+     sequential per-token prefill using the existing `cpu_full_forward` decode
+     path. This is correct but slower than the batched kernel.
+
+### Qwen2.5-7B PRM experiment (2026-06-15)
+
+Downloaded `Qwen2.5-7B-Instruct-Q4_0` (4.2 GB) and re-ran the process-reward
+experiment with the same trivia dataset.
+
+**Training**
+- Model: `Qwen2.5-7B-Instruct-Q4_0`
+- Command: `ROCMFORGE_TEST_MODEL_PATH=/home/feanor/Projects/models/qwen2.5-7b-instruct-q4_0.gguf cargo test ... train_process_reward_head_on_trivia_sample -- --ignored`
+- 960 prefix examples, 744 correct (77.5% sampling accuracy)
+- Head saved to `target/trivia_prm_7b_head.bin`
+- Learned score range: [-1.07, 0.87]
+
+**Reranker eval with 7B PRM**
+- Command: `ROCMFORGE_TEST_MODEL_PATH=... ROCMFORGE_TEST_VALUE_HEAD_PATH=target/trivia_prm_7b_head.bin cargo test ... test_reranker_token_level_accuracy -- --ignored`
+- Baseline greedy: 30.0%
+- rerank-d1 / rerank-d2: 30.0%
+- beam-w2-d1: 70.0%
+- beam-w2-d2: 60.0%
+- beam-w2-d1-lp0.5: 70.0%
+
+**Interpretation**
+- Beam width 2 with a 7B process-reward head more than doubles first-token
+  accuracy versus greedy (30% → 70%) on this tiny trivia set.
+- Single-token reranker still does not help; the gain comes from multi-hypothesis
+  beam search.
+- The PRM that failed on the 0.5B model now works on 7B, confirming that model
+  capacity is essential for meaningful per-step value estimates.
+
+### Open issues
+
+- **LFM2.5-8B** still does not run. Root cause: it stores hyperparameters such
+  as `lfm2moe.attention.head_count_kv` as GGUF arrays, but the metadata parser
+  only supports scalar numeric values (other arrays are replaced with
+  placeholders). Supporting per-layer array metadata is required before the
+  CPU path can determine the correct `num_kv_heads` for each layer.
+
+### Test env vars
+
+- `ROCMFORGE_TEST_MODEL_PATH` — override the default 0.5B model in the eval
+  and training tests.
+- `ROCMFORGE_TEST_VALUE_HEAD_PATH` — load a trained head in the reranker eval.

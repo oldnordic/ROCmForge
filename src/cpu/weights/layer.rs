@@ -96,11 +96,24 @@ impl CpuLayerWeights {
         };
 
         // ── Layer type detection ────────────────────────────────────────────────
-        // Attention layer if attn_k tensor exists; otherwise shortconv (LFM2).
-        let is_attention_layer = file
-            .tensor(&config.tensor_registry.resolve(TensorName::AttnK, layer))
+        // Attention layer if attn_k exists. For fused-QKV models (e.g. Phi-3)
+        // there is no attn_k, so we also check for attn_qkv.
+        let split_k_name = config.tensor_registry.resolve(TensorName::AttnK, layer);
+        let is_attention_layer = if file
+            .tensor(&split_k_name)
             .map_err(WeightError::Load)?
-            .is_some();
+            .is_some()
+        {
+            true
+        } else if matches!(
+            config.attention_layout,
+            crate::config::AttentionLayout::FusedQkv
+        ) {
+            let qkv_name = format!("blk.{}.attn_qkv.weight", layer);
+            file.has_tensor(&qkv_name)
+        } else {
+            false
+        };
 
         // ── Attention / Shortconv weights ─────────────────────────────────────────
         let (
@@ -129,6 +142,7 @@ impl CpuLayerWeights {
                         qkv_name
                     ))
                 })?;
+                let (ao, ao_meta) = load_weight(TensorName::AttnOutput)?;
                 (
                     vec![],
                     qkv_meta.clone(),
@@ -138,8 +152,8 @@ impl CpuLayerWeights {
                     qkv_meta.clone(),
                     Some(qkv_buf),
                     Some(qkv_meta),
-                    vec![],
-                    WeightMeta::default(),
+                    ao,
+                    ao_meta,
                     None,
                 )
             } else {
@@ -338,10 +352,23 @@ impl CpuLayerWeights {
         };
 
         // ── Layer type detection ────────────────────────────────────────────────
-        let is_attention_layer = file
-            .tensor(&config.tensor_registry.resolve(TensorName::AttnK, layer))
+        // Attention layer if attn_k exists; for fused-QKV models check attn_qkv.
+        let split_k_name = config.tensor_registry.resolve(TensorName::AttnK, layer);
+        let is_attention_layer = if file
+            .tensor(&split_k_name)
             .map_err(WeightError::Load)?
-            .is_some();
+            .is_some()
+        {
+            true
+        } else if matches!(
+            config.attention_layout,
+            crate::config::AttentionLayout::FusedQkv
+        ) {
+            let qkv_name = format!("blk.{}.attn_qkv.weight", layer);
+            file.has_tensor(&qkv_name)
+        } else {
+            false
+        };
 
         // ── Attention / Shortconv weights ───────────────────────────────────────
         let (

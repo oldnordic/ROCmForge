@@ -7,6 +7,7 @@
 //! For multi-core systems, batches are distributed across physical cores.
 
 use super::cache::{CpuForwardScratch, CpuKvCache};
+use super::forward::{cpu_embed_token, cpu_full_forward};
 use super::ops::{
     add_bias_batched, dispatch_gemm, dispatch_gemv, flash_attn_prefill, gelu_inplace, rms_norm,
     silu_fuse,
@@ -82,6 +83,37 @@ impl CpuPrefillScratch {
             qkv: vec![0.0; n * (q + 2 * kv)],
         }
     }
+}
+
+// ── Prefill fallback for exotic architectures ─────────────────────────────────
+
+/// Returns true if any layer uses shortconv or MoE, which the batched prefill
+/// kernel does not yet support.
+fn needs_decode_fallback(weights: &CpuModelWeights) -> bool {
+    weights
+        .layers
+        .iter()
+        .any(|lw| !lw.is_attention_layer || lw.moe.is_some())
+}
+
+/// Sequential, per-token prefill using the decode forward path.
+/// Correct but slower than the batched prefill kernel; used as a fallback for
+/// shortconv/MoE layers until batched implementations are added.
+fn cpu_prefill_decode_fallback(
+    tokens: &[u32],
+    weights: &CpuModelWeights,
+    kv: &mut CpuKvCache,
+    scratch: &mut CpuForwardScratch,
+    start_pos: usize,
+    config: &ModelConfig,
+) -> Result<(), CpuError> {
+    let mut hidden = vec![0.0f32; config.hidden_size];
+    for (offset, &token) in tokens.iter().enumerate() {
+        let pos = start_pos + offset;
+        cpu_embed_token(token, weights, &mut hidden, config);
+        cpu_full_forward(&mut hidden, weights, kv, scratch, pos, config)?;
+    }
+    Ok(())
 }
 
 // ── prefill_layer_forward ─────────────────────────────────────────────────────
@@ -304,6 +336,10 @@ pub fn cpu_prefill_forward(
         ));
     }
 
+    if needs_decode_fallback(weights) {
+        return cpu_prefill_decode_fallback(tokens, weights, kv, scratch, start_pos, config);
+    }
+
     let seq_len = tokens.len();
     assert!(seq_len > 0, "cpu_prefill_forward: empty token list");
     assert!(
@@ -457,6 +493,10 @@ pub fn cpu_prefill_forward_parallel(
         return Err(CpuError::InvalidOperation(
             "qwen35 hybrid attention/SSM CPU prefill is not implemented yet".to_string(),
         ));
+    }
+
+    if needs_decode_fallback(weights) {
+        return cpu_prefill_decode_fallback(tokens, weights, kv, scratch, start_pos, config);
     }
 
     let seq_len = tokens.len();

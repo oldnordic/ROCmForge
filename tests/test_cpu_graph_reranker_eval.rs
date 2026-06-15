@@ -17,8 +17,12 @@ use rocmforge::cpu::graph::BranchValueHead;
 use rocmforge::loader::ModelFile;
 use serde::Deserialize;
 
-const MODEL_PATH: &str = "/home/feanor/Projects/models/qwen2.5-0.5b-instruct-q4_0.gguf";
+const DEFAULT_MODEL_PATH: &str = "/home/feanor/Projects/models/qwen2.5-0.5b-instruct-q4_0.gguf";
 const DATASET_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/eval/rerank_trivia.jsonl");
+
+fn model_path() -> String {
+    std::env::var("ROCMFORGE_TEST_MODEL_PATH").unwrap_or_else(|_| DEFAULT_MODEL_PATH.to_string())
+}
 
 #[derive(Debug, Deserialize)]
 struct Sample {
@@ -28,7 +32,7 @@ struct Sample {
 }
 
 fn model_exists() -> bool {
-    Path::new(MODEL_PATH).exists()
+    Path::new(&model_path()).exists()
 }
 
 fn rocmforge_binary() -> PathBuf {
@@ -66,9 +70,11 @@ fn build_command() -> Command {
 
 fn run_rocmforge(prompt: &str, max_tokens: usize, extra: &[String]) -> std::io::Result<String> {
     let mut cmd = build_command();
+    let model = model_path();
+    let model_arg = model.as_str();
     cmd.args([
         "--model",
-        MODEL_PATH,
+        model_arg,
         "--prompt",
         prompt,
         "--max-tokens",
@@ -103,11 +109,15 @@ struct Config {
 #[test]
 fn test_reranker_token_level_accuracy() -> Result<(), Box<dyn std::error::Error>> {
     if !model_exists() {
-        eprintln!("Skipping reranker eval: model not found at {}", MODEL_PATH);
+        eprintln!(
+            "Skipping reranker eval: model not found at {}",
+            model_path()
+        );
         return Ok(());
     }
 
-    let file = ModelFile::open(MODEL_PATH)?;
+    let model_path = model_path();
+    let file = ModelFile::open(&model_path)?;
     let config = file.config()?;
     let hidden_size = config.hidden_size;
 
@@ -270,8 +280,14 @@ fn test_reranker_token_level_accuracy() -> Result<(), Box<dyn std::error::Error>
 
     let report_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("eval/reranker_eval_1.md");
     let mut report = String::new();
+    let model_desc = std::path::Path::new(&model_path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown model")
+        .to_string();
+
     report.push_str("# Reranker Token-Level Accuracy Evaluation (Option 1)\n\n");
-    report.push_str("Model: Qwen2.5-0.5B-Instruct (Q4_0)\n\n");
+    report.push_str(&format!("Model: {}\n\n", model_desc));
     report.push_str(&format!("Value head: {}\n\n", head_desc));
     report.push_str("Dataset: `eval/rerank_trivia.jsonl`\n\n");
     report.push_str("## Summary\n\n");

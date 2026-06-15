@@ -25,8 +25,12 @@ use rocmforge::loader::ModelFile;
 use rocmforge::tokenizer::BpeTokenizer;
 use serde::Deserialize;
 
-const MODEL_PATH: &str = "/home/feanor/Projects/models/qwen2.5-0.5b-instruct-q4_0.gguf";
+const DEFAULT_MODEL_PATH: &str = "/home/feanor/Projects/models/qwen2.5-0.5b-instruct-q4_0.gguf";
 const DATASET_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/eval/rerank_trivia.jsonl");
+
+fn model_path() -> String {
+    std::env::var("ROCMFORGE_TEST_MODEL_PATH").unwrap_or_else(|_| DEFAULT_MODEL_PATH.to_string())
+}
 
 const SAMPLES_PER_PROMPT: usize = 4;
 const MAX_TOKENS_PER_COMPLETION: usize = 24;
@@ -40,7 +44,7 @@ struct TriviaSample {
 }
 
 fn model_exists() -> bool {
-    std::path::Path::new(MODEL_PATH).exists()
+    std::path::Path::new(&model_path()).exists()
 }
 
 fn normalize(s: &str) -> String {
@@ -102,12 +106,13 @@ fn train_process_reward_head_on_trivia_sample() -> Result<(), Box<dyn std::error
     if !model_exists() {
         eprintln!(
             "Skipping value-head training: model not found at {}",
-            MODEL_PATH
+            model_path()
         );
         return Ok(());
     }
 
-    let file = ModelFile::open(MODEL_PATH)?;
+    let model_path = model_path();
+    let file = ModelFile::open(&model_path)?;
     let config = file.config()?;
     let tok = file.tokenizer();
     let weights = file.load_cpu_weights(&config)?;
