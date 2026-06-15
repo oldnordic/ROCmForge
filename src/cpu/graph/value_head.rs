@@ -172,3 +172,118 @@ fn normalize(hidden: &[f32], mean: &[f32], std: &[f32]) -> Vec<f32> {
 fn dot(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b.iter()).map(|(&x, &y)| x * y).sum()
 }
+
+/// A single multi-class training example: hidden-state representation of a
+/// full multi-branch prompt plus the index of the best branch.
+#[derive(Debug, Clone)]
+pub struct BranchChoiceExample {
+    pub hidden: Vec<f32>,
+    pub label: usize,
+}
+
+/// Linear multi-class choice head trained with SGD on a softmax cross-entropy
+/// approximation.
+///
+/// This is useful when the model's final hidden state after a multi-branch
+/// prompt encodes enough information to discriminate the best branch, but the
+/// raw output tokens are hard to align.
+#[derive(Debug, Clone)]
+pub struct BranchChoiceHead {
+    weights: Vec<Vec<f32>>,
+    biases: Vec<f32>,
+    mean: Vec<f32>,
+    std: Vec<f32>,
+}
+
+impl BranchChoiceHead {
+    pub fn new(hidden_size: usize, n_labels: usize) -> Self {
+        Self {
+            weights: vec![vec![0.0f32; hidden_size]; n_labels],
+            biases: vec![0.0f32; n_labels],
+            mean: vec![0.0f32; hidden_size],
+            std: vec![1.0f32; hidden_size],
+        }
+    }
+
+    pub fn n_labels(&self) -> usize {
+        self.weights.len()
+    }
+
+    pub fn predict(&self, hidden: &[f32]) -> usize {
+        self.logits(hidden)
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(idx, _)| idx)
+            .unwrap_or(0)
+    }
+
+    fn logits(&self, hidden: &[f32]) -> Vec<f32> {
+        if hidden.len() != self.mean.len() {
+            return self.biases.clone();
+        }
+        self.weights
+            .iter()
+            .zip(self.biases.iter())
+            .map(|(w, &b)| b + dot(w, &normalize(hidden, &self.mean, &self.std)))
+            .collect()
+    }
+
+    pub fn fit(&mut self, examples: &[BranchChoiceExample], epochs: usize, lr: f32) {
+        if examples.is_empty() || self.weights.is_empty() || self.weights[0].is_empty() {
+            return;
+        }
+        self.compute_statistics(examples);
+
+        let n_labels = self.weights.len();
+        let hidden_size = self.weights[0].len();
+
+        for _ in 0..epochs {
+            for ex in examples {
+                let x = normalize(&ex.hidden, &self.mean, &self.std);
+                let z: Vec<f32> = self
+                    .weights
+                    .iter()
+                    .zip(self.biases.iter())
+                    .map(|(w, &b)| b + dot(w, &x))
+                    .collect();
+                let max_z = z.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                let exp: Vec<f32> = z.iter().map(|&v| (v - max_z).exp()).collect();
+                let sum_exp = exp.iter().sum::<f32>();
+                let probs: Vec<f32> = exp.iter().map(|&e| e / sum_exp).collect();
+
+                for (k, &prob) in probs.iter().enumerate().take(n_labels) {
+                    let grad = prob - if k == ex.label { 1.0f32 } else { 0.0f32 };
+                    for (i, &xi) in x.iter().enumerate().take(hidden_size) {
+                        self.weights[k][i] -= lr * grad * xi;
+                    }
+                    self.biases[k] -= lr * grad;
+                }
+            }
+        }
+    }
+
+    fn compute_statistics(&mut self, examples: &[BranchChoiceExample]) {
+        let hidden_size = self.mean.len();
+        self.mean.fill(0.0f32);
+        self.std.fill(0.0f32);
+        for ex in examples {
+            for (i, &x) in ex.hidden.iter().enumerate().take(hidden_size) {
+                self.mean[i] += x;
+            }
+        }
+        let n = examples.len() as f32;
+        for m in &mut self.mean {
+            *m /= n;
+        }
+        for ex in examples {
+            for (i, &x) in ex.hidden.iter().enumerate().take(hidden_size) {
+                let diff = x - self.mean[i];
+                self.std[i] += diff * diff;
+            }
+        }
+        for s in &mut self.std {
+            *s = (*s / n).sqrt().max(1e-6f32);
+        }
+    }
+}

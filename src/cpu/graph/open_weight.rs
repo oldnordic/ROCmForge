@@ -38,7 +38,18 @@ pub fn extract_hidden_state(
     prompt: &str,
     max_seq_len: usize,
 ) -> Result<Vec<f32>, CpuError> {
-    let tokens = tokenizer.encode(prompt, true);
+    extract_hidden_state_with_special(weights, config, tokenizer, prompt, max_seq_len, true)
+}
+
+pub fn extract_hidden_state_with_special(
+    weights: &CpuModelWeights,
+    config: &ModelConfig,
+    tokenizer: &BpeTokenizer,
+    prompt: &str,
+    max_seq_len: usize,
+    add_special: bool,
+) -> Result<Vec<f32>, CpuError> {
+    let tokens = tokenizer.encode(prompt, add_special);
     if tokens.is_empty() {
         return Err(CpuError::InvalidOperation(
             "extract_hidden_state: empty tokenization".to_string(),

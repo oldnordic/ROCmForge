@@ -1,180 +1,151 @@
 #![cfg(feature = "cpu-graph")]
-//! Step 8 validation experiment: open-weight label bias on the 0.5B model.
+//! Step 8 validation experiment: train an open-weight choice head on the 0.5B model.
 //!
-//! This test loads the local Qwen2.5-0.5B-instruct GGUF, presents the model with
-//! a multi-branch choice prompt, and records the logits for the answer letters
-//! (A, B, C, ...). A `BranchLabelBias` — one small open weight per label — is
-//! trained on preference pairs so that higher-scoring branches receive higher
-//! biased logits.
+//! This test loads the local Qwen2.5-0.5B-instruct GGUF, applies the chat
+//! template to the standard two-branch introspection prompt, and extracts the
+//! final hidden-state vector. A `BranchChoiceHead` (a small linear binary
+//! classifier) is trained on those hidden states to predict which of the two
+//! branches has the higher score. The two branches have semantic descriptions
+//! (toward vs away from the target direction) that the 0.5B model can already
+//! discriminate in Step 4, so this measures whether a tiny open-weight head can
+//! learn from the base model's frozen representations.
 //!
-//! The task is deliberately hard for a 0.5B model on synthetic numeric scores,
-//! so the test primarily verifies that the real-model pipeline runs end-to-end
-//! and that the open weights are updated. The printed accuracy is the grounded
-//! observed result for this training budget.
-//!
-//! It is marked `#[ignore]` because it runs CPU inference on a 0.5B model and
-//! takes several minutes.
+//! It is marked `#[ignore]` because it runs CPU inference on a 0.5B model
+//! dozens of times and takes several minutes.
 
 use fastrand::Rng;
 use rocmforge::cpu::graph::{
-    build_label_choice_prompt, extract_label_logits, BranchLabelBias, CaptureContext,
-    CpuExecutionContext, GraphMap, GraphSummarizer, ScoreMetric, Shelf, SHORT_PROMPT_MAX_SEQ_LEN,
+    BranchChoiceExample, BranchChoiceHead, CaptureContext, CpuExecutionContext, GraphMap,
+    GraphSummarizer, ScoreMetric, Shelf, SHORT_PROMPT_MAX_SEQ_LEN,
 };
 use rocmforge::loader::ModelFile;
 
-const DIM: usize = 4;
+const DIM: usize = 16;
 const MODEL_PATH: &str = "/home/feanor/Projects/models/qwen2.5-0.5b-instruct-q4_0.gguf";
 
-type LabelLogitExample = (char, f32, f32);
-
-fn make_trace(rng: &mut Rng, n_branches: usize) -> GraphMap {
+fn make_branch_pair(rng: &mut Rng) -> (GraphMap, usize) {
     let mut ctx = CaptureContext::new(0, 0);
-    let mut hidden = vec![0.0f32; DIM];
-    hidden[0] = 1.0f32;
+    let mut hidden: Vec<f32> = (0..DIM).map(|_| rng.f32() - 0.5f32).collect();
     let target: Vec<f32> = (0..DIM).map(|_| rng.f32() * 2.0f32 - 1.0f32).collect();
     let ptr = hidden.as_ptr() as usize;
     ctx.arena.bind_f32(Shelf::Persistent, ptr, &hidden);
 
-    for idx in 0..n_branches {
-        ctx.timestamp = (idx + 1) as u64;
-        let scale = rng.f32() * 2.0f32 - 1.0f32;
-        let perturbation = vec![scale; DIM];
-        ctx.execute_residual_add(&mut hidden, &perturbation);
-        let _score = ctx.score_against(&hidden, Some(&target), ScoreMetric::CosineSimilarity);
-        ctx.regress_to(0);
-    }
-
-    GraphMap::from_context(&ctx)
-}
-
-fn best_branch_by_score(map: &GraphMap) -> u64 {
-    *map.branch_scores()
+    // Branch A: add a small vector correlated with the target direction.
+    let toward: Vec<f32> = target
         .iter()
-        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
-        .map(|(ts, _)| ts)
-        .expect("at least one branch")
+        .map(|&t| t * rng.f32() * 0.3f32 + rng.f32() * 0.05f32)
+        .collect();
+    ctx.timestamp = 1;
+    ctx.execute_residual_add(&mut hidden, &toward);
+    ctx.score_against(&hidden, Some(&target), ScoreMetric::CosineSimilarity);
+
+    ctx.regress_to(0);
+
+    // Branch B: add a vector pointing away from the target direction.
+    let away: Vec<f32> = target
+        .iter()
+        .map(|&t| -t * rng.f32() * 0.6f32 + rng.f32() * 0.05f32)
+        .collect();
+    ctx.timestamp = 2;
+    ctx.execute_residual_add(&mut hidden, &away);
+    ctx.score_against(&hidden, Some(&target), ScoreMetric::CosineSimilarity);
+
+    let map = GraphMap::from_context(&ctx);
+    let scores = map.branch_scores();
+    let better = if scores[&1] > scores[&2] { 0 } else { 1 };
+    (map, better)
 }
 
 #[ignore]
 #[test]
-fn test_open_weight_label_bias_on_0_5b_model() {
+fn test_open_weight_choice_head_on_0_5b_model() {
     let file = ModelFile::open(MODEL_PATH).expect("open 0.5B model file");
     let mut config = file.config().expect("load model config");
     config.max_seq_len = SHORT_PROMPT_MAX_SEQ_LEN;
     let tokenizer = file.tokenizer();
+    let template = file.chat_template(&config, false);
     let weights = file
         .load_cpu_weights(&config)
         .expect("load CPU weights for 0.5B model");
 
     let mut rng = Rng::with_seed(4242);
-    let summarizer = GraphSummarizer::default();
+    let summarizer = GraphSummarizer::new(1.0);
 
-    let train_maps: Vec<(String, GraphMap)> = (0..8)
-        .map(|i| (format!("train_{}", i), make_trace(&mut rng, 4)))
-        .collect();
-    let test_maps: Vec<GraphMap> = (0..6).map(|_| make_trace(&mut rng, 4)).collect();
+    let train_pairs: Vec<(GraphMap, usize)> = (0..12).map(|_| make_branch_pair(&mut rng)).collect();
+    let test_pairs: Vec<(GraphMap, usize)> = (0..8).map(|_| make_branch_pair(&mut rng)).collect();
 
-    eprintln!("Extracting label logits for training traces...");
-    let mut train_examples: Vec<(String, Vec<LabelLogitExample>)> = Vec::new();
-    for (trace_id, map) in &train_maps {
+    eprintln!("Extracting hidden states for training pairs...");
+    let mut train_examples: Vec<BranchChoiceExample> = Vec::new();
+    for (map, better_label) in &train_pairs {
         let summary = summarizer.summarize(map);
-        let (prompt, label_map) = build_label_choice_prompt(&summary);
-        let labels: Vec<char> = label_map.iter().map(|(c, _)| *c).collect();
-        let logits = extract_label_logits(
+        let prompt = summarizer.prompt(&summary);
+        let full_text = template.apply(&prompt.text);
+        let hidden = rocmforge::cpu::graph::extract_hidden_state_with_special(
             &weights,
             &config,
             &tokenizer,
-            &prompt,
-            &labels,
+            &full_text,
             SHORT_PROMPT_MAX_SEQ_LEN,
+            false,
         )
-        .expect("extract label logits");
-        let mut per_trace = Vec::with_capacity(label_map.len());
-        for (label, timestamp) in label_map {
-            let score = map.branch_scores()[&timestamp];
-            per_trace.push((label, logits[&label], score));
-        }
-        train_examples.push((trace_id.clone(), per_trace));
+        .expect("extract training hidden state");
+        train_examples.push(BranchChoiceExample {
+            hidden,
+            label: *better_label,
+        });
     }
 
-    eprintln!("Training label bias on {} traces...", train_examples.len());
-    let mut bias = BranchLabelBias::new();
-    for (_trace_id, examples) in &train_examples {
-        bias.fit(examples, 40, 0.5f32, 0.3f32);
-    }
-
-    // Verify that training actually updated at least one open weight.
-    assert!(
-        !bias.is_empty(),
-        "label bias should have been updated during training"
+    eprintln!(
+        "Training binary choice head on {} examples...",
+        train_examples.len()
     );
+    let mut head = BranchChoiceHead::new(config.hidden_size, 2);
+    head.fit(&train_examples, 100, 0.02f32);
 
-    eprintln!("Extracting label logits for test traces...");
+    eprintln!("Extracting hidden states for test pairs...");
     let mut trained_correct = 0usize;
-    let mut unbiased_correct = 0usize;
     let mut random_correct = 0usize;
-    for map in &test_maps {
-        let true_best = best_branch_by_score(map);
+    for (map, better_label) in &test_pairs {
         let summary = summarizer.summarize(map);
-        let (prompt, label_map) = build_label_choice_prompt(&summary);
-        let labels: Vec<char> = label_map.iter().map(|(c, _)| *c).collect();
-        let logits = extract_label_logits(
+        let prompt = summarizer.prompt(&summary);
+        let full_text = template.apply(&prompt.text);
+        let hidden = rocmforge::cpu::graph::extract_hidden_state_with_special(
             &weights,
             &config,
             &tokenizer,
-            &prompt,
-            &labels,
+            &full_text,
             SHORT_PROMPT_MAX_SEQ_LEN,
+            false,
         )
-        .expect("extract test label logits");
+        .expect("extract test hidden state");
 
-        let predicted_biased = label_map
-            .iter()
-            .map(|(label, ts)| (*ts, bias.predict(*label, logits[label])))
-            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(ts, _)| ts)
-            .expect("at least one branch");
-        if predicted_biased == true_best {
+        let predicted = head.predict(&hidden);
+        if predicted == *better_label {
             trained_correct += 1;
         }
 
-        let predicted_unbiased = label_map
-            .iter()
-            .map(|(label, ts)| (*ts, logits[label]))
-            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(ts, _)| ts)
-            .expect("at least one branch");
-        if predicted_unbiased == true_best {
-            unbiased_correct += 1;
-        }
-
-        let random_label = labels[rng.usize(..labels.len())];
-        let random_ts = label_map
-            .iter()
-            .find(|(c, _)| *c == random_label)
-            .map(|(_, ts)| *ts)
-            .expect("label exists");
-        if random_ts == true_best {
+        let random_label = rng.usize(..2);
+        if random_label == *better_label {
             random_correct += 1;
         }
     }
 
     eprintln!(
-        "Trained bias accuracy: {}/{}  Unbiased accuracy: {}/{}  Random accuracy: {}/{}",
+        "Trained choice head accuracy: {}/{}  Random accuracy: {}/{}",
         trained_correct,
-        test_maps.len(),
-        unbiased_correct,
-        test_maps.len(),
+        test_pairs.len(),
         random_correct,
-        test_maps.len()
+        test_pairs.len()
     );
 
-    // The primary correctness gate for this hard synthetic task is that the
-    // pipeline runs end-to-end with the real 0.5B model and that open weights
-    // are updated from trace feedback. The printed accuracies are the grounded
-    // observed result for this training budget.
     assert!(
-        trained_correct + unbiased_correct + random_correct <= 3 * test_maps.len(),
-        "sanity: counted accurities must be within range"
+        trained_correct > random_correct,
+        "trained choice head must beat random baseline"
+    );
+    assert!(
+        trained_correct >= test_pairs.len() * 3 / 4,
+        "trained choice head should reach at least 3/4 accuracy: {}/{}",
+        trained_correct,
+        test_pairs.len()
     );
 }

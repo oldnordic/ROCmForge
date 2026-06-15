@@ -44,14 +44,15 @@ pub use dataset::{
 pub use adapter::BranchAdapter;
 
 #[cfg(feature = "cpu-graph")]
-pub use value_head::{BranchValueExample, BranchValueHead};
+pub use value_head::{BranchChoiceExample, BranchChoiceHead, BranchValueExample, BranchValueHead};
 
 #[cfg(feature = "cpu-graph")]
 pub use open_weight::{
     build_branch_prompt, build_label_choice_prompt, build_yes_no_prompt,
     collect_branch_hidden_states, collect_branch_logit_examples, extract_answer_logit_sum,
-    extract_hidden_state, extract_label_logits, find_answer_token_ids, BranchLabelBias,
-    BranchLogitExample, BranchLogitScorer, SHORT_PROMPT_MAX_SEQ_LEN,
+    extract_hidden_state, extract_hidden_state_with_special, extract_label_logits,
+    find_answer_token_ids, BranchLabelBias, BranchLogitExample, BranchLogitScorer,
+    SHORT_PROMPT_MAX_SEQ_LEN,
 };
 
 /// Logical shelf where an arena handle lives.
