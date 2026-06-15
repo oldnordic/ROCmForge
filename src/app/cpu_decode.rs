@@ -495,6 +495,249 @@ pub(crate) fn run_cpu_decode_loop_with_ctx(
     Ok(())
 }
 
+#[cfg(feature = "cpu-graph")]
+struct BeamState {
+    hidden: Vec<f32>,
+    kv: CpuKvCache,
+    logits: Vec<f32>,
+    pos_after: usize,
+}
+
+#[cfg(feature = "cpu-graph")]
+struct BeamHypothesis {
+    tokens: Vec<u32>,
+    total_score: f32,
+    state: BeamState,
+}
+
+#[cfg(feature = "cpu-graph")]
+struct BeamExpansion {
+    tokens: Vec<u32>,
+    total_score: f32,
+    candidate_state: CandidateState,
+    pos_after: usize,
+    parent_idx: usize,
+    entry_index: usize,
+    is_eos: bool,
+}
+
+/// Run a value-head beam search that keeps `beam_width` hypotheses alive.
+///
+/// Each active hypothesis is expanded by its top-k next tokens.  Every
+/// expansion is scored over a short greedy continuation (`rerank_beam_depth`)
+/// and the top `beam_width` expansions survive to the next step.
+#[cfg(feature = "cpu-graph")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "CLI orchestration passes through many params"
+)]
+pub(crate) fn run_cpu_decode_beam_loop_with_ctx(
+    args: &Args,
+    config: &ModelConfig,
+    tok: &BpeTokenizer,
+    weights: &CpuModelWeights,
+    kv: &CpuKvCache,
+    scratch: &CpuForwardScratch,
+    n_prompt: usize,
+    ctx: &mut CaptureContext,
+    value_head: &BranchValueHead,
+    rerank_top_k: usize,
+    rerank_scale: f32,
+    rerank_beam_depth: usize,
+    rerank_beam_width: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let initial_state = BeamState {
+        hidden: vec![0.0f32; config.hidden_size],
+        kv: kv.clone(),
+        logits: scratch.logits[..config.vocab_size].to_vec(),
+        pos_after: n_prompt,
+    };
+    let mut active: Vec<BeamHypothesis> = vec![BeamHypothesis {
+        tokens: Vec::new(),
+        total_score: 0.0f32,
+        state: initial_state,
+    }];
+    let mut finished: Vec<BeamHypothesis> = Vec::new();
+
+    let t_gen = Instant::now();
+    let mut rerank_scratch = CpuForwardScratch::new(config);
+
+    for step in 1..=args.max_tokens {
+        let mut expansions: Vec<BeamExpansion> = Vec::with_capacity(active.len() * rerank_top_k);
+        let mut candidate_entries: Vec<rocmforge::cpu::graph::CandidateBranch> = Vec::new();
+
+        for (parent_idx, parent) in active.iter().enumerate() {
+            let candidates =
+                top_k_token_ids(&parent.state.logits[..config.vocab_size], rerank_top_k);
+            if candidates.is_empty() || parent.state.pos_after >= parent.state.kv.max_seq_len {
+                continue;
+            }
+
+            let mut kv_scratch = parent.state.kv.clone();
+            for &candidate in &candidates {
+                let Some((beam_score, candidate_state)) = evaluate_candidate_beam(
+                    candidate,
+                    &parent.state.hidden,
+                    &parent.state.kv,
+                    &mut kv_scratch,
+                    &mut rerank_scratch,
+                    tok,
+                    weights,
+                    config,
+                    parent.state.pos_after,
+                    value_head,
+                    rerank_beam_depth,
+                ) else {
+                    continue;
+                };
+
+                let original_logit = parent.state.logits[candidate as usize];
+                let biased_logit = original_logit + rerank_scale * beam_score;
+                if args.debug {
+                    eprintln!(
+                        "[Rerank] step={} candidate={} value_score={:.4} logit_before={:.4} logit_after={:.4}",
+                        step, candidate, beam_score, original_logit, biased_logit
+                    );
+                }
+                let entry_index = candidate_entries.len();
+                candidate_entries.push(rocmforge::cpu::graph::CandidateBranch {
+                    parent_timestamp: step as u64,
+                    token_id: candidate,
+                    value_score: beam_score,
+                    biased_logit,
+                    chosen: false,
+                });
+
+                let mut tokens = parent.tokens.clone();
+                tokens.push(candidate);
+                expansions.push(BeamExpansion {
+                    tokens,
+                    total_score: parent.total_score + beam_score,
+                    candidate_state,
+                    pos_after: parent.state.pos_after + 1,
+                    parent_idx,
+                    entry_index,
+                    is_eos: tok.is_eog(candidate),
+                });
+            }
+        }
+
+        if expansions.is_empty() {
+            break;
+        }
+
+        expansions.sort_by(|a, b| {
+            let a_mean = a.total_score / a.tokens.len() as f32;
+            let b_mean = b.total_score / b.tokens.len() as f32;
+            b_mean
+                .partial_cmp(&a_mean)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let survivors: Vec<BeamExpansion> =
+            expansions.into_iter().take(rerank_beam_width).collect();
+
+        for survivor in &survivors {
+            if let Some(entry) = candidate_entries.get_mut(survivor.entry_index) {
+                entry.chosen = true;
+            }
+        }
+        ctx.candidate_branches.extend(candidate_entries);
+
+        let mut next_active: Vec<BeamHypothesis> = Vec::with_capacity(rerank_beam_width);
+        for survivor in survivors {
+            if survivor.is_eos {
+                finished.push(BeamHypothesis {
+                    tokens: survivor.tokens,
+                    total_score: survivor.total_score,
+                    state: BeamState {
+                        hidden: survivor.candidate_state.hidden,
+                        kv: {
+                            let mut kv = active[survivor.parent_idx].state.kv.clone();
+                            apply_kv_delta(
+                                &mut kv,
+                                &survivor.candidate_state.kv_delta,
+                                active[survivor.parent_idx].state.pos_after,
+                            );
+                            kv
+                        },
+                        logits: survivor.candidate_state.logits,
+                        pos_after: survivor.pos_after,
+                    },
+                });
+                continue;
+            }
+
+            let mut kv = active[survivor.parent_idx].state.kv.clone();
+            apply_kv_delta(
+                &mut kv,
+                &survivor.candidate_state.kv_delta,
+                active[survivor.parent_idx].state.pos_after,
+            );
+            next_active.push(BeamHypothesis {
+                tokens: survivor.tokens,
+                total_score: survivor.total_score,
+                state: BeamState {
+                    hidden: survivor.candidate_state.hidden,
+                    kv,
+                    logits: survivor.candidate_state.logits,
+                    pos_after: survivor.pos_after,
+                },
+            });
+        }
+        active = next_active;
+    }
+
+    let best = if !finished.is_empty() {
+        finished
+            .into_iter()
+            .max_by(|a, b| {
+                let a_mean = a.total_score / a.tokens.len() as f32;
+                let b_mean = b.total_score / b.tokens.len() as f32;
+                a_mean
+                    .partial_cmp(&b_mean)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .ok_or("no finished beam hypothesis")?
+    } else {
+        active
+            .into_iter()
+            .max_by(|a, b| {
+                let a_mean = if a.tokens.is_empty() {
+                    f32::NEG_INFINITY
+                } else {
+                    a.total_score / a.tokens.len() as f32
+                };
+                let b_mean = if b.tokens.is_empty() {
+                    f32::NEG_INFINITY
+                } else {
+                    b.total_score / b.tokens.len() as f32
+                };
+                a_mean
+                    .partial_cmp(&b_mean)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .ok_or("no beam hypothesis survived")?
+    };
+
+    print!("\n");
+    for &token in &best.tokens {
+        let text = tok.decode_token(token);
+        print!("{}", text);
+    }
+    std::io::stdout().flush().ok();
+    println!();
+
+    if !best.tokens.is_empty() {
+        let gen_ms = t_gen.elapsed().as_secs_f64() * 1000.0;
+        print_generation_stats(best.tokens.len(), gen_ms);
+    } else {
+        print_eos_stats();
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::sample_next_token;

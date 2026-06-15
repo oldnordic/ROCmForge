@@ -23,6 +23,7 @@
 - Step 11.5/B (speculative candidate branch recording) committed: every top-k candidate evaluated by the online reranker is now persisted as a `CandidateBranch` inside the `GraphMap` sidecar, including parent timestamp, token id, value score, biased logit, and a chosen flag. The sidecar section is optional and backward-compatible.
 - Step 11.5/C (reranker chosen-state reuse) committed: the chosen candidate's speculative forward state is now reused on the next decode iteration, eliminating the redundant main forward pass. Candidate scoring uses a single shared KV scratch and captures only small KV deltas, keeping memory overhead low.
 - Step 11.5/D (multi-token beam/lookahead reranking) committed: added `--rerank-beam-depth <D>` so each top-k candidate is scored over a short greedy continuation. The cumulative beam score biases the logits and is persisted in the `CandidateBranch` entries. Depth `1` preserves single-token behavior.
+- Step 11.5/E (multi-hypothesis beam search) committed: added `--rerank-beam-width <B>`. When `B > 1` the decode loop keeps `B` hypotheses alive across steps, expands each by its top-k candidates, and prunes back to the top `B` by mean cumulative beam score. The full winning sequence is printed after generation and the search tree is persisted as `CandidateBranch` entries.
 
 ## Vision
 
@@ -279,6 +280,13 @@ Because `geographdb-core` already has storage primitives, traces should live the
 - The first-token state is still captured for chosen-state reuse, so the optimization from Step 11.5/C still applies to the first speculative step.
 - On the 0.5B Qwen model, top-5 depth-2 reranking costs ~7.1× baseline CPU decode time and produces a different trajectory than depth-1.
 
+**Multi-hypothesis beam search (Step 11.5/E):**
+- Added `--rerank-beam-width <B>` to the CLI.  Width `1` preserves the single-hypothesis reranker; width `B>1` keeps `B` partial hypotheses alive across decode steps.
+- Each active hypothesis is expanded by its top-k next tokens, each expansion is scored with the beam depth, and the top `B` expansions by mean cumulative score survive to the next step.
+- Every evaluated expansion is recorded as a `CandidateBranch` with `chosen = true` for survivors.
+- The winning sequence is decoded and printed after generation rather than token-by-token.
+- On the 0.5B Qwen model, top-5 width-2 reranking costs ~7.9× baseline CPU decode time and chooses a different sequence than width-1.
+
 **Hard constraint surfaced by this step:**
 - Token-level reranking still requires N speculative forward passes per token. On CPU this remains expensive; on GPU it would need hidden-state extraction from the GPU path, which is not yet implemented. The current MVP is CPU-only.
 
@@ -292,7 +300,7 @@ Because `geographdb-core` already has storage primitives, traces should live the
 
 ## Next action
 
-Steps 1–11 are now locked and verified, and Steps 11.5/B–D add candidate-branch recording, chosen-state reuse, and multi-token beam lookahead to the online reranker. The CPU-graph introspection ladder has reached a working closed loop: capture, persist, score, introspect, annotate, dataset, lightweight adapter, open-weight value head, real-session persistence, GPU decode trace capture, online value-head reranking, searchable candidate branches, state reuse, and short beam lookahead.
+Steps 1–11 are now locked and verified, and Steps 11.5/B–E add candidate-branch recording, chosen-state reuse, multi-token beam lookahead, and multi-hypothesis beam search to the online reranker. The CPU-graph introspection ladder has reached a working closed loop: capture, persist, score, introspect, annotate, dataset, lightweight adapter, open-weight value head, real-session persistence, GPU decode trace capture, online value-head reranking, searchable candidate branches, state reuse, beam lookahead, and beam search.
 
 Recommended follow-ups (outside the current ladder):
 - Reduce `GraphMap` size by storing weight pointers/hashes instead of full weight tensors, or by referencing a separate model-manifest file.
@@ -301,4 +309,4 @@ Recommended follow-ups (outside the current ladder):
 - Bring the online reranker to the GPU path: extract hidden states from GPU decode for value-head scoring without round-tripping through CPU.
 - Convert the frozen 0.5B base into a fully differentiable graph and run real gradient steps on base weights.
 - Hide numeric scores from the branch prompt to force the value head to learn from structural state rather than read numbers.
-- Widen the beam to keep multiple candidates alive across steps instead of collapsing to one per token.
+- Add length normalization and hypothesis recombination to the beam search for higher-quality generation.

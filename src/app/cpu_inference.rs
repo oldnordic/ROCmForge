@@ -5,7 +5,7 @@ use super::cpu_runtime::prepare_cpu_runtime;
 use super::cpu_setup::prepare_cpu_inference_state;
 
 #[cfg(feature = "cpu-graph")]
-use super::cpu_decode::run_cpu_decode_loop_with_ctx;
+use super::cpu_decode::{run_cpu_decode_beam_loop_with_ctx, run_cpu_decode_loop_with_ctx};
 
 #[cfg(feature = "cpu-graph")]
 use rocmforge::cpu::graph::{BranchValueHead, CaptureContext, GraphMap, ScoreMetric};
@@ -77,7 +77,32 @@ pub(crate) fn run_cpu_inference(args: &Args) -> Result<(), Box<dyn std::error::E
 
     #[cfg(feature = "cpu-graph")]
     {
-        if let Some(save_dir) = &args.graph_map_dir {
+        if value_head.is_some() && args.rerank_beam_width > 1 {
+            let mut ctx = CaptureContext::new(0, 0);
+            run_cpu_decode_beam_loop_with_ctx(
+                args,
+                &config,
+                &tok,
+                &weights,
+                &kv,
+                &scratch,
+                n_prompt,
+                &mut ctx,
+                value_head
+                    .as_ref()
+                    .expect("beam width > 1 requires value head"),
+                args.rerank_top_k,
+                args.rerank_scale,
+                args.rerank_beam_depth,
+                args.rerank_beam_width,
+            )?;
+            if let Some(save_dir) = &args.graph_map_dir {
+                let map = GraphMap::from_context(&ctx);
+                map.save(std::path::Path::new(save_dir))?;
+                eprintln!("Saved GraphMap to {}", save_dir);
+                eprintln!("  branches: {}", map.branch_scores().len());
+            }
+        } else if let Some(save_dir) = &args.graph_map_dir {
             let score_metric = ScoreMetric::from_name(&args.graph_score_metric);
             let mut ctx = CaptureContext::new(0, 0);
             run_cpu_decode_loop_with_ctx(
