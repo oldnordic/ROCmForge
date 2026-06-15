@@ -111,12 +111,30 @@ fn test_reranker_token_level_accuracy() -> Result<(), Box<dyn std::error::Error>
     let config = file.config()?;
     let hidden_size = config.hidden_size;
 
-    let mut head = BranchValueHead::new(hidden_size);
-    head.set_weight(0, 1.0f32);
-    let head_dir = tempfile::tempdir()?;
-    let head_path = head_dir.path().join("value_head.bin");
-    head.save(&head_path)?;
-    let head_path_str = head_path.to_str().ok_or("head path is not UTF-8")?;
+    let head: BranchValueHead;
+    let head_path_str: String;
+    let _head_dir: Option<tempfile::TempDir>;
+    let using_trained_head: bool;
+
+    if let Ok(path) = std::env::var("ROCMFORGE_TEST_VALUE_HEAD_PATH") {
+        eprintln!("Loading trained value head from {}", path);
+        head = BranchValueHead::load(std::path::Path::new(&path))?;
+        head_path_str = path;
+        _head_dir = None;
+        using_trained_head = true;
+    } else {
+        let mut synthetic = BranchValueHead::new(hidden_size);
+        synthetic.set_weight(0, 1.0f32);
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("value_head.bin");
+        synthetic.save(&path)?;
+        head_path_str = path.to_str().ok_or("head path is not UTF-8")?.to_string();
+        head = synthetic;
+        _head_dir = Some(dir);
+        using_trained_head = false;
+    }
+
+    let _ = head; // keep alive for the test
 
     let dataset = std::fs::read_to_string(DATASET_PATH)?;
     let samples: Vec<Sample> = dataset
@@ -134,7 +152,7 @@ fn test_reranker_token_level_accuracy() -> Result<(), Box<dyn std::error::Error>
             name: "rerank-d1",
             extra: [
                 "--value-head-path",
-                head_path_str,
+                head_path_str.as_str(),
                 "--rerank-top-k",
                 "5",
                 "--rerank-scale",
@@ -152,7 +170,7 @@ fn test_reranker_token_level_accuracy() -> Result<(), Box<dyn std::error::Error>
             name: "rerank-d2",
             extra: [
                 "--value-head-path",
-                head_path_str,
+                head_path_str.as_str(),
                 "--rerank-top-k",
                 "5",
                 "--rerank-scale",
@@ -170,7 +188,7 @@ fn test_reranker_token_level_accuracy() -> Result<(), Box<dyn std::error::Error>
             name: "beam-w2-d1",
             extra: [
                 "--value-head-path",
-                head_path_str,
+                head_path_str.as_str(),
                 "--rerank-top-k",
                 "5",
                 "--rerank-scale",
@@ -188,7 +206,7 @@ fn test_reranker_token_level_accuracy() -> Result<(), Box<dyn std::error::Error>
             name: "beam-w2-d2",
             extra: [
                 "--value-head-path",
-                head_path_str,
+                head_path_str.as_str(),
                 "--rerank-top-k",
                 "5",
                 "--rerank-scale",
@@ -206,7 +224,7 @@ fn test_reranker_token_level_accuracy() -> Result<(), Box<dyn std::error::Error>
             name: "beam-w2-d1-lp0.5",
             extra: [
                 "--value-head-path",
-                head_path_str,
+                head_path_str.as_str(),
                 "--rerank-top-k",
                 "5",
                 "--rerank-scale",
@@ -225,10 +243,8 @@ fn test_reranker_token_level_accuracy() -> Result<(), Box<dyn std::error::Error>
     ];
 
     // results[config_name][sample_idx] = (first_ok, continuation_ok, generated)
-    let mut results: std::collections::HashMap<
-        &str,
-        Vec<(bool, bool, String)>,
-    > = std::collections::HashMap::new();
+    let mut results: std::collections::HashMap<&str, Vec<(bool, bool, String)>> =
+        std::collections::HashMap::new();
 
     for cfg in &configs {
         let mut cfg_results = Vec::with_capacity(samples.len());
@@ -236,17 +252,27 @@ fn test_reranker_token_level_accuracy() -> Result<(), Box<dyn std::error::Error>
             let stdout = run_rocmforge(&sample.prompt, 5, &cfg.extra)?;
             let generated = first_line(&stdout);
             let first_ok = normalize(&generated).starts_with(&normalize(&sample.expected_first));
-            let continuation_ok = normalize(&generated).starts_with(&normalize(&sample.expected_continuation));
+            let continuation_ok =
+                normalize(&generated).starts_with(&normalize(&sample.expected_continuation));
             cfg_results.push((first_ok, continuation_ok, generated));
         }
         results.insert(cfg.name, cfg_results);
     }
 
+    let head_desc = if using_trained_head {
+        format!(
+            "trained value head loaded from `{}`",
+            head_path_str.as_str()
+        )
+    } else {
+        "deterministic `score = hidden[0]`".to_string()
+    };
+
     let report_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("eval/reranker_eval_1.md");
     let mut report = String::new();
     report.push_str("# Reranker Token-Level Accuracy Evaluation (Option 1)\n\n");
     report.push_str("Model: Qwen2.5-0.5B-Instruct (Q4_0)\n\n");
-    report.push_str("Value head: deterministic `score = hidden[0]`\n\n");
+    report.push_str(&format!("Value head: {}\n\n", head_desc));
     report.push_str("Dataset: `eval/rerank_trivia.jsonl`\n\n");
     report.push_str("## Summary\n\n");
     report.push_str("| config | first-token accuracy | continuation-prefix accuracy |\n");
@@ -290,8 +316,15 @@ fn test_reranker_token_level_accuracy() -> Result<(), Box<dyn std::error::Error>
     }
 
     report.push_str("\n## Observations\n\n");
-    report.push_str("- This is a synthetic value head, not trained on quality signals, so the results measure the *mechanical effect* of the reranker/beam, not a real quality improvement.\n");
-    report.push_str("- A real evaluation requires either a trained value head or a model-based judge.\n");
+    if using_trained_head {
+        report.push_str("- This run uses a value head trained on temperature-sampled completions from the same trivia dataset, labeled by exact-match correctness.\n");
+        report.push_str("- Beam search now receives a real quality signal, and the accuracy change versus greedy is a meaningful measurement of the reranker's utility.\n");
+    } else {
+        report.push_str("- This run uses a synthetic value head, so the results measure the *mechanical effect* of the reranker/beam, not a real quality improvement.\n");
+        report.push_str(
+            "- A real evaluation requires either a trained value head or a model-based judge.\n",
+        );
+    }
 
     std::fs::write(&report_path, report)?;
     eprintln!("Wrote report to {}", report_path.display());
@@ -300,7 +333,11 @@ fn test_reranker_token_level_accuracy() -> Result<(), Box<dyn std::error::Error>
     for cfg in &configs {
         let rows = results.get(cfg.name).expect("results populated");
         let first_acc = rows.iter().filter(|(ok, _, _)| *ok).count() as f32 / rows.len() as f32;
-        eprintln!("{} first-token accuracy: {:.1}%", cfg.name, first_acc * 100.0);
+        eprintln!(
+            "{} first-token accuracy: {:.1}%",
+            cfg.name,
+            first_acc * 100.0
+        );
     }
 
     Ok(())

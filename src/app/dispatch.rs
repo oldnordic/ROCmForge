@@ -96,6 +96,9 @@ mod tests {
             value_head_path: None,
             rerank_top_k: 3,
             rerank_scale: 1.0,
+            rerank_beam_depth: 1,
+            rerank_beam_width: 1,
+            rerank_beam_length_penalty: 1.0,
             train_value_head_from_traces: None,
             save_value_head: None,
         }
