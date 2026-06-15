@@ -709,6 +709,130 @@ pub fn cpu_full_forward(
     Ok(())
 }
 
+/// Full transformer decode forward pass with a pluggable execution context.
+///
+/// This is identical to `cpu_full_forward` but records every captured op
+/// through `ctx`. It is the hook used to turn a real inference session into a
+/// `GraphMap` when `ctx` is a `CaptureContext`.
+#[allow(clippy::too_many_arguments)]
+pub fn cpu_full_forward_with_ctx<C: CpuExecutionContext>(
+    ctx: &mut C,
+    hidden: &mut [f32],
+    weights: &CpuModelWeights,
+    kv: &mut CpuKvCache,
+    scratch: &mut CpuForwardScratch,
+    pos: usize,
+    config: &ModelConfig,
+) -> Result<(), CpuError> {
+    let debug = std::env::var("ROCMFORGE_DEBUG").is_ok();
+    if debug {
+        let mean: f32 = hidden.iter().copied().sum::<f32>() / hidden.len() as f32;
+        let std: f32 = ((hidden.iter().map(|x| x * x).sum::<f32>() / hidden.len() as f32)
+            - mean * mean)
+            .sqrt();
+        eprintln!(
+            "[Forward input] pos={} mean={:.4} std={:.4}",
+            pos, mean, std
+        );
+    }
+
+    let half = config.head_dim / 2;
+    for i in 0..half {
+        let angle = pos as f32 * config.rope_freq[i];
+        let (s, c) = angle.sin_cos();
+        scratch.rope_sin[i] = s;
+        scratch.rope_cos[i] = c;
+    }
+
+    let rope_sin = unsafe { std::slice::from_raw_parts(scratch.rope_sin.as_ptr(), half) };
+    let rope_cos = unsafe { std::slice::from_raw_parts(scratch.rope_cos.as_ptr(), half) };
+
+    for layer_idx in 0..config.num_layers {
+        cpu_layer_forward_with_ctx(
+            ctx,
+            hidden,
+            weights.layer(layer_idx),
+            kv,
+            scratch,
+            layer_idx,
+            pos,
+            rope_sin,
+            rope_cos,
+            config,
+            debug,
+        )?;
+
+        if debug && layer_idx < 2 {
+            let mean: f32 = hidden.iter().copied().sum::<f32>() / hidden.len() as f32;
+            let std: f32 = ((hidden.iter().map(|x| x * x).sum::<f32>() / hidden.len() as f32)
+                - mean * mean)
+                .sqrt();
+            eprintln!(
+                "[After layer {}] mean={:.4} std={:.4}",
+                layer_idx, mean, std
+            );
+        }
+    }
+
+    ctx.execute_rms_norm(
+        hidden,
+        &weights.output_norm,
+        &mut scratch.normed,
+        config.rms_norm_eps,
+    );
+
+    if debug {
+        let mean: f32 = scratch.normed.iter().copied().sum::<f32>() / scratch.normed.len() as f32;
+        let std: f32 = ((scratch.normed.iter().map(|x| x * x).sum::<f32>()
+            / scratch.normed.len() as f32)
+            - mean * mean)
+            .sqrt();
+        eprintln!("[After final norm] mean={:.4} std={:.4}", mean, std);
+    }
+
+    let h = config.hidden_size;
+    let v = config.vocab_size;
+    if debug {
+        eprintln!(
+            "[LM head] type={:?} h={} v={} tied={} transpose={}",
+            weights.lm_head_meta.wtype,
+            h,
+            v,
+            weights.lm_head_tied,
+            weights.lm_head_meta.needs_transpose
+        );
+    }
+    ctx.execute_gemv(
+        &weights.lm_head,
+        &weights.lm_head_meta,
+        &scratch.normed,
+        &mut scratch.logits,
+        v,
+        h,
+        Some(&mut scratch.q8_scratch),
+    )?;
+
+    if debug {
+        let mean: f32 = scratch.logits.iter().copied().sum::<f32>() / scratch.logits.len() as f32;
+        let std: f32 = ((scratch.logits.iter().map(|x| x * x).sum::<f32>()
+            / scratch.logits.len() as f32)
+            - mean * mean)
+            .sqrt();
+        let min: f32 = scratch.logits.iter().cloned().fold(f32::INFINITY, f32::min);
+        let max: f32 = scratch
+            .logits
+            .iter()
+            .cloned()
+            .fold(f32::NEG_INFINITY, f32::max);
+        eprintln!(
+            "[After LM head] mean={:.4} std={:.4} range=[{:.4}, {:.4}]",
+            mean, std, min, max
+        );
+    }
+
+    Ok(())
+}
+
 // ── Prefill wrappers ────────────────────────────────────────────────────────────────
 
 /// Convenience wrapper for prompt prefill that populates `scratch.logits` for sampling.

@@ -90,6 +90,9 @@ mod tests {
             port: 0,
             threads: None,
             ctx_size: None,
+            graph_map_dir: None,
+            load_graph_map_dir: None,
+            graph_score_metric: "neg-entropy".to_string(),
         }
     }
 

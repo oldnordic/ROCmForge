@@ -56,6 +56,9 @@ mod main_tests {
             port: 0,
             threads: None,
             ctx_size: None,
+            graph_map_dir: None,
+            load_graph_map_dir: None,
+            graph_score_metric: String::new(),
         };
         assert!(!args.prefill_only_validate);
         assert!(args.draft_model.is_none());

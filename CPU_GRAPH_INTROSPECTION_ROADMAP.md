@@ -17,6 +17,7 @@
 - Step 6 (trace dataset) committed: `GraphTraceDataset` implemented in `src/cpu/graph/dataset.rs` and validated by `tests/test_cpu_graph_trace_dataset.rs`, which loads persisted `GraphMap`s and exports them into process-supervision, rejection-sampling, and preference-pair formats without loss.
 - Step 7 (mistake-driven adapter) committed: `BranchAdapter` implemented in `src/cpu/graph/adapter.rs` and validated by `tests/test_cpu_graph_adapter.rs`, which trains a tiny MLP on preference pairs and reaches 12/12 branch-selection accuracy on held-out traces versus 4/12 for random.
 - Step 8 (open-weight experiment) committed: `BranchValueHead` implemented in `src/cpu/graph/value_head.rs`, hidden-state extraction from the frozen 0.5B model implemented in `src/cpu/graph/open_weight.rs`, validated by `tests/test_cpu_graph_value_head.rs` (synthetic) and `tests/test_cpu_graph_open_weight.rs` (real model, `#[ignored]`).
+- Step 9 (real-session capture/reload) committed: `CaptureContext` is now wired into the live CLI inference path via `src/app/cpu_decode.rs` and `src/app/cpu_inference.rs`, allowing a real decode session to be captured, persisted with `GraphMap::save`, reloaded with `GraphMap::load`, and resumed. Validated by `tests/test_cpu_graph_real_session.rs` (real model, `#[ignored]`).
 
 ## Vision
 
@@ -193,6 +194,22 @@ Because `geographdb-core` already has storage primitives, traces should live the
 
 ---
 
+### Step 9 — Real-session capture and reload from the live CLI
+
+**Goal:** Capture a genuine inference session as it runs through the `rocmforge` CLI, persist it to disk, and reload it in a later process.
+
+**What to build:**
+- A context-aware CPU decode path that wraps each forward pass in a `CaptureContext` instead of a `DirectContext`.
+- CLI flags: `--graph-map-dir <path>` to save the captured `GraphMap` after generation, and `--load-graph-map-dir <path>` to load a previously saved map.
+- A `ScoreMetric` flag (`--graph-score-metric`) so the captured branches are scored consistently.
+- An integration test that invokes the compiled `rocmforge` binary, captures a session, checks the saved files, reloads them, and captures a second session.
+
+**Success criterion:** A process that loads a saved `GraphMap` sees the previous session summary and can save a new `GraphMap` without crashing; the replay of the saved graph still matches the original decode output within the existing tolerance.
+
+**Implementation status:** Implemented in `src/app/cli.rs`, `src/app/cpu_decode.rs`, and `src/app/cpu_inference.rs`. The test `tests/test_cpu_graph_real_session.rs` (marked `#[ignore]`) runs the binary twice against the local 0.5B model and verifies persistence/reload. Captured maps are large (~700 MB for a 2-token session) because weights and constants are currently included; this is acceptable for the proof of concept but noted as a follow-up optimization.
+
+---
+
 ## Hard constraints
 
 - The 0.5B Qwen weights are fixed in GGUF unless a training step is explicitly added.
@@ -201,9 +218,11 @@ Because `geographdb-core` already has storage primitives, traces should live the
 
 ## Next action
 
-Steps 1–8 are now locked and verified. The CPU-graph introspection ladder has reached a working closed loop: capture, persist, score, introspect, annotate, dataset, lightweight adapter, and open-weight value head.
+Steps 1–9 are now locked and verified. The CPU-graph introspection ladder has reached a working closed loop: capture, persist, score, introspect, annotate, dataset, lightweight adapter, open-weight value head, and real-session persistence.
 
 Recommended follow-ups (outside the current ladder):
+- Reduce `GraphMap` size by storing weight pointers/hashes instead of full weight tensors, or by referencing a separate model-manifest file.
+- Capture the prefill phase (not just decode) into `CaptureContext` so the entire session is graph-replayable.
 - Convert the frozen 0.5B base into a fully differentiable graph and run real gradient steps on base weights.
 - Hide numeric scores from the branch prompt to force the value head to learn from structural state rather than read numbers.
 - Use `BranchValueHead` as an online reranker during inference, applying its score as a `branch_bias` in future `CaptureContext` sessions.

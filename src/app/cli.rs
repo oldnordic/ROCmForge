@@ -16,6 +16,9 @@ pub(crate) struct Args {
     pub port: u16,
     pub threads: Option<usize>,
     pub ctx_size: Option<usize>,
+    pub graph_map_dir: Option<String>,
+    pub load_graph_map_dir: Option<String>,
+    pub graph_score_metric: String,
 }
 
 fn usage() -> ! {
@@ -39,6 +42,13 @@ fn usage() -> ! {
     eprintln!("  --threads N, -t N      Number of CPU threads/cores to use [default: auto-detect]");
     eprintln!(
         "  --ctx-size N, -c N     Override maximum context window size [default: model default]"
+    );
+    eprintln!(
+        "  --graph-map-dir <path> Save session GraphMap to directory (requires cpu-graph feature)"
+    );
+    eprintln!("  --load-graph-map-dir <path> Load a previous session GraphMap from directory");
+    eprintln!(
+        "  --graph-score-metric <name> Score metric for captured branches [default: neg-entropy]"
     );
     eprintln!("  --prefill-only-validate Run prefill only, exit with validation status");
     eprintln!("  --kv-dump <path>       Dump post-prefill KV cache to binary file");
@@ -80,6 +90,9 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Args {
     let mut kv_dump: Option<String> = None;
     let mut threads = None;
     let mut ctx_size = None;
+    let mut graph_map_dir: Option<String> = None;
+    let mut load_graph_map_dir: Option<String> = None;
+    let mut graph_score_metric = "neg-entropy".to_string();
 
     while let Some(flag) = args.next() {
         match flag.as_str() {
@@ -135,6 +148,11 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Args {
                 )
             }
             "--prefill-only-validate" => prefill_only_validate = true,
+            "--graph-map-dir" => graph_map_dir = Some(args.next().unwrap_or_else(|| usage())),
+            "--load-graph-map-dir" => {
+                load_graph_map_dir = Some(args.next().unwrap_or_else(|| usage()))
+            }
+            "--graph-score-metric" => graph_score_metric = args.next().unwrap_or_else(|| usage()),
             "--kv-dump" => kv_dump = Some(args.next().unwrap_or_else(|| usage())),
             "--draft-model" => draft_model = Some(args.next().unwrap_or_else(|| usage())),
             "--speculative-tokens" => {
@@ -170,6 +188,9 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Args {
         port,
         threads,
         ctx_size,
+        graph_map_dir,
+        load_graph_map_dir,
+        graph_score_metric,
     };
 
     // Touch fields used only in gpu/server code paths to keep clippy happy
@@ -180,6 +201,12 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Args {
         let _ = result.draft_model;
         let _ = result.speculative_tokens;
         let _ = result.kv_dump;
+    }
+    #[cfg(not(feature = "cpu-graph"))]
+    {
+        let _ = result.graph_map_dir;
+        let _ = result.load_graph_map_dir;
+        let _ = result.graph_score_metric;
     }
 
     result
