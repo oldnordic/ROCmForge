@@ -32,6 +32,7 @@ const SCORE_LOG_SECTION: &str = "score_log";
 const BRANCH_ANNOTATIONS_SECTION: &str = "branch_annotations";
 const META_SECTION: &str = "meta";
 const GPU_TRACE_SECTION: &str = "gpu_trace";
+const CANDIDATE_BRANCHES_SECTION: &str = "candidate_branches";
 
 /// A single decode-step entry for a GPU-captured session.
 ///
@@ -46,6 +47,19 @@ pub struct GpuTraceEntry {
     pub input_token_id: u32,
     pub sampled_token_id: u32,
     pub score: f32,
+}
+
+/// A token-level candidate evaluated by the online reranker.
+///
+/// Each candidate is a potential next token.  The value-head score and the
+/// biased logit are recorded so the search tree can be inspected later.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CandidateBranch {
+    pub parent_timestamp: u64,
+    pub token_id: u32,
+    pub value_score: f32,
+    pub biased_logit: f32,
+    pub chosen: bool,
 }
 
 #[derive(Debug, Error)]
@@ -82,6 +96,7 @@ pub struct GraphMap {
     pub score_log: Vec<(u64, ScoreMetric, f32)>,
     pub branch_annotations: HashMap<u64, BranchAnnotation>,
     pub gpu_trace: Vec<GpuTraceEntry>,
+    pub candidate_branches: Vec<CandidateBranch>,
     pub layer: usize,
     pub timestamp: u64,
     pub last_timestamp: u64,
@@ -99,6 +114,7 @@ impl GraphMap {
             score_log: ctx.score_log.clone(),
             branch_annotations: ctx.branch_annotations.clone(),
             gpu_trace: Vec::new(),
+            candidate_branches: ctx.candidate_branches.clone(),
             layer: ctx.layer,
             timestamp: ctx.timestamp,
             last_timestamp: ctx.last_timestamp,
@@ -119,6 +135,7 @@ impl GraphMap {
             score_log,
             branch_annotations: HashMap::new(),
             gpu_trace,
+            candidate_branches: Vec::new(),
             layer: 0,
             timestamp: 0,
             last_timestamp: 0,
@@ -161,6 +178,7 @@ impl GraphMap {
         let score_log_bytes = bincode::serialize(&self.score_log)?;
         let branch_annotations_bytes = bincode::serialize(&self.branch_annotations)?;
         let gpu_trace_bytes = bincode::serialize(&self.gpu_trace)?;
+        let candidate_branches_bytes = bincode::serialize(&self.candidate_branches)?;
         let meta = GraphMapMeta {
             layer: self.layer,
             timestamp: self.timestamp,
@@ -198,6 +216,11 @@ impl GraphMap {
             &branch_annotations_bytes,
         )?;
         create_and_write(&mut storage, GPU_TRACE_SECTION, &gpu_trace_bytes)?;
+        create_and_write(
+            &mut storage,
+            CANDIDATE_BRANCHES_SECTION,
+            &candidate_branches_bytes,
+        )?;
         create_and_write(&mut storage, META_SECTION, &meta_bytes)?;
 
         storage
@@ -245,6 +268,12 @@ impl GraphMap {
         } else {
             Vec::new()
         };
+        let candidate_branches: Vec<CandidateBranch> =
+            if storage.get_section(CANDIDATE_BRANCHES_SECTION).is_some() {
+                read_section_bincode(&mut storage, CANDIDATE_BRANCHES_SECTION)?
+            } else {
+                Vec::new()
+            };
         let meta: GraphMapMeta = read_section_bincode(&mut storage, META_SECTION)?;
 
         let f32_bindings: HashMap<usize, F32Handle> = f32_bindings_vec.into_iter().collect();
@@ -270,6 +299,7 @@ impl GraphMap {
             score_log,
             branch_annotations,
             gpu_trace,
+            candidate_branches,
             layer: meta.layer,
             timestamp: meta.timestamp,
             last_timestamp: meta.last_timestamp,
@@ -289,12 +319,18 @@ impl GraphMap {
             shelf_snapshots: self.shelf_snapshots,
             score_log: self.score_log,
             branch_annotations: self.branch_annotations,
+            candidate_branches: self.candidate_branches,
         }
     }
 
     /// Return the GPU decode trace, if any.
     pub fn gpu_trace(&self) -> &[GpuTraceEntry] {
         &self.gpu_trace
+    }
+
+    /// Return the reranker candidate branches, if any.
+    pub fn candidate_branches(&self) -> &[CandidateBranch] {
+        &self.candidate_branches
     }
 
     /// Return the bias for each annotated timestamp.

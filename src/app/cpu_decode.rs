@@ -246,7 +246,8 @@ pub(crate) fn run_cpu_decode_loop_with_ctx(
                 // original logits by the speculative score.
                 let mut rerank_scratch = CpuForwardScratch::new(config);
                 let mut biased_logits = scratch.logits[..config.vocab_size].to_vec();
-                let mut candidate_scores: Vec<(u32, f32)> = Vec::with_capacity(candidates.len());
+                let mut candidate_entries: Vec<rocmforge::cpu::graph::CandidateBranch> =
+                    Vec::with_capacity(candidates.len());
                 for &candidate in &candidates {
                     let score = score_candidate_value(
                         candidate,
@@ -258,8 +259,25 @@ pub(crate) fn run_cpu_decode_loop_with_ctx(
                         pos,
                         head,
                     );
+                    let original_logit = scratch.logits[candidate as usize];
                     biased_logits[candidate as usize] += rerank_scale * score;
-                    candidate_scores.push((candidate, score));
+                    candidate_entries.push(rocmforge::cpu::graph::CandidateBranch {
+                        parent_timestamp: ctx.timestamp,
+                        token_id: candidate,
+                        value_score: score,
+                        biased_logit: biased_logits[candidate as usize],
+                        chosen: false,
+                    });
+                    if args.debug {
+                        eprintln!(
+                            "[Rerank] step={} candidate={} value_score={:.4} logit_before={:.4} logit_after={:.4}",
+                            n_generated,
+                            candidate,
+                            score,
+                            original_logit,
+                            biased_logits[candidate as usize]
+                        );
+                    }
                 }
                 let chosen = sample_next_token(
                     &biased_logits,
@@ -268,17 +286,12 @@ pub(crate) fn run_cpu_decode_loop_with_ctx(
                     args.top_p,
                     &mut seed,
                 );
-                if args.debug {
-                    let scores_str = candidate_scores
-                        .iter()
-                        .map(|(id, s)| format!("{}:{:.4}", id, s))
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    eprintln!(
-                        "[Rerank] step={} candidates=[{}] chosen={}",
-                        n_generated, scores_str, chosen
-                    );
+                for entry in &mut candidate_entries {
+                    if entry.token_id == chosen {
+                        entry.chosen = true;
+                    }
                 }
+                ctx.candidate_branches.extend(candidate_entries);
                 chosen
             }
         } else {

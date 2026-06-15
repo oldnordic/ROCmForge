@@ -98,7 +98,7 @@ impl ScoreMetric {
 }
 
 #[cfg(feature = "cpu-graph")]
-pub use map::{GpuTraceEntry, GraphMap, GraphMapError};
+pub use map::{CandidateBranch, GpuTraceEntry, GraphMap, GraphMapError};
 
 /// Stable handle to a contiguous f32 tensor inside a `CpuGraphArena`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -641,6 +641,8 @@ pub struct CaptureContext {
     /// Human or model-generated annotations (bias, report, semantic key) keyed
     /// by branch timestamp.
     pub branch_annotations: HashMap<u64, BranchAnnotation>,
+    /// Token-level candidates evaluated by the online reranker.
+    pub candidate_branches: Vec<CandidateBranch>,
 }
 
 #[cfg(feature = "cpu-graph")]
@@ -658,6 +660,7 @@ impl CaptureContext {
             shelf_snapshots: HashMap::new(),
             score_log: Vec::new(),
             branch_annotations: HashMap::new(),
+            candidate_branches: Vec::new(),
         }
     }
 

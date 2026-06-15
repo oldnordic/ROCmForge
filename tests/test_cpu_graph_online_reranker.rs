@@ -154,6 +154,22 @@ fn test_online_value_head_reranker() -> Result<(), Box<dyn std::error::Error>> {
         "GraphMap was not saved during reranked decode"
     );
 
+    let map = rocmforge::cpu::graph::GraphMap::load(capture_dir.path())?;
+    assert!(
+        !map.candidate_branches().is_empty(),
+        "reranked decode should record candidate branches"
+    );
+    let chosen_count = map.candidate_branches().iter().filter(|c| c.chosen).count();
+    assert!(
+        chosen_count > 0,
+        "at least one candidate branch should be marked chosen"
+    );
+    eprintln!(
+        "Recorded {} candidate branches ({} chosen)",
+        map.candidate_branches().len(),
+        chosen_count
+    );
+
     // Mechanical property: reranker evaluated candidates and emitted debug.
     assert!(
         rerank_stderr.contains("[Rerank]"),

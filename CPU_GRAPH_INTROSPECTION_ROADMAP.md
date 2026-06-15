@@ -20,6 +20,7 @@
 - Step 9 (real-session capture/reload) committed: `CaptureContext` is now wired into the live CLI inference path via `src/app/cpu_decode.rs` and `src/app/cpu_inference.rs`, allowing a real decode session to be captured, persisted with `GraphMap::save`, reloaded with `GraphMap::load`, and resumed. Validated by `tests/test_cpu_graph_real_session.rs` (real model, `#[ignored]`).
 - Step 10 (GPU decode trace capture) committed: the live GPU inference path in `src/app/gpu_inference.rs` records a metadata-only token-level trace (`GpuTraceEntry`) into the `GraphMap` sidecar. Each decode step is scored with the same `ScoreMetric` used on CPU. Validated by `tests/test_gpu_graph_trace.rs` (real GPU + 0.5B model, `#[ignored]`).
 - Step 11 (online value-head reranker) committed: `BranchValueHead` can be saved/loaded; a training utility converts persisted `GraphMap` traces into a value head; and CPU decode reranks the top-k next-token candidates using speculative forward passes and a loaded value head. Validated by `tests/test_cpu_graph_online_reranker.rs` (0.5B model, `#[ignored]`).
+- Step 11.5/B (speculative candidate branch recording) committed: every top-k candidate evaluated by the online reranker is now persisted as a `CandidateBranch` inside the `GraphMap` sidecar, including parent timestamp, token id, value score, biased logit, and a chosen flag. The sidecar section is optional and backward-compatible.
 
 ## Vision
 
@@ -258,8 +259,15 @@ Because `geographdb-core` already has storage primitives, traces should live the
 
 **Implementation status:** Implemented in `src/cpu/graph/value_head.rs`, `src/cpu/graph/open_weight.rs`, `src/app/cli.rs`, `src/app/cpu_decode.rs`, and `src/app/cpu_inference.rs`. Validated by `tests/test_cpu_graph_online_reranker.rs` (marked `#[ignore]`). Measured overhead on the 0.5B Qwen model: ~5.9× baseline CPU decode time for top-5 reranking (37 ms/token → 220 ms/token).
 
+**Candidate branch recording (Step 11.5/B):**
+- Each reranker evaluation now records a `CandidateBranch` in `CaptureContext::candidate_branches`, which is persisted in the `GraphMap` sidecar as an optional `candidate_branches` section.
+- Fields: `parent_timestamp` (the decode step that produced the candidates), `token_id`, `value_score` (raw value-head output), `biased_logit` (logit after adding the scaled value score), and `chosen` (whether this token was selected by the sampler).
+- Old `GraphMap` files without the section load with an empty candidate list, preserving backward compatibility.
+- The recording test asserts that at least one candidate is marked chosen and that the candidate count equals the number of reranked steps times `--rerank-top-k` (minus the final step if it is skipped to protect the KV-cache bound).
+
 **Hard constraint surfaced by this step:**
 - Token-level reranking requires N extra forward passes per token. On CPU this is expensive; on GPU it would need hidden-state extraction from the GPU path, which is not yet implemented. The current MVP is CPU-only.
+- Compute reuse is still outstanding: the chosen candidate’s speculative forward state is currently discarded and the next real decode step recomputes it from scratch. Reusing that state is the obvious next optimization, but it is intentionally deferred until the search tree itself was being persisted (now done).
 
 ---
 
@@ -271,7 +279,7 @@ Because `geographdb-core` already has storage primitives, traces should live the
 
 ## Next action
 
-Steps 1–11 are now locked and verified. The CPU-graph introspection ladder has reached a working closed loop: capture, persist, score, introspect, annotate, dataset, lightweight adapter, open-weight value head, real-session persistence, GPU decode trace capture, and online value-head reranking.
+Steps 1–11 are now locked and verified, and Step 11.5/B records the reranker’s speculative search tree in the persisted `GraphMap`. The CPU-graph introspection ladder has reached a working closed loop: capture, persist, score, introspect, annotate, dataset, lightweight adapter, open-weight value head, real-session persistence, GPU decode trace capture, online value-head reranking, and searchable candidate branches.
 
 Recommended follow-ups (outside the current ladder):
 - Reduce `GraphMap` size by storing weight pointers/hashes instead of full weight tensors, or by referencing a separate model-manifest file.
@@ -280,4 +288,5 @@ Recommended follow-ups (outside the current ladder):
 - Bring the online reranker to the GPU path: extract hidden states from GPU decode for value-head scoring without round-tripping through CPU.
 - Convert the frozen 0.5B base into a fully differentiable graph and run real gradient steps on base weights.
 - Hide numeric scores from the branch prompt to force the value head to learn from structural state rather than read numbers.
+- Reuse the chosen candidate’s speculative forward state instead of recomputing it on the next real decode step. This is the highest-impact optimization for the online reranker.
 - Extend token-level reranking to multi-token beam search: evaluate candidate continuations several tokens deep before selecting a branch.
