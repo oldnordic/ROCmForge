@@ -97,31 +97,17 @@ pub unsafe fn dot_q4_k_q8_k_block_avx512(q4_block: &BlockQ4K, q8_block: &BlockQ8
     utmp[2] = uaux;
     utmp[0] &= KMASK1;
 
-    // Apply -32 bias only to scales (first 8 bytes), not mins (last 8 bytes)
-    // Q4_K scales are stored as 6-bit values with +32 bias
-    let mut biased_bytes = [0i8; 16];
-    #[allow(
-        clippy::needless_range_loop,
-        reason = "raw pointer arithmetic loop is clearer as indices"
-    )]
-    for i in 0..16 {
-        let raw_byte: i8 = unsafe { *(&utmp as *const [u32; 4] as *const i8).add(i) };
-        // Only bias the first 8 bytes (scales), not the last 8 (mins)
-        biased_bytes[i] = if i < 8 {
-            raw_byte.wrapping_sub(32)
-        } else {
-            raw_byte
-        };
-    }
+    // Convert scales/mins to 16-bit integers.  After unpacking, each byte holds
+    // one unsigned 6-bit value; zero-extend them.  Low 128 bits are scales,
+    // high 128 bits are mins.
+    let mins_and_scales = _mm256_cvtepu8_epi16(_mm_set_epi32(
+        utmp[3] as i32,
+        utmp[2] as i32,
+        utmp[1] as i32,
+        utmp[0] as i32,
+    ));
 
-    // Convert biased scales to 16-bit integers using SIGN-extension
-    // This treats 224 (0xE0) as -32, which is what we want
-    let biased_ptr = biased_bytes.as_ptr();
-    let mins_and_scales =
-        unsafe { _mm256_cvtepi8_epi16(_mm_loadu_si128(biased_ptr as *const __m128i)) };
-
-    // Extract mins and scales (mins are in high 128, scales in low 128)
-    let scales_128 = _mm256_extracti128_si256(mins_and_scales, 0);
+    // Extract mins (scales stay in the full 256-bit register for broadcasting).
     let mins_128 = _mm256_extracti128_si256(mins_and_scales, 1);
 
     // Copy bsums to local array
@@ -142,11 +128,21 @@ pub unsafe fn dot_q4_k_q8_k_block_avx512(q4_block: &BlockQ4K, q8_block: &BlockQ8
     );
     let prod = _mm_madd_epi16(mins_128, q8s);
 
-    let mut acc_m = _mm_set1_ps(dmin);
-    acc_m = _mm_fmadd_ps(acc_m, _mm_cvtepi32_ps(prod), acc_m);
+    let mut acc_m = _mm_setzero_ps();
+    acc_m = _mm_fmadd_ps(_mm_set1_ps(dmin), _mm_cvtepi32_ps(prod), acc_m);
 
-    // Duplicate scales for all sub-blocks
-    let scales = _mm256_set_m128i(scales_128, scales_128);
+    // scales lives in the low 128 bits; pre-broadcast each 16-bit scale to all
+    // lanes so it can be selected by a non-constant index.
+    let scale_vecs = [
+        _mm256_set1_epi16(_mm256_extract_epi16(mins_and_scales, 0) as i16),
+        _mm256_set1_epi16(_mm256_extract_epi16(mins_and_scales, 1) as i16),
+        _mm256_set1_epi16(_mm256_extract_epi16(mins_and_scales, 2) as i16),
+        _mm256_set1_epi16(_mm256_extract_epi16(mins_and_scales, 3) as i16),
+        _mm256_set1_epi16(_mm256_extract_epi16(mins_and_scales, 4) as i16),
+        _mm256_set1_epi16(_mm256_extract_epi16(mins_and_scales, 5) as i16),
+        _mm256_set1_epi16(_mm256_extract_epi16(mins_and_scales, 6) as i16),
+        _mm256_set1_epi16(_mm256_extract_epi16(mins_and_scales, 7) as i16),
+    ];
 
     let m4 = _mm256_set1_epi8(0xF);
     let mut sumi = _mm256_setzero_si256();
@@ -168,37 +164,13 @@ pub unsafe fn dot_q4_k_q8_k_block_avx512(q4_block: &BlockQ4K, q8_block: &BlockQ8
         let q8l = _mm256_loadu_si256(q8_ptr as *const __m256i);
         q8_ptr = q8_ptr.add(32);
 
-        // AVX-512 VNNI: multiply-accumulate bytes to 32-bit directly
-        // dpbusd_epi32 produces 8 results, each = sum of 4 consecutive products
-        let _p32l = _mm256_dpbusd_epi32(_mm256_setzero_si256(), q4l, q8l);
-
         // Load Q8_K values for high nibbles (32 bytes)
         let q8h = _mm256_loadu_si256(q8_ptr as *const __m256i);
         q8_ptr = q8_ptr.add(32);
 
-        let _p32h = _mm256_dpbusd_epi32(_mm256_setzero_si256(), q4h, q8h);
-
-        // Get scale vectors for this group
-        let scale_l = _mm256_shuffle_epi8(scales, super::gemm_q4k_q8::get_scale_shuffle_k4(2 * j));
-        let scale_h =
-            _mm256_shuffle_epi8(scales, super::gemm_q4k_q8::get_scale_shuffle_k4(2 * j + 1));
-
-        // The key insight: dpbusd produces stride-4, but we need stride-8
-        // The AVX2 code uses madd_epi16 which does: result[i] = products[2i]*scales[2i] + products[2i+1]*scales[2i+1]
-        // This pairs adjacent products and adds them together.
-        //
-        // With dpbusd, we have: p32[0] = sum(products[0..3]), p32[1] = sum(products[4..7]), etc.
-        // To match the AVX2 behavior, we need to:
-        // 1. Add p32[0]+p32[1] to get sum(products[0..7])
-        // 2. Apply scale[0], scale[1] to this sum
-        // But this is wrong because scales should be applied to individual products, not sums.
-        //
-        // The correct approach is to realize that maddubs_epi16 produces 16 16-bit products,
-        // and madd_epi16 then pairs them up with scales. With dpbusd, we lose the intermediate
-        // 16-bit products and only get the final 32-bit sums.
-        //
-        // Therefore, dpbusd_epi32 cannot directly replace the maddubs_epi16 + madd_epi16 combination.
-        // We need to use the AVX2 approach.
+        // Select the two 16-bit scale values for this 64-value group.
+        let scale_l = scale_vecs[2 * j];
+        let scale_h = scale_vecs[2 * j + 1];
 
         // Use AVX2 pattern: maddubs_epi16 + madd_epi16
         let mut p16l = _mm256_maddubs_epi16(q4l, q8l);
@@ -215,7 +187,10 @@ pub unsafe fn dot_q4_k_q8_k_block_avx512(q4_block: &BlockQ4K, q8_block: &BlockQ8
     let vd = _mm256_set1_ps(d);
     let acc = _mm256_mul_ps(vd, _mm256_cvtepi32_ps(sumi));
 
-    // Horizontal sum + min contribution
+    // Horizontal sum of the min accumulator
+    acc_m = _mm_add_ps(acc_m, _mm_movehl_ps(acc_m, acc_m));
+    acc_m = _mm_add_ss(acc_m, _mm_movehdup_ps(acc_m));
+
     hsum_float_8_avx512(acc) + _mm_cvtss_f32(acc_m)
 }
 
@@ -278,6 +253,37 @@ mod tests {
 
     #[test]
     #[cfg(target_arch = "x86_64")]
+    fn test_dot_q4_k_q8_k_block_avx512_matches_scalar() {
+        if !is_x86_feature_detected!("avx512f")
+            || !is_x86_feature_detected!("avx512bw")
+            || !is_x86_feature_detected!("avx512vl")
+            || !is_x86_feature_detected!("avx2")
+            || !is_x86_feature_detected!("fma")
+        {
+            return;
+        }
+
+        let mut rng = fastrand::Rng::new();
+        let weights: Vec<f32> = (0..256).map(|_| rng.f32() * 4.0 - 2.0).collect();
+        let activations: Vec<f32> = (0..256).map(|_| rng.f32() * 4.0 - 2.0).collect();
+
+        let q4 = BlockQ4K::quantize(&weights);
+        let q8 = crate::cpu::kernels::q8::quantize_q8_k(&activations);
+
+        let avx512 = unsafe { dot_q4_k_q8_k_block_avx512(&q4, &q8) };
+        let scalar = crate::cpu::kernels::gemm_q4k_q8_scalar::dot_q4_k_q8_k_block_scalar(&q4, &q8);
+
+        let abs_err = (avx512 - scalar).abs();
+        let rel_err = abs_err / scalar.abs().max(1e-6);
+        assert!(
+            rel_err < 1e-4,
+            "AVX-512 dot diverges from scalar: avx512={avx512} scalar={scalar} rel={rel_err}"
+        );
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    #[ignore]
     fn trace_dpbusd_vs_scalar_step_by_step() {
         // This test traces through the computation step by step
         // to understand exactly where dpbusd_epi32 differs from scalar

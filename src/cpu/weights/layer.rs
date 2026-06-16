@@ -44,6 +44,13 @@ pub struct CpuLayerWeights {
     pub shortconv: Option<CpuShortconvWeights>,
     pub moe: Option<CpuMoeWeights>,
     pub weight_type: GgmlType,
+    // Gemma4 Per-Layer Embedding (PLE) tensors (optional, only for gemma4)
+    pub inp_gate: Option<(Vec<u8>, WeightMeta)>,
+    pub proj: Option<(Vec<u8>, WeightMeta)>,
+    pub post_attention_norm: Option<Vec<f32>>,
+    pub post_ffw_norm: Option<Vec<f32>>,
+    pub post_norm: Option<Vec<f32>>,
+    pub layer_output_scale: Option<f32>,
 }
 
 impl CpuLayerWeights {
@@ -238,6 +245,28 @@ impl CpuLayerWeights {
 
         let gate = load_opt_name(&format!("blk.{}.attn_gate.weight", layer))?;
 
+        // Gemma4-specific optional tensors
+        let (inp_gate, proj, post_attention_norm, post_ffw_norm, post_norm, layer_output_scale) =
+            if config.architecture == "gemma4" {
+                let inp_gate = load_opt(TensorName::InpGate)?;
+                let proj = load_opt(TensorName::Proj)?;
+                let post_attention_norm = copy_f32_opt(TensorName::PostAttentionNorm)?;
+                let post_ffw_norm = copy_f32_opt(TensorName::PostFfwNorm)?;
+                let post_norm = copy_f32_opt(TensorName::PostNorm)?;
+                let layer_output_scale =
+                    copy_f32_opt(TensorName::LayerOutputScale)?.and_then(|v| v.into_iter().next());
+                (
+                    inp_gate,
+                    proj,
+                    post_attention_norm,
+                    post_ffw_norm,
+                    post_norm,
+                    layer_output_scale,
+                )
+            } else {
+                (None, None, None, None, None, None)
+            };
+
         Ok(CpuLayerWeights {
             is_attention_layer,
             ssm,
@@ -276,6 +305,12 @@ impl CpuLayerWeights {
             ffn_down,
             ffn_down_meta,
             weight_type,
+            inp_gate,
+            proj,
+            post_attention_norm,
+            post_ffw_norm,
+            post_norm,
+            layer_output_scale,
         })
     }
 
@@ -485,6 +520,29 @@ impl CpuLayerWeights {
 
         let gate = load_rfm_opt(&format!("blk.{}.attn_gate.weight", layer))?;
 
+        // Gemma4-specific optional tensors
+        let (inp_gate, proj, post_attention_norm, post_ffw_norm, post_norm, layer_output_scale) =
+            if config.architecture == "gemma4" {
+                let inp_gate =
+                    load_rfm_opt(&config.tensor_registry.resolve(TensorName::InpGate, layer))?;
+                let proj = load_rfm_opt(&config.tensor_registry.resolve(TensorName::Proj, layer))?;
+                let post_attention_norm = load_rfm_f32_opt(TensorName::PostAttentionNorm)?;
+                let post_ffw_norm = load_rfm_f32_opt(TensorName::PostFfwNorm)?;
+                let post_norm = load_rfm_f32_opt(TensorName::PostNorm)?;
+                let layer_output_scale = load_rfm_f32_opt(TensorName::LayerOutputScale)?
+                    .and_then(|v| v.into_iter().next());
+                (
+                    inp_gate,
+                    proj,
+                    post_attention_norm,
+                    post_ffw_norm,
+                    post_norm,
+                    layer_output_scale,
+                )
+            } else {
+                (None, None, None, None, None, None)
+            };
+
         Ok(CpuLayerWeights {
             is_attention_layer,
             ssm,
@@ -519,6 +577,12 @@ impl CpuLayerWeights {
             ffn_down,
             ffn_down_meta,
             weight_type,
+            inp_gate,
+            proj,
+            post_attention_norm,
+            post_ffw_norm,
+            post_norm,
+            layer_output_scale,
         })
     }
 }

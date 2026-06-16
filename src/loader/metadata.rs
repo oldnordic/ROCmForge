@@ -12,17 +12,28 @@ use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub struct GgufMetadata {
     pub raw: HashMap<String, String>,
+    /// Captured array values (key -> element strings). Used for per-layer arrays
+    /// such as Gemma4's `attention.sliding_window_pattern` and `feed_forward_length`.
+    pub arrays: HashMap<String, Vec<String>>,
     pub architecture: String,
 }
 
 impl GgufMetadata {
     pub fn from_kv(kv: HashMap<String, String>) -> Self {
+        Self::from_kv_with_arrays(kv, HashMap::new())
+    }
+
+    pub fn from_kv_with_arrays(
+        kv: HashMap<String, String>,
+        arrays: HashMap<String, Vec<String>>,
+    ) -> Self {
         let architecture = kv
             .get("general.architecture")
             .cloned()
             .unwrap_or_else(|| "unknown".to_string());
         Self {
             raw: kv,
+            arrays,
             architecture,
         }
     }
@@ -43,6 +54,7 @@ impl GgufMetadata {
         self.raw.get(param).map(|s| s.as_str())
     }
 
+    /// Resolve a scalar usize, trying arch-prefixed and llama fallback keys.
     fn resolve_usize(&self, keys: &[&str]) -> Option<usize> {
         for key in keys {
             if let Some(v) = self.get(key).and_then(|s| s.parse::<usize>().ok()) {
@@ -54,6 +66,7 @@ impl GgufMetadata {
         None
     }
 
+    /// Resolve a scalar f32, trying arch-prefixed and llama fallback keys.
     fn resolve_f32(&self, keys: &[&str]) -> Option<f32> {
         for key in keys {
             if let Some(v) = self.get(key).and_then(|s| s.parse::<f32>().ok()) {
@@ -63,6 +76,41 @@ impl GgufMetadata {
             }
         }
         None
+    }
+
+    /// Parse a captured string array into `Vec<String>` using arch-prefixed keys.
+    pub fn resolve_string_array(&self, keys: &[&str]) -> Option<Vec<String>> {
+        for key in keys {
+            let full_key = format!("{}.{}", self.architecture, key);
+            if let Some(arr) = self.arrays.get(&full_key) {
+                return Some(arr.clone());
+            }
+            if self.architecture != "llama" {
+                let llama_key = format!("llama.{}", key);
+                if let Some(arr) = self.arrays.get(&llama_key) {
+                    return Some(arr.clone());
+                }
+            }
+            if let Some(arr) = self.arrays.get(*key) {
+                return Some(arr.clone());
+            }
+        }
+        None
+    }
+
+    /// Parse a captured numeric array into `Vec<usize>`.
+    pub fn resolve_usize_array(&self, keys: &[&str]) -> Option<Vec<usize>> {
+        self.resolve_string_array(keys)
+            .map(|arr| arr.iter().filter_map(|s| s.parse::<usize>().ok()).collect())
+    }
+
+    /// Parse a captured bool array into `Vec<bool>`.
+    pub fn resolve_bool_array(&self, keys: &[&str]) -> Option<Vec<bool>> {
+        self.resolve_string_array(keys).map(|arr| {
+            arr.iter()
+                .map(|s| matches!(s.as_str(), "true" | "1" | "True" | "TRUE"))
+                .collect()
+        })
     }
 
     // ── Accessors ─────────────────────────────────────────────────────────────
@@ -168,6 +216,40 @@ impl GgufMetadata {
     pub fn expert_weights_scale(&self) -> f32 {
         self.resolve_f32(&["expert_weights_scale", "routed_scaling_factor"])
             .unwrap_or(1.0)
+    }
+
+    pub fn sliding_window(&self) -> usize {
+        self.resolve_usize(&["attention.sliding_window", "sliding_window"])
+            .unwrap_or(0)
+    }
+
+    pub fn shared_kv_layers(&self) -> usize {
+        self.resolve_usize(&["attention.shared_kv_layers", "num_kv_shared_layers"])
+            .unwrap_or(0)
+    }
+
+    pub fn embedding_length_per_layer_input(&self) -> usize {
+        self.resolve_usize(&[
+            "embedding_length_per_layer_input",
+            "hidden_size_per_layer_input",
+        ])
+        .unwrap_or(0)
+    }
+
+    pub fn final_logit_softcapping(&self) -> Option<f32> {
+        self.resolve_f32(&["final_logit_softcapping", "logit_softcapping"])
+    }
+
+    pub fn rope_dimension_count(&self) -> Option<usize> {
+        self.resolve_usize(&["rope.dimension_count"])
+    }
+
+    pub fn rope_dimension_count_swa(&self) -> Option<usize> {
+        self.resolve_usize(&["rope.dimension_count_swa"])
+    }
+
+    pub fn rope_freq_base_swa(&self) -> Option<f32> {
+        self.resolve_f32(&["rope.freq_base_swa", "rope_theta_swa"])
     }
 }
 

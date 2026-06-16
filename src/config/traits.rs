@@ -3,28 +3,31 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 /// How RoPE rotations are applied to head dimensions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RopeStyle {
     /// Consecutive pairs: (0,1),(2,3),... - LLaMA, Mistral
+    #[default]
     Normal,
     /// Split-half pairs: (0,head_dim/2),(1,head_dim/2+1),... - Qwen2, GPT-NeoX
     NeoX,
 }
 
 /// How the Q/K/V weight tensors are laid out in the GGUF file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AttentionLayout {
     /// Separate `blk.N.attn_q`, `blk.N.attn_k`, `blk.N.attn_v`
+    #[default]
     SplitQkv,
     /// Single fused tensor `blk.N.attn_qkv` (Phi3, Falcon, etc.)
     FusedQkv,
 }
 
 /// How the FFN (feed-forward network) is structured.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FfnLayout {
     /// SwiGLU: gate + up → SiLU(gate) * up → down
     /// Used by LLaMA, Mistral, Qwen2, Gemma, etc.
+    #[default]
     SwiGLU,
     /// Standard FFN: up → activation → down
     /// No separate gate projection. Used by Phi-3.
@@ -183,7 +186,8 @@ fn registry() -> &'static HashMap<&'static str, ModelTraits> {
 
         // Gemma family
         let gemma = ModelTraits {
-            rope_style: RopeStyle::Normal,
+            // Gemma uses the same half-split RoPE convention as GPT-NeoX/LLaMA
+            rope_style: RopeStyle::NeoX,
             attention_layout: AttentionLayout::SplitQkv,
             use_attention_bias: false,
             default_rope_theta: 10000.0,
@@ -191,7 +195,7 @@ fn registry() -> &'static HashMap<&'static str, ModelTraits> {
             tensor_naming: TensorNamingScheme::Gguf,
             ffn_layout: FfnLayout::SwiGLU,
         };
-        for arch in &["gemma", "gemma2", "gemma3"] {
+        for arch in &["gemma", "gemma2", "gemma3", "gemma4"] {
             m.insert(*arch, gemma.clone());
         }
 

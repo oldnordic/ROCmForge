@@ -77,6 +77,7 @@ pub fn parse_kv<R: Read + Seek>(
     kv_count: u64,
 ) -> Result<(GgufMetadata, TokenizerData), LoadError> {
     let mut kv = HashMap::with_capacity(kv_count as usize);
+    let mut arrays = HashMap::<String, Vec<String>>::new();
     let mut tok = TokenizerData::default();
 
     for _ in 0..kv_count {
@@ -104,6 +105,14 @@ pub fn parse_kv<R: Read + Seek>(
             _ => {}
         }
 
+        // Capture non-tokenizer arrays so callers can retrieve per-layer values
+        if value_type == 9 {
+            let arr = read_array_as_strings(r)?;
+            arrays.insert(key.clone(), arr);
+            kv.insert(key, "array".to_string());
+            continue;
+        }
+
         // Everything else: convert to string for GgufMetadata
         let value = read_value_as_string(r, value_type)?;
 
@@ -122,7 +131,7 @@ pub fn parse_kv<R: Read + Seek>(
         kv.insert(key, value);
     }
 
-    Ok((GgufMetadata::from_kv(kv), tok))
+    Ok((GgufMetadata::from_kv_with_arrays(kv, arrays), tok))
 }
 
 /// Read an array of raw byte sequences (for tokenizer.ggml.tokens).
@@ -168,6 +177,72 @@ fn read_merge_array<R: Read>(r: &mut R) -> Result<Vec<(Vec<u8>, Vec<u8>)>, LoadE
             result.push((first, second));
         }
         // Silently skip any merge that does not have the expected format
+    }
+    Ok(result)
+}
+
+/// Read a GGUF array as a vector of element strings.
+///
+/// The caller has already consumed the value_type (9); this function reads the
+/// element type and count, then each element.  Nested arrays are flattened to
+/// a single placeholder string per element.
+fn read_array_as_strings<R: Read>(r: &mut R) -> Result<Vec<String>, LoadError> {
+    let elem_type = read_u32(r)?;
+    let count = read_u64(r)? as usize;
+    if count > 1_000_000 {
+        return Err(LoadError::StringTooLong(count));
+    }
+    let mut result = Vec::with_capacity(count);
+    for _ in 0..count {
+        let s = match elem_type {
+            0 | 1 | 7 => {
+                // u8 / i8 / bool
+                let mut b = [0u8; 1];
+                r.read_exact(&mut b)?;
+                if elem_type == 7 {
+                    (b[0] != 0).to_string()
+                } else {
+                    b[0].to_string()
+                }
+            }
+            2 | 3 => {
+                let mut b = [0u8; 2];
+                r.read_exact(&mut b)?;
+                u16::from_le_bytes(b).to_string()
+            }
+            4 | 5 => {
+                let mut b = [0u8; 4];
+                r.read_exact(&mut b)?;
+                u32::from_le_bytes(b).to_string()
+            }
+            6 => {
+                let mut b = [0u8; 4];
+                r.read_exact(&mut b)?;
+                f32::from_le_bytes(b).to_string()
+            }
+            8 => read_string(r)?,
+            9 => {
+                // Nested array: read and flatten to placeholder
+                let nested = read_array_as_strings(r)?;
+                format!("[{}]", nested.len())
+            }
+            10 | 11 => {
+                let mut b = [0u8; 8];
+                r.read_exact(&mut b)?;
+                u64::from_le_bytes(b).to_string()
+            }
+            12 => {
+                let mut b = [0u8; 8];
+                r.read_exact(&mut b)?;
+                f64::from_le_bytes(b).to_string()
+            }
+            _ => {
+                let mut b = [0u8; 4];
+                r.read_exact(&mut b)?;
+                "unknown".to_string()
+            }
+        };
+        result.push(s);
     }
     Ok(result)
 }

@@ -173,11 +173,13 @@ impl BlockQ4K {
                 }
                 .clamp(0, 15) as u8;
 
-                // Pack 2 quants into 1 byte
-                let byte_idx = (sb * SUBBLOCK_SIZE + i) / 2;
-                let bit_offset = i % 2;
+                // Pack into the llama.cpp Q4_K layout: subblocks 0/1 share 32
+                // bytes (low/high nibbles), subblocks 2/3 share the next 32, etc.
+                let chunk = sb / 2;
+                let is_high = sb % 2;
+                let byte_idx = chunk * 32 + i;
 
-                if bit_offset == 0 {
+                if is_high == 0 {
                     block.qs[byte_idx] = (block.qs[byte_idx] & 0xF0) | qi;
                 } else {
                     block.qs[byte_idx] = (block.qs[byte_idx] & 0x0F) | (qi << 4);

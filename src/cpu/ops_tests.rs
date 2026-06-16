@@ -112,7 +112,7 @@ mod tests {
         ];
         let mut out = vec![0.0; 4];
 
-        flash_attn_decode(&q, &k_cache, &v_cache, &mut out, 2, 1, 1, 4);
+        flash_attn_decode(&q, &k_cache, &v_cache, &mut out, 2, 1, 1, 4, 0, 0.0, 1.0);
 
         // q·k[0] = 1, q·k[1] = 0
         // softmax scores: exp(1)/(exp(1)+exp(0)) ≈ 0.731, exp(0)/(exp(1)+exp(0)) ≈ 0.269

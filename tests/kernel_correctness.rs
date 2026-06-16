@@ -51,7 +51,7 @@ fn test_q4_0_dequantization_correctness() {
     let mut cpu_hidden = vec![0.0f32; config.hidden_size];
 
     for (pos, &token_id) in tokens.iter().enumerate() {
-        cpu_embed_token(token_id, &cpu_weights, &mut cpu_hidden, &config);
+        cpu_embed_token(token_id, &cpu_weights, &mut cpu_hidden, &config, None);
         cpu_full_forward(
             &mut cpu_hidden,
             &cpu_weights,

@@ -314,31 +314,46 @@ pub fn embed_q4_k(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usi
         let qs = &block[16..144]; // 128 bytes of 4-bit quants
         let base = b * Q4_K_BLOCK_ELEMS;
 
-        // Helper to unpack scale and min (following llama.cpp's get_scale_min_k4)
-        let get_scale_min = |j: usize| -> (i8, i8) {
+        // Helper to unpack scale and min (following llama.cpp's get_scale_min_k4).
+        // Q4_K scales/mins are unsigned 6-bit values, so dequantization is
+        //   w = d * sc * q - dmin * m.
+        let get_scale_min = |j: usize| -> (u8, u8) {
             if j < 4 {
-                let sc = ((scales[j] & 63) as i8).wrapping_sub(32);
-                let m = ((scales[j + 4] & 63) as i8).wrapping_sub(32);
+                let sc = scales[j] & 63;
+                let m = scales[j + 4] & 63;
                 (sc, m)
             } else {
-                let sc = ((scales[j + 4] & 0xF) as i8 | (((scales[j - 4] >> 6) as i8) << 4))
-                    .wrapping_sub(32);
-                let m =
-                    ((scales[j + 4] >> 4) as i8 | (((scales[j] >> 6) as i8) << 4)).wrapping_sub(32);
+                let sc = (scales[j + 4] & 0xF) | ((scales[j - 4] >> 6) << 4);
+                let m = (scales[j + 4] >> 4) | ((scales[j] >> 6) << 4);
                 (sc, m)
             }
         };
 
-        // Dequantize 256 values, 32 at a time (8 groups of 32)
-        for j in 0..8 {
-            let offset = j * 32;
-            for i in 0..32 {
-                let q = (qs[(offset + i) / 2] >> (((offset + i) % 2) * 4)) & 0x0F;
-                let (sc, m) = get_scale_min(j);
-                let ls = (d * (sc as f32)) * (q as f32);
-                let lm = dmin * (m as f32);
-                out[base + offset + i] = ls + lm;
+        // Dequantize 256 values following llama.cpp's dequantize_row_q4_K order:
+        // 4 chunks of 64 values. Each chunk consumes 32 qs bytes; the first 32
+        // output values use the low nibble of those bytes, the next 32 use the
+        // high nibble. The two 32-value sub-blocks within a chunk use scales
+        // is and is+1 respectively.
+        let mut is = 0;
+        for j in 0..4 {
+            let offset = j * 64;
+            let q4 = &qs[j * 32..(j + 1) * 32];
+
+            let (sc, m) = get_scale_min(is);
+            let scale = d * (sc as f32);
+            let min = dmin * (m as f32);
+            for l in 0..32 {
+                out[base + offset + l] = scale * ((q4[l] & 0x0F) as f32) - min;
             }
+
+            let (sc, m) = get_scale_min(is + 1);
+            let scale = d * (sc as f32);
+            let min = dmin * (m as f32);
+            for l in 0..32 {
+                out[base + offset + 32 + l] = scale * ((q4[l] >> 4) as f32) - min;
+            }
+
+            is += 2;
         }
     }
 }

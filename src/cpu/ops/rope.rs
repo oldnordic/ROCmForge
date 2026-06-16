@@ -19,26 +19,60 @@ pub fn rope(
     cos: &[f32],
     neox: bool,
 ) {
+    rope_partial(x, num_heads, head_dim, head_dim, sin, cos, neox);
+}
+
+/// Apply RoPE to only the first `rotated_dims` dimensions of each head.
+///
+/// `sin` / `cos` must have length `rotated_dims / 2`. Dimensions beyond
+/// `rotated_dims` are left unchanged. This is required by Gemma4's partial
+/// rotary embeddings, where global attention layers rotate only 25% of the
+/// head dimension.
+pub fn rope_partial(
+    x: &mut [f32],
+    num_heads: usize,
+    head_dim: usize,
+    rotated_dims: usize,
+    sin: &[f32],
+    cos: &[f32],
+    neox: bool,
+) {
     let total_len = num_heads * head_dim;
     let half = head_dim / 2;
+    let rotated_half = rotated_dims / 2;
     debug_assert_eq!(x.len(), total_len, "rope input dimension mismatch");
-    debug_assert_eq!(sin.len(), half, "rope sin length mismatch");
-    debug_assert_eq!(cos.len(), half, "rope cos length mismatch");
+    debug_assert_eq!(
+        sin.len(),
+        rotated_half,
+        "rope sin length mismatch (partial RoPE)"
+    );
+    debug_assert_eq!(
+        cos.len(),
+        rotated_half,
+        "rope cos length mismatch (partial RoPE)"
+    );
+    debug_assert!(
+        rotated_dims <= head_dim && rotated_dims % 2 == 0,
+        "invalid rotated_dims"
+    );
 
     #[cfg(target_arch = "x86_64")]
     let has_avx2 = is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma");
     #[cfg(not(target_arch = "x86_64"))]
     let has_avx2 = false;
 
+    // Only use the AVX2 NeoX path for full-head rotation; partial rotation is scalar.
+    let use_avx2 = neox && has_avx2 && rotated_dims == head_dim;
+
     for h in 0..num_heads {
         let base = h * head_dim;
 
-        if neox && has_avx2 {
+        if use_avx2 {
             unsafe {
                 rope_neox_avx2(&mut x[base..base + head_dim], half, sin, cos);
             }
         } else {
-            for i in 0..half {
+            for i in 0..rotated_half {
                 let sin_a = sin[i];
                 let cos_a = cos[i];
 

@@ -64,7 +64,13 @@ fn generate_response(
     let mut hidden = vec![0.0f32; session.config.hidden_size];
 
     for (pos, &token_id) in prompt_tokens.iter().enumerate() {
-        cpu_embed_token(token_id, &session.weights, &mut hidden, &session.config);
+        cpu_embed_token(
+            token_id,
+            &session.weights,
+            &mut hidden,
+            &session.config,
+            None,
+        );
         cpu_full_forward(
             &mut hidden,
             &session.weights,
@@ -81,7 +87,7 @@ fn generate_response(
     let mut pos = prompt_tokens.len();
     while !session.tokenizer.is_eog(next) && generated.len() < max_tokens {
         generated.push(next);
-        cpu_embed_token(next, &session.weights, &mut hidden, &session.config);
+        cpu_embed_token(next, &session.weights, &mut hidden, &session.config, None);
         cpu_full_forward(
             &mut hidden,
             &session.weights,

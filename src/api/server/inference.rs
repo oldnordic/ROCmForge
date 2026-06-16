@@ -144,7 +144,7 @@ pub(crate) fn run_cpu_sync_inference(
         }
 
         output_tokens.push(next_token);
-        cpu_embed_token(next_token, weights, &mut hidden, config);
+        cpu_embed_token(next_token, weights, &mut hidden, config, Some(&mut scratch));
         cpu_full_forward(&mut hidden, weights, &mut kv, &mut scratch, pos, config)?;
 
         next_token = if use_greedy {
@@ -214,7 +214,7 @@ pub(crate) fn run_cpu_stream_inference(
         }
         previous_text = text;
 
-        cpu_embed_token(next_token, weights, &mut hidden, config);
+        cpu_embed_token(next_token, weights, &mut hidden, config, Some(&mut scratch));
         cpu_full_forward(&mut hidden, weights, &mut kv, &mut scratch, pos, config)?;
 
         next_token = if use_greedy {

@@ -941,56 +941,23 @@ fn gemm_f16_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_di
 ///
 /// For transposed access, computes Y = W^T * X where W is stored as [in_dim, out_dim].
 /// Uses dequantization-on-the-fly for simplicity (slower but correct).
-fn gemm_q4_k_transposed_fallback(
-    w: &[u8],
-    x: &[f32],
-    y: &mut [f32],
-    _m: usize,
-    n: usize,
-    k: usize,
-) {
-    use crate::cpu::kernels::q4::BlockQ4K;
-
-    let num_blocks_k = k / 256;
-    let row_bytes = num_blocks_k * BlockQ4K::SIZE;
-
-    // For transposed access: W stored as [k, n], compute as W^T * X
-    // Each output column j corresponds to row j in stored layout
+fn gemm_q4_k_transposed_fallback(w: &[u8], x: &[f32], y: &mut [f32], m: usize, n: usize, k: usize) {
+    // For transposed access: W stored as [k, n], compute as W^T * X.
+    // Each output column j corresponds to row j in the stored layout.
     y.par_chunks_mut(n)
         .enumerate()
         .for_each(|(batch_idx, y_row)| {
             let x_row = &x[batch_idx * k..(batch_idx + 1) * k];
+            let mut deq = vec![0.0f32; k];
 
             for (out_col, y_out) in y_row.iter_mut().enumerate() {
-                let mut acc = 0.0f32;
-
-                for block_idx in 0..num_blocks_k {
-                    let block_ptr = unsafe {
-                        w.as_ptr()
-                            .add(out_col * row_bytes + block_idx * BlockQ4K::SIZE)
-                            as *const BlockQ4K
-                    };
-                    let block = unsafe { &*block_ptr };
-
-                    // Dequantize this block and compute dot product
-                    let block_start = block_idx * 256;
-                    for i in 0..256 {
-                        if block_start + i < k {
-                            // Simplified Q4_K dequantization
-                            let q4_value = if i < 128 {
-                                (block.qs[i / 2] >> (4 * (i % 2))) & 0x0F
-                            } else {
-                                (block.qs[64 + (i - 128) / 2] >> (4 * ((i - 128) % 2))) & 0x0F
-                            };
-
-                            let d = half::f16::from_le_bytes(block.d).to_f32();
-                            let weight = d * (q4_value as f32 - 8.0);
-                            acc += weight * x_row[block_start + i];
-                        }
-                    }
-                }
-
-                *y_out = acc;
+                crate::cpu::quant::embed_q4_k(out_col, w, &mut deq, k);
+                *y_out = deq
+                    .iter()
+                    .zip(x_row.iter())
+                    .map(|(d, xi)| d * xi)
+                    .sum::<f32>();
             }
         });
+    let _ = m;
 }

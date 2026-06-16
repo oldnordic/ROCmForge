@@ -33,7 +33,7 @@ fn run_cpu_prompt_reference(
     let mut hidden = vec![0.0f32; config.hidden_size];
 
     for (pos, &token_id) in prompt_tokens.iter().enumerate() {
-        cpu_embed_token(token_id, weights, &mut hidden, config);
+        cpu_embed_token(token_id, weights, &mut hidden, config, None);
         cpu_full_forward(&mut hidden, weights, &mut kv, &mut scratch, pos, config)
             .expect("CPU decode should succeed");
     }
@@ -54,6 +54,7 @@ fn build_cpu_prompt_embeddings(
             weights,
             &mut hidden[row * config.hidden_size..(row + 1) * config.hidden_size],
             config,
+            None,
         );
     }
     hidden
@@ -123,7 +124,7 @@ fn test_gpu_embed_real_model_matches_cpu_hidden() {
 
     let first_token = prompt_tokens[0];
     let mut cpu_hidden = vec![0.0f32; config.hidden_size];
-    cpu_embed_token(first_token, &cpu_weights, &mut cpu_hidden, &config);
+    cpu_embed_token(first_token, &cpu_weights, &mut cpu_hidden, &config, None);
 
     let mut gpu_scratch = GpuForwardScratch::new(&config).expect("GPU scratch should allocate");
     let mut host_scratch = CpuForwardScratch::new(&config);
@@ -218,7 +219,7 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
         let first_token = prompt_tokens[0];
 
         let mut cpu_hidden_l0 = vec![0.0f32; config.hidden_size];
-        cpu_embed_token(first_token, &cpu_weights, &mut cpu_hidden_l0, &config);
+        cpu_embed_token(first_token, &cpu_weights, &mut cpu_hidden_l0, &config, None);
         let mut cpu_kv_l0 = CpuKvCache::new(&config, 1);
         let mut cpu_scratch_l0 = CpuForwardScratch::new(&config);
         let half = config.head_dim / 2;
@@ -325,7 +326,13 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
 
         let half = config.head_dim / 2;
         for (diag_pos, &diag_token_id) in prompt_tokens.iter().enumerate() {
-            cpu_embed_token(diag_token_id, &cpu_weights, &mut cpu_hidden_diag, &config);
+            cpu_embed_token(
+                diag_token_id,
+                &cpu_weights,
+                &mut cpu_hidden_diag,
+                &config,
+                None,
+            );
             for i in 0..half {
                 let angle = diag_pos as f32 * config.rope_freq[i];
                 let (s, c) = angle.sin_cos();
@@ -938,7 +945,7 @@ fn test_gpu_ffn_down_real_model_matches_cpu_layer0_projection() {
 
     let first_token = prompt_tokens[0];
     let mut cpu_hidden = vec![0.0f32; config.hidden_size];
-    cpu_embed_token(first_token, &cpu_weights, &mut cpu_hidden, &config);
+    cpu_embed_token(first_token, &cpu_weights, &mut cpu_hidden, &config, None);
 
     let mut cpu_kv = CpuKvCache::new(&config, 1);
     let mut cpu_scratch = CpuForwardScratch::new(&config);

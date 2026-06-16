@@ -83,7 +83,7 @@ pub(crate) fn run_cpu_decode_loop(
         std::io::stdout().flush().ok();
         n_generated += 1;
 
-        cpu_embed_token(next_token, weights, &mut hidden, config);
+        cpu_embed_token(next_token, weights, &mut hidden, config, Some(scratch));
 
         if args.debug && n_generated <= 3 {
             print_hidden_stats(n_generated, next_token, &hidden);
@@ -236,7 +236,13 @@ fn evaluate_candidate_beam(
     beam_depth: usize,
 ) -> Option<(f32, CandidateState)> {
     let mut hidden_candidate = hidden.to_vec();
-    cpu_embed_token(candidate, weights, &mut hidden_candidate, config);
+    cpu_embed_token(
+        candidate,
+        weights,
+        &mut hidden_candidate,
+        config,
+        Some(rerank_scratch),
+    );
     cpu_full_forward(
         &mut hidden_candidate,
         weights,
@@ -262,7 +268,13 @@ fn evaluate_candidate_beam(
         if tok.is_eog(cont_token) {
             break;
         }
-        cpu_embed_token(cont_token, weights, &mut hidden_candidate, config);
+        cpu_embed_token(
+            cont_token,
+            weights,
+            &mut hidden_candidate,
+            config,
+            Some(rerank_scratch),
+        );
         if cpu_full_forward(
             &mut hidden_candidate,
             weights,
@@ -362,7 +374,7 @@ pub(crate) fn run_cpu_decode_loop_with_ctx(
                 print_top_logits_debug(n_generated, &scratch.logits, tok, 5);
             }
         } else {
-            cpu_embed_token(next_token, weights, &mut hidden, config);
+            cpu_embed_token(next_token, weights, &mut hidden, config, Some(scratch));
 
             if args.debug && n_generated <= 3 {
                 print_hidden_stats(n_generated, next_token, &hidden);

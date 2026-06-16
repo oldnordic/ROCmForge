@@ -8,7 +8,7 @@ use super::traits::{AttentionLayout, FfnLayout, ModelTraits, RopeStyle};
 /// Values come from GGUF metadata; behaviors come from the traits registry.
 /// `vocab_size` comes from `tokenizer_data.tokens.len()` - not GGUF metadata,
 /// which returns 0 for Qwen2.5.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ModelConfig {
     // Transformer dimensions
     pub num_layers: usize,
@@ -55,9 +55,160 @@ pub struct ModelConfig {
     pub kv_quant_bits: Option<usize>,
     pub turboquant_centroids: Option<Vec<f32>>,
     pub qjl_scale: Option<f32>,
+
+    // Gemma4-specific per-layer parameters
+    /// Per-layer query projection size (num_heads * q_head_dim).
+    pub per_layer_q_sizes: Vec<usize>,
+    /// Per-layer KV projection size (num_kv_heads * kv_head_dim).
+    pub per_layer_kv_sizes: Vec<usize>,
+    /// Per-layer query head dimension.
+    pub per_layer_head_dims: Vec<usize>,
+    /// Per-layer KV head dimension.
+    pub per_layer_kv_head_dims: Vec<usize>,
+    /// Per-layer FFN intermediate size.
+    pub per_layer_intermediate_sizes: Vec<usize>,
+    /// Per-layer RoPE theta (sliding vs full attention).
+    pub per_layer_rope_thetas: Vec<f32>,
+    /// Per-layer RoPE partial rotary factor (1.0 for sliding, 0.25 for full).
+    pub per_layer_rope_partial_factors: Vec<f32>,
+    /// Per-layer sliding-window size (0 for full attention).
+    pub per_layer_sliding_windows: Vec<usize>,
+    /// True for sliding/local attention layers, false for full/global layers.
+    pub per_layer_is_sliding: Vec<bool>,
+    /// Precomputed RoPE frequencies per layer (length depends on rotated dims).
+    pub per_layer_rope_freqs: Vec<Vec<f32>>,
+    /// Number of consecutive final layers that share KV projections.
+    pub num_kv_shared_layers: usize,
+    /// Per-layer embedding (PLE) dimension, if present.
+    pub hidden_size_per_layer_input: usize,
+    /// Final logit softcapping value (e.g., 30.0 for Gemma4).
+    pub final_logit_softcapping: Option<f32>,
+    /// Attention logit softcapping value (e.g., 50.0 for Gemma4).
+    pub attention_logit_cap: Option<f32>,
+    /// Attention score scale (1.0 for Gemma4 because it uses QK norm;
+    /// 1/sqrt(head_dim) otherwise).
+    pub attention_scale: f32,
+    /// Token embedding scale (sqrt(hidden_size) for Gemma4, 1.0 otherwise).
+    pub embedding_scale: f32,
+    /// Use GELU instead of SiLU in the SwiGLU FFN (Gemma4).
+    pub use_gelu_swiglu: bool,
 }
 
 impl ModelConfig {
+    /// Query projection size for a layer (handles Gemma4 per-layer dims).
+    pub fn q_size(&self, layer: usize) -> usize {
+        self.per_layer_q_sizes
+            .get(layer)
+            .copied()
+            .unwrap_or(self.num_heads * self.head_dim)
+    }
+
+    /// KV projection size for a layer.
+    pub fn kv_size(&self, layer: usize) -> usize {
+        self.per_layer_kv_sizes
+            .get(layer)
+            .copied()
+            .unwrap_or(self.num_kv_heads * self.head_dim)
+    }
+
+    /// Query head dimension for a layer.
+    pub fn head_dim_for_layer(&self, layer: usize) -> usize {
+        self.per_layer_head_dims
+            .get(layer)
+            .copied()
+            .unwrap_or(self.head_dim)
+    }
+
+    /// KV head dimension for a layer.
+    pub fn kv_head_dim_for_layer(&self, layer: usize) -> usize {
+        self.per_layer_kv_head_dims
+            .get(layer)
+            .copied()
+            .unwrap_or(self.head_dim)
+    }
+
+    /// Intermediate size for a layer.
+    pub fn intermediate_size_for_layer(&self, layer: usize) -> usize {
+        self.per_layer_intermediate_sizes
+            .get(layer)
+            .copied()
+            .unwrap_or(self.intermediate_size)
+    }
+
+    /// RoPE theta for a layer.
+    pub fn rope_theta_for_layer(&self, layer: usize) -> f32 {
+        self.per_layer_rope_thetas
+            .get(layer)
+            .copied()
+            .unwrap_or(self.rope_theta)
+    }
+
+    /// RoPE partial rotary factor for a layer.
+    pub fn rope_partial_factor_for_layer(&self, layer: usize) -> f32 {
+        self.per_layer_rope_partial_factors
+            .get(layer)
+            .copied()
+            .unwrap_or(1.0)
+    }
+
+    /// Sliding-window size for a layer (0 means full causal).
+    pub fn sliding_window_for_layer(&self, layer: usize) -> usize {
+        self.per_layer_sliding_windows
+            .get(layer)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// True if the layer is a sliding/local attention layer.
+    pub fn is_sliding_for_layer(&self, layer: usize) -> bool {
+        self.per_layer_is_sliding
+            .get(layer)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// First layer index that participates in KV sharing (Gemma4).
+    pub fn first_kv_shared_layer_idx(&self) -> usize {
+        if self.num_kv_shared_layers > 0 && self.num_layers >= self.num_kv_shared_layers {
+            self.num_layers - self.num_kv_shared_layers
+        } else {
+            self.num_layers
+        }
+    }
+
+    /// Layer type string used for KV sharing (Gemma4).
+    pub fn layer_type_for_layer(&self, layer: usize) -> &'static str {
+        if self.is_sliding_for_layer(layer) {
+            "sliding_attention"
+        } else {
+            "full_attention"
+        }
+    }
+
+    /// True if this layer stores the full-length KV state shared by later layers.
+    pub fn stores_shared_kv(&self, layer: usize) -> bool {
+        let first = self.first_kv_shared_layer_idx();
+        if layer >= first {
+            return false;
+        }
+        // Last non-shared layer of its type stores the KV.
+        let ty = self.layer_type_for_layer(layer);
+        for l in (layer + 1)..first {
+            if self.layer_type_for_layer(l) == ty {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Precomputed RoPE frequencies for a layer.
+    pub fn rope_freq_for_layer(&self, layer: usize) -> &[f32] {
+        self.per_layer_rope_freqs
+            .get(layer)
+            .map(|v| v.as_slice())
+            .unwrap_or(self.rope_freq.as_slice())
+    }
+
     /// Build `ModelConfig` from an open GGUF file.
     ///
     /// `vocab_size` is taken from `tokenizer_data.tokens.len()` because GGUF
@@ -96,7 +247,7 @@ impl ModelConfig {
             }
         };
 
-        let config = Self {
+        let mut config = Self {
             num_layers,
             hidden_size,
             num_heads,
@@ -125,7 +276,29 @@ impl ModelConfig {
             kv_quant_bits: None,
             turboquant_centroids: None,
             qjl_scale: None,
+            per_layer_q_sizes: Vec::new(),
+            per_layer_kv_sizes: Vec::new(),
+            per_layer_head_dims: Vec::new(),
+            per_layer_kv_head_dims: Vec::new(),
+            per_layer_intermediate_sizes: Vec::new(),
+            per_layer_rope_thetas: Vec::new(),
+            per_layer_rope_partial_factors: Vec::new(),
+            per_layer_sliding_windows: Vec::new(),
+            per_layer_is_sliding: Vec::new(),
+            per_layer_rope_freqs: Vec::new(),
+            num_kv_shared_layers: 0,
+            hidden_size_per_layer_input: 0,
+            final_logit_softcapping: None,
+            attention_logit_cap: None,
+            attention_scale: 1.0 / (head_dim as f32).sqrt(),
+            embedding_scale: 1.0,
+            use_gelu_swiglu: false,
         };
+
+        // Gemma4 has per-layer attention dims, RoPE params, and PLE.
+        if config.architecture == "gemma4" {
+            configure_gemma4(file, meta, &mut config)?;
+        }
 
         config.validate()?;
         Ok(config)
@@ -169,6 +342,23 @@ impl ModelConfig {
             kv_quant_bits: meta.kv_quant_bits,
             turboquant_centroids: meta.turboquant_centroids.clone(),
             qjl_scale: meta.qjl_scale,
+            per_layer_q_sizes: Vec::new(),
+            per_layer_kv_sizes: Vec::new(),
+            per_layer_head_dims: Vec::new(),
+            per_layer_kv_head_dims: Vec::new(),
+            per_layer_intermediate_sizes: Vec::new(),
+            per_layer_rope_thetas: Vec::new(),
+            per_layer_rope_partial_factors: Vec::new(),
+            per_layer_sliding_windows: Vec::new(),
+            per_layer_is_sliding: Vec::new(),
+            per_layer_rope_freqs: Vec::new(),
+            num_kv_shared_layers: 0,
+            hidden_size_per_layer_input: 0,
+            final_logit_softcapping: None,
+            attention_logit_cap: None,
+            attention_scale: 1.0 / (meta.head_dim as f32).sqrt(),
+            embedding_scale: 1.0,
+            use_gelu_swiglu: false,
         };
 
         config.validate()?;
@@ -239,6 +429,97 @@ fn infer_intermediate_size(file: &GgufFile, hidden_size: usize) -> Option<usize>
     None
 }
 
+/// Configure Gemma4-specific per-layer parameters from GGUF metadata and tensor shapes.
+fn configure_gemma4(
+    file: &GgufFile,
+    meta: &crate::loader::GgufMetadata,
+    config: &mut ModelConfig,
+) -> Result<(), ConfigError> {
+    let num_layers = config.num_layers;
+    let num_heads = config.num_heads;
+    let num_kv_heads = config.num_kv_heads;
+
+    // Layer type pattern from metadata; fall back to shape-based heuristic.
+    let sliding_pattern = meta
+        .resolve_bool_array(&["attention.sliding_window_pattern"])
+        .unwrap_or_else(Vec::new);
+
+    let rope_theta_full = meta.rope_freq_base(config.rope_theta);
+    let rope_theta_swa = meta.rope_freq_base_swa().unwrap_or(10_000.0);
+    let sliding_window = meta.sliding_window();
+    let q_head_dim = meta
+        .rope_dimension_count_swa()
+        .unwrap_or(config.head_dim.max(256));
+    let global_q_head_dim = meta.rope_dimension_count().unwrap_or(q_head_dim * 2);
+
+    config.num_kv_shared_layers = meta.shared_kv_layers();
+    config.hidden_size_per_layer_input = meta.embedding_length_per_layer_input();
+    config.final_logit_softcapping = meta.final_logit_softcapping();
+    config.attention_logit_cap = Some(50.0);
+    config.attention_scale = 1.0;
+    config.embedding_scale = (config.hidden_size as f32).sqrt();
+    config.use_gelu_swiglu = true;
+
+    for layer in 0..num_layers {
+        let q_name = format!("blk.{}.attn_q.weight", layer);
+        let k_name = format!("blk.{}.attn_k.weight", layer);
+        let gate_name = format!("blk.{}.ffn_gate.weight", layer);
+
+        let q_size = file
+            .tensor(&q_name)
+            .map_err(ConfigError::Load)?
+            .map(|t| t.dims[1] as usize)
+            .unwrap_or(num_heads * q_head_dim);
+        let kv_size = file
+            .tensor(&k_name)
+            .map_err(ConfigError::Load)?
+            .map(|t| t.dims[1] as usize)
+            .unwrap_or(num_kv_heads * global_q_head_dim);
+        let intermediate_size = file
+            .tensor(&gate_name)
+            .map_err(ConfigError::Load)?
+            .map(|t| t.dims[1] as usize)
+            .unwrap_or(config.intermediate_size);
+
+        let q_head_dim_layer = if num_heads > 0 { q_size / num_heads } else { 0 };
+        let kv_head_dim_layer = if num_kv_heads > 0 {
+            kv_size / num_kv_heads
+        } else {
+            0
+        };
+
+        let is_sliding = sliding_pattern
+            .get(layer)
+            .copied()
+            .unwrap_or_else(|| q_head_dim_layer == q_head_dim);
+
+        let (theta, partial_factor, window) = if is_sliding {
+            (rope_theta_swa, 1.0f32, sliding_window)
+        } else {
+            (rope_theta_full, 0.25f32, 0)
+        };
+
+        let rotated_dims = (q_head_dim_layer as f32 * partial_factor) as usize;
+        let half = rotated_dims / 2;
+        let rope_freq: Vec<f32> = (0..half)
+            .map(|i| 1.0 / theta.powf((2 * i) as f32 / q_head_dim_layer as f32))
+            .collect();
+
+        config.per_layer_q_sizes.push(q_size);
+        config.per_layer_kv_sizes.push(kv_size);
+        config.per_layer_head_dims.push(q_head_dim_layer);
+        config.per_layer_kv_head_dims.push(kv_head_dim_layer);
+        config.per_layer_intermediate_sizes.push(intermediate_size);
+        config.per_layer_rope_thetas.push(theta);
+        config.per_layer_rope_partial_factors.push(partial_factor);
+        config.per_layer_sliding_windows.push(window);
+        config.per_layer_is_sliding.push(is_sliding);
+        config.per_layer_rope_freqs.push(rope_freq);
+    }
+
+    Ok(())
+}
+
 /// Errors that can occur when building a `ModelConfig`.
 #[derive(Debug)]
 pub enum ConfigError {
@@ -303,6 +584,7 @@ mod tests {
             kv_quant_bits: None,
             turboquant_centroids: None,
             qjl_scale: None,
+            ..Default::default()
         };
         assert!(cfg.validate().is_err());
     }
@@ -339,6 +621,7 @@ mod tests {
             kv_quant_bits: None,
             turboquant_centroids: None,
             qjl_scale: None,
+            ..Default::default()
         };
         assert!(cfg.validate().is_err());
     }

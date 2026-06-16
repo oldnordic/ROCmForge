@@ -181,7 +181,7 @@ pub fn detect_chat_template(architecture: &str, tokenizer_model: Option<&str>) -
         }
 
         "phi3" => ChatTemplate::Phi3,
-        "gemma" | "gemma2" | "gemma3" => ChatTemplate::Gemma,
+        "gemma" | "gemma2" | "gemma3" | "gemma4" => ChatTemplate::Gemma,
         "mixtral" => ChatTemplate::LLaMA2,
 
         // Unknown architecture: no template, raw completion

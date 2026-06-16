@@ -597,6 +597,7 @@ impl CpuExecutionContext for DirectContext {
         head_dim: usize,
         _max_seq_len: usize,
     ) {
+        let scale = 1.0 / (head_dim as f32).sqrt();
         crate::cpu::ops::flash_attn_decode(
             q,
             k,
@@ -606,6 +607,9 @@ impl CpuExecutionContext for DirectContext {
             num_heads,
             num_kv_heads,
             head_dim,
+            0,
+            0.0,
+            scale,
         );
     }
 
@@ -912,6 +916,7 @@ impl CpuExecutionContext for CaptureContext {
         self.graph
             .add_node(op, self.layer, self.step, self.timestamp);
         self.step += 1;
+        let scale = 1.0 / (head_dim as f32).sqrt();
         crate::cpu::ops::flash_attn_decode(
             q,
             k,
@@ -921,6 +926,9 @@ impl CpuExecutionContext for CaptureContext {
             num_heads,
             num_kv_heads,
             head_dim,
+            0,
+            0.0,
+            scale,
         );
         self.arena.f32_mut(h_out).copy_from_slice(out);
     }
@@ -1162,6 +1170,7 @@ impl CpuGraph {
                 let k = f32_slice(*k);
                 let v = f32_slice(*v);
                 let out = f32_slice_mut(*out);
+                let scale = 1.0 / (*head_dim as f32).sqrt();
                 crate::cpu::ops::flash_attn_decode(
                     q,
                     k,
@@ -1171,6 +1180,9 @@ impl CpuGraph {
                     *num_heads,
                     *num_kv_heads,
                     *head_dim,
+                    0,
+                    0.0,
+                    scale,
                 );
             }
             CpuOpNode::SiLU {

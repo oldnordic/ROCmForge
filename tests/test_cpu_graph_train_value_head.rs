@@ -80,7 +80,7 @@ fn generate_completion(
         generated_tokens.push(next_token);
         n_generated += 1;
 
-        cpu_embed_token(next_token, weights, &mut hidden, config);
+        cpu_embed_token(next_token, weights, &mut hidden, config, None);
         cpu_full_forward(&mut hidden, weights, kv, scratch, pos, config).ok();
         pos += 1;
 

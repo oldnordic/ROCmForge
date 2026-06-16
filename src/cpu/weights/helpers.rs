@@ -18,6 +18,26 @@ pub(crate) fn copy_f32(file: &GgufFile, name: &str) -> Result<Vec<f32>, WeightEr
     Ok(copy_f32_from_bytes(&bytes))
 }
 
+/// Copy a BF16 tensor as Vec<f32>.
+///
+/// Each element is stored as a little-endian `u16` in the GGUF tensor data.
+pub(crate) fn copy_bf16_as_f32(file: &GgufFile, name: &str) -> Result<Vec<f32>, WeightError> {
+    let bytes = copy_tensor(file, name)?;
+    Ok(copy_bf16_from_bytes(&bytes))
+}
+
+/// Convert a little-endian byte slice of BF16 values to Vec<f32>.
+pub(crate) fn copy_bf16_from_bytes(bytes: &[u8]) -> Vec<f32> {
+    let n = bytes.len() / 2;
+    let mut out = vec![0.0f32; n];
+    for i in 0..n {
+        let b = &bytes[i * 2..i * 2 + 2];
+        let bits = u16::from_le_bytes([b[0], b[1]]);
+        out[i] = half::bf16::from_bits(bits).to_f32();
+    }
+    out
+}
+
 /// Convert a little-endian byte slice to Vec<f32> without alignment assumptions.
 pub(crate) fn copy_f32_from_bytes(bytes: &[u8]) -> Vec<f32> {
     let n = bytes.len() / 4;

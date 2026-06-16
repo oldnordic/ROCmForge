@@ -1,4 +1,7 @@
-use super::helpers::{copy_f32, copy_tensor_with_meta, rfm_type_to_ggml};
+use super::helpers::{
+    copy_bf16_as_f32, copy_bf16_from_bytes, copy_f32, copy_f32_from_bytes, copy_tensor_with_meta,
+    rfm_type_to_ggml, rfm_weight_meta,
+};
 use super::layer::CpuLayerWeights;
 use super::meta::{WeightError, WeightMeta};
 use crate::config::{ModelConfig, TensorName, TensorRole};
@@ -15,6 +18,10 @@ pub struct CpuModelWeights {
     pub lm_head: Vec<u8>,
     pub lm_head_meta: WeightMeta,
     pub lm_head_tied: bool,
+    // Gemma4 Per-Layer Embedding (PLE) model-level tensors (optional, only for gemma4)
+    pub per_layer_token_emb: Option<(Vec<u8>, WeightMeta)>,
+    pub per_layer_proj_norm: Option<Vec<f32>>,
+    pub per_layer_model_proj: Option<(Vec<f32>, WeightMeta)>,
 }
 
 impl CpuModelWeights {
@@ -50,6 +57,43 @@ impl CpuModelWeights {
             (token_emb.clone(), token_emb_meta.clone(), true)
         };
 
+        // Gemma4-specific model-level tensors
+        let (per_layer_token_emb, per_layer_proj_norm, per_layer_model_proj) =
+            if config.architecture == "gemma4" {
+                let ple_tok = copy_tensor_with_meta(
+                    file,
+                    &config
+                        .tensor_registry
+                        .resolve(TensorName::PerLayerTokenEmb, 0),
+                    false,
+                )?;
+                let ple_norm = copy_f32(
+                    file,
+                    &config
+                        .tensor_registry
+                        .resolve(TensorName::PerLayerProjNorm, 0),
+                )?;
+                let ple_proj_name = config
+                    .tensor_registry
+                    .resolve(TensorName::PerLayerModelProj, 0);
+                let ple_proj_view = file
+                    .tensor(&ple_proj_name)
+                    .map_err(WeightError::Load)?
+                    .ok_or_else(|| WeightError::TensorNotFound(ple_proj_name.clone()))?;
+                let ple_proj_meta =
+                    WeightMeta::from_view_with_role(&ple_proj_view, false, TensorRole::Generic);
+                let ple_proj = copy_bf16_as_f32(file, &ple_proj_name)?;
+                let mut ple_proj_meta = ple_proj_meta;
+                ple_proj_meta.wtype = crate::loader::GgmlType::F32;
+                (
+                    Some(ple_tok),
+                    Some(ple_norm),
+                    Some((ple_proj, ple_proj_meta)),
+                )
+            } else {
+                (None, None, None)
+            };
+
         Ok(CpuModelWeights {
             token_emb,
             token_emb_meta,
@@ -60,6 +104,9 @@ impl CpuModelWeights {
             lm_head,
             lm_head_meta,
             lm_head_tied,
+            per_layer_token_emb,
+            per_layer_proj_norm,
+            per_layer_model_proj,
         })
     }
 
@@ -114,6 +161,56 @@ impl CpuModelWeights {
             (token_emb.clone(), token_emb_meta.clone(), true)
         };
 
+        // Gemma4-specific model-level tensors
+        let (per_layer_token_emb, per_layer_proj_norm, per_layer_model_proj) =
+            if config.architecture == "gemma4" {
+                let ple_tok = load_rfm_u8_meta(
+                    &config
+                        .tensor_registry
+                        .resolve(TensorName::PerLayerTokenEmb, 0),
+                )?;
+                let ple_norm = load_rfm_f32(
+                    &config
+                        .tensor_registry
+                        .resolve(TensorName::PerLayerProjNorm, 0),
+                )?;
+                let ple_proj_t = file
+                    .tensor(
+                        &config
+                            .tensor_registry
+                            .resolve(TensorName::PerLayerModelProj, 0),
+                    )
+                    .map_err(WeightError::Load)?
+                    .ok_or_else(|| {
+                        WeightError::TensorNotFound(
+                            config
+                                .tensor_registry
+                                .resolve(TensorName::PerLayerModelProj, 0),
+                        )
+                    })?;
+                let mut ple_proj_meta = rfm_weight_meta(&ple_proj_t, false);
+                let ple_proj = match ple_proj_t.wtype {
+                    crate::loader::RfmType::F32 => copy_f32_from_bytes(ple_proj_t.data),
+                    crate::loader::RfmType::GgufPassthrough(t) => {
+                        let ggml_type = crate::loader::GgmlType::from_u32(t)
+                            .unwrap_or(crate::loader::GgmlType::F32);
+                        match ggml_type {
+                            crate::loader::GgmlType::BF16 => copy_bf16_from_bytes(ple_proj_t.data),
+                            _ => copy_f32_from_bytes(ple_proj_t.data),
+                        }
+                    }
+                    _ => copy_f32_from_bytes(ple_proj_t.data),
+                };
+                ple_proj_meta.wtype = crate::loader::GgmlType::F32;
+                (
+                    Some(ple_tok),
+                    Some(ple_norm),
+                    Some((ple_proj, ple_proj_meta)),
+                )
+            } else {
+                (None, None, None)
+            };
+
         Ok(CpuModelWeights {
             token_emb,
             token_emb_meta,
@@ -130,6 +227,9 @@ impl CpuModelWeights {
             lm_head,
             lm_head_meta,
             lm_head_tied,
+            per_layer_token_emb,
+            per_layer_proj_norm,
+            per_layer_model_proj,
         })
     }
 }

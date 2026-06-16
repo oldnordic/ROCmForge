@@ -98,7 +98,7 @@ fn main() {
     let mut hidden = vec![0.0f32; config.hidden_size];
 
     // Embed first token
-    cpu_embed_token(prompt_tokens[0], &weights, &mut hidden, &config);
+    cpu_embed_token(prompt_tokens[0], &weights, &mut hidden, &config, None);
 
     // Run prefill for remaining prompt tokens
     if prompt_tokens.len() > 1 {
@@ -131,7 +131,7 @@ fn main() {
         }
 
         // Embed the next token for the next iteration
-        cpu_embed_token(next_token, &weights, &mut hidden, &config);
+        cpu_embed_token(next_token, &weights, &mut hidden, &config, None);
     }
 
     // Decode output

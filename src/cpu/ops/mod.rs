@@ -27,4 +27,4 @@ pub use gemv::{
     gemv_q8_0, gemv_q8_0_transposed,
 };
 pub use norm::{rms_norm, rms_norm_batch};
-pub use rope::{rope, rope_batch, rope_with_pos};
+pub use rope::{rope, rope_batch, rope_partial, rope_with_pos};

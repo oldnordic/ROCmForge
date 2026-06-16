@@ -108,7 +108,9 @@ pub unsafe fn dot_q4_k_q8_k_block_avx2(q4_block: &BlockQ4K, q8_block: &BlockQ8K)
     utmp[2] = uaux;
     utmp[0] &= KMASK1;
 
-    // Convert scales to 16-bit integers
+    // Convert scales/mins to 16-bit integers.  After unpacking, each byte holds
+    // one unsigned 6-bit value; zero-extend them.  Low 128 bits are scales,
+    // high 128 bits are mins.
     let mins_and_scales = _mm256_cvtepu8_epi16(_mm_set_epi32(
         utmp[3] as i32,
         utmp[2] as i32,
@@ -134,12 +136,21 @@ pub unsafe fn dot_q4_k_q8_k_block_avx2(q4_block: &BlockQ4K, q8_block: &BlockQ8K)
     );
     let prod = _mm_madd_epi16(_mm256_extracti128_si256(mins_and_scales, 1), q8s);
 
-    let mut acc_m = _mm_set1_ps(dmin);
-    acc_m = _mm_fmadd_ps(acc_m, _mm_cvtepi32_ps(prod), acc_m);
+    let mut acc_m = _mm_setzero_ps();
+    acc_m = _mm_fmadd_ps(_mm_set1_ps(dmin), _mm_cvtepi32_ps(prod), acc_m);
 
-    // Duplicate scales for all sub-blocks
-    let sc128 = _mm256_extracti128_si256(mins_and_scales, 0);
-    let scales = _mm256_set_m128i(sc128, sc128);
+    // scales lives in the low 128 bits of mins_and_scales; pre-broadcast each
+    // 16-bit scale to all lanes so it can be selected by a non-constant index.
+    let scale_vecs = [
+        _mm256_set1_epi16(_mm256_extract_epi16(mins_and_scales, 0) as i16),
+        _mm256_set1_epi16(_mm256_extract_epi16(mins_and_scales, 1) as i16),
+        _mm256_set1_epi16(_mm256_extract_epi16(mins_and_scales, 2) as i16),
+        _mm256_set1_epi16(_mm256_extract_epi16(mins_and_scales, 3) as i16),
+        _mm256_set1_epi16(_mm256_extract_epi16(mins_and_scales, 4) as i16),
+        _mm256_set1_epi16(_mm256_extract_epi16(mins_and_scales, 5) as i16),
+        _mm256_set1_epi16(_mm256_extract_epi16(mins_and_scales, 6) as i16),
+        _mm256_set1_epi16(_mm256_extract_epi16(mins_and_scales, 7) as i16),
+    ];
 
     let m4 = _mm256_set1_epi8(0xF);
     let mut sumi = _mm256_setzero_si256();
@@ -149,8 +160,9 @@ pub unsafe fn dot_q4_k_q8_k_block_avx2(q4_block: &BlockQ4K, q8_block: &BlockQ8K)
 
     // Process 4 groups of 64 values
     for j in 0..(QK_K / 64) {
-        let scale_l = _mm256_shuffle_epi8(scales, get_scale_shuffle_k4(2 * j));
-        let scale_h = _mm256_shuffle_epi8(scales, get_scale_shuffle_k4(2 * j + 1));
+        // Select the two 16-bit scale values for this 64-value group.
+        let scale_l = scale_vecs[2 * j];
+        let scale_h = scale_vecs[2 * j + 1];
 
         // Load 32 bytes of Q4_K (64 nibbles)
         let q4bits = _mm256_loadu_si256(q4_ptr as *const __m256i);
@@ -182,7 +194,10 @@ pub unsafe fn dot_q4_k_q8_k_block_avx2(q4_block: &BlockQ4K, q8_block: &BlockQ8K)
     let vd = _mm256_set1_ps(d);
     let acc = _mm256_fmadd_ps(vd, _mm256_cvtepi32_ps(sumi), _mm256_setzero_ps());
 
-    // Horizontal sum
+    // Horizontal sum of the min accumulator
+    acc_m = _mm_add_ps(acc_m, _mm_movehl_ps(acc_m, acc_m));
+    acc_m = _mm_add_ss(acc_m, _mm_movehdup_ps(acc_m));
+
     hsum_float_8(acc) + _mm_cvtss_f32(acc_m)
 }
 
@@ -281,6 +296,10 @@ pub fn gemm_q4_k_q8_k_avx2(w: &[u8], x: &[f32], y: &mut [f32], _m: usize, n: usi
 
 /// Dispatch to AVX2 or scalar GEMV based on CPU features.
 pub fn gemv_q4_k_q8_k_dispatch(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    if std::env::var("ROCMFORGE_Q4K_SCALAR").is_ok() {
+        return crate::cpu::kernels::gemm_q4k_q8_scalar::gemv_q4_k_q8_k(w, x, y, out_dim, in_dim);
+    }
+
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
@@ -288,7 +307,6 @@ pub fn gemv_q4_k_q8_k_dispatch(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usiz
         }
     }
 
-    // Fallback to scalar
     crate::cpu::kernels::gemm_q4k_q8_scalar::gemv_q4_k_q8_k(w, x, y, out_dim, in_dim);
 }
 
@@ -301,6 +319,10 @@ pub fn gemm_q4_k_q8_k_dispatch_gemm(
     n: usize,
     k: usize,
 ) {
+    if std::env::var("ROCMFORGE_Q4K_SCALAR").is_ok() {
+        return crate::cpu::kernels::gemm_q4k_q8_scalar::gemm_q4_k_q8_k(w, x, y, m, n, k);
+    }
+
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
@@ -405,6 +427,31 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
+    fn test_dot_q4_k_q8_k_block_avx2_matches_scalar_dequantized() {
+        if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
+            return;
+        }
+
+        let mut rng = fastrand::Rng::new();
+        let weights: Vec<f32> = (0..256).map(|_| rng.f32() * 4.0 - 2.0).collect();
+        let activations: Vec<f32> = (0..256).map(|_| rng.f32() * 4.0 - 2.0).collect();
+
+        let q4 = BlockQ4K::quantize(&weights);
+        let q8 = crate::cpu::kernels::q8::quantize_q8_k(&activations);
+
+        let avx2 = unsafe { dot_q4_k_q8_k_block_avx2(&q4, &q8) };
+        let scalar = crate::cpu::kernels::gemm_q4k_q8_scalar::dot_q4_k_q8_k_block_scalar(&q4, &q8);
+
+        let abs_err = (avx2 - scalar).abs();
+        let rel_err = abs_err / scalar.abs().max(1e-6);
+        assert!(
+            rel_err < 1e-4,
+            "AVX2 dot diverges from scalar: avx2={avx2} scalar={scalar} rel={rel_err}"
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
     fn test_gemm_q4_k_q8_k_avx2_small_matrix() {
         if !is_x86_feature_detected!("avx2") {
             return;
@@ -420,5 +467,55 @@ mod tests {
 
         // Should not panic and produce output
         assert!(y.iter().all(|v| v.is_finite()));
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_gemm_q4_k_q8_k_avx2_matches_scalar_random() {
+        if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
+            return;
+        }
+
+        let mut rng = fastrand::Rng::new();
+        let m = 3;
+        let n = 4;
+        let k = 512;
+
+        let weights_f32: Vec<Vec<f32>> = (0..n)
+            .map(|_| (0..k).map(|_| rng.f32() * 4.0 - 2.0).collect())
+            .collect();
+        let mut w = vec![0u8; n * (k / 256) * BlockQ4K::SIZE];
+        for (row, weights) in weights_f32.iter().enumerate() {
+            for (b, block_weights) in weights.chunks(256).enumerate() {
+                let q4 = BlockQ4K::quantize(block_weights);
+                let offset = row * (k / 256) * BlockQ4K::SIZE + b * BlockQ4K::SIZE;
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        &q4 as *const _ as *const u8,
+                        w.as_mut_ptr().add(offset),
+                        BlockQ4K::SIZE,
+                    );
+                }
+            }
+        }
+
+        let x: Vec<f32> = (0..m * k).map(|_| rng.f32() * 4.0 - 2.0).collect();
+        let mut y_avx2 = vec![0.0f32; m * n];
+        let mut y_scalar = vec![0.0f32; m * n];
+
+        gemm_q4_k_q8_k_avx2(&w, &x, &mut y_avx2, m, n, k);
+        crate::cpu::kernels::gemm_q4k_q8_scalar::gemm_q4_k_q8_k(&w, &x, &mut y_scalar, m, n, k);
+
+        for i in 0..(m * n) {
+            let abs_err = (y_avx2[i] - y_scalar[i]).abs();
+            let rel_err = abs_err / y_scalar[i].abs().max(1e-6);
+            assert!(
+                rel_err < 1e-3,
+                "GEMM row {i}: avx2={} scalar={} rel={}",
+                y_avx2[i],
+                y_scalar[i],
+                rel_err
+            );
+        }
     }
 }

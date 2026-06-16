@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
 /// Tensor naming convention used by GGUF file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TensorNamingScheme {
     /// GGUF-style: `blk.N.ffn_gate.weight`
+    #[default]
     Gguf,
     /// HuggingFace-style: `model.layers.N.mlp.gate_proj.weight`
     HuggingFace,
@@ -49,6 +50,16 @@ pub enum TensorName {
     LmHead,
     // Output norm
     OutputNorm,
+    // Gemma4 Per-Layer Embedding (PLE) tensors
+    InpGate,
+    Proj,
+    PostAttentionNorm,
+    PostFfwNorm,
+    PostNorm,
+    LayerOutputScale,
+    PerLayerTokenEmb,
+    PerLayerProjNorm,
+    PerLayerModelProj,
 }
 
 /// Registry for resolving semantic tensor names to actual tensor names
@@ -59,6 +70,12 @@ pub struct TensorNameRegistry {
     pub scheme: TensorNamingScheme,
     /// Map of semantic names to format templates (use {} for layer number)
     templates: HashMap<TensorName, String>,
+}
+
+impl Default for TensorNameRegistry {
+    fn default() -> Self {
+        Self::from_scheme(&TensorNamingScheme::default())
+    }
 }
 
 impl TensorNameRegistry {
@@ -124,6 +141,35 @@ impl TensorNameRegistry {
         templates.insert(TensorName::TokenEmb, "token_embd.weight".to_string());
         templates.insert(TensorName::LmHead, "output.weight".to_string());
         templates.insert(TensorName::OutputNorm, "output_norm.weight".to_string());
+
+        // Gemma4 Per-Layer Embedding (PLE) tensors
+        templates.insert(TensorName::InpGate, "blk.{}.inp_gate.weight".to_string());
+        templates.insert(TensorName::Proj, "blk.{}.proj.weight".to_string());
+        templates.insert(
+            TensorName::PostAttentionNorm,
+            "blk.{}.post_attention_norm.weight".to_string(),
+        );
+        templates.insert(
+            TensorName::PostFfwNorm,
+            "blk.{}.post_ffw_norm.weight".to_string(),
+        );
+        templates.insert(TensorName::PostNorm, "blk.{}.post_norm.weight".to_string());
+        templates.insert(
+            TensorName::LayerOutputScale,
+            "blk.{}.layer_output_scale.weight".to_string(),
+        );
+        templates.insert(
+            TensorName::PerLayerTokenEmb,
+            "per_layer_token_embd.weight".to_string(),
+        );
+        templates.insert(
+            TensorName::PerLayerProjNorm,
+            "per_layer_proj_norm.weight".to_string(),
+        );
+        templates.insert(
+            TensorName::PerLayerModelProj,
+            "per_layer_model_proj.weight".to_string(),
+        );
 
         Self {
             scheme: TensorNamingScheme::Gguf,
@@ -335,6 +381,15 @@ impl TensorNameRegistry {
             "TokenEmb",
             "LmHead",
             "OutputNorm",
+            "InpGate",
+            "Proj",
+            "PostAttentionNorm",
+            "PostFfwNorm",
+            "PostNorm",
+            "LayerOutputScale",
+            "PerLayerTokenEmb",
+            "PerLayerProjNorm",
+            "PerLayerModelProj",
         ]
     }
 }

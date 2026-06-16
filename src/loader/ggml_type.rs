@@ -16,6 +16,7 @@ pub enum GgmlType {
     Q4_K = 12,
     Q5_K = 13,
     Q6_K = 14,
+    BF16 = 30,
 }
 
 impl GgmlType {
@@ -36,6 +37,7 @@ impl GgmlType {
             12 => Ok(GgmlType::Q4_K),
             13 => Ok(GgmlType::Q5_K),
             14 => Ok(GgmlType::Q6_K),
+            30 => Ok(GgmlType::BF16),
             _ => Err(LoadError::UnknownTensorType(v)),
         }
     }
@@ -58,6 +60,7 @@ impl GgmlType {
         match self {
             GgmlType::F32 => n * 4,
             GgmlType::F16 => n * 2,
+            GgmlType::BF16 => n * 2,
             GgmlType::Q4_0 => n.div_ceil(32) * 18,
             GgmlType::Q4_1 => n.div_ceil(32) * 20,
             GgmlType::Q5_0 => n.div_ceil(32) * 22,
@@ -87,6 +90,7 @@ impl std::fmt::Display for GgmlType {
             GgmlType::Q4_K => "Q4_K",
             GgmlType::Q5_K => "Q5_K",
             GgmlType::Q6_K => "Q6_K",
+            GgmlType::BF16 => "BF16",
         };
         write!(f, "{}", s)
     }
@@ -111,6 +115,7 @@ mod tests {
             (12, GgmlType::Q4_K),
             (13, GgmlType::Q5_K),
             (14, GgmlType::Q6_K),
+            (30, GgmlType::BF16),
         ];
         for &(v, expected) in cases {
             assert_eq!(GgmlType::from_u32(v).unwrap(), expected);

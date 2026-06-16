@@ -23,6 +23,7 @@
 - **Beam Search Quality Improvements (Step 11.5/F)** — Added `--rerank-beam-length-penalty <alpha>` to control length normalization during beam pruning (default `1.0`, i.e. mean score). Also added hypothesis recombination: before pruning, expansions that end with the same token are merged and only the best normalized score is kept, preventing the beam from filling with near-duplicate endings.
 
 ### Fixed
+- **Q4_K weight dequantization byte order** — `cpu::quant::embed_q4_k` now follows llama.cpp's `dequantize_row_q4_K` layout: each 64-value chunk consumes 32 `qs` bytes, with the low nibble sub-block using scale `is` and the high nibble sub-block using scale `is+1`. This corrects token-embedding lookups and all transposed/fallback Q4_K GEMV paths that dequantize on the fly. The internal `BlockQ4K::quantize` test helper was updated to pack nibbles into the same layout.
 - **`GraphSummarizer` final hidden norm on regressed traces** — `final_hidden_norm` now filters `output_log` handles through `CpuGraphArena::is_f32_handle_valid()` so that regressed branches pointing to restored persistent shelves do not panic when a `GraphMap` is summarized.
 
 ### Tests

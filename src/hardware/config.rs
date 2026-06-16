@@ -125,6 +125,7 @@ mod tests {
             kv_quant_bits: None,
             turboquant_centroids: None,
             qjl_scale: None,
+            ..Default::default()
         }
     }
 

@@ -87,9 +87,13 @@ impl CpuPrefillScratch {
 
 // ── Prefill fallback for exotic architectures ─────────────────────────────────
 
-/// Returns true if any layer uses shortconv or MoE, which the batched prefill
-/// kernel does not yet support.
-fn needs_decode_fallback(weights: &CpuModelWeights) -> bool {
+/// Returns true if the batched prefill kernel cannot handle this model.
+/// This includes shortconv/MoE layers and Gemma4-specific features
+/// (per-layer dims, partial RoPE, sliding-window attention, PLE).
+fn needs_decode_fallback(config: &ModelConfig, weights: &CpuModelWeights) -> bool {
+    if config.architecture == "gemma4" {
+        return true;
+    }
     weights
         .layers
         .iter()
@@ -110,7 +114,7 @@ fn cpu_prefill_decode_fallback(
     let mut hidden = vec![0.0f32; config.hidden_size];
     for (offset, &token) in tokens.iter().enumerate() {
         let pos = start_pos + offset;
-        cpu_embed_token(token, weights, &mut hidden, config);
+        cpu_embed_token(token, weights, &mut hidden, config, Some(scratch));
         cpu_full_forward(&mut hidden, weights, kv, scratch, pos, config)?;
     }
     Ok(())
@@ -234,6 +238,9 @@ fn prefill_layer_forward(
         config.num_heads,
         config.num_kv_heads,
         config.head_dim,
+        0,
+        0.0,
+        config.attention_scale,
     );
 
     // 7. O projection GEMM
@@ -336,7 +343,7 @@ pub fn cpu_prefill_forward(
         ));
     }
 
-    if needs_decode_fallback(weights) {
+    if needs_decode_fallback(config, weights) {
         return cpu_prefill_decode_fallback(tokens, weights, kv, scratch, start_pos, config);
     }
 
@@ -495,7 +502,7 @@ pub fn cpu_prefill_forward_parallel(
         ));
     }
 
-    if needs_decode_fallback(weights) {
+    if needs_decode_fallback(config, weights) {
         return cpu_prefill_decode_fallback(tokens, weights, kv, scratch, start_pos, config);
     }
 
@@ -831,6 +838,7 @@ mod tests {
             kv_quant_bits: None,
             turboquant_centroids: None,
             qjl_scale: None,
+            ..Default::default()
         }
     }
 

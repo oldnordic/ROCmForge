@@ -42,6 +42,7 @@ pub fn gpu_embed_token_hybrid(
                     cpu_weights,
                     &mut scratch.input_hidden_pinned.as_slice_mut::<f32>()[..h],
                     config,
+                    None,
                 );
                 unsafe {
                     ffi::hip_memcpy_h2d_async(
@@ -61,6 +62,7 @@ pub fn gpu_embed_token_hybrid(
                 cpu_weights,
                 &mut scratch.input_hidden_pinned.as_slice_mut::<f32>()[..h],
                 config,
+                None,
             );
             // Async upload
             unsafe {

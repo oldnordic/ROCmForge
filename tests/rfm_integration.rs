@@ -219,7 +219,13 @@ fn test_gguf_to_rfm_cpu_inference_equivalence() {
     // Token-by-token forward pass comparison
     for (pos, &token_id) in gguf_tokens.iter().enumerate() {
         // Run GGUF step
-        cpu_embed_token(token_id, &gguf_weights, &mut gguf_hidden, &gguf_config);
+        cpu_embed_token(
+            token_id,
+            &gguf_weights,
+            &mut gguf_hidden,
+            &gguf_config,
+            None,
+        );
         cpu_full_forward(
             &mut gguf_hidden,
             &gguf_weights,
@@ -231,7 +237,7 @@ fn test_gguf_to_rfm_cpu_inference_equivalence() {
         .expect("GGUF CPU forward step failed");
 
         // Run RFM step
-        cpu_embed_token(token_id, &rfm_weights, &mut rfm_hidden, &rfm_config);
+        cpu_embed_token(token_id, &rfm_weights, &mut rfm_hidden, &rfm_config, None);
         cpu_full_forward(
             &mut rfm_hidden,
             &rfm_weights,

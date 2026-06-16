@@ -12,6 +12,9 @@ use rayon::prelude::*;
 /// v_cache: [max_seq, kv_size]
 /// out:     [num_heads, head_dim]
 /// seq_len: number of valid K/V positions (= current pos + 1)
+/// sliding_window: if > 0, attend only to the last `sliding_window` positions.
+/// logit_cap: if > 0, soft-cap attention scores with `cap * tanh(score / cap)`.
+/// scale: attention score scale. Pass 0.0 to use the default 1/sqrt(head_dim).
 ///
 #[allow(
     clippy::too_many_arguments,
@@ -27,10 +30,23 @@ pub fn flash_attn_decode(
     num_heads: usize,
     num_kv_heads: usize,
     head_dim: usize,
+    sliding_window: usize,
+    logit_cap: f32,
+    scale: f32,
 ) {
     let kv_group = num_heads / num_kv_heads; // GQA ratio
-    let scale = 1.0 / (head_dim as f32).sqrt();
+    let scale = if scale > 0.0 {
+        scale
+    } else {
+        1.0 / (head_dim as f32).sqrt()
+    };
     let kv_size = num_kv_heads * head_dim;
+
+    let start_t = if sliding_window > 0 && seq_len > sliding_window {
+        seq_len - sliding_window
+    } else {
+        0
+    };
 
     #[cfg(target_arch = "x86_64")]
     let has_avx2 = is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma");
@@ -48,14 +64,14 @@ pub fn flash_attn_decode(
         let mut l = 0.0f32;
         let mut acc = vec![0.0f32; head_dim];
 
-        for t in 0..seq_len {
+        for t in start_t..seq_len {
             let k_start = t * kv_size + kv_h * head_dim;
             let v_start = t * kv_size + kv_h * head_dim;
             let k_t = &k_cache[k_start..k_start + head_dim];
             let v_t = &v_cache[v_start..v_start + head_dim];
 
             // dot(q, k) * scale
-            let score = if has_avx2 {
+            let mut score = if has_avx2 {
                 unsafe { dot_f32_avx2(q_h, k_t) * scale }
             } else {
                 q_h.iter()
@@ -64,6 +80,11 @@ pub fn flash_attn_decode(
                     .sum::<f32>()
                     * scale
             };
+
+            // Optional attention logit softcapping (Gemma4)
+            if logit_cap > 0.0 {
+                score = logit_cap * (score / logit_cap).tanh();
+            }
 
             // Online softmax update
             (m, l) = if has_avx2 {
@@ -171,6 +192,10 @@ unsafe fn normalize_f32_avx2(out: &mut [f32], acc: &[f32], l: f32) {
 /// v: [seq_len, num_kv_heads, head_dim]
 /// out: [seq_len, num_heads, head_dim]
 ///
+/// `sliding_window`: if > 0, row `s` attends to positions
+/// `max(0, s + 1 - sliding_window) ..= s`.
+/// `logit_cap`: if > 0, soft-cap attention scores with `cap * tanh(score / cap)`.
+/// `scale`: attention score scale. Pass 0.0 to use the default 1/sqrt(head_dim).
 #[allow(
     clippy::too_many_arguments,
     reason = "function has many parameters by design"
@@ -185,9 +210,16 @@ pub fn flash_attn_prefill(
     num_heads: usize,
     num_kv_heads: usize,
     head_dim: usize,
+    sliding_window: usize,
+    logit_cap: f32,
+    scale: f32,
 ) {
     let kv_group = num_heads / num_kv_heads;
-    let scale = 1.0 / (head_dim as f32).sqrt();
+    let scale = if scale > 0.0 {
+        scale
+    } else {
+        1.0 / (head_dim as f32).sqrt()
+    };
     let q_stride = num_heads * head_dim;
     let kv_stride = num_kv_heads * head_dim;
 
@@ -209,14 +241,24 @@ pub fn flash_attn_prefill(
                 let mut l = 0.0f32;
                 let mut acc = vec![0.0f32; head_dim];
 
-                // Causal: attend to positions 0..=s
-                for t in 0..=s {
+                // Causal: attend to positions 0..=s (or sliding window subset)
+                let start_t = if sliding_window > 0 {
+                    let row_len = s + 1;
+                    if row_len > sliding_window {
+                        row_len - sliding_window
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                };
+                for t in start_t..=s {
                     let k_th = &k[t * kv_stride + kv_h * head_dim
                         ..t * kv_stride + kv_h * head_dim + head_dim];
                     let v_th = &v[t * kv_stride + kv_h * head_dim
                         ..t * kv_stride + kv_h * head_dim + head_dim];
 
-                    let score = if has_avx2 {
+                    let mut score = if has_avx2 {
                         unsafe { dot_f32_avx2(q_sh, k_th) * scale }
                     } else {
                         q_sh.iter()
@@ -225,6 +267,10 @@ pub fn flash_attn_prefill(
                             .sum::<f32>()
                             * scale
                     };
+
+                    if logit_cap > 0.0 {
+                        score = logit_cap * (score / logit_cap).tanh();
+                    }
 
                     (m, l) = if has_avx2 {
                         unsafe { online_softmax_update_avx2(score, m, l, &mut acc, v_th) }

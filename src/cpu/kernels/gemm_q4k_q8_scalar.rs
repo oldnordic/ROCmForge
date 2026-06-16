@@ -30,9 +30,13 @@ pub fn dot_q4_k_q8_k_block_scalar(q4_block: &BlockQ4K, q8_block: &BlockQ8K) -> f
     utmp[2] = uaux;
     utmp[0] &= KMASK1;
 
-    // scales and mins are accessed as byte arrays from utmp
-    let scales = &utmp[0..2]; // First 8 bytes contain scales
-    let mins = &utmp[2..4]; // Next 8 bytes contain mins (after unpacking)
+    // After unpacking, utmp holds 16 bytes:
+    //   bytes 0..7  -> 8 unsigned 6-bit scales (one per byte, low 6 bits)
+    //   bytes 8..15 -> 8 unsigned 6-bit mins   (one per byte, low 6 bits)
+    let utmp_bytes = utmp.as_ptr() as *const u8;
+    let scales_bytes: [u8; 8] = unsafe { std::ptr::read_unaligned(utmp_bytes as *const [u8; 8]) };
+    let mins_bytes: [u8; 8] =
+        unsafe { std::ptr::read_unaligned(utmp_bytes.add(8) as *const [u8; 8]) };
 
     // Copy bsums to local array to avoid packed struct reference issues
     let mut bsums_local = [0i16; 16];
@@ -44,10 +48,11 @@ pub fn dot_q4_k_q8_k_block_scalar(q4_block: &BlockQ4K, q8_block: &BlockQ8K) -> f
         bsums_local[i] = q8_block.bsums[i];
     }
 
-    // Compute min contribution
+    // Compute min contribution.  Q4_K has one min per 32-element sub-block,
+    // but bsums are sums over 16-element groups, so two adjacent groups share a min.
     let mut sumi = 0i32;
     for (j, bsum) in bsums_local.iter().enumerate() {
-        let min_val = get_scaled_min(mins, j);
+        let min_val = (mins_bytes[j / 2] & 0x3F) as i32;
         sumi += *bsum as i32 * min_val;
     }
 
@@ -71,11 +76,11 @@ pub fn dot_q4_k_q8_k_block_scalar(q4_block: &BlockQ4K, q8_block: &BlockQ8K) -> f
     let mut q8_ptr = 0;
     let mut aux_ptr = 0;
 
-    for (scale_idx, _j) in (0..8).enumerate() {
+    for scale_idx in 0..8 {
         let mut aux32 = [0i32; 8];
 
-        // Get scale for this sub-block
-        let scale = get_scale(scales, scale_idx);
+        // Scale for this 32-element sub-block is an unsigned 6-bit value.
+        let scale = (scales_bytes[scale_idx] & 0x3F) as i32;
 
         // Process 4 groups of 8 elements
         for _ in 0..4 {
@@ -97,31 +102,6 @@ pub fn dot_q4_k_q8_k_block_scalar(q4_block: &BlockQ4K, q8_block: &BlockQ8K) -> f
     }
 
     result
-}
-
-/// Extract 6-bit scale value from packed array.
-fn get_scale(scales: &[u32], index: usize) -> i32 {
-    let byte_idx = index / 2;
-    let bit_offset = (index % 2) * 6;
-
-    let scales_bytes: &[u8] =
-        unsafe { std::slice::from_raw_parts(scales.as_ptr() as *const u8, 8) };
-
-    let scale = ((scales_bytes[byte_idx] as u32) >> bit_offset) & 0x3F;
-    // Convert to signed value centered around 32
-    (scale as i32) - 32
-}
-
-/// Extract 6-bit min value from packed array.
-fn get_scaled_min(mins: &[u32], index: usize) -> i32 {
-    let byte_idx = index / 2;
-    let bit_offset = (index % 2) * 6;
-
-    let mins_bytes: &[u8] = unsafe { std::slice::from_raw_parts(mins.as_ptr() as *const u8, 8) };
-
-    let min_val = ((mins_bytes[byte_idx] as u32) >> bit_offset) & 0x3F;
-    // Convert to signed value centered around 32
-    (min_val as i32) - 32
 }
 
 /// Scalar Q4_K × Q8_K GEMV: y = W * x
@@ -299,5 +279,90 @@ mod tests {
         gemm_q4_k_q8_k(&w, &x, &mut y, 1, 1, 256);
 
         assert_eq!(y[0], 0.0);
+    }
+
+    #[test]
+    fn dot_q4_k_q8_k_scalar_matches_dequantized() {
+        // The kernel must agree with the block's own dequantize semantics.
+        let mut rng = fastrand::Rng::new();
+        let weights: Vec<f32> = (0..256).map(|_| rng.f32() * 4.0 - 2.0).collect();
+        let activations: Vec<f32> = (0..256).map(|_| rng.f32() * 4.0 - 2.0).collect();
+
+        let q4 = BlockQ4K::quantize(&weights);
+        let q8 = crate::cpu::kernels::q8::quantize_q8_k(&activations);
+
+        let quantized_dot = dot_q4_k_q8_k_block_scalar(&q4, &q8);
+
+        let mut dequant_w = vec![0.0f32; 256];
+        q4.dequantize(&mut dequant_w);
+        let mut dequant_x = vec![0.0f32; 256];
+        q8.dequantize(&mut dequant_x);
+        let reference_dot: f32 = dequant_w.iter().zip(&dequant_x).map(|(w, a)| w * a).sum();
+
+        let abs_error = (quantized_dot - reference_dot).abs();
+        let rel_error = abs_error / reference_dot.abs().max(1e-6);
+
+        assert!(
+            rel_error < 0.01,
+            "Q4_K scalar dot mismatch: got {quantized_dot}, expected {reference_dot} (rel {rel_error})"
+        );
+    }
+
+    #[test]
+    fn gemv_q4_k_q8_k_scalar_matches_dequantized() {
+        let mut rng = fastrand::Rng::new();
+        let out_dim = 5;
+        let in_dim = 512;
+
+        let weights_f32: Vec<Vec<f32>> = (0..out_dim)
+            .map(|_| (0..in_dim).map(|_| rng.f32() * 4.0 - 2.0).collect())
+            .collect();
+        let mut w = vec![0u8; out_dim * (in_dim / 256) * BlockQ4K::SIZE];
+        for (row, weights) in weights_f32.iter().enumerate() {
+            for (b, block_weights) in weights.chunks(256).enumerate() {
+                let q4 = BlockQ4K::quantize(block_weights);
+                let offset = row * (in_dim / 256) * BlockQ4K::SIZE + b * BlockQ4K::SIZE;
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        &q4 as *const _ as *const u8,
+                        w.as_mut_ptr().add(offset),
+                        BlockQ4K::SIZE,
+                    );
+                }
+            }
+        }
+
+        let x: Vec<f32> = (0..in_dim).map(|_| rng.f32() * 4.0 - 2.0).collect();
+        let mut y = vec![0.0f32; out_dim];
+        gemv_q4_k_q8_k(&w, &x, &mut y, out_dim, in_dim);
+
+        // Build the dequantized input vector the kernel actually uses.
+        let mut dequant_x = vec![0.0f32; in_dim];
+        for (b, chunk) in x.chunks(256).enumerate() {
+            let q8 = crate::cpu::kernels::q8::quantize_q8_k(chunk);
+            q8.dequantize(&mut dequant_x[b * 256..(b + 1) * 256]);
+        }
+
+        for (row, weights) in weights_f32.iter().enumerate() {
+            let mut dequant_w = vec![0.0f32; in_dim];
+            for (b, block_weights) in weights.chunks(256).enumerate() {
+                let q4 = BlockQ4K::quantize(block_weights);
+                q4.dequantize(&mut dequant_w[b * 256..(b + 1) * 256]);
+            }
+            let expected = dequant_w
+                .iter()
+                .zip(&dequant_x)
+                .map(|(w, a)| w * a)
+                .sum::<f32>();
+            let abs_error = (y[row] - expected).abs();
+            let rel_error = abs_error / expected.abs().max(1e-6);
+            assert!(
+                rel_error < 0.01,
+                "Q4_K scalar GEMV row {row} mismatch: got {}, expected {} (rel {})",
+                y[row],
+                expected,
+                rel_error
+            );
+        }
     }
 }

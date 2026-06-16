@@ -13,7 +13,7 @@
 use super::cache::{CpuForwardScratch, CpuKvCache};
 use super::graph::{CpuExecutionContext, DirectContext};
 use super::ops::{
-    dispatch_gemv, flash_attn_decode, gelu_inplace, residual_add, rms_norm, rope, silu_fuse,
+    dispatch_gemv, flash_attn_decode, gelu_inplace, residual_add, rms_norm, rope_partial, silu_fuse,
 };
 use super::weights::{CpuLayerWeights, CpuModelWeights, CpuMoeWeights};
 use super::CpuError;
@@ -31,19 +31,20 @@ fn apply_qk_norm(
     k_norm: Option<&[f32]>,
     num_heads: usize,
     num_kv_heads: usize,
-    head_dim: usize,
+    q_head_dim: usize,
+    kv_head_dim: usize,
     eps: f32,
 ) {
     if let Some(norm) = q_norm {
         for h in 0..num_heads {
-            let start = h * head_dim;
-            let end = start + head_dim;
+            let start = h * q_head_dim;
+            let end = start + q_head_dim;
             let slice = &mut q[start..end];
             let mut inv_rms = 0.0f32;
             for v in slice.iter() {
                 inv_rms += v * v;
             }
-            inv_rms = (inv_rms / head_dim as f32 + eps).sqrt().recip();
+            inv_rms = (inv_rms / q_head_dim as f32 + eps).sqrt().recip();
             for (i, v) in slice.iter_mut().enumerate() {
                 *v = *v * inv_rms * norm[i];
             }
@@ -51,14 +52,14 @@ fn apply_qk_norm(
     }
     if let Some(norm) = k_norm {
         for h in 0..num_kv_heads {
-            let start = h * head_dim;
-            let end = start + head_dim;
+            let start = h * kv_head_dim;
+            let end = start + kv_head_dim;
             let slice = &mut k[start..end];
             let mut inv_rms = 0.0f32;
             for v in slice.iter() {
                 inv_rms += v * v;
             }
-            inv_rms = (inv_rms / head_dim as f32 + eps).sqrt().recip();
+            inv_rms = (inv_rms / kv_head_dim as f32 + eps).sqrt().recip();
             for (i, v) in slice.iter_mut().enumerate() {
                 *v = *v * inv_rms * norm[i];
             }
@@ -341,11 +342,15 @@ pub fn cpu_layer_forward_with_ctx<C: CpuExecutionContext>(
         ));
     }
 
+    let is_gemma4 = config.architecture == "gemma4";
     let h = config.hidden_size;
-    let q_size = config.num_heads * config.head_dim;
-    let kv_size = config.num_kv_heads * config.head_dim;
-    let ff_size = config.intermediate_size;
+    let q_size = config.q_size(layer);
+    let kv_size = config.kv_size(layer);
+    let head_dim = config.head_dim_for_layer(layer);
+    let kv_head_dim = config.kv_head_dim_for_layer(layer);
+    let ff_size = config.intermediate_size_for_layer(layer);
     let eps = config.rms_norm_eps;
+    let sliding_window = config.sliding_window_for_layer(layer);
 
     // 1. Attention RMS norm
     ctx.execute_rms_norm(hidden, &weights.attn_norm, &mut scratch.normed, eps);
@@ -363,128 +368,247 @@ pub fn cpu_layer_forward_with_ctx<C: CpuExecutionContext>(
 
     // 2. Attention or Shortconv
     if weights.is_attention_layer {
-        // 2a. QKV projections
-        if let (Some(ref qkv_w), Some(ref qkv_m)) = (&weights.attn_qkv, &weights.attn_qkv_meta) {
-            let qkv_total = q_size + 2 * kv_size;
-            ctx.execute_gemv(
-                qkv_w,
-                qkv_m,
-                &scratch.normed,
-                &mut scratch.qkv,
-                qkv_total,
-                h,
-                Some(&mut scratch.q8_scratch),
-            )?;
-            scratch.q.copy_from_slice(&scratch.qkv[0..q_size]);
-            scratch
-                .k
-                .copy_from_slice(&scratch.qkv[q_size..q_size + kv_size]);
-            scratch
-                .v
-                .copy_from_slice(&scratch.qkv[q_size + kv_size..qkv_total]);
-        } else {
-            let normed = &*scratch.normed;
-            let q = &mut *scratch.q;
-            let k = &mut *scratch.k;
-            let v = &mut *scratch.v;
+        let first_shared = config.first_kv_shared_layer_idx();
+        let is_kv_shared = is_gemma4 && layer >= first_shared;
+        let stores_shared_kv = is_gemma4 && layer < first_shared && config.stores_shared_kv(layer);
 
+        // Query projection
+        if weights.attn_qkv.is_none() {
             ctx.execute_gemv(
                 &weights.attn_q,
                 &weights.attn_q_meta,
-                normed,
-                q,
+                &scratch.normed,
+                &mut scratch.q[..q_size],
                 q_size,
                 h,
                 Some(&mut scratch.q8_scratch),
             )?;
-            ctx.execute_gemv(
-                &weights.attn_k,
-                &weights.attn_k_meta,
-                normed,
-                k,
-                kv_size,
-                h,
-                Some(&mut scratch.q8_scratch),
-            )?;
-            ctx.execute_gemv(
-                &weights.attn_v,
-                &weights.attn_v_meta,
-                normed,
-                v,
-                kv_size,
-                h,
-                Some(&mut scratch.q8_scratch),
-            )?;
+            if let Some(bq) = &weights.attn_q_bias {
+                super::ops::add_bias(&mut scratch.q[..q_size], bq);
+            }
         }
 
-        // Optional biases
-        if let Some(bq) = &weights.attn_q_bias {
-            super::ops::add_bias(&mut scratch.q, bq);
-        }
-        if let Some(bk) = &weights.attn_k_bias {
-            super::ops::add_bias(&mut scratch.k, bk);
-        }
-        if let Some(bv) = &weights.attn_v_bias {
-            super::ops::add_bias(&mut scratch.v, bv);
+        // Key/value projection (skipped for Gemma4 shared-KV layers)
+        if !is_kv_shared {
+            if let (Some(ref qkv_w), Some(ref qkv_m)) = (&weights.attn_qkv, &weights.attn_qkv_meta)
+            {
+                // Fused QKV path (non-Gemma4)
+                let qkv_total = q_size + 2 * kv_size;
+                ctx.execute_gemv(
+                    qkv_w,
+                    qkv_m,
+                    &scratch.normed,
+                    &mut scratch.qkv[..qkv_total],
+                    qkv_total,
+                    h,
+                    Some(&mut scratch.q8_scratch),
+                )?;
+                scratch.q[..q_size].copy_from_slice(&scratch.qkv[..q_size]);
+                scratch.k[..kv_size].copy_from_slice(&scratch.qkv[q_size..q_size + kv_size]);
+                scratch.v[..kv_size].copy_from_slice(&scratch.qkv[q_size + kv_size..qkv_total]);
+            } else {
+                let normed = &*scratch.normed;
+                ctx.execute_gemv(
+                    &weights.attn_k,
+                    &weights.attn_k_meta,
+                    normed,
+                    &mut scratch.k[..kv_size],
+                    kv_size,
+                    h,
+                    Some(&mut scratch.q8_scratch),
+                )?;
+                ctx.execute_gemv(
+                    &weights.attn_v,
+                    &weights.attn_v_meta,
+                    normed,
+                    &mut scratch.v[..kv_size],
+                    kv_size,
+                    h,
+                    Some(&mut scratch.q8_scratch),
+                )?;
+            }
+            if let Some(bk) = &weights.attn_k_bias {
+                super::ops::add_bias(&mut scratch.k[..kv_size], bk);
+            }
+            if let Some(bv) = &weights.attn_v_bias {
+                super::ops::add_bias(&mut scratch.v[..kv_size], bv);
+            }
         }
 
-        // QK-Norm (if present)
-        if weights.attn_q_norm.is_some() || weights.attn_k_norm.is_some() {
-            apply_qk_norm(
-                &mut scratch.q,
-                &mut scratch.k,
-                weights.attn_q_norm.as_deref(),
-                weights.attn_k_norm.as_deref(),
-                config.num_heads,
-                config.num_kv_heads,
-                config.head_dim,
-                eps,
-            );
+        // QK-Norm and RoPE
+        if is_kv_shared {
+            // Shared layers only normalize and rotate the query; K/V are reused.
+            if let Some(q_norm) = weights.attn_q_norm.as_deref() {
+                apply_qk_norm(
+                    &mut scratch.q[..q_size],
+                    &mut [],
+                    Some(q_norm),
+                    None,
+                    config.num_heads,
+                    config.num_kv_heads,
+                    head_dim,
+                    kv_head_dim,
+                    eps,
+                );
+            }
+            if is_gemma4 {
+                let partial_factor = config.rope_partial_factor_for_layer(layer);
+                let rotated_dims = (head_dim as f32 * partial_factor) as usize;
+                let rotated_half = rotated_dims / 2;
+                let freq = config.rope_freq_for_layer(layer);
+                for i in 0..rotated_half {
+                    let angle = pos as f32 * freq[i];
+                    let (s, c) = angle.sin_cos();
+                    scratch.rope_sin[i] = s;
+                    scratch.rope_cos[i] = c;
+                }
+                rope_partial(
+                    &mut scratch.q[..q_size],
+                    config.num_heads,
+                    head_dim,
+                    rotated_dims,
+                    &scratch.rope_sin[..rotated_half],
+                    &scratch.rope_cos[..rotated_half],
+                    config.rope_neox,
+                );
+            } else {
+                ctx.execute_rope(
+                    &mut scratch.q[..q_size],
+                    config.num_heads,
+                    head_dim,
+                    rope_sin,
+                    rope_cos,
+                    config.rope_neox,
+                );
+            }
+        } else {
+            // Non-shared layers: normalize and rotate both Q and K.
+            if weights.attn_q_norm.is_some() || weights.attn_k_norm.is_some() {
+                apply_qk_norm(
+                    &mut scratch.q[..q_size],
+                    &mut scratch.k[..kv_size],
+                    weights.attn_q_norm.as_deref(),
+                    weights.attn_k_norm.as_deref(),
+                    config.num_heads,
+                    config.num_kv_heads,
+                    head_dim,
+                    kv_head_dim,
+                    eps,
+                );
+            }
+
+            if is_gemma4 {
+                let partial_factor = config.rope_partial_factor_for_layer(layer);
+                let rotated_dims = (head_dim as f32 * partial_factor) as usize;
+                let kv_rotated_dims = (kv_head_dim as f32 * partial_factor) as usize;
+                let rotated_half = rotated_dims / 2;
+                let kv_rotated_half = kv_rotated_dims / 2;
+                let freq = config.rope_freq_for_layer(layer);
+                for i in 0..rotated_half.max(kv_rotated_half) {
+                    let angle = pos as f32 * freq[i];
+                    let (s, c) = angle.sin_cos();
+                    scratch.rope_sin[i] = s;
+                    scratch.rope_cos[i] = c;
+                }
+                let rope_sin = &scratch.rope_sin[..rotated_half];
+                let rope_cos = &scratch.rope_cos[..rotated_half];
+                let kv_rope_sin = &scratch.rope_sin[..kv_rotated_half];
+                let kv_rope_cos = &scratch.rope_cos[..kv_rotated_half];
+                rope_partial(
+                    &mut scratch.q[..q_size],
+                    config.num_heads,
+                    head_dim,
+                    rotated_dims,
+                    rope_sin,
+                    rope_cos,
+                    config.rope_neox,
+                );
+                rope_partial(
+                    &mut scratch.k[..kv_size],
+                    config.num_kv_heads,
+                    kv_head_dim,
+                    kv_rotated_dims,
+                    kv_rope_sin,
+                    kv_rope_cos,
+                    config.rope_neox,
+                );
+            } else {
+                ctx.execute_rope(
+                    &mut scratch.q[..q_size],
+                    config.num_heads,
+                    head_dim,
+                    rope_sin,
+                    rope_cos,
+                    config.rope_neox,
+                );
+                ctx.execute_rope(
+                    &mut scratch.k[..kv_size],
+                    config.num_kv_heads,
+                    kv_head_dim,
+                    rope_sin,
+                    rope_cos,
+                    config.rope_neox,
+                );
+            }
+
+            // Write K, V cache
+            kv.write_k(layer, pos, &scratch.k[..kv_size]);
+            kv.write_v(layer, pos, &scratch.v[..kv_size]);
+            if stores_shared_kv {
+                let ty = config.layer_type_for_layer(layer);
+                kv.write_shared_k(ty, pos, &scratch.k[..kv_size]);
+                kv.write_shared_v(ty, pos, &scratch.v[..kv_size]);
+            }
         }
-
-        // 2c. RoPE
-        ctx.execute_rope(
-            &mut scratch.q,
-            config.num_heads,
-            config.head_dim,
-            rope_sin,
-            rope_cos,
-            config.rope_neox,
-        );
-        ctx.execute_rope(
-            &mut scratch.k,
-            config.num_kv_heads,
-            config.head_dim,
-            rope_sin,
-            rope_cos,
-            config.rope_neox,
-        );
-
-        // Write K, V cache
-        kv.write_k(layer, pos, &scratch.k);
-        kv.write_v(layer, pos, &scratch.v);
 
         // Flash attention
         let seq_len = pos + 1;
-        // 2e. Attention
-        ctx.execute_attention(
-            &scratch.q,
-            kv.k_buf(layer),
-            kv.v_buf(layer),
-            &mut scratch.attn_out,
-            seq_len,
-            config.num_heads,
-            config.num_kv_heads,
-            config.head_dim,
-            kv.max_seq_len,
-        );
+        if is_gemma4 {
+            let logit_cap = config.attention_logit_cap.unwrap_or(0.0);
+            let (k_cache, v_cache) = if is_kv_shared {
+                let ty = config.layer_type_for_layer(layer);
+                kv.shared_kv(ty).ok_or_else(|| {
+                    CpuError::InvalidOperation(format!(
+                        "missing shared KV state for layer type {}",
+                        ty
+                    ))
+                })?
+            } else {
+                (kv.k_buf(layer), kv.v_buf(layer))
+            };
+            flash_attn_decode(
+                &scratch.q[..q_size],
+                k_cache,
+                v_cache,
+                &mut scratch.attn_out[..q_size],
+                seq_len,
+                config.num_heads,
+                config.num_kv_heads,
+                head_dim,
+                sliding_window,
+                logit_cap,
+                config.attention_scale,
+            );
+        } else {
+            ctx.execute_attention(
+                &scratch.q[..q_size],
+                kv.k_buf(layer),
+                kv.v_buf(layer),
+                &mut scratch.attn_out[..q_size],
+                seq_len,
+                config.num_heads,
+                config.num_kv_heads,
+                head_dim,
+                kv.max_seq_len,
+            );
+        }
 
         // Output projection
         ctx.execute_gemv(
             &weights.attn_o,
             &weights.attn_o_meta,
-            &scratch.attn_out,
-            &mut scratch.layer_out,
+            &scratch.attn_out[..q_size],
+            &mut scratch.layer_out[..h],
             h,
             q_size,
             Some(&mut scratch.q8_scratch),
@@ -497,14 +621,23 @@ pub fn cpu_layer_forward_with_ctx<C: CpuExecutionContext>(
             kv,
             &mut scratch.shortconv_bcx,
             &mut scratch.shortconv_tmp,
-            &mut scratch.layer_out,
+            &mut scratch.layer_out[..h],
             layer,
             config,
         )?;
     }
 
-    // 3. Residual after attention/shortconv
-    ctx.execute_residual_add(hidden, &scratch.layer_out);
+    // 3. Optional post-attention norm (Gemma4) and residual
+    if let Some(ref norm) = weights.post_attention_norm {
+        scratch.shortconv_tmp[..h].copy_from_slice(&scratch.layer_out[..h]);
+        rms_norm(
+            &scratch.shortconv_tmp[..h],
+            norm,
+            &mut scratch.layer_out[..h],
+            eps,
+        );
+    }
+    ctx.execute_residual_add(hidden, &scratch.layer_out[..h]);
 
     // 4. FFN RMS norm
     ctx.execute_rms_norm(hidden, &weights.ffn_norm, &mut scratch.normed, eps);
@@ -518,15 +651,15 @@ pub fn cpu_layer_forward_with_ctx<C: CpuExecutionContext>(
             &mut scratch.gate,
             &mut scratch.swiglu,
             &mut scratch.shortconv_tmp,
-            &mut scratch.layer_out,
+            &mut scratch.layer_out[..h],
             config,
             Some(&mut scratch.q8_scratch),
         )?;
     } else {
         let normed = &*scratch.normed;
-        let swiglu = &mut *scratch.swiglu;
+        let swiglu = &mut scratch.swiglu[..ff_size];
         if let (Some(ref gate_w), Some(ref gate_m)) = (&weights.ffn_gate, &weights.ffn_gate_meta) {
-            let gate = &mut *scratch.gate;
+            let gate = &mut scratch.gate[..ff_size];
             ctx.execute_gemv(
                 gate_w,
                 gate_m,
@@ -545,7 +678,14 @@ pub fn cpu_layer_forward_with_ctx<C: CpuExecutionContext>(
                 h,
                 Some(&mut scratch.q8_scratch),
             )?;
-            ctx.execute_silu(&scratch.gate, &mut scratch.swiglu);
+            if config.use_gelu_swiglu {
+                gelu_inplace(gate);
+                for i in 0..ff_size {
+                    swiglu[i] *= gate[i];
+                }
+            } else {
+                ctx.execute_silu(gate, swiglu);
+            }
         } else {
             ctx.execute_gemv(
                 &weights.ffn_up,
@@ -561,16 +701,84 @@ pub fn cpu_layer_forward_with_ctx<C: CpuExecutionContext>(
         ctx.execute_gemv(
             &weights.ffn_down,
             &weights.ffn_down_meta,
-            &scratch.swiglu,
-            &mut scratch.layer_out,
+            &scratch.swiglu[..ff_size],
+            &mut scratch.layer_out[..h],
             h,
             ff_size,
             Some(&mut scratch.q8_scratch),
         )?;
     }
 
-    // 6. Residual after FFN
-    ctx.execute_residual_add(hidden, &scratch.layer_out);
+    // 6. Optional post-ffw norm (Gemma4) and residual
+    if let Some(ref norm) = weights.post_ffw_norm {
+        scratch.shortconv_tmp[..h].copy_from_slice(&scratch.layer_out[..h]);
+        rms_norm(
+            &scratch.shortconv_tmp[..h],
+            norm,
+            &mut scratch.layer_out[..h],
+            eps,
+        );
+    }
+    ctx.execute_residual_add(hidden, &scratch.layer_out[..h]);
+
+    // 7. Per-Layer Embedding (PLE) branch for Gemma4
+    if is_gemma4 && config.hidden_size_per_layer_input > 0 {
+        if let (Some((ref gate_w, ref gate_m)), Some((ref proj_w, ref proj_m))) =
+            (&weights.inp_gate, &weights.proj)
+        {
+            let ple_dim = config.hidden_size_per_layer_input;
+            let ple_offset = layer * ple_dim;
+            let ple_slice = &scratch.ple_input[ple_offset..ple_offset + ple_dim];
+
+            // inp_gate: hidden -> ple_dim, then GELU
+            let gate = &mut scratch.gate[..ple_dim];
+            ctx.execute_gemv(
+                gate_w,
+                gate_m,
+                hidden,
+                gate,
+                ple_dim,
+                h,
+                Some(&mut scratch.q8_scratch),
+            )?;
+            gelu_inplace(gate);
+            for i in 0..ple_dim {
+                gate[i] *= ple_slice[i];
+            }
+
+            // proj: ple_dim -> hidden
+            ctx.execute_gemv(
+                proj_w,
+                proj_m,
+                gate,
+                &mut scratch.layer_out[..h],
+                h,
+                ple_dim,
+                Some(&mut scratch.q8_scratch),
+            )?;
+
+            if let Some(ref norm) = weights.post_norm {
+                scratch.shortconv_tmp[..h].copy_from_slice(&scratch.layer_out[..h]);
+                rms_norm(
+                    &scratch.shortconv_tmp[..h],
+                    norm,
+                    &mut scratch.layer_out[..h],
+                    eps,
+                );
+            }
+
+            for i in 0..h {
+                hidden[i] += scratch.layer_out[i];
+            }
+        }
+    }
+
+    // 8. Optional layer output scale (Gemma4)
+    if let Some(scale) = weights.layer_output_scale {
+        for v in hidden.iter_mut() {
+            *v *= scale;
+        }
+    }
 
     Ok(())
 }
@@ -601,9 +809,22 @@ pub fn cpu_full_forward(
         );
     }
 
-    // Precompute RoPE sin/cos for this position once, reuse across all layers
-    let half = config.head_dim / 2;
-    for i in 0..half {
+    // Precompute RoPE sin/cos for this position once, reuse across all layers.
+    // For models with per-layer head dimensions (e.g. Gemma4), size the table for
+    // the largest rotated dimension seen across layers, not the global head_dim.
+    let max_rotated_half = (0..config.num_layers)
+        .map(|layer| {
+            let head_dim = config.head_dim_for_layer(layer);
+            let factor = config.rope_partial_factor_for_layer(layer);
+            ((head_dim as f32 * factor) as usize / 2).max(1)
+        })
+        .max()
+        .unwrap_or(config.head_dim / 2);
+    let rope_freq_len = config.rope_freq.len();
+    // Zero any trailing entries that may be unused on this model.
+    scratch.rope_sin[..max_rotated_half].fill(0.0);
+    scratch.rope_cos[..max_rotated_half].fill(0.0);
+    for i in 0..max_rotated_half.min(rope_freq_len) {
         let angle = pos as f32 * config.rope_freq[i];
         let (s, c) = angle.sin_cos();
         scratch.rope_sin[i] = s;
@@ -614,8 +835,10 @@ pub fn cpu_full_forward(
     // mutated by it. We use raw-pointer slices to avoid a borrow-checker conflict
     // between the immutable borrows into scratch.rope_sin/rope_cos and the mutable
     // borrow of scratch passed to cpu_layer_forward.
-    let rope_sin = unsafe { std::slice::from_raw_parts(scratch.rope_sin.as_ptr(), half) };
-    let rope_cos = unsafe { std::slice::from_raw_parts(scratch.rope_cos.as_ptr(), half) };
+    let rope_sin =
+        unsafe { std::slice::from_raw_parts(scratch.rope_sin.as_ptr(), max_rotated_half) };
+    let rope_cos =
+        unsafe { std::slice::from_raw_parts(scratch.rope_cos.as_ptr(), max_rotated_half) };
 
     // Process all transformer layers
     for layer_idx in 0..config.num_layers {
@@ -633,7 +856,7 @@ pub fn cpu_full_forward(
         )?;
 
         // Debug: show hidden state after each layer
-        if debug && layer_idx < 2 {
+        if debug {
             let mean: f32 = hidden.iter().copied().sum::<f32>() / hidden.len() as f32;
             let std: f32 = ((hidden.iter().map(|x| x * x).sum::<f32>() / hidden.len() as f32)
                 - mean * mean)
@@ -643,6 +866,20 @@ pub fn cpu_full_forward(
                 layer_idx, mean, std
             );
         }
+    }
+
+    // Debug: show hidden state before final norm
+    if debug {
+        let mean: f32 = hidden.iter().copied().sum::<f32>() / hidden.len() as f32;
+        let std: f32 = ((hidden.iter().map(|x| x * x).sum::<f32>() / hidden.len() as f32)
+            - mean * mean)
+            .sqrt();
+        let min: f32 = hidden.iter().copied().fold(f32::INFINITY, f32::min);
+        let max: f32 = hidden.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        eprintln!(
+            "[Before final norm] mean={:.4} std={:.4} range=[{:.4}, {:.4}]",
+            mean, std, min, max
+        );
     }
 
     // Final RMS norm
@@ -686,6 +923,14 @@ pub fn cpu_full_forward(
         h, // hidden_size (in_dim)
         Some(&mut scratch.q8_scratch),
     )?;
+
+    // Final logit softcapping (Gemma4)
+    if let Some(cap) = config.final_logit_softcapping {
+        let inv_cap = 1.0 / cap;
+        for logit in scratch.logits.iter_mut() {
+            *logit = cap * (*logit * inv_cap).tanh();
+        }
+    }
 
     // Debug: show logits statistics
     if debug {
@@ -736,16 +981,28 @@ pub fn cpu_full_forward_with_ctx<C: CpuExecutionContext>(
         );
     }
 
-    let half = config.head_dim / 2;
-    for i in 0..half {
+    let max_rotated_half = (0..config.num_layers)
+        .map(|layer| {
+            let head_dim = config.head_dim_for_layer(layer);
+            let factor = config.rope_partial_factor_for_layer(layer);
+            ((head_dim as f32 * factor) as usize / 2).max(1)
+        })
+        .max()
+        .unwrap_or(config.head_dim / 2);
+    let rope_freq_len = config.rope_freq.len();
+    scratch.rope_sin[..max_rotated_half].fill(0.0);
+    scratch.rope_cos[..max_rotated_half].fill(0.0);
+    for i in 0..max_rotated_half.min(rope_freq_len) {
         let angle = pos as f32 * config.rope_freq[i];
         let (s, c) = angle.sin_cos();
         scratch.rope_sin[i] = s;
         scratch.rope_cos[i] = c;
     }
 
-    let rope_sin = unsafe { std::slice::from_raw_parts(scratch.rope_sin.as_ptr(), half) };
-    let rope_cos = unsafe { std::slice::from_raw_parts(scratch.rope_cos.as_ptr(), half) };
+    let rope_sin =
+        unsafe { std::slice::from_raw_parts(scratch.rope_sin.as_ptr(), max_rotated_half) };
+    let rope_cos =
+        unsafe { std::slice::from_raw_parts(scratch.rope_cos.as_ptr(), max_rotated_half) };
 
     for layer_idx in 0..config.num_layers {
         cpu_layer_forward_with_ctx(
@@ -812,6 +1069,14 @@ pub fn cpu_full_forward_with_ctx<C: CpuExecutionContext>(
         Some(&mut scratch.q8_scratch),
     )?;
 
+    // Final logit softcapping (Gemma4)
+    if let Some(cap) = config.final_logit_softcapping {
+        let inv_cap = 1.0 / cap;
+        for logit in scratch.logits.iter_mut() {
+            *logit = cap * (*logit * inv_cap).tanh();
+        }
+    }
+
     if debug {
         let mean: f32 = scratch.logits.iter().copied().sum::<f32>() / scratch.logits.len() as f32;
         let std: f32 = ((scratch.logits.iter().map(|x| x * x).sum::<f32>()
@@ -868,17 +1133,214 @@ pub fn cpu_prefill(
     )
 }
 
+// ── Per-Layer Embeddings (PLE) ───────────────────────────────────────────────────
+
+/// Compute Gemma4 Per-Layer Embedding (PLE) inputs for the current token.
+///
+/// This implements `Gemma4TextModel.project_per_layer_inputs`:
+///   per_layer_token_embd lookup (scaled by sqrt(ple_dim))
+///   + main_embedding projected through per_layer_model_proj (scaled by 1/sqrt(hidden_size))
+///   RMSNorm per layer with per_layer_proj_norm
+///   * 1/sqrt(2)
+///
+/// Result is written to `scratch.ple_input` as `[num_layers * ple_dim]`.
+pub fn cpu_compute_ple_inputs(
+    token_id: u32,
+    hidden: &[f32],
+    weights: &CpuModelWeights,
+    scratch: &mut CpuForwardScratch,
+    config: &ModelConfig,
+) {
+    if config.architecture != "gemma4" || config.hidden_size_per_layer_input == 0 {
+        return;
+    }
+
+    let ple_dim = config.hidden_size_per_layer_input;
+    let ple_total = config.num_layers * ple_dim;
+    let h = config.hidden_size;
+    let eps = config.rms_norm_eps;
+
+    let (ple_emb_data, ple_emb_meta) = match &weights.per_layer_token_emb {
+        Some(x) => x,
+        None => return,
+    };
+    let (ple_proj_data, ple_proj_meta) = match &weights.per_layer_model_proj {
+        Some(x) => x,
+        None => return,
+    };
+    let ple_norm = match &weights.per_layer_proj_norm {
+        Some(x) => x,
+        None => return,
+    };
+
+    // 1. Lookup per-layer token embedding into ple_input.
+    match ple_emb_meta.wtype {
+        GgmlType::F32 => {
+            if let Some(emb) = super::weights::try_as_f32_slice(ple_emb_data) {
+                super::quant::embed_f32(
+                    token_id as usize,
+                    emb,
+                    &mut scratch.ple_input[..ple_total],
+                );
+            } else {
+                let start = token_id as usize * ple_total * 4;
+                let bytes = &ple_emb_data[start..start + ple_total * 4];
+                for i in 0..ple_total {
+                    scratch.ple_input[i] = f32::from_le_bytes([
+                        bytes[i * 4],
+                        bytes[i * 4 + 1],
+                        bytes[i * 4 + 2],
+                        bytes[i * 4 + 3],
+                    ]);
+                }
+            }
+        }
+        GgmlType::F16 => {
+            let start_idx = token_id as usize * ple_total;
+            let emb = &ple_emb_data[start_idx * 2..(start_idx + ple_total) * 2];
+            for i in 0..ple_total {
+                let bits = u16::from_le_bytes([emb[i * 2], emb[i * 2 + 1]]);
+                scratch.ple_input[i] = half::f16::from_bits(bits).to_f32();
+            }
+        }
+        GgmlType::Q4_0 => {
+            super::quant::embed_q4_0(
+                token_id as usize,
+                ple_emb_data,
+                &mut scratch.ple_input[..ple_total],
+                ple_total,
+            );
+        }
+        GgmlType::Q4_1 => {
+            super::quant::embed_q4_1(
+                token_id as usize,
+                ple_emb_data,
+                &mut scratch.ple_input[..ple_total],
+                ple_total,
+            );
+        }
+        GgmlType::Q4_K => {
+            super::quant::embed_q4_k(
+                token_id as usize,
+                ple_emb_data,
+                &mut scratch.ple_input[..ple_total],
+                ple_total,
+            );
+        }
+        GgmlType::Q5_0 => {
+            super::quant::embed_q5_0(
+                token_id as usize,
+                ple_emb_data,
+                &mut scratch.ple_input[..ple_total],
+                ple_total,
+            );
+        }
+        GgmlType::Q5_K => {
+            super::quant::embed_q5_k(
+                token_id as usize,
+                ple_emb_data,
+                &mut scratch.ple_input[..ple_total],
+                ple_total,
+            );
+        }
+        GgmlType::Q6_K => {
+            super::quant::embed_q6_k(
+                token_id as usize,
+                ple_emb_data,
+                &mut scratch.ple_input[..ple_total],
+                ple_total,
+            );
+        }
+        GgmlType::Q8_0 => {
+            super::quant::embed_q8_0(
+                token_id as usize,
+                ple_emb_data,
+                &mut scratch.ple_input[..ple_total],
+                ple_total,
+            );
+        }
+        GgmlType::Q3_K => {
+            super::quant::embed_q3_k(
+                token_id as usize,
+                ple_emb_data,
+                &mut scratch.ple_input[..ple_total],
+                ple_total,
+            );
+        }
+        GgmlType::Q2_K => {
+            super::quant::embed_q2_k(
+                token_id as usize,
+                ple_emb_data,
+                &mut scratch.ple_input[..ple_total],
+                ple_total,
+            );
+        }
+        _ => {
+            panic!(
+                "Unsupported per-layer token embedding type: {:?}",
+                ple_emb_meta.wtype
+            );
+        }
+    }
+
+    // Scale token embeddings by sqrt(ple_dim).
+    let ple_scale = (ple_dim as f32).sqrt();
+    for v in scratch.ple_input[..ple_total].iter_mut() {
+        *v *= ple_scale;
+    }
+
+    // 2. Project main hidden state through per_layer_model_proj -> ple_proj.
+    let proj_bytes = unsafe {
+        std::slice::from_raw_parts(ple_proj_data.as_ptr() as *const u8, ple_proj_data.len() * 4)
+    };
+    dispatch_gemv(
+        proj_bytes,
+        ple_proj_meta,
+        hidden,
+        &mut scratch.ple_proj[..ple_total],
+        ple_total,
+        h,
+        Some(&mut scratch.q8_scratch),
+    )
+    .expect("per_layer_model_proj GEMV failed");
+
+    let hidden_scale = 1.0 / (h as f32).sqrt();
+    for v in scratch.ple_proj[..ple_total].iter_mut() {
+        *v *= hidden_scale;
+    }
+
+    // 3. Combine and RMSNorm per layer, scale by 1/sqrt(2).
+    let inv_sqrt2 = 1.0 / (2.0f32).sqrt();
+    for i in 0..ple_total {
+        scratch.ple_proj[i] += scratch.ple_input[i];
+    }
+    for layer in 0..config.num_layers {
+        let off = layer * ple_dim;
+        rms_norm(
+            &scratch.ple_proj[off..off + ple_dim],
+            ple_norm,
+            &mut scratch.ple_input[off..off + ple_dim],
+            eps,
+        );
+        for v in scratch.ple_input[off..off + ple_dim].iter_mut() {
+            *v *= inv_sqrt2;
+        }
+    }
+}
+
 // ── Token embedding ──────────────────────────────────────────────────────────────
 
 /// Embed a single token into hidden state.
 ///
 /// Looks up the token embedding and stores it in `hidden`.
 /// Dispatches based on embedding quantization type (F32, Q4_0, etc.)
+/// If `scratch` is provided, also computes Gemma4 PLE inputs.
 pub fn cpu_embed_token(
     token_id: u32,
     weights: &CpuModelWeights,
     hidden: &mut [f32],
     config: &ModelConfig,
+    scratch: Option<&mut CpuForwardScratch>,
 ) {
     let h = config.hidden_size;
     match weights.token_emb_meta.wtype {
@@ -946,6 +1408,18 @@ pub fn cpu_embed_token(
             );
             std::panic::panic_any(msg);
         }
+    }
+
+    // Gemma-style embedding scaling (sqrt(hidden_size) for gemma4, 1.0 otherwise).
+    let scale = config.embedding_scale;
+    if scale != 1.0 {
+        for v in hidden[..h].iter_mut() {
+            *v *= scale;
+        }
+    }
+
+    if let Some(scratch) = scratch {
+        cpu_compute_ple_inputs(token_id, &hidden[..h], weights, scratch, config);
     }
 }
 

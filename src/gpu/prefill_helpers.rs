@@ -148,7 +148,7 @@ pub(crate) fn embed_prompt_tokens(
         for (pos, &token_id) in token_ids.iter().enumerate() {
             let hidden_row = scratch.hidden_row_ptr(pos, h);
             let mut hidden_cpu = vec![0.0f32; h];
-            cpu_embed_token(token_id, cpu_weights, &mut hidden_cpu, config);
+            cpu_embed_token(token_id, cpu_weights, &mut hidden_cpu, config, None);
 
             unsafe {
                 super::ffi::hip_memcpy_h2d(

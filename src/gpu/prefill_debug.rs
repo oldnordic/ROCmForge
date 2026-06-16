@@ -79,7 +79,7 @@ pub(crate) fn compute_layer0_cpu_reference(
     let mut hidden_out = vec![0.0f32; seq_len * h];
 
     for (pos, &token_id) in token_ids.iter().enumerate() {
-        cpu_embed_token(token_id, cpu_weights, &mut cpu_hidden, config);
+        cpu_embed_token(token_id, cpu_weights, &mut cpu_hidden, config, None);
         hidden_in[pos * h..(pos + 1) * h].copy_from_slice(&cpu_hidden);
 
         let layer_idx = 0;
@@ -189,6 +189,9 @@ pub(crate) fn compute_layer0_cpu_reference(
             config.num_heads,
             config.num_kv_heads,
             config.head_dim,
+            0,
+            0.0,
+            config.attention_scale,
         );
         attn_out[pos * q_size..(pos + 1) * q_size].copy_from_slice(&t_attn_out);
 

@@ -70,7 +70,7 @@ pub(crate) fn run_cpu_decode_loop(
         std::io::stdout().flush().ok();
         n_generated += 1;
 
-        cpu_embed_token(next_token, weights, &mut hidden, config);
+        cpu_embed_token(next_token, weights, &mut hidden, config, Some(scratch));
 
         if args.debug && n_generated <= 3 {
             print_hidden_stats(n_generated, next_token, &hidden);

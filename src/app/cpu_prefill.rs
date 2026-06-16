@@ -38,7 +38,7 @@ pub(crate) fn run_cpu_prefill(
     if args.debug {
         if let Some(first_tok) = first_prompt_token(prompt_tokens) {
             let mut test_hidden = vec![0.0f32; config.hidden_size];
-            cpu_embed_token(first_tok, weights, &mut test_hidden, config);
+            cpu_embed_token(first_tok, weights, &mut test_hidden, config, None);
             print_prefill_debug(first_tok, &test_hidden);
         }
     }

@@ -1,7 +1,6 @@
 use super::super::gemm::{
     gemm_q2_k_fallback, gemm_q3_k_fallback, gemm_q5_k_fallback, gemm_q6_k_fallback,
 };
-use crate::cpu::quant::load_f16_scale;
 use rayon::prelude::*;
 
 /// Q3_K GEMV: dequant on-the-fly (fallback, slower but works).
@@ -149,46 +148,13 @@ pub(crate) fn gemv_q4_k_transposed_fallback(
     w: &[u8],
     x: &[f32],
     y: &mut [f32],
-    _out_dim: usize,
+    out_dim: usize,
     in_dim: usize,
 ) {
-    use crate::cpu::kernels::q4::BlockQ4K;
-
-    let num_blocks_k = in_dim / 256;
-    let row_bytes = num_blocks_k * BlockQ4K::SIZE;
-
     y.par_iter_mut().enumerate().for_each(|(vocab_idx, out)| {
-        let mut acc = 0.0f32;
-
-        for block_idx in 0..num_blocks_k {
-            let block_ptr = unsafe {
-                w.as_ptr()
-                    .add(vocab_idx * row_bytes + block_idx * BlockQ4K::SIZE)
-                    as *const BlockQ4K
-            };
-            let block = unsafe { &*block_ptr };
-
-            let block_start = block_idx * 256;
-            for i in 0..256 {
-                if block_start + i < in_dim {
-                    let q4_value = if i < 128 {
-                        (block.qs[i / 2] >> (4 * (i % 2))) & 0x0F
-                    } else {
-                        (block.qs[64 + (i - 128) / 2] >> (4 * ((i - 128) % 2))) & 0x0F
-                    };
-
-                    let d = load_f16_scale(&block.d);
-                    let m = load_f16_scale(&block.dmin);
-
-                    let is_scale = i / 64;
-                    let is_group = (i % 64) / 32;
-                    let sc_val = (block.scales[is_scale] >> (4 * is_group)) & 0x0F;
-
-                    let val = d * (sc_val as f32) * ((q4_value as i32 - 8) as f32) + m;
-                    acc += val * x[block_start + i];
-                }
-            }
-        }
-        *out = acc;
+        let mut deq = vec![0.0f32; in_dim];
+        crate::cpu::quant::embed_q4_k(vocab_idx, w, &mut deq, in_dim);
+        *out = deq.iter().zip(x.iter()).map(|(d, xi)| d * xi).sum::<f32>();
     });
+    let _ = out_dim;
 }

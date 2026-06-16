@@ -156,7 +156,7 @@ fn benchmark_model(model_path: &PathBuf, args: &Args) -> Result<ModelResult, Str
         let prefill_start = Instant::now();
 
         // Embed first token
-        cpu_embed_token(prompt_tokens[0], &weights, &mut hidden, &config);
+        cpu_embed_token(prompt_tokens[0], &weights, &mut hidden, &config, None);
 
         // Process remaining prompt tokens
         for i in 1..prompt_tokens.len() {
@@ -184,7 +184,7 @@ fn benchmark_model(model_path: &PathBuf, args: &Args) -> Result<ModelResult, Str
                 break;
             }
 
-            cpu_embed_token(next_token, &weights, &mut hidden, &config);
+            cpu_embed_token(next_token, &weights, &mut hidden, &config, None);
 
             total_tokens += 1;
         }
