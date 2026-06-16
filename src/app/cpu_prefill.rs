@@ -9,7 +9,7 @@ use rocmforge::cpu::{
     CpuError,
 };
 use rocmforge::hardware::BatchConfig;
-use rocmforge::tokenizer::BpeTokenizer;
+use rocmforge::tokenizer::Tokenizer;
 
 use super::cli::Args;
 use super::cpu_debug::{print_prefill_debug, print_prefill_stats, print_top_logits_debug};
@@ -25,7 +25,7 @@ fn first_prompt_token(prompt_tokens: &[u32]) -> Option<u32> {
 pub(crate) fn run_cpu_prefill(
     args: &Args,
     config: &ModelConfig,
-    tok: &BpeTokenizer,
+    tok: &dyn Tokenizer,
     weights: &CpuModelWeights,
     batch_config: &BatchConfig,
     prompt_tokens: &[u32],

@@ -6,7 +6,7 @@
 use crate::config::{detect_chat_template, ChatTemplate, ModelConfig};
 use crate::cpu::weights::CpuModelWeights;
 use crate::loader::{GgufFile, RfmFile};
-use crate::tokenizer::BpeTokenizer;
+use crate::tokenizer::{BpeTokenizer, SpmTokenizer, TokenizerHandle};
 
 pub struct ModelTensorDesc {
     pub name: String,
@@ -42,10 +42,17 @@ impl ModelFile {
         }
     }
 
-    pub fn tokenizer(&self) -> BpeTokenizer {
+    pub fn tokenizer(&self) -> TokenizerHandle {
         match self {
-            Self::Gguf(f) => BpeTokenizer::from_gguf(f.tokenizer_data()),
-            Self::Rfm(f) => BpeTokenizer::from_rfm(&f.metadata),
+            Self::Gguf(f) => {
+                let data = f.tokenizer_data();
+                if is_sentencepiece_model(data.model.as_deref()) {
+                    TokenizerHandle::Spm(SpmTokenizer::from_gguf(data))
+                } else {
+                    TokenizerHandle::Bpe(BpeTokenizer::from_gguf(data))
+                }
+            }
+            Self::Rfm(f) => TokenizerHandle::Bpe(BpeTokenizer::from_rfm(&f.metadata)),
         }
     }
 
@@ -143,4 +150,12 @@ impl ModelFile {
                 .unwrap_or(0),
         }
     }
+}
+
+/// Return true for tokenizer model names that use the SentencePiece format.
+fn is_sentencepiece_model(model: Option<&str>) -> bool {
+    matches!(
+        model,
+        Some("gemma4") | Some("spm") | Some("llama") | Some("t5")
+    )
 }

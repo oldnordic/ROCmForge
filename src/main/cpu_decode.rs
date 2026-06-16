@@ -9,7 +9,7 @@ use rocmforge::cpu::{
     sampler::{cpu_sample_greedy, cpu_sample_top_p},
     weights::CpuModelWeights,
 };
-use rocmforge::tokenizer::BpeTokenizer;
+use rocmforge::tokenizer::{Tokenizer, TokenizerHandle};
 
 use super::cli::Args;
 use super::cpu_debug::{
@@ -35,7 +35,7 @@ fn sample_next_token(
 pub(crate) fn run_cpu_decode_loop(
     args: &Args,
     config: &ModelConfig,
-    tok: &BpeTokenizer,
+    tok: &dyn Tokenizer,
     weights: &CpuModelWeights,
     kv: &mut CpuKvCache,
     scratch: &mut CpuForwardScratch,

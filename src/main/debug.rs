@@ -1,4 +1,4 @@
-use rocmforge::tokenizer::BpeTokenizer;
+use rocmforge::tokenizer::{Tokenizer, TokenizerHandle};
 
 #[derive(Debug, Clone, PartialEq)]
 struct LogitHealth {
@@ -41,7 +41,7 @@ fn top_k_probabilities(logits: &[f32], k: usize) -> Vec<(usize, f32)> {
     indexed
 }
 
-pub(crate) fn print_top_k_tokens(logits: &[f32], tok: &BpeTokenizer, k: usize) {
+pub(crate) fn print_top_k_tokens(logits: &[f32], tok: &dyn Tokenizer, k: usize) {
     if let Err(health) = inspect_logits(logits) {
         eprintln!(
             "ERROR: logits contain {} NaN and {} Inf values",

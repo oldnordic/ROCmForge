@@ -10,6 +10,8 @@
 //! Implements the autoregressive decode path: one token through all transformer layers.
 //! Uses KV cache for efficient attention computation.
 
+use std::io::Write;
+
 use super::cache::{CpuForwardScratch, CpuKvCache};
 use super::graph::{CpuExecutionContext, DirectContext};
 use super::ops::{
@@ -507,7 +509,7 @@ pub fn cpu_layer_forward_with_ctx<C: CpuExecutionContext>(
                 apply_qk_norm(
                     &mut scratch.q[..q_size],
                     &mut scratch.k[..kv_size],
-                    None,
+                    Some(&mut scratch.v[..kv_size]),
                     weights.attn_q_norm.as_deref(),
                     weights.attn_k_norm.as_deref(),
                     config.num_heads,
@@ -830,6 +832,27 @@ pub fn cpu_full_forward(
         );
     }
 
+    // Optional hidden-state dump for layer-by-layer debugging.
+    if let Ok(spec) = std::env::var("ROCMFORGE_DUMP_HIDDEN") {
+        if let Some((p, path)) = spec.split_once(':') {
+            if p.parse::<usize>().ok() == Some(pos) {
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                {
+                    let bytes = unsafe {
+                        std::slice::from_raw_parts(
+                            hidden.as_ptr() as *const u8,
+                            hidden.len() * std::mem::size_of::<f32>(),
+                        )
+                    };
+                    let _ = f.write_all(bytes);
+                }
+            }
+        }
+    }
+
     // Precompute RoPE sin/cos for this position once, reuse across all layers.
     // For models with per-layer head dimensions (e.g. Gemma4), size the table for
     // the largest rotated dimension seen across layers, not the global head_dim.
@@ -886,6 +909,27 @@ pub fn cpu_full_forward(
                 "[After layer {}] mean={:.4} std={:.4}",
                 layer_idx, mean, std
             );
+        }
+
+        // Optional hidden-state dump for layer-by-layer debugging.
+        if let Ok(spec) = std::env::var("ROCMFORGE_DUMP_HIDDEN") {
+            if let Some((p, path)) = spec.split_once(':') {
+                if p.parse::<usize>().ok() == Some(pos) {
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(path)
+                    {
+                        let bytes = unsafe {
+                            std::slice::from_raw_parts(
+                                hidden.as_ptr() as *const u8,
+                                hidden.len() * std::mem::size_of::<f32>(),
+                            )
+                        };
+                        let _ = f.write_all(bytes);
+                    }
+                }
+            }
         }
     }
 
@@ -1194,7 +1238,7 @@ pub fn cpu_compute_ple_inputs(
         None => return,
     };
 
-    // 1. Lookup per-layer token embedding into ple_input.
+    // 1. Lookup per-layer token embedding into ple_input and scale by sqrt(ple_dim).
     match ple_emb_meta.wtype {
         GgmlType::F32 => {
             if let Some(emb) = super::weights::try_as_f32_slice(ple_emb_data) {
@@ -1222,6 +1266,14 @@ pub fn cpu_compute_ple_inputs(
             for i in 0..ple_total {
                 let bits = u16::from_le_bytes([emb[i * 2], emb[i * 2 + 1]]);
                 scratch.ple_input[i] = half::f16::from_bits(bits).to_f32();
+            }
+        }
+        GgmlType::BF16 => {
+            let start_idx = token_id as usize * ple_total;
+            let emb = &ple_emb_data[start_idx * 2..(start_idx + ple_total) * 2];
+            for i in 0..ple_total {
+                let bits = u16::from_le_bytes([emb[i * 2], emb[i * 2 + 1]]);
+                scratch.ple_input[i] = half::bf16::from_bits(bits).to_f32();
             }
         }
         GgmlType::Q4_0 => {
@@ -1304,18 +1356,15 @@ pub fn cpu_compute_ple_inputs(
         }
     }
 
-    // Scale token embeddings by sqrt(ple_dim).
     let ple_scale = (ple_dim as f32).sqrt();
     for v in scratch.ple_input[..ple_total].iter_mut() {
         *v *= ple_scale;
     }
 
-    // 2. Project main hidden state through per_layer_model_proj -> ple_proj.
-    let proj_bytes = unsafe {
-        std::slice::from_raw_parts(ple_proj_data.as_ptr() as *const u8, ple_proj_data.len() * 4)
-    };
+    // 2. Project main hidden state through per_layer_model_proj -> ple_proj and
+    //    apply Gemma4's per-layer projection scale (1/sqrt(hidden_size)).
     dispatch_gemv(
-        proj_bytes,
+        ple_proj_data,
         ple_proj_meta,
         hidden,
         &mut scratch.ple_proj[..ple_total],
@@ -1330,21 +1379,22 @@ pub fn cpu_compute_ple_inputs(
         *v *= hidden_scale;
     }
 
-    // 3. Combine and RMSNorm per layer, scale by 1/sqrt(2).
+    // 3. RMSNorm the projection per layer, add per-layer token embeddings, then
+    //    scale the combined result by 1/sqrt(2) to match Gemma4's
+    //    project_per_layer_inputs.
     let inv_sqrt2 = 1.0 / (2.0f32).sqrt();
-    for i in 0..ple_total {
-        scratch.ple_proj[i] += scratch.ple_input[i];
-    }
+    let mut norm_tmp = vec![0.0f32; ple_dim];
     for layer in 0..config.num_layers {
         let off = layer * ple_dim;
         rms_norm(
             &scratch.ple_proj[off..off + ple_dim],
             ple_norm,
-            &mut scratch.ple_input[off..off + ple_dim],
+            &mut norm_tmp,
             eps,
         );
-        for v in scratch.ple_input[off..off + ple_dim].iter_mut() {
-            *v *= inv_sqrt2;
+        for i in 0..ple_dim {
+            let combined = norm_tmp[i] + scratch.ple_input[off + i];
+            scratch.ple_input[off + i] = combined * inv_sqrt2;
         }
     }
 }

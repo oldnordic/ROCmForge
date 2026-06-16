@@ -115,3 +115,39 @@ pub(crate) fn gemv_f16_transposed(
         *out = acc;
     });
 }
+
+/// BF16 GEMV: y[row] = dot(W[row, :], x)
+pub(crate) fn gemv_bf16(w: &[u8], x: &[f32], y: &mut [f32]) {
+    let in_dim = x.len();
+    y.par_iter_mut().enumerate().for_each(|(row, out)| {
+        let row_offset = row * in_dim * 2;
+        let mut acc = 0.0f32;
+        for (i, x_val) in x.iter().enumerate() {
+            let offset = row_offset + i * 2;
+            let bits = u16::from_le_bytes([w[offset], w[offset + 1]]);
+            let val = half::bf16::from_bits(bits).to_f32();
+            acc += val * x_val;
+        }
+        *out = acc;
+    });
+}
+
+/// BF16 GEMV transposed for tied embeddings.
+pub(crate) fn gemv_bf16_transposed(
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+    out_dim: usize,
+    _in_dim: usize,
+) {
+    y.par_iter_mut().enumerate().for_each(|(v, out)| {
+        let mut acc = 0.0f32;
+        for (i, x_val) in x.iter().enumerate() {
+            let offset = (i * out_dim + v) * 2;
+            let bits = u16::from_le_bytes([w[offset], w[offset + 1]]);
+            let val = half::bf16::from_bits(bits).to_f32();
+            acc += x_val * val;
+        }
+        *out = acc;
+    });
+}

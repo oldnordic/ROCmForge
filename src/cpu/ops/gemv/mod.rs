@@ -41,7 +41,7 @@ fn quantize_q8_0_single(x: &[f32], out: &mut [u8], in_dim: usize) {
         out[off] = scale_bytes[0];
         out[off + 1] = scale_bytes[1];
         for i in 0..Q8_BLOCK_ELEMS {
-            let q = (xb[i] * inv_scale).round().clamp(-128.0, 127.0) as i8;
+            let q = (xb[i] * inv_scale).round().clamp(-127.0, 127.0) as i8;
             out[off + 2 + i] = q as u8;
         }
     }
@@ -153,6 +153,32 @@ pub fn gemv_q4_1_q8_0(w: &[u8], x_q8: &[u8], y: &mut [f32], _out_dim: usize, in_
         }
         *out = acc;
     });
+}
+
+/// F32 fallback for Q4_1 GEMV: dequantize each row on the fly.
+pub fn gemv_q4_1_f32(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    let num_blocks = in_dim / Q4_1_BLOCK_ELEMS;
+    let row_bytes = num_blocks * Q4_1_BLOCK_BYTES;
+
+    y.par_iter_mut().enumerate().for_each(|(row, out)| {
+        let row_w = &w[row * row_bytes..(row + 1) * row_bytes];
+        let mut acc = 0.0f32;
+        for b in 0..num_blocks {
+            let block = &row_w[b * Q4_1_BLOCK_BYTES..];
+            let scale = load_f16_scale(&block[0..2]);
+            let min = load_f16_scale(&block[2..4]);
+            let qs = &block[4..20];
+            let xb = &x[b * Q4_1_BLOCK_ELEMS..];
+            for i in 0..16 {
+                let q0 = (qs[i] & 0x0F) as f32;
+                let q1 = (qs[i] >> 4) as f32;
+                acc += (scale * q0 + min) * xb[i];
+                acc += (scale * q1 + min) * xb[i + 16];
+            }
+        }
+        *out = acc;
+    });
+    let _ = out_dim;
 }
 
 pub fn gemv_q5_0(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
@@ -306,24 +332,42 @@ pub fn dispatch_gemv(
                 gemv_f16(w, x, y);
             }
         }
+        GgmlType::BF16 => {
+            if meta.needs_transpose {
+                gemv_bf16_transposed(w, x, y, out_dim, in_dim);
+            } else {
+                gemv_bf16(w, x, y);
+            }
+        }
         GgmlType::Q4_0 => {
             if meta.needs_transpose {
                 gemv_q4_0_transposed(w, x, y, out_dim, in_dim);
             } else if let Some(scratch) = q8_scratch {
-                let required = in_dim / Q8_BLOCK_ELEMS * Q8_BLOCK_BYTES;
-                if scratch.len() < required {
-                    return Err(crate::cpu::CpuError::InvalidOperation(
-                        "scratch too small".to_string(),
-                    ));
+                // Some models (e.g. Gemma4) are extremely sensitive to activation
+                // quantization because of large RMS-norm weights.  Allow forcing
+                // the slower f32 path for debugging/verification.
+                let force_f32 = std::env::var("ROCMFORGE_FORCE_Q4_0_F32").is_ok();
+                if force_f32 {
+                    gemv_q4_0(w, x, y, out_dim, in_dim);
+                } else {
+                    let required = in_dim / Q8_BLOCK_ELEMS * Q8_BLOCK_BYTES;
+                    if scratch.len() < required {
+                        return Err(crate::cpu::CpuError::InvalidOperation(
+                            "scratch too small".to_string(),
+                        ));
+                    }
+                    quantize_q8_0_single(x, scratch, in_dim);
+                    gemv_q4_0_q8_0(w, scratch, y, out_dim, in_dim);
                 }
-                quantize_q8_0_single(x, scratch, in_dim);
-                gemv_q4_0_q8_0(w, scratch, y, out_dim, in_dim);
             } else {
                 gemv_q4_0(w, x, y, out_dim, in_dim);
             }
         }
         GgmlType::Q4_1 => {
-            if let Some(scratch) = q8_scratch {
+            let force_f32 = std::env::var("ROCMFORGE_FORCE_Q4_1_F32").is_ok();
+            if force_f32 {
+                gemv_q4_1_f32(w, x, y, out_dim, in_dim);
+            } else if let Some(scratch) = q8_scratch {
                 let required = in_dim / Q8_BLOCK_ELEMS * Q8_BLOCK_BYTES;
                 if scratch.len() < required {
                     return Err(crate::cpu::CpuError::InvalidOperation(
@@ -333,7 +377,7 @@ pub fn dispatch_gemv(
                 quantize_q8_0_single(x, scratch, in_dim);
                 gemv_q4_1_q8_0(w, scratch, y, out_dim, in_dim);
             } else {
-                return Err(crate::cpu::CpuError::UnsupportedWeightType(GgmlType::Q4_1));
+                gemv_q4_1_f32(w, x, y, out_dim, in_dim);
             }
         }
         GgmlType::Q5_0 => {

@@ -137,6 +137,16 @@ impl TensorNameRegistry {
         templates.insert(TensorName::AttnNorm, "blk.{}.attn_norm.weight".to_string());
         templates.insert(TensorName::FfnNorm, "blk.{}.ffn_norm.weight".to_string());
 
+        // Attention Q/K normalization (Gemma4-style QK norm)
+        templates.insert(
+            TensorName::AttnQNorm,
+            "blk.{}.attn_q_norm.weight".to_string(),
+        );
+        templates.insert(
+            TensorName::AttnKNorm,
+            "blk.{}.attn_k_norm.weight".to_string(),
+        );
+
         // Embeddings (no layer number)
         templates.insert(TensorName::TokenEmb, "token_embd.weight".to_string());
         templates.insert(TensorName::LmHead, "output.weight".to_string());

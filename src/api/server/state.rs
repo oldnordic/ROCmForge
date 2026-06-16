@@ -5,7 +5,7 @@ use tokio::sync::Mutex;
 use crate::config::{ChatTemplate, ModelConfig};
 use crate::cpu::weights::CpuModelWeights;
 use crate::loader::ModelFile;
-use crate::tokenizer::BpeTokenizer;
+use crate::tokenizer::{Tokenizer, TokenizerHandle};
 
 // ── Per-model state ────────────────────────────────────────────────────────────
 
@@ -13,7 +13,7 @@ use crate::tokenizer::BpeTokenizer;
 pub struct ModelEntry {
     pub model_path: String,
     pub config: ModelConfig,
-    pub tokenizer: BpeTokenizer,
+    pub tokenizer: TokenizerHandle,
     pub chat_template: ChatTemplate,
     pub created_at: i64,
     /// One permit per model: serializes inference so concurrent requests

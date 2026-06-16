@@ -34,7 +34,7 @@ pub const SHORT_PROMPT_MAX_SEQ_LEN: usize = 256;
 pub fn extract_hidden_state(
     weights: &CpuModelWeights,
     config: &ModelConfig,
-    tokenizer: &BpeTokenizer,
+    tokenizer: &dyn Tokenizer,
     prompt: &str,
     max_seq_len: usize,
 ) -> Result<Vec<f32>, CpuError> {
@@ -44,7 +44,7 @@ pub fn extract_hidden_state(
 pub fn extract_hidden_state_with_special(
     weights: &CpuModelWeights,
     config: &ModelConfig,
-    tokenizer: &BpeTokenizer,
+    tokenizer: &dyn Tokenizer,
     prompt: &str,
     max_seq_len: usize,
     add_special: bool,
@@ -91,7 +91,7 @@ pub fn build_branch_prompt(score: f32, divergence: f32) -> String {
 pub fn collect_branch_hidden_states(
     weights: &CpuModelWeights,
     config: &ModelConfig,
-    tokenizer: &BpeTokenizer,
+    tokenizer: &dyn Tokenizer,
     maps: &[(String, GraphMap)],
     summarizer: &GraphSummarizer,
     max_seq_len: usize,
@@ -216,7 +216,7 @@ pub fn build_yes_no_prompt(score: f32) -> String {
 
 /// Find all token IDs whose decoded text (ignoring leading/trailing whitespace)
 /// matches `word`.
-pub fn find_answer_token_ids(tokenizer: &BpeTokenizer, word: &str) -> Vec<u32> {
+pub fn find_answer_token_ids(tokenizer: &dyn Tokenizer, word: &str) -> Vec<u32> {
     let target = word.to_lowercase();
     let mut ids = Vec::new();
 
@@ -246,7 +246,7 @@ pub fn find_answer_token_ids(tokenizer: &BpeTokenizer, word: &str) -> Vec<u32> {
 pub fn extract_answer_logit_sum(
     weights: &CpuModelWeights,
     config: &ModelConfig,
-    tokenizer: &BpeTokenizer,
+    tokenizer: &dyn Tokenizer,
     prompt: &str,
     word: &str,
     max_seq_len: usize,
@@ -289,7 +289,7 @@ pub fn extract_answer_logit_sum(
 pub fn collect_branch_logit_examples(
     weights: &CpuModelWeights,
     config: &ModelConfig,
-    tokenizer: &BpeTokenizer,
+    tokenizer: &dyn Tokenizer,
     maps: &[(String, GraphMap)],
     max_seq_len: usize,
 ) -> Result<HashMap<(String, u64), BranchLogitExample>, CpuError> {
@@ -417,7 +417,7 @@ pub fn train_value_head_from_trace_dir(
     trace_dir: &std::path::Path,
     weights: &CpuModelWeights,
     config: &ModelConfig,
-    tokenizer: &BpeTokenizer,
+    tokenizer: &dyn Tokenizer,
     epochs: usize,
     lr: f32,
     save_path: &std::path::Path,
@@ -458,7 +458,7 @@ pub fn train_value_head_from_trace_dir(
 pub fn extract_label_logits(
     weights: &CpuModelWeights,
     config: &ModelConfig,
-    tokenizer: &BpeTokenizer,
+    tokenizer: &dyn Tokenizer,
     prompt: &str,
     labels: &[char],
     max_seq_len: usize,

@@ -459,10 +459,12 @@ fn configure_gemma4(
     // the text decoder. Leave it unset so flash_attn_decode does not transform
     // text attention scores.
     config.attention_logit_cap = None;
-    // Use the default 1/sqrt(head_dim) attention scale; flash_attn_decode
-    // recomputes it per-layer from the layer-specific head_dim when 0.0.
-    config.attention_scale = 0.0;
-    config.embedding_scale = (config.hidden_size as f32).sqrt();
+    // Gemma4 applies QK norm and does not use an additional 1/sqrt(head_dim)
+    // attention scale; flash_attn_decode skips scaling when the value is 1.0.
+    config.attention_scale = 1.0;
+    // The GGUF token_embd.weight already contains the Gemma sqrt(hidden_size)
+    // scaling baked in by the converter; do not scale it again at runtime.
+    config.embedding_scale = 1.0;
     config.use_gelu_swiglu = true;
 
     for layer in 0..num_layers {

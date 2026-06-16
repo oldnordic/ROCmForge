@@ -21,6 +21,8 @@ pub enum LoadError {
     InvalidUtf8(Vec<u8>),
     /// String exceeds the sanity limit.
     StringTooLong(usize),
+    /// Invalid file format or unexpected value.
+    InvalidFormat(String),
 }
 
 impl fmt::Display for LoadError {
@@ -43,6 +45,7 @@ impl fmt::Display for LoadError {
             }
             LoadError::InvalidUtf8(_) => write!(f, "invalid UTF-8 in string field"),
             LoadError::StringTooLong(n) => write!(f, "string too long: {} bytes", n),
+            LoadError::InvalidFormat(msg) => write!(f, "invalid format: {}", msg),
         }
     }
 }

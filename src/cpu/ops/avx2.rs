@@ -46,31 +46,48 @@ unsafe fn unpack_q4_0_nibbles_avx2(qs: &[u8]) -> std::arch::x86_64::__m256i {
     _mm256_sub_epi8(q4, _mm256_set1_epi8(8))
 }
 
-/// Multiply-sum Q4_0 × Q8_0 block (unscaled).
+/// Multiply-sum Q4_0 × Q8_0 block using AVX-VNNI.
 ///
-/// Computes sum(q4[i] * q8[i]) for 32-element blocks.
-/// Returns __m256 with one i32 result per 8-element group.
+/// Computes `scale * sum((q4[i] - 8) * q8[i])` for a 32-element block.
+/// `q4` contains signed nibbles (`nibble - 8`).  The VNNI `dpbusd`
+/// instruction performs unsigned×signed products, so we add the `8`
+/// offset back to `q4` and subtract `8 * scale * sum(q8)` from the
+/// result.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
 #[target_feature(enable = "avxvnni")]
-unsafe fn mul_sum_q4_0_q8_0_block_avx2_vnni(
+unsafe fn dot_q4_0_q8_0_block_avx2_vnni(
     q4: std::arch::x86_64::__m256i,
     q8: &[u8],
-) -> std::arch::x86_64::__m256 {
+    scale: f32,
+) -> f32 {
     use std::arch::x86_64::*;
 
     debug_assert_eq!(
         q8.len(),
         Q8_BLOCK_ELEMS,
-        "mul_sum_q4_0_q8_0_block_avx2_vnni: q8 must have 32 elements"
+        "dot_q4_0_q8_0_block_avx2_vnni: q8 must have 32 elements"
     );
 
     let q8v = _mm256_loadu_si256(q8.as_ptr() as *const __m256i);
-    // AVX2VNNI: compute dot product of signed i8 vectors
-    // This does both multiply and horizontal sum in one instruction
+
+    // Re-bias q4 to unsigned (0..15) for dpbusd.
+    let q4_u = _mm256_add_epi8(q4, _mm256_set1_epi8(8));
     let zero = _mm256_setzero_si256();
-    let dot32 = _mm256_dpwssd_avx_epi32(zero, q4, q8v);
-    _mm256_cvtepi32_ps(dot32)
+    let dot32 = _mm256_dpbusd_avx_epi32(zero, q4_u, q8v);
+    let dotf = _mm256_cvtepi32_ps(dot32);
+    let scale_v = _mm256_set1_ps(scale);
+    let unsigned_sum = hsum_avx2(_mm256_mul_ps(dotf, scale_v));
+
+    // Compute signed sum of the Q8_0 bytes for the offset correction.
+    let q8_lo = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(q8v));
+    let q8_hi = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(q8v, 1));
+    let q8_sum16 = _mm256_add_epi16(q8_lo, q8_hi);
+    let ones16 = _mm256_set1_epi16(1);
+    let pair_sums = _mm256_madd_epi16(ones16, q8_sum16);
+    let q8_sum = hsum_avx2(_mm256_cvtepi32_ps(pair_sums));
+
+    unsigned_sum - 8.0 * scale * q8_sum
 }
 
 /// Multiply-sum Q4_0 × Q8_0 block (unscaled) without VNNI.
@@ -206,12 +223,9 @@ pub unsafe fn dot_q4_0_q8_0_block_avx2(qs: &[u8], q8: &[u8], scale: f32) -> f32 
 
     // Use cached CPU features to select implementation
     #[cfg(target_arch = "x86_64")]
-    let dotf = if super::super::features::CpuFeatures::get().has_avxvnni {
-        mul_sum_q4_0_q8_0_block_avx2_vnni(q4, q8)
-    } else {
-        mul_sum_q4_0_q8_0_block_avx2_unscaled(q4, q8)
-    };
-    #[cfg(not(target_arch = "x86_64"))]
+    if super::super::features::CpuFeatures::get().has_avxvnni {
+        return dot_q4_0_q8_0_block_avx2_vnni(q4, q8, scale);
+    }
     let dotf = mul_sum_q4_0_q8_0_block_avx2_unscaled(q4, q8);
     let scaled = _mm256_mul_ps(dotf, _mm256_set1_ps(scale));
     hsum_avx2(scaled)
@@ -281,17 +295,15 @@ pub unsafe fn dot_q4_1_q8_0_block_avx2(qs: &[u8], q8: &[u8], scale: f32, min_off
         "dot_q4_1_q8_0_block_avx2: q8 must have 32 elements"
     );
 
-    // Compute sum of Q8_0 values for min_offset correction
+    // Compute sum of Q8_0 values for min_offset correction.
+    // q8_sum16[i] = q8[i] + q8[i+16]; sum all 16 lanes with madd/hsum.
     let q8v = _mm256_loadu_si256(q8.as_ptr() as *const __m256i);
     let q8_low = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(q8v));
     let q8_high = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(q8v, 1));
     let q8_sum16 = _mm256_add_epi16(q8_low, q8_high);
-    // Horizontal sum 16-bit values: pairwise, then to 32-bit, then final sum
-    let q8_hadd = _mm256_hadd_epi16(q8_sum16, q8_sum16);
-    let q8_hadd2 = _mm256_hadd_epi16(q8_hadd, q8_hadd);
-    // Extract the result (only first two elements needed)
-    let q8_sum =
-        (_mm256_extract_epi16(q8_hadd2, 0) as i32) + (_mm256_extract_epi16(q8_hadd2, 4) as i32);
+    let ones16 = _mm256_set1_epi16(1);
+    let q8_sum32 = _mm256_madd_epi16(ones16, q8_sum16);
+    let q8_sum = hsum_avx2(_mm256_cvtepi32_ps(q8_sum32)) as i32;
 
     let q4 = unpack_q4_1_nibbles_avx2(qs);
     let dotf = mul_sum_q4_1_q8_0_block_avx2_unscaled(q4, q8);
@@ -324,6 +336,157 @@ pub fn dot_q4_1_q8_0_block_scalar(qs: &[u8], q8: &[u8], scale: f32, min_offset: 
     // sum((q4 * w_scale + w_min) * q8 * x_scale)
     // = sum(q4 * q8) * w_scale * x_scale + w_min * x_scale * sum(q8)
     (acc as f32) * scale + min_offset * (q8_sum as f32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a fake Q4_1 block and compare the AVX2 dot product against the
+    /// scalar implementation and a direct f32 reference.
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn q4_1_q8_0_block_matches_scalar_and_reference() {
+        use crate::cpu::quant::Q8_BLOCK_ELEMS;
+        let mut rng = fastrand::Rng::with_seed(0x1234_5678);
+        let w_scale = 0.1_f32;
+        let w_min = -0.5_f32;
+
+        // 16 weight bytes -> 32 nibbles
+        let mut qs = [0u8; 16];
+        for i in 0..16 {
+            let lo: u8 = rng.u8(0..16);
+            let hi: u8 = rng.u8(0..16);
+            qs[i] = (hi << 4) | lo;
+        }
+
+        // Build an activation vector and quantize it to Q8_0 (one block).
+        let mut x = [0.0_f32; Q8_BLOCK_ELEMS];
+        for v in x.iter_mut() {
+            *v = rng.f32() * 10.0 - 5.0;
+        }
+        let x_scale = x.iter().map(|v| v.abs()).fold(0.0f32, f32::max) / 127.0;
+        let mut q8 = [0u8; Q8_BLOCK_ELEMS];
+        for (i, &v) in x.iter().enumerate() {
+            let q = (v / x_scale).round().clamp(-127.0, 127.0) as i8;
+            q8[i] = q as u8;
+        }
+
+        // Direct f32 reference.
+        let mut expected = 0.0_f32;
+        for i in 0..16 {
+            let q_lo = (qs[i] & 0x0F) as f32;
+            let q_hi = (qs[i] >> 4) as f32;
+            let w_lo = w_scale * q_lo + w_min;
+            let w_hi = w_scale * q_hi + w_min;
+            expected += w_lo * x[i] + w_hi * x[i + 16];
+        }
+
+        let combined_scale = w_scale * x_scale;
+        let min_offset = w_min * x_scale;
+        let scalar = dot_q4_1_q8_0_block_scalar(&qs, &q8, combined_scale, min_offset);
+        let avx2 = unsafe { dot_q4_1_q8_0_block_avx2(&qs, &q8, combined_scale, min_offset) };
+
+        // Tolerate the ~0.5% error introduced by the Q8_0 activation
+        // quantization; the important comparison is AVX2 vs scalar.
+        let tol = (expected.abs() * 0.01).max(1e-3);
+        assert!(
+            (scalar - expected).abs() < tol,
+            "scalar {} vs reference {} (diff {})",
+            scalar,
+            expected,
+            (scalar - expected).abs()
+        );
+        assert!(
+            (avx2 - expected).abs() < tol,
+            "avx2 {} vs reference {} (diff {})",
+            avx2,
+            expected,
+            (avx2 - expected).abs()
+        );
+        assert!(
+            (avx2 - scalar).abs() < 1e-3,
+            "avx2 {} vs scalar {} (diff {})",
+            avx2,
+            scalar,
+            (avx2 - scalar).abs()
+        );
+    }
+
+    /// Verify the AVX2 Q4_0 block dot against a scalar reference.
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn q4_0_f32_block_matches_reference() {
+        use crate::cpu::quant::Q4_BLOCK_ELEMS;
+        let mut rng = fastrand::Rng::with_seed(0x1234_5678);
+        let scale = 0.05_f32;
+
+        let mut qs = [0u8; 16];
+        for i in 0..16 {
+            let lo: u8 = rng.u8(0..16);
+            let hi: u8 = rng.u8(0..16);
+            qs[i] = (hi << 4) | lo;
+        }
+
+        let mut x = [0.0_f32; Q4_BLOCK_ELEMS];
+        for v in x.iter_mut() {
+            *v = rng.f32() * 4.0 - 2.0;
+        }
+
+        let mut expected = 0.0_f32;
+        for i in 0..16 {
+            let q_lo = (qs[i] & 0x0F) as i32 - 8;
+            let q_hi = (qs[i] >> 4) as i32 - 8;
+            expected += scale * (q_lo as f32) * x[i] + scale * (q_hi as f32) * x[i + 16];
+        }
+
+        let avx2 = unsafe { dot_q4_0_block_avx2(&qs, &x, scale) };
+        assert!(
+            (avx2 - expected).abs() < 1e-3,
+            "avx2 {} vs reference {} (diff {})",
+            avx2,
+            expected,
+            (avx2 - expected).abs()
+        );
+    }
+
+    /// Verify the AVX2 Q4_0 x Q8_0 block dot against the scalar implementation.
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn q4_0_q8_0_block_matches_scalar() {
+        use crate::cpu::quant::Q8_BLOCK_ELEMS;
+        let mut rng = fastrand::Rng::with_seed(0x1234_5678);
+        let w_scale = 0.05_f32;
+
+        let mut qs = [0u8; 16];
+        for i in 0..16 {
+            let lo: u8 = rng.u8(0..16);
+            let hi: u8 = rng.u8(0..16);
+            qs[i] = (hi << 4) | lo;
+        }
+
+        let mut x = [0.0_f32; Q8_BLOCK_ELEMS];
+        for v in x.iter_mut() {
+            *v = rng.f32() * 4.0 - 2.0;
+        }
+        let x_scale = x.iter().map(|v| v.abs()).fold(0.0f32, f32::max) / 127.0;
+        let mut q8 = [0u8; Q8_BLOCK_ELEMS];
+        for (i, &v) in x.iter().enumerate() {
+            let q = (v / x_scale).round().clamp(-127.0, 127.0) as i8;
+            q8[i] = q as u8;
+        }
+
+        let combined = w_scale * x_scale;
+        let scalar = dot_q4_0_q8_0_block_scalar(&qs, &q8, combined);
+        let avx2 = unsafe { dot_q4_0_q8_0_block_avx2(&qs, &q8, combined) };
+        assert!(
+            (avx2 - scalar).abs() < 1e-3,
+            "avx2 {} vs scalar {} (diff {})",
+            avx2,
+            scalar,
+            (avx2 - scalar).abs()
+        );
+    }
 }
 
 /// Scalar Q4_0 × Q8_0 block dot product — one 32-element block.

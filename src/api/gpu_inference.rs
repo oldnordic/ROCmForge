@@ -15,7 +15,7 @@ use crate::cpu::weights::CpuModelWeights;
 #[cfg(feature = "gpu")]
 use crate::gpu;
 #[cfg(feature = "gpu")]
-use crate::tokenizer::BpeTokenizer;
+use crate::tokenizer::{Tokenizer, TokenizerHandle};
 #[cfg(feature = "gpu")]
 use bytes::Bytes;
 #[cfg(feature = "gpu")]
@@ -26,7 +26,7 @@ pub fn run_gpu_sync_inference(
     gpu_weights_arc: &Arc<crate::gpu::GpuModelWeights>,
     cpu_weights: &Arc<CpuModelWeights>,
     config: &ModelConfig,
-    tok: &BpeTokenizer,
+    tok: &dyn Tokenizer,
     prompt_tokens: &[u32],
     max_tokens: usize,
     temperature: f32,
@@ -371,7 +371,7 @@ pub fn run_gpu_stream_inference(
     gpu_weights_arc: &Arc<crate::gpu::GpuModelWeights>,
     cpu_weights: &Arc<CpuModelWeights>,
     config: &ModelConfig,
-    tok: &BpeTokenizer,
+    tok: &dyn Tokenizer,
     prompt_tokens: &[u32],
     max_tokens: usize,
     temperature: f32,

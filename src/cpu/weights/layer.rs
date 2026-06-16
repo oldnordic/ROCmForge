@@ -292,6 +292,7 @@ impl CpuLayerWeights {
             attn_k_bias: copy_f32_opt(TensorName::AttnKBias)?,
             attn_v_bias: copy_f32_opt(TensorName::AttnVBias)?,
             attn_q_norm: copy_f32_opt(TensorName::AttnQNorm)?,
+
             attn_k_norm: copy_f32_opt(TensorName::AttnKNorm)?,
             ffn_norm: copy_f32(
                 file,

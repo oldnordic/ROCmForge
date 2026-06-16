@@ -1,6 +1,6 @@
 use crate::config::ModelConfig;
 use crate::cpu::weights::CpuModelWeights;
-use crate::tokenizer::BpeTokenizer;
+use crate::tokenizer::{Tokenizer, TokenizerHandle};
 use bytes::Bytes;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -11,7 +11,7 @@ pub(crate) fn run_sync_inference(
     #[cfg(feature = "gpu")] speculative_engine: &Option<Arc<Mutex<crate::gpu::SpeculativeEngine>>>,
     model_path: &str,
     config: &ModelConfig,
-    tok: &BpeTokenizer,
+    tok: &dyn Tokenizer,
     prompt_tokens: &[u32],
     max_tokens: usize,
     temperature: f32,
@@ -60,7 +60,7 @@ pub(crate) fn run_stream_inference(
     #[cfg(feature = "gpu")] speculative_engine: &Option<Arc<Mutex<crate::gpu::SpeculativeEngine>>>,
     model_path: &str,
     config: &ModelConfig,
-    tok: &BpeTokenizer,
+    tok: &dyn Tokenizer,
     prompt_tokens: &[u32],
     max_tokens: usize,
     temperature: f32,
@@ -104,7 +104,7 @@ pub(crate) fn run_cpu_sync_inference(
     weights: &CpuModelWeights,
     _model_path: &str,
     config: &ModelConfig,
-    tok: &BpeTokenizer,
+    tok: &dyn Tokenizer,
     prompt_tokens: &[u32],
     max_tokens: usize,
     temperature: f32,
@@ -163,7 +163,7 @@ pub(crate) fn run_cpu_stream_inference(
     weights: &CpuModelWeights,
     _model_path: &str,
     config: &ModelConfig,
-    tok: &BpeTokenizer,
+    tok: &dyn Tokenizer,
     prompt_tokens: &[u32],
     max_tokens: usize,
     temperature: f32,

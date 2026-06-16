@@ -3,14 +3,14 @@ use rocmforge::config::ModelConfig;
 #[cfg(feature = "gpu")]
 use rocmforge::loader::ModelFile;
 #[cfg(feature = "gpu")]
-use rocmforge::tokenizer::BpeTokenizer;
+use rocmforge::tokenizer::TokenizerHandle;
 
 #[cfg(feature = "gpu")]
 use super::cli::Args;
 
 #[cfg(feature = "gpu")]
 pub(crate) struct GpuPromptSetup {
-    pub tok: BpeTokenizer,
+    pub tok: TokenizerHandle,
     pub prompt_tokens: Vec<u32>,
     pub max_seq: usize,
 }

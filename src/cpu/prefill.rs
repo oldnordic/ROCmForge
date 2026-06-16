@@ -416,6 +416,14 @@ pub fn cpu_prefill_forward(
             }
         }
 
+        // Gemma-style embedding scaling (sqrt(hidden_size) for Gemma4, 1.0 otherwise).
+        let scale = config.embedding_scale;
+        if scale != 1.0 {
+            for v in ps.hidden.iter_mut() {
+                *v *= scale;
+            }
+        }
+
         // 2. All layers for this batch
         for layer_idx in 0..config.num_layers {
             prefill_layer_forward(
@@ -643,6 +651,14 @@ pub fn cpu_prefill_forward_parallel(
                     }
                 }
 
+                // Gemma-style embedding scaling (sqrt(hidden_size) for Gemma4, 1.0 otherwise).
+                let scale = config_shared.embedding_scale;
+                if scale != 1.0 {
+                    for v in ps.hidden.iter_mut() {
+                        *v *= scale;
+                    }
+                }
+
                 // 2. All layers for this batch
                 // SAFETY: Each batch writes to disjoint KV positions: [layer, pos_start..pos_end]
                 // Lock KV cache briefly for writes (disjoint positions, minimal contention)
@@ -764,6 +780,14 @@ pub fn cpu_prefill_forward_parallel(
         }
         other => {
             return Err(CpuError::UnsupportedWeightType(other));
+        }
+    }
+
+    // Gemma-style embedding scaling (sqrt(hidden_size) for Gemma4, 1.0 otherwise).
+    let scale = config.embedding_scale;
+    if scale != 1.0 {
+        for v in ps_last.hidden.iter_mut() {
+            *v *= scale;
         }
     }
 

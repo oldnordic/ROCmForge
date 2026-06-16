@@ -1,4 +1,4 @@
-use rocmforge::tokenizer::BpeTokenizer;
+use rocmforge::tokenizer::Tokenizer;
 
 use super::debug::print_top_k_tokens;
 
@@ -98,7 +98,7 @@ pub(crate) fn print_logits_stats(n_generated: usize, logits: &[f32]) {
 pub(crate) fn print_top_logits_debug(
     n_generated: usize,
     logits: &[f32],
-    tok: &BpeTokenizer,
+    tok: &dyn Tokenizer,
     k: usize,
 ) {
     eprintln!("\n[Token {} logits]", n_generated);

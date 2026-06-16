@@ -12,7 +12,7 @@ use rocmforge::cpu::{
     weights::CpuModelWeights,
     CpuError,
 };
-use rocmforge::tokenizer::BpeTokenizer;
+use rocmforge::tokenizer::Tokenizer;
 
 #[cfg(feature = "cpu-graph")]
 use rocmforge::cpu::{
@@ -48,7 +48,7 @@ fn sample_next_token(
 pub(crate) fn run_cpu_decode_loop(
     args: &Args,
     config: &ModelConfig,
-    tok: &BpeTokenizer,
+    tok: &dyn Tokenizer,
     weights: &CpuModelWeights,
     kv: &mut CpuKvCache,
     scratch: &mut CpuForwardScratch,
@@ -228,7 +228,7 @@ fn evaluate_candidate_beam(
     kv_parent: &CpuKvCache,
     kv_scratch: &mut CpuKvCache,
     rerank_scratch: &mut CpuForwardScratch,
-    tok: &BpeTokenizer,
+    tok: &dyn Tokenizer,
     weights: &CpuModelWeights,
     config: &ModelConfig,
     pos: usize,
@@ -311,7 +311,7 @@ fn evaluate_candidate_beam(
 pub(crate) fn run_cpu_decode_loop_with_ctx(
     args: &Args,
     config: &ModelConfig,
-    tok: &BpeTokenizer,
+    tok: &dyn Tokenizer,
     weights: &CpuModelWeights,
     kv: &mut CpuKvCache,
     scratch: &mut CpuForwardScratch,
@@ -559,7 +559,7 @@ struct BeamExpansion {
 pub(crate) fn run_cpu_decode_beam_loop_with_ctx(
     args: &Args,
     config: &ModelConfig,
-    tok: &BpeTokenizer,
+    tok: &dyn Tokenizer,
     weights: &CpuModelWeights,
     kv: &CpuKvCache,
     scratch: &CpuForwardScratch,

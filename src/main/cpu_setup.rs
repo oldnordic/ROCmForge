@@ -5,14 +5,14 @@ use rocmforge::cpu::{
 };
 use rocmforge::hardware::{BatchConfig, CpuCapabilities, derive_batch_config};
 use rocmforge::loader::ModelFile;
-use rocmforge::tokenizer::BpeTokenizer;
+use rocmforge::tokenizer::{Tokenizer, TokenizerHandle};
 
 use super::cli::Args;
 use super::cpu_debug::{print_batch_config, print_prompt_summary};
 
 pub(crate) struct CpuRunState {
     pub config: ModelConfig,
-    pub tok: BpeTokenizer,
+    pub tok: TokenizerHandle,
     pub weights: CpuModelWeights,
     pub batch_config: BatchConfig,
     pub prompt_tokens: Vec<u32>,

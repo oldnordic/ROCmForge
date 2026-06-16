@@ -575,7 +575,7 @@ impl SpeculativeOrchestrator {
         &self,
         device: &GpuDevice,
         engine: &mut SpeculativeEngine,
-        tok: &crate::tokenizer::BpeTokenizer,
+        tok: &dyn crate::tokenizer::Tokenizer,
         prompt_tokens: &[u32],
         max_tokens: usize,
     ) -> crate::error::RocmForgeResult<(String, usize)> {
@@ -652,7 +652,7 @@ impl SpeculativeOrchestrator {
         &self,
         device: &GpuDevice,
         engine: &mut SpeculativeEngine,
-        tok: &crate::tokenizer::BpeTokenizer,
+        tok: &dyn crate::tokenizer::Tokenizer,
         prompt_tokens: &[u32],
         max_tokens: usize,
         tx: tokio::sync::mpsc::UnboundedSender<Bytes>,

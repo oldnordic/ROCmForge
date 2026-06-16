@@ -66,6 +66,11 @@ pub struct TokenizerData {
     pub pre: Option<String>,
     pub add_bos: bool,
     pub add_eos: bool,
+    /// SentencePiece token scores (log probabilities).
+    pub scores: Vec<f32>,
+    /// SentencePiece token types (1=normal, 2=unknown, 3=control, 4=user-defined,
+    /// 5=unused, 6=byte).
+    pub token_types: Vec<i32>,
 }
 
 // ── KV section -> (GgufMetadata, TokenizerData) ───────────────────────────────
@@ -97,6 +102,22 @@ pub fn parse_kv<R: Read + Seek>(
             "tokenizer.ggml.merges" => {
                 if value_type == 9 {
                     tok.merges = read_merge_array(r)?;
+                } else {
+                    skip_value(r, value_type)?;
+                }
+                continue;
+            }
+            "tokenizer.ggml.scores" => {
+                if value_type == 9 {
+                    tok.scores = read_f32_array(r)?;
+                } else {
+                    skip_value(r, value_type)?;
+                }
+                continue;
+            }
+            "tokenizer.ggml.token_type" => {
+                if value_type == 9 {
+                    tok.token_types = read_i32_array(r)?;
                 } else {
                     skip_value(r, value_type)?;
                 }
@@ -177,6 +198,50 @@ fn read_merge_array<R: Read>(r: &mut R) -> Result<Vec<(Vec<u8>, Vec<u8>)>, LoadE
             result.push((first, second));
         }
         // Silently skip any merge that does not have the expected format
+    }
+    Ok(result)
+}
+
+/// Read a GGUF array of f32 values.
+fn read_f32_array<R: Read>(r: &mut R) -> Result<Vec<f32>, LoadError> {
+    let elem_type = read_u32(r)?;
+    if elem_type != 6 {
+        return Err(LoadError::InvalidFormat(format!(
+            "expected f32 array, got element type {}",
+            elem_type
+        )));
+    }
+    let count = read_u64(r)? as usize;
+    if count > 10_000_000 {
+        return Err(LoadError::StringTooLong(count));
+    }
+    let mut result = Vec::with_capacity(count);
+    for _ in 0..count {
+        let mut b = [0u8; 4];
+        r.read_exact(&mut b)?;
+        result.push(f32::from_le_bytes(b));
+    }
+    Ok(result)
+}
+
+/// Read a GGUF array of i32 values.
+fn read_i32_array<R: Read>(r: &mut R) -> Result<Vec<i32>, LoadError> {
+    let elem_type = read_u32(r)?;
+    if elem_type != 5 {
+        return Err(LoadError::InvalidFormat(format!(
+            "expected i32 array, got element type {}",
+            elem_type
+        )));
+    }
+    let count = read_u64(r)? as usize;
+    if count > 10_000_000 {
+        return Err(LoadError::StringTooLong(count));
+    }
+    let mut result = Vec::with_capacity(count);
+    for _ in 0..count {
+        let mut b = [0u8; 4];
+        r.read_exact(&mut b)?;
+        result.push(i32::from_le_bytes(b));
     }
     Ok(result)
 }

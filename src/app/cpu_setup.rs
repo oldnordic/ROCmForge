@@ -5,14 +5,14 @@ use rocmforge::cpu::{
 };
 use rocmforge::hardware::{derive_batch_config, BatchConfig, CpuCapabilities};
 use rocmforge::loader::ModelFile;
-use rocmforge::tokenizer::BpeTokenizer;
+use rocmforge::tokenizer::TokenizerHandle;
 
 use super::cli::Args;
 use super::cpu_debug::{print_batch_config, print_prompt_summary};
 
 pub(crate) struct CpuRunState {
     pub config: ModelConfig,
-    pub tok: BpeTokenizer,
+    pub tok: TokenizerHandle,
     pub weights: CpuModelWeights,
     pub batch_config: BatchConfig,
     pub prompt_tokens: Vec<u32>,
@@ -67,6 +67,7 @@ pub(crate) fn prepare_cpu_inference_state(
 
     let prompted = template.apply(&args.prompt);
     let prompt_tokens = tok.encode(&prompted, false);
+    eprintln!("[Tokens] {:?}", prompt_tokens);
     if prompt_tokens.is_empty() {
         return Err("Prompt tokenized to zero tokens".into());
     }
