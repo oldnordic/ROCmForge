@@ -455,8 +455,13 @@ fn configure_gemma4(
     config.num_kv_shared_layers = meta.shared_kv_layers();
     config.hidden_size_per_layer_input = meta.embedding_length_per_layer_input();
     config.final_logit_softcapping = meta.final_logit_softcapping();
-    config.attention_logit_cap = Some(50.0);
-    config.attention_scale = 1.0;
+    // Attention logit soft-capping is part of Gemma4's audio/vision layers, not
+    // the text decoder. Leave it unset so flash_attn_decode does not transform
+    // text attention scores.
+    config.attention_logit_cap = None;
+    // Use the default 1/sqrt(head_dim) attention scale; flash_attn_decode
+    // recomputes it per-layer from the layer-specific head_dim when 0.0.
+    config.attention_scale = 0.0;
     config.embedding_scale = (config.hidden_size as f32).sqrt();
     config.use_gelu_swiglu = true;
 

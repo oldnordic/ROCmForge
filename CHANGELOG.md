@@ -24,6 +24,9 @@
 
 ### Fixed
 - **Q4_K weight dequantization byte order** — `cpu::quant::embed_q4_k` now follows llama.cpp's `dequantize_row_q4_K` layout: each 64-value chunk consumes 32 `qs` bytes, with the low nibble sub-block using scale `is` and the high nibble sub-block using scale `is+1`. This corrects token-embedding lookups and all transposed/fallback Q4_K GEMV paths that dequantize on the fly. The internal `BlockQ4K::quantize` test helper was updated to pack nibbles into the same layout.
+- **Gemma4 text attention scale** — `configure_gemma4` now leaves `attention_scale` at `0.0` so `flash_attn_decode` uses the default `1/sqrt(head_dim)` computed from each layer's specific `head_dim` (256 for sliding layers, 512 for full layers). The previous hard-coded `1.0` caused attention scores to be unscaled.
+- **Gemma4 attention logit cap** — Removed the unconditional `attention_logit_cap = 50.0` for Gemma4 text layers; the `attention_logit_cap` hyperparameter belongs to the audio/vision encoder, not the text decoder.
+- **`apply_qk_norm` value-norm support** — Extended `apply_qk_norm` to optionally apply a scaleless RMS norm to the value tensor, matching Gemma4's `v_norm`. Currently called with `v = None` because the converter does not emit per-layer `attn_v_norm.weight` tensors, but the hook is now in place.
 - **`GraphSummarizer` final hidden norm on regressed traces** — `final_hidden_norm` now filters `output_log` handles through `CpuGraphArena::is_f32_handle_valid()` so that regressed branches pointing to restored persistent shelves do not panic when a `GraphMap` is summarized.
 
 ### Tests

@@ -23,10 +23,14 @@ use crate::loader::GgmlType;
 
 // ── Layer forward ────────────────────────────────────────────────────────────────
 
-/// Apply RMS norm to Q/K heads when `attn_q_norm` / `attn_k_norm` are present.
+/// Apply RMS norm to Q/K/V heads.
+///
+/// Q and K use the provided per-head weight tensors. V is normalized without a
+/// learned scale (used by Gemma4's scaleless value norm).
 fn apply_qk_norm(
     q: &mut [f32],
     k: &mut [f32],
+    v: Option<&mut [f32]>,
     q_norm: Option<&[f32]>,
     k_norm: Option<&[f32]>,
     num_heads: usize,
@@ -62,6 +66,21 @@ fn apply_qk_norm(
             inv_rms = (inv_rms / kv_head_dim as f32 + eps).sqrt().recip();
             for (i, v) in slice.iter_mut().enumerate() {
                 *v = *v * inv_rms * norm[i];
+            }
+        }
+    }
+    if let Some(v) = v {
+        for h in 0..num_kv_heads {
+            let start = h * kv_head_dim;
+            let end = start + kv_head_dim;
+            let slice = &mut v[start..end];
+            let mut inv_rms = 0.0f32;
+            for x in slice.iter() {
+                inv_rms += x * x;
+            }
+            inv_rms = (inv_rms / kv_head_dim as f32 + eps).sqrt().recip();
+            for x in slice.iter_mut() {
+                *x *= inv_rms;
             }
         }
     }
@@ -442,6 +461,7 @@ pub fn cpu_layer_forward_with_ctx<C: CpuExecutionContext>(
                 apply_qk_norm(
                     &mut scratch.q[..q_size],
                     &mut [],
+                    None,
                     Some(q_norm),
                     None,
                     config.num_heads,
@@ -487,6 +507,7 @@ pub fn cpu_layer_forward_with_ctx<C: CpuExecutionContext>(
                 apply_qk_norm(
                     &mut scratch.q[..q_size],
                     &mut scratch.k[..kv_size],
+                    None,
                     weights.attn_q_norm.as_deref(),
                     weights.attn_k_norm.as_deref(),
                     config.num_heads,
