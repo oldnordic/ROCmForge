@@ -4,8 +4,13 @@ use rocmforge::cpu::kernels::gemm_q4k_q8_scalar::gemv_q4_k_q8_k;
 use rocmforge::cpu::ops::gemm::gemm_q6_k_fallback;
 use rocmforge::cpu::quant::{embed_q4_k, embed_q6_k};
 use rocmforge::loader::{GgmlType, GgufFile};
+use std::path::Path;
 
 const MODEL: &str = "/home/feanor/Projects/models/Qwen2.5-7B-Instruct-Q4_K_M.gguf";
+
+fn skip_if_model_missing() -> bool {
+    !Path::new(MODEL).exists()
+}
 
 fn max_abs_err(a: &[f32], b: &[f32]) -> f32 {
     a.iter()
@@ -21,6 +26,11 @@ fn mean_abs_err(a: &[f32], b: &[f32]) -> f32 {
 
 #[test]
 fn real_q4_k_scalar_gemv_matches_dequant_reference() {
+    if skip_if_model_missing() {
+        eprintln!("{} missing, skipping test.", MODEL);
+        return;
+    }
+
     let gguf = GgufFile::open(MODEL).expect("open model");
     let tv = gguf
         .tensor("blk.0.attn_q.weight")
@@ -64,6 +74,11 @@ fn real_q4_k_scalar_gemv_matches_dequant_reference() {
 
 #[test]
 fn real_q4_k_avx2_gemv_matches_scalar() {
+    if skip_if_model_missing() {
+        eprintln!("{} missing, skipping test.", MODEL);
+        return;
+    }
+
     let gguf = GgufFile::open(MODEL).expect("open model");
     let tv = gguf
         .tensor("blk.0.attn_q.weight")
@@ -103,6 +118,11 @@ fn real_q4_k_avx2_gemv_matches_scalar() {
 
 #[test]
 fn real_q4_k_avx2_gemm_matches_scalar() {
+    if skip_if_model_missing() {
+        eprintln!("{} missing, skipping test.", MODEL);
+        return;
+    }
+
     let gguf = GgufFile::open(MODEL).expect("open model");
     let tv = gguf
         .tensor("blk.0.attn_q.weight")
@@ -143,6 +163,11 @@ fn real_q4_k_avx2_gemm_matches_scalar() {
 
 #[test]
 fn real_q6_k_gemm_matches_dequant_reference() {
+    if skip_if_model_missing() {
+        eprintln!("{} missing, skipping test.", MODEL);
+        return;
+    }
+
     let gguf = GgufFile::open(MODEL).expect("open model");
     let tv = gguf
         .tensor("blk.0.attn_v.weight")
