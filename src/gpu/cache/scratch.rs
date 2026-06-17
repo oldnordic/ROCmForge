@@ -364,8 +364,8 @@ impl GpuForwardScratch {
             .attn_weights
             .as_ref()
             .ok_or_else(|| GpuError::InvalidOperation {
-                op: "ensure_attn_weights".to_string(),
-                reason: "attention weights buffer missing after allocation".to_string(),
+                message: "ensure_attn_weights: attention weights buffer missing after allocation"
+                    .to_string(),
             })?;
         Ok(buf.as_ptr() as *mut f32)
     }

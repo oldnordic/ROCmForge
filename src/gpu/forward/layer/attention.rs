@@ -126,9 +126,9 @@ pub(in crate::gpu::forward) fn gpu_attention_decode(
                 let buf = scratch
                     .attn_weights_buf()
                     .ok_or_else(|| GpuError::InvalidOperation {
-                        op: "decode_attention_q4_0".to_string(),
-                        reason: "attention trace requested without attn_weights buffer"
-                            .to_string(),
+                        message:
+                            "decode_attention_q4_0: attention trace requested without attn_weights buffer"
+                                .to_string(),
                     })?;
                 buf.copy_to_host_vec()?
             };
@@ -249,9 +249,9 @@ pub(in crate::gpu::forward) fn gpu_attention_decode_from_state(
                 let buf = scratch
                     .attn_weights_buf()
                     .ok_or_else(|| GpuError::InvalidOperation {
-                        op: "prefill_attention_q4_0".to_string(),
-                        reason: "attention trace requested without attn_weights buffer"
-                            .to_string(),
+                        message:
+                            "prefill_attention_q4_0: attention trace requested without attn_weights buffer"
+                                .to_string(),
                     })?;
                 buf.copy_to_host_vec()?
             };
