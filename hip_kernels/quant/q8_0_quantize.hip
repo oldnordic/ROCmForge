@@ -2,7 +2,7 @@
 
 // Q8_0 constants (must match Rust types.rs)
 #define QK8_0 32
-#define Q8_0_BLOCK_SIZE 36  // Changed from 34 to 36 (4 bytes float + 32 bytes qs)
+#define Q8_0_BLOCK_SIZE 34
 
 /// Quantize f32 data to Q8_0 format (device kernel)
 /// Each thread block processes one 32-element block
@@ -53,10 +53,13 @@ __global__ void quantize_q8_0_device(
     }
 }
 
-/// Quantize f32 data to activation-optimized Q8_0 format (36 bytes per block, float32 scale)
+/// Quantize f32 data to decode-fastpath Q8_0 format.
+///
+/// This must match the layout consumed by the Q4_0 x Q8_0 decode kernels:
+/// 2-byte f16 scale followed by 32 signed bytes.
 __global__ void quantize_q8_0_act_device(
     const float* __restrict__ input,   // [n] f32 input data
-    void* __restrict__ output,         // [n/32 * 36] Q8_0 quantized output
+    void* __restrict__ output,         // [n/32 * 34] Q8_0 quantized output
     int n                              // Total number of elements
 ) {
     int block_idx = blockIdx.x;
@@ -80,23 +83,22 @@ __global__ void quantize_q8_0_act_device(
     }
     __syncthreads();
 
-    // Quantize values (activation fastpath uses 36 bytes per block)
-    uint8_t* out = static_cast<uint8_t*>(output) + block_idx * 36;
+    uint8_t* out = static_cast<uint8_t*>(output) + block_idx * Q8_0_BLOCK_SIZE;
 
-    // Thread 0 writes scale as float32 (4 bytes)
+    // Thread 0 writes scale as f16 so the workspace matches the decode kernels.
     if (threadIdx.x == 0) {
-        float* d_ptr = reinterpret_cast<float*>(out);
-        *d_ptr = s_scale_f32;
+        half* d_ptr = reinterpret_cast<half*>(out);
+        *d_ptr = __float2half(s_scale_f32);
     }
 
-    // All threads write their quantized value (starting at byte 4)
+    // All threads write their quantized value (starting at byte 2)
     if (threadIdx.x < QK8_0) {
         // Round to nearest int, then clamp and convert to int8_t
         const float x0 = val / s_scale_f32;
         const float x0_rounded = roundf(x0);
         const float x0_clamped = fminf(fmaxf(x0_rounded, -127.0f), 127.0f);
         int8_t q = static_cast<int8_t>(x0_clamped);
-        out[4 + threadIdx.x] = reinterpret_cast<uint8_t&>(q);
+        out[2 + threadIdx.x] = reinterpret_cast<uint8_t&>(q);
     }
 }
 

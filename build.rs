@@ -12,6 +12,8 @@ mod gpu_build {
         use std::path::Path;
         use std::process::Command;
 
+        println!("cargo:rerun-if-changed=hip_kernels");
+
         let hip_path = find_rocm_path();
         let hip_path = hip_path.as_deref().unwrap_or(Path::new("/opt/rocm"));
 
@@ -121,6 +123,8 @@ mod gpu_build {
     pub fn compile_quant_kernels() {
         use std::path::Path;
         use std::process::Command;
+
+        println!("cargo:rerun-if-changed=hip_kernels/quant");
 
         // Find cmake executable
         let cmake = find_cmake();

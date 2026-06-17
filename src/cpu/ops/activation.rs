@@ -47,7 +47,7 @@ unsafe fn silu_fuse_avx2(gate: &[f32], up: &mut [f32]) {
     let chunks = n / 8;
 
     for i in 0..chunks {
-        // Load gate and up into temporary arrays for scalar compute
+        // Load gate and up into local arrays for scalar compute
         let mut gate_buf = [0.0f32; 8];
         let mut up_buf = [0.0f32; 8];
         _mm256_storeu_ps(

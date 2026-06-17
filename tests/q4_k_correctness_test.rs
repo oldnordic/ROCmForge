@@ -4,7 +4,7 @@ use std::process::Command;
 #[test]
 #[ignore = "Requires Q4_K model file and GPU"]
 fn test_q4_k_model_output_coherence() {
-    let model_path = "/home/feanor/Projects/Memoria/models/qwen2.5-0.5b-instruct-q4_k.gguf";
+    let model_path = "/home/feanor/Projects/models/qwen2.5-0.5b-instruct-q4_k_m.gguf";
 
     // Run inference with simple prompt
     let output = Command::new("timeout")

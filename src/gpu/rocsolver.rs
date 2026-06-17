@@ -41,11 +41,7 @@ type rocblas_handle = *mut std::ffi::c_void;
 type rocblas_int = c_int;
 
 /// Values from /opt/rocm/include/rocblas/rocblas-types.h — NOT ASCII codes.
-#[allow(
-    non_camel_case_types,
-    dead_code,
-    reason = "Bindings mirror ROCm C enum names; some values are reserved for completeness"
-)]
+#[allow(non_camel_case_types, dead_code, reason = "ROCm FFI")]
 #[repr(i32)]
 enum rocblas_svect {
     All = 191,
@@ -57,11 +53,7 @@ enum rocblas_svect {
 /// Algorithm variant for sgesvd fast_alg.
 /// Values from /opt/rocm/include/rocsolver/rocsolver-extra-types.h —
 /// NOT ASCII character codes.
-#[allow(
-    non_camel_case_types,
-    dead_code,
-    reason = "Bindings mirror ROCm C enum names; some values are reserved for completeness"
-)]
+#[allow(non_camel_case_types, dead_code, reason = "ROCm FFI")]
 #[repr(i32)]
 enum rocblas_workmode {
     OutOfPlace = 201,

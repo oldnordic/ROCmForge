@@ -16,10 +16,7 @@ use rayon::prelude::*;
 /// logit_cap: if > 0, soft-cap attention scores with `cap * tanh(score / cap)`.
 /// scale: attention score scale. Pass 0.0 to use the default 1/sqrt(head_dim).
 ///
-#[allow(
-    clippy::too_many_arguments,
-    reason = "function has many parameters by design"
-)]
+#[allow(clippy::too_many_arguments, reason = "kernel ABI")]
 /// For decode (single query), uses serial iteration to avoid rayon overhead.
 pub fn flash_attn_decode(
     q: &[f32],
@@ -196,10 +193,7 @@ unsafe fn normalize_f32_avx2(out: &mut [f32], acc: &[f32], l: f32) {
 /// `max(0, s + 1 - sliding_window) ..= s`.
 /// `logit_cap`: if > 0, soft-cap attention scores with `cap * tanh(score / cap)`.
 /// `scale`: attention score scale. Pass 0.0 to use the default 1/sqrt(head_dim).
-#[allow(
-    clippy::too_many_arguments,
-    reason = "function has many parameters by design"
-)]
+#[allow(clippy::too_many_arguments, reason = "kernel ABI")]
 /// Position s attends to 0..=s (causal mask).
 pub fn flash_attn_prefill(
     q: &[f32],
@@ -244,11 +238,7 @@ pub fn flash_attn_prefill(
                 // Causal: attend to positions 0..=s (or sliding window subset)
                 let start_t = if sliding_window > 0 {
                     let row_len = s + 1;
-                    if row_len > sliding_window {
-                        row_len - sliding_window
-                    } else {
-                        0
-                    }
+                    row_len.saturating_sub(sliding_window)
                 } else {
                     0
                 };

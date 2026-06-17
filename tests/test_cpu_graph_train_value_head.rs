@@ -22,7 +22,7 @@ use rocmforge::cpu::{
     weights::CpuModelWeights,
 };
 use rocmforge::loader::ModelFile;
-use rocmforge::tokenizer::BpeTokenizer;
+use rocmforge::tokenizer::Tokenizer;
 use serde::Deserialize;
 
 const DEFAULT_MODEL_PATH: &str = "/home/feanor/Projects/models/qwen2.5-0.5b-instruct-q4_0.gguf";
@@ -56,7 +56,7 @@ fn generate_completion(
     weights: &CpuModelWeights,
     kv: &mut CpuKvCache,
     scratch: &mut CpuForwardScratch,
-    tok: &BpeTokenizer,
+    tok: &dyn Tokenizer,
     config: &rocmforge::config::ModelConfig,
     seed: u64,
 ) -> (String, Vec<Vec<f32>>) {

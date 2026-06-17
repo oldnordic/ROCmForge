@@ -62,10 +62,10 @@ __device__ inline void vec_dot_q4_0_packed_x4(
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
         // Packed load: 4 consecutive bytes as uint32
-        const uint32_t pk0 = *reinterpret_cast<const uint32_t*>(&blocks[0]->qs[i * 4]);
-        const uint32_t pk1 = *reinterpret_cast<const uint32_t*>(&blocks[1]->qs[i * 4]);
-        const uint32_t pk2 = *reinterpret_cast<const uint32_t*>(&blocks[2]->qs[i * 4]);
-        const uint32_t pk3 = *reinterpret_cast<const uint32_t*>(&blocks[3]->qs[i * 4]);
+        uint32_t pk0; __builtin_memcpy(&pk0, &blocks[0]->qs[i * 4], 4);
+        uint32_t pk1; __builtin_memcpy(&pk1, &blocks[1]->qs[i * 4], 4);
+        uint32_t pk2; __builtin_memcpy(&pk2, &blocks[2]->qs[i * 4], 4);
+        uint32_t pk3; __builtin_memcpy(&pk3, &blocks[3]->qs[i * 4], 4);
 
         // Extract 8 nibbles from each packed uint32 and accumulate
         // Each nibble is subtracted by 8 (Q4_0 zero point)

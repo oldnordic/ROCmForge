@@ -27,7 +27,7 @@ fn cli_binary_path() -> PathBuf {
 }
 
 fn validation_model_path() -> PathBuf {
-    PathBuf::from("/home/feanor/Projects/Memoria/models/qwen2.5-0.5b-instruct-q4_0.gguf")
+    PathBuf::from("/home/feanor/Projects/models/qwen2.5-0.5b-instruct-q4_0.gguf")
 }
 
 /// Run CLI command with safe runner wrapper.

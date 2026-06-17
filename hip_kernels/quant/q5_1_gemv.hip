@@ -21,12 +21,22 @@ __device__ inline float vec_dot_q5_1(const void* block_ptr, const float* vec, in
 
     float sum = 0.0f;
 
-    for (int i = 0; i < QK5_1; ++i) {
-        const uint8_t high_bit = ((qh[i / 8] >> (i % 8)) & 1) << 4;
-        const uint8_t low_bits = (qs[i / 2] >> ((i % 2) * 4)) & 0x0F;
-        const int q = (int)(high_bit | low_bits);
+    // Q5_1 packs 32 values into 16 nibble bytes using the GGUF/llama.cpp
+    // layout (same as Q4_1/Q5_0): byte i holds element i (low nibble) and
+    // element i+16 (high nibble). Each value also has a high bit in qh.
+    for (int i = 0; i < QK5_1 / 2; ++i) {
+        // element i: low nibble of qs[i], high bit i of qh
+        const uint8_t high_bit_0 = ((qh[i / 8] >> (i % 8)) & 1) << 4;
+        const uint8_t low_bits_0 = qs[i] & 0x0F;
+        const int q0 = (int)(high_bit_0 | low_bits_0);
 
-        sum += (d * (float)q + m) * vec[offset + i];
+        // element i+16: high nibble of qs[i], high bit (i+16) of qh
+        const uint8_t high_bit_1 = ((qh[i / 8 + 2] >> (i % 8)) & 1) << 4;
+        const uint8_t low_bits_1 = (qs[i] >> 4) & 0x0F;
+        const int q1 = (int)(high_bit_1 | low_bits_1);
+
+        sum += (d * (float)q0 + m) * vec[offset + i] +
+               (d * (float)q1 + m) * vec[offset + i + 16];
     }
 
     return sum;
@@ -49,10 +59,14 @@ __global__ void gemv_q5_1_f32_kernel(
     const uint8_t* col_base = static_cast<const uint8_t*>(weights_q5_1) + col * n_blocks * Q5_1_BLOCK_SIZE;
 
     float sum = 0.0f;
-    for (int block_idx = 0; block_idx < n_blocks; ++block_idx) {
+    // Distribute Q5_1 blocks across the 32 lanes; each lane computes a
+    // partial dot product for its assigned blocks, then the warp shuffle
+    // reduction sums the partials into the correct full-column result.
+    for (int block_idx = tid; block_idx < n_blocks; block_idx += 32) {
         sum += vec_dot_q5_1(col_base + block_idx * Q5_1_BLOCK_SIZE, input, block_idx * QK5_1);
     }
 
+    // Warp reduction across lanes
     for (int offset = 16; offset > 0; offset >>= 1) {
         sum += __shfl_down(sum, offset, 32);
     }

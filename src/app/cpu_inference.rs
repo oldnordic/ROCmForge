@@ -3,6 +3,7 @@ use super::cpu_decode::run_cpu_decode_loop;
 use super::cpu_prefill::run_cpu_prefill;
 use super::cpu_runtime::prepare_cpu_runtime;
 use super::cpu_setup::prepare_cpu_inference_state;
+use rocmforge::cpu::forward_graph_trace::ForwardGraphRecorder;
 
 #[cfg(feature = "cpu-graph")]
 use super::cpu_decode::{run_cpu_decode_beam_loop_with_ctx, run_cpu_decode_loop_with_ctx};
@@ -49,34 +50,45 @@ pub(crate) fn run_cpu_inference(args: &Args) -> Result<(), Box<dyn std::error::E
 
     let n_prompt = prompt_tokens.len();
 
-    #[cfg(feature = "cpu-graph")]
-    let value_head = if let Some(path) = &args.value_head_path {
-        Some(BranchValueHead::load(std::path::Path::new(path))?)
-    } else {
-        None
-    };
-
-    #[cfg(feature = "cpu-graph")]
-    if let Some(load_dir) = &args.load_graph_map_dir {
-        let map = GraphMap::load(std::path::Path::new(load_dir))?;
-        eprintln!("Loaded GraphMap from {}", load_dir);
-        eprintln!("  branches: {}", map.branch_scores().len());
-        eprintln!("  annotations: {}", map.branch_annotations.len());
+    let mut recorder = args
+        .forward_graph_trace
+        .as_ref()
+        .map(|_| ForwardGraphRecorder::new(&prompt_tokens));
+    if let (Some(recorder), Some(json)) = (recorder.as_mut(), args.expected_attention.as_ref()) {
+        let value: serde_json::Value = serde_json::from_str(json)
+            .map_err(|e| format!("--expected-attention is not valid JSON: {}", e))?;
+        recorder.set_expected_attention(value);
     }
-
-    run_cpu_prefill(
-        args,
-        &config,
-        &tok,
-        &weights,
-        &batch_config,
-        &prompt_tokens,
-        &mut kv,
-        &mut scratch,
-    )?;
 
     #[cfg(feature = "cpu-graph")]
     {
+        if recorder.is_some() {
+            return Err(
+                "--forward-graph-trace is not supported together with the cpu-graph feature".into(),
+            );
+        }
+        let value_head = if let Some(path) = &args.value_head_path {
+            Some(BranchValueHead::load(std::path::Path::new(path))?)
+        } else {
+            None
+        };
+        if let Some(load_dir) = &args.load_graph_map_dir {
+            let map = GraphMap::load(std::path::Path::new(load_dir))?;
+            eprintln!("Loaded GraphMap from {}", load_dir);
+            eprintln!("  branches: {}", map.branch_scores().len());
+            eprintln!("  annotations: {}", map.branch_annotations.len());
+        }
+        run_cpu_prefill(
+            args,
+            &config,
+            &tok,
+            &weights,
+            &batch_config,
+            &prompt_tokens,
+            &mut kv,
+            &mut scratch,
+            None,
+        )?;
         if value_head.is_some() && args.rerank_beam_width > 1 {
             let mut ctx = CaptureContext::new(0, 0);
             run_cpu_decode_beam_loop_with_ctx(
@@ -136,6 +148,7 @@ pub(crate) fn run_cpu_inference(args: &Args) -> Result<(), Box<dyn std::error::E
                 &mut scratch,
                 use_greedy,
                 n_prompt,
+                None,
             )?;
         }
     }
@@ -153,6 +166,17 @@ pub(crate) fn run_cpu_inference(args: &Args) -> Result<(), Box<dyn std::error::E
                     .into(),
             );
         }
+        run_cpu_prefill(
+            args,
+            &config,
+            &tok,
+            &weights,
+            &batch_config,
+            &prompt_tokens,
+            &mut kv,
+            &mut scratch,
+            recorder.as_mut(),
+        )?;
         run_cpu_decode_loop(
             args,
             &config,
@@ -162,7 +186,12 @@ pub(crate) fn run_cpu_inference(args: &Args) -> Result<(), Box<dyn std::error::E
             &mut scratch,
             use_greedy,
             n_prompt,
+            recorder.as_mut(),
         )?;
+        if let (Some(path), Some(recorder)) = (args.forward_graph_trace.as_ref(), recorder) {
+            recorder.write_jsonl(path)?;
+            eprintln!("Wrote forward graph trace to {}", path);
+        }
     }
 
     Ok(())

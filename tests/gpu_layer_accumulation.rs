@@ -15,7 +15,7 @@ use rocmforge::gpu::{
 use rocmforge::loader::GgufFile;
 use serial_test::serial;
 
-const MODEL_PATH: &str = "/home/feanor/Projects/Memoria/models/qwen2.5-0.5b-instruct-q4_0.gguf";
+const MODEL_PATH: &str = "/home/feanor/Projects/models/qwen2.5-0.5b-instruct-q4_0.gguf";
 
 fn skip_if_model_missing() -> bool {
     !std::path::Path::new(MODEL_PATH).exists()
@@ -154,6 +154,7 @@ fn test_gpu_state_accumulation_across_layers() {
     }
 
     // Test 2: Accumulated correctness (output of layer N-1 -> input of layer N)
+    // This is still a single-token decode path, so sequence position stays fixed.
     eprintln!("\n=== Test 2: Accumulated State Correctness ===");
 
     // Initialize state for accumulated test
@@ -176,14 +177,15 @@ fn test_gpu_state_accumulation_across_layers() {
         })
         .expect("Failed to upload hidden state");
 
+    let decode_pos = 0usize;
     for layer_idx in 0..test_layers {
         // CPU accumulated computation
         let cpu_input = cpu_hidden_accum.clone();
 
-        // Precompute RoPE sin/cos tables for this position
+        // Precompute RoPE sin/cos tables for the single decode position.
         let half = config.head_dim / 2;
         for i in 0..half {
-            let angle = layer_idx as f32 * config.rope_freq[i];
+            let angle = decode_pos as f32 * config.rope_freq[i];
             let (s, c) = angle.sin_cos();
             cpu_scratch_accum.rope_sin[i] = s;
             cpu_scratch_accum.rope_cos[i] = c;
@@ -199,7 +201,7 @@ fn test_gpu_state_accumulation_across_layers() {
             &mut cpu_kv_accum,
             &mut cpu_scratch_accum,
             layer_idx,
-            layer_idx, // position equals layer_idx for decode
+            decode_pos,
             rope_sin,
             rope_cos,
             &config,
@@ -216,7 +218,7 @@ fn test_gpu_state_accumulation_across_layers() {
             &mut gpu_scratch_accum,
             Some(&mut cpu_scratch_accum),
             layer_idx,
-            layer_idx, // position equals layer_idx for decode
+            decode_pos,
             &config,
         )
         .expect("GPU accumulated layer forward should succeed");

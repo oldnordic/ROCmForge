@@ -82,6 +82,7 @@ unsafe extern "C" {
 
     pub fn gpu_flash_attn_decode_strided_multi_head(
         d_out: *mut f32,
+        d_attn_weights: *mut f32,
         d_q: *const f32,
         d_k_cache: *const f32,
         d_v_cache: *const f32,
@@ -99,6 +100,7 @@ unsafe extern "C" {
 
     pub fn gpu_flash_attn_decode_strided_multi_head_state(
         d_out: *mut f32,
+        d_attn_weights: *mut f32,
         d_q: *const f32,
         d_k_cache: *const f32,
         d_v_cache: *const f32,

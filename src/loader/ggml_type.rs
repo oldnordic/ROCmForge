@@ -2,7 +2,7 @@ use crate::loader::LoadError;
 
 /// GGUF tensor data types — matches ggml_type from ggml.h
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[allow(non_camel_case_types)]
+#[allow(non_camel_case_types, reason = "GGML names")]
 pub enum GgmlType {
     F32 = 0,
     F16 = 1,

@@ -3,6 +3,7 @@ use super::{
     ModelConfig,
 };
 use crate::config::FfnLayout;
+use crate::cpu::forward_graph_trace::ForwardGraphRecorder;
 use crate::gpu::ffi::hipStream_t;
 
 /// Reusable scratch buffers in GPU VRAM for a single forward pass.
@@ -58,6 +59,11 @@ pub struct GpuForwardScratch {
     /// Pre-allocated GPU scratch for per-expert H2D upload during MoE decode.
     /// None for non-MoE or non-compressed models.
     pub expert_scratch: Option<GpuExpertScratch>,
+    /// Optional forward-graph recorder set by the CLI when tracing GPU decode.
+    forward_graph_recorder: Option<*mut ForwardGraphRecorder>,
+    /// Optional scratch buffer for normalized attention weights when tracing.
+    /// Sized to [num_heads * max_seq_len] f32 and allocated on first use.
+    attn_weights: Option<GpuBuffer>,
 }
 
 /// Pre-allocated GPU buffers for uploading one expert's compressed data at decode time.
@@ -135,7 +141,9 @@ impl GpuExpertScratch {
 impl GpuForwardScratch {
     /// Estimate VRAM bytes required for forward scratch buffers without allocating.
     ///
-    /// This mirrors the GPU-only (non-pinned) allocations in `new`.
+    /// This mirrors the GPU-only (non-pinned) allocations in `new`, plus the
+    /// optional attention-weights trace buffer sized to the model's maximum
+    /// sequence length.
     pub fn estimate_bytes(config: &ModelConfig) -> usize {
         let h = config.hidden_size;
         let q = config.num_heads * config.head_dim;
@@ -143,8 +151,9 @@ impl GpuForwardScratch {
         let ff = config.intermediate_size;
         let v = config.vocab_size;
         let argmax_partials = v.div_ceil(GPU_ARGMAX_ITEMS_PER_BLOCK);
+        let attn_weights = config.num_heads * config.max_seq_len;
         std::mem::size_of::<f32>()
-            * (3 * h + 2 * q + 2 * kv + 2 * ff + 32 + v + 2 * argmax_partials + 3)
+            * (3 * h + 2 * q + 2 * kv + 2 * ff + 32 + v + 2 * argmax_partials + 3 + attn_weights)
     }
 
     /// Allocate expert scratch buffers for compressed MoE dispatch.
@@ -318,7 +327,52 @@ impl GpuForwardScratch {
             decode_state_next_pos: None,
             captured_decode: None,
             expert_scratch: None,
+            forward_graph_recorder: None,
+            attn_weights: None,
         })
+    }
+
+    /// Bind (or unbind) the optional forward-graph recorder.
+    pub fn set_forward_graph_recorder(&mut self, recorder: Option<&mut ForwardGraphRecorder>) {
+        self.forward_graph_recorder = recorder.map(|r| r as *mut _);
+    }
+
+    /// Clear any bound forward-graph recorder.
+    pub fn clear_forward_graph_recorder(&mut self) {
+        self.forward_graph_recorder = None;
+    }
+
+    /// Return a mutable reference to the bound recorder, if any.
+    pub fn forward_graph_recorder(&mut self) -> Option<&mut ForwardGraphRecorder> {
+        self.forward_graph_recorder.map(|p| unsafe { &mut *p })
+    }
+
+    /// Ensure the per-layer attention-weights scratch buffer exists and return a
+    /// device pointer suitable for the decode attention kernel.
+    pub fn ensure_attn_weights(&mut self, config: &ModelConfig) -> GpuResult<*mut f32> {
+        if self.attn_weights.is_none() {
+            let size = config
+                .num_heads
+                .saturating_mul(config.max_seq_len)
+                .saturating_mul(std::mem::size_of::<f32>());
+            let buf = GpuBuffer::alloc(size).map_err(|e| GpuError::CacheAllocationFailed {
+                reason: format!("attn_weights buffer allocation failed: {}", e),
+            })?;
+            self.attn_weights = Some(buf);
+        }
+        let buf = self
+            .attn_weights
+            .as_ref()
+            .ok_or_else(|| GpuError::InvalidOperation {
+                op: "ensure_attn_weights".to_string(),
+                reason: "attention weights buffer missing after allocation".to_string(),
+            })?;
+        Ok(buf.as_ptr() as *mut f32)
+    }
+
+    /// Borrow the optional attention-weights buffer for host readback.
+    pub(crate) fn attn_weights_buf(&self) -> Option<&GpuBuffer> {
+        self.attn_weights.as_ref()
     }
 
     pub fn hidden_ptr(&self) -> *const f32 {
@@ -675,6 +729,7 @@ mod tests {
             kv_quant_bits: None,
             turboquant_centroids: None,
             qjl_scale: None,
+            ..Default::default()
         }
     }
 

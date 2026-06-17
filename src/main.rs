@@ -67,6 +67,8 @@ mod main_tests {
             rerank_beam_length_penalty: 1.0,
             train_value_head_from_traces: None,
             save_value_head: None,
+            forward_graph_trace: None,
+            expected_attention: None,
         };
         assert!(!args.prefill_only_validate);
         assert!(args.draft_model.is_none());

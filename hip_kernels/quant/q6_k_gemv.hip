@@ -6,60 +6,51 @@
 
 __device__ inline float vec_dot_q6_k(const void* block_ptr, const float* vec, int offset) {
     const int tid = threadIdx.x;
-    const uint8_t* block_bytes = static_cast<const uint8_t*>(block_ptr);
+    const uint8_t* block = static_cast<const uint8_t*>(block_ptr);
 
-    // Extract scale d (fp16 at bytes 208-209)
+    // Q6_K block layout: ql[0..128], qh[128..192], scales[192..208], d[208..210]
     half d_half;
-    memcpy(&d_half, &block_bytes[208], sizeof(half));
+    memcpy(&d_half, &block[208], sizeof(half));
     const float d = __half2float(d_half);
-
-    // Q4_K safety: check for denormal d
     if (fabsf(d) < 1e-7f) return 0.0f;
 
-    // Pointer to scales (int8_t at bytes 192-207)
-    const int8_t* scales = reinterpret_cast<const int8_t*>(&block_bytes[192]);
-
+    const int8_t* scales = reinterpret_cast<const int8_t*>(&block[192]);
+    const int l = tid;
+    const int is = l / 16;
     float sum = 0.0f;
 
-    // LINEAR PROCESSING: Process 8 elements per thread with single loop
-    // Thread T (0-31) processes elements: T, T+32, T+64, T+96, T+128, T+160, T+192, T+224
-    // This matches Q6_K's INTERLEAVED distribution but uses linear loop pattern
-    for (int l = 0; l < 8; ++l) {
-        const int i = tid * 8 + l;  // Linear index: 0-255 for this thread
+    // Group 0: values 0..127
+    {
+        const uint8_t* ql = &block[0];
+        const uint8_t* qh = &block[128];
+        const int8_t* sc = &scales[0];
 
-        // Map linear index to Q6_K INTERLEAVED distribution
-        // Thread T (0-31) processes: T, T+32, T+64, T+96, T+128, T+160, T+192, T+224
-        // Calculate which group (0 or 1) and position within group
-        const int group = i / 128;           // 0 for 0-127, 1 for 128-255
-        const int pos_in_group = i % 128;    // 0-127 within the group
-        const int l_base = pos_in_group % 32; // 0-31 (thread ID within group)
-        const int quadrant = pos_in_group / 32; // 0, 1, 2, or 3
+        const int8_t q1 = (int8_t)((ql[l + 0] & 0xF) | (((qh[l] >> 0) & 3) << 4)) - 32;
+        const int8_t q2 = (int8_t)((ql[l + 32] & 0xF) | (((qh[l] >> 2) & 3) << 4)) - 32;
+        const int8_t q3 = (int8_t)((ql[l + 0] >> 4) | (((qh[l] >> 4) & 3) << 4)) - 32;
+        const int8_t q4 = (int8_t)((ql[l + 32] >> 4) | (((qh[l] >> 6) & 3) << 4)) - 32;
 
-        // Compute scale index (matching original nested loop logic)
-        const int is = l_base / 16;  // 0 or 1
-        const int scale_idx = group * 8 + is * 2 + quadrant;
-        const float scale = d * (float)scales[scale_idx];
+        sum += vec[offset + l + 0]   * (d * (float)sc[is + 0] * (float)q1);
+        sum += vec[offset + l + 32]  * (d * (float)sc[is + 2] * (float)q2);
+        sum += vec[offset + l + 64]  * (d * (float)sc[is + 4] * (float)q3);
+        sum += vec[offset + l + 96]  * (d * (float)sc[is + 6] * (float)q4);
+    }
 
-        // Compute ql offset (matching original kernel: ql[l + quadrant*32])
-        const int ql_offset = group * 64 + l_base + quadrant * 32;
-        const uint8_t ql_byte = block_bytes[ql_offset];
+    // Group 1: values 128..255
+    {
+        const uint8_t* ql = &block[64];
+        const uint8_t* qh = &block[160];
+        const int8_t* sc = &scales[8];
 
-        // Compute qh offset (matching original kernel: qh[l])
-        const int qh_offset = 128 + group * 32 + l_base;
-        const uint8_t qh_byte = block_bytes[qh_offset];
+        const int8_t q1 = (int8_t)((ql[l + 0] & 0xF) | (((qh[l] >> 0) & 3) << 4)) - 32;
+        const int8_t q2 = (int8_t)((ql[l + 32] & 0xF) | (((qh[l] >> 2) & 3) << 4)) - 32;
+        const int8_t q3 = (int8_t)((ql[l + 0] >> 4) | (((qh[l] >> 4) & 3) << 4)) - 32;
+        const int8_t q4 = (int8_t)((ql[l + 32] >> 4) | (((qh[l] >> 6) & 3) << 4)) - 32;
 
-        // Unpack Q6_K value (matching original kernel bit operations)
-        // Determine which half of ql byte and corresponding qh bits
-        const int is_low_half = (quadrant < 2) ? 0 : 1;
-        const int shift = is_low_half ? 0 : 4;
-        const int qh_shift = is_low_half ? (quadrant % 2) * 2 : (quadrant % 2) * 2 + 4;
-
-        const uint8_t ql_4bits = (ql_byte >> shift) & 0x0F;
-        const uint8_t qh_2bits = (qh_byte >> qh_shift) & 0x03;
-        const int8_t q = (int8_t)(ql_4bits | (qh_2bits << 4)) - 32;
-
-        // Accumulate (matching original kernel logic)
-        sum += vec[offset + i] * (scale * (float)q);
+        sum += vec[offset + l + 128] * (d * (float)sc[is + 0] * (float)q1);
+        sum += vec[offset + l + 160] * (d * (float)sc[is + 2] * (float)q2);
+        sum += vec[offset + l + 192] * (d * (float)sc[is + 4] * (float)q3);
+        sum += vec[offset + l + 224] * (d * (float)sc[is + 6] * (float)q4);
     }
 
     return sum;

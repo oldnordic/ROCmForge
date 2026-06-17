@@ -24,7 +24,6 @@ pub(crate) struct GpuInferenceSetupState {
     pub host_scratch: CpuForwardScratch,
     pub use_greedy: bool,
     pub use_gpu_greedy_fastpath: bool,
-    pub final_prompt_logits_mode: gpu::GpuLogitsMode,
 }
 
 #[cfg(feature = "gpu")]
@@ -138,11 +137,6 @@ pub(crate) fn prepare_gpu_inference_state(
     let host_scratch = CpuForwardScratch::new(config);
     let use_greedy = args.top_p >= 1.0;
     let use_gpu_greedy_fastpath = use_greedy && !args.debug;
-    let final_prompt_logits_mode = if use_gpu_greedy_fastpath {
-        gpu::GpuLogitsMode::GreedyArgmax
-    } else {
-        gpu::GpuLogitsMode::DownloadToHost
-    };
 
     Ok(GpuInferenceSetupState {
         cpu_weights,
@@ -152,7 +146,6 @@ pub(crate) fn prepare_gpu_inference_state(
         host_scratch,
         use_greedy,
         use_gpu_greedy_fastpath,
-        final_prompt_logits_mode,
     })
 }
 

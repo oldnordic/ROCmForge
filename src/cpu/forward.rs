@@ -13,6 +13,7 @@
 use std::io::Write;
 
 use super::cache::{CpuForwardScratch, CpuKvCache};
+use super::forward_graph_trace::{ForwardGraphRecorder, TraceComponent};
 use super::graph::{CpuExecutionContext, DirectContext};
 use super::ops::{
     dispatch_gemv, flash_attn_decode, gelu_inplace, residual_add, rms_norm, rope_partial, silu_fuse,
@@ -22,6 +23,23 @@ use super::CpuError;
 use crate::config::ModelConfig;
 use crate::loader::GgmlType;
 // WeightMeta used internally via re-export; no direct import needed here.
+
+fn dump_cpu_f32(name: &str, buf: &[f32], n: usize) {
+    // Paired with the GPU-side gate so CPU vs GPU bisection dumps can be
+    // toggled together via ROCMFORGE_DUMP_LAYER_INTERMEDIATES=1. Off by
+    // default to avoid per-layer eprintln noise in production.
+    if std::env::var("ROCMFORGE_DUMP_LAYER_INTERMEDIATES")
+        .map(|v| v != "1")
+        .unwrap_or(true)
+    {
+        return;
+    }
+    let n = n.min(buf.len());
+    if n == 0 {
+        return;
+    }
+    eprintln!("[CPU] {}: {:?}", name, &buf[..n]);
+}
 
 // ── Layer forward ────────────────────────────────────────────────────────────────
 
@@ -83,6 +101,90 @@ fn apply_qk_norm(
             inv_rms = (inv_rms / kv_head_dim as f32 + eps).sqrt().recip();
             for x in slice.iter_mut() {
                 *x *= inv_rms;
+            }
+        }
+    }
+}
+
+/// Recompute the softmax attention matrix for the current query position and
+/// emit `attention` edges (plus any required key/value nodes) into `recorder`.
+#[allow(clippy::too_many_arguments, reason = "trace ABI")]
+fn capture_attention_edges(
+    recorder: &mut ForwardGraphRecorder,
+    q: &[f32],
+    k_cache: &[f32],
+    v_cache: &[f32],
+    layer: usize,
+    pos: usize,
+    seq_len: usize,
+    num_heads: usize,
+    num_kv_heads: usize,
+    head_dim: usize,
+    kv_head_dim: usize,
+    sliding_window: usize,
+    logit_cap: f32,
+    attention_scale: f32,
+) {
+    if pos >= recorder.len() {
+        return;
+    }
+    let kv_group = if num_kv_heads > 0 {
+        num_heads / num_kv_heads
+    } else {
+        1
+    };
+    let kv_size = num_kv_heads * kv_head_dim;
+    let scale = if attention_scale > 0.0 {
+        attention_scale
+    } else {
+        1.0 / (head_dim as f32).sqrt()
+    };
+    let start_t = if sliding_window > 0 && seq_len > sliding_window {
+        seq_len - sliding_window
+    } else {
+        0
+    };
+    let threshold = recorder.attention_threshold();
+    let window_len = seq_len - start_t;
+    let mut scores = vec![0.0f32; window_len];
+
+    for h in 0..num_heads {
+        let kv_h = h / kv_group;
+        let q_h = &q[h * head_dim..(h + 1) * head_dim];
+
+        for (idx, t) in (start_t..seq_len).enumerate() {
+            let k_start = t * kv_size + kv_h * kv_head_dim;
+            let k_t = &k_cache[k_start..k_start + kv_head_dim];
+            let mut score = 0.0f32;
+            for i in 0..head_dim {
+                score += q_h[i] * k_t[i];
+            }
+            score *= scale;
+            if logit_cap > 0.0 {
+                score = logit_cap * (score / logit_cap).tanh();
+            }
+            scores[idx] = score;
+        }
+
+        let max_score = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let mut sum = 0.0f32;
+        for s in scores.iter_mut() {
+            *s = (*s - max_score).exp();
+            sum += *s;
+        }
+        if sum > 0.0 {
+            for s in scores.iter_mut() {
+                *s /= sum;
+            }
+        }
+
+        for (idx, t) in (start_t..seq_len).enumerate() {
+            let weight = scores[idx];
+            if weight > threshold {
+                let k_full = &k_cache[t * kv_size..(t + 1) * kv_size];
+                let v_full = &v_cache[t * kv_size..(t + 1) * kv_size];
+                recorder.ensure_kv_nodes(layer, t, k_full, v_full);
+                recorder.record_attention_edge(Some(h), layer, pos, t, weight);
             }
         }
     }
@@ -316,10 +418,7 @@ fn moe_forward_decode<C: CpuExecutionContext>(
     Ok(())
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "function has many parameters by design"
-)]
+#[allow(clippy::too_many_arguments, reason = "forward ABI")]
 /// Forward pass through a single transformer layer.
 ///
 /// Architecture: RMSNorm → Attention/Shortconv → Residual → RMSNorm → FFN → Residual
@@ -341,9 +440,9 @@ pub fn cpu_layer_forward(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, reason = "forward ABI")]
 /// Internal forward pass using abstract context.
-pub fn cpu_layer_forward_with_ctx<C: CpuExecutionContext>(
+fn cpu_layer_forward_with_ctx_impl<C: CpuExecutionContext>(
     ctx: &mut C,
     hidden: &mut [f32],
     weights: &CpuLayerWeights,
@@ -355,6 +454,7 @@ pub fn cpu_layer_forward_with_ctx<C: CpuExecutionContext>(
     rope_cos: &[f32],
     config: &ModelConfig,
     debug: bool,
+    recorder: &mut Option<&mut ForwardGraphRecorder>,
 ) -> Result<(), CpuError> {
     // Legacy qwen35 SSM still rejected; everything else now supported.
     if config.architecture == "qwen35" || weights.ssm.is_some() {
@@ -375,6 +475,7 @@ pub fn cpu_layer_forward_with_ctx<C: CpuExecutionContext>(
 
     // 1. Attention RMS norm
     ctx.execute_rms_norm(hidden, &weights.attn_norm, &mut scratch.normed, eps);
+    dump_cpu_f32("attn_normed", &scratch.normed, 5);
 
     if debug && layer == 0 {
         let norm_mean: f32 = scratch.normed.iter().copied().sum::<f32>() / h as f32;
@@ -454,6 +555,9 @@ pub fn cpu_layer_forward_with_ctx<C: CpuExecutionContext>(
             if let Some(bv) = &weights.attn_v_bias {
                 super::ops::add_bias(&mut scratch.v[..kv_size], bv);
             }
+            dump_cpu_f32("q", &scratch.q[..q_size], 5);
+            dump_cpu_f32("k", &scratch.k[..kv_size], 5);
+            dump_cpu_f32("v", &scratch.v[..kv_size], 5);
         }
 
         // QK-Norm and RoPE
@@ -577,10 +681,25 @@ pub fn cpu_layer_forward_with_ctx<C: CpuExecutionContext>(
             // Write K, V cache
             kv.write_k(layer, pos, &scratch.k[..kv_size]);
             kv.write_v(layer, pos, &scratch.v[..kv_size]);
+            dump_cpu_f32("q_rope", &scratch.q[..q_size], 5);
+            dump_cpu_f32("k_rope", &scratch.k[..kv_size], 5);
+            dump_cpu_f32("v_raw", &scratch.v[..kv_size], 5);
             if stores_shared_kv {
                 let ty = config.layer_type_for_layer(layer);
                 kv.write_shared_k(ty, pos, &scratch.k[..kv_size]);
                 kv.write_shared_v(ty, pos, &scratch.v[..kv_size]);
+            }
+        }
+
+        if let Some(recorder) = recorder.as_mut() {
+            recorder.record_node(
+                TraceComponent::Query,
+                layer,
+                Some(pos),
+                &scratch.q[..q_size],
+            );
+            if !is_kv_shared {
+                recorder.ensure_kv_nodes(layer, pos, &scratch.k[..kv_size], &scratch.v[..kv_size]);
             }
         }
 
@@ -623,6 +742,46 @@ pub fn cpu_layer_forward_with_ctx<C: CpuExecutionContext>(
                 config.num_kv_heads,
                 head_dim,
                 kv.max_seq_len,
+            );
+        }
+
+        if let Some(recorder) = recorder.as_mut() {
+            recorder.record_node(
+                TraceComponent::AttentionOutput,
+                layer,
+                Some(pos),
+                &scratch.attn_out[..q_size],
+            );
+            let (k_cache, v_cache) = if is_gemma4 {
+                if is_kv_shared {
+                    let ty = config.layer_type_for_layer(layer);
+                    kv.shared_kv(ty)
+                        .expect("shared KV must exist for traced layer")
+                } else {
+                    (kv.k_buf(layer), kv.v_buf(layer))
+                }
+            } else {
+                (kv.k_buf(layer), kv.v_buf(layer))
+            };
+            capture_attention_edges(
+                recorder,
+                &scratch.q[..q_size],
+                k_cache,
+                v_cache,
+                layer,
+                pos,
+                seq_len,
+                config.num_heads,
+                config.num_kv_heads,
+                head_dim,
+                kv_head_dim,
+                sliding_window,
+                if is_gemma4 {
+                    config.attention_logit_cap.unwrap_or(0.0)
+                } else {
+                    0.0
+                },
+                config.attention_scale,
             );
         }
 
@@ -709,6 +868,14 @@ pub fn cpu_layer_forward_with_ctx<C: CpuExecutionContext>(
             } else {
                 ctx.execute_silu(gate, swiglu);
             }
+            if let Some(recorder) = recorder.as_mut() {
+                recorder.record_node(
+                    TraceComponent::MlpHidden,
+                    layer,
+                    Some(pos),
+                    &scratch.swiglu[..ff_size],
+                );
+            }
         } else {
             ctx.execute_gemv(
                 &weights.ffn_up,
@@ -720,6 +887,14 @@ pub fn cpu_layer_forward_with_ctx<C: CpuExecutionContext>(
                 Some(&mut scratch.q8_scratch),
             )?;
             gelu_inplace(swiglu);
+            if let Some(recorder) = recorder.as_mut() {
+                recorder.record_node(
+                    TraceComponent::MlpHidden,
+                    layer,
+                    Some(pos),
+                    &scratch.swiglu[..ff_size],
+                );
+            }
         }
         ctx.execute_gemv(
             &weights.ffn_down,
@@ -806,18 +981,84 @@ pub fn cpu_layer_forward_with_ctx<C: CpuExecutionContext>(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments, reason = "forward ABI")]
+/// Forward pass using abstract context (no graph tracing).
+pub fn cpu_layer_forward_with_ctx<C: CpuExecutionContext>(
+    ctx: &mut C,
+    hidden: &mut [f32],
+    weights: &CpuLayerWeights,
+    kv: &mut CpuKvCache,
+    scratch: &mut CpuForwardScratch,
+    layer: usize,
+    pos: usize,
+    rope_sin: &[f32],
+    rope_cos: &[f32],
+    config: &ModelConfig,
+    debug: bool,
+) -> Result<(), CpuError> {
+    let mut recorder: Option<&mut ForwardGraphRecorder> = None;
+    cpu_layer_forward_with_ctx_impl(
+        ctx,
+        hidden,
+        weights,
+        kv,
+        scratch,
+        layer,
+        pos,
+        rope_sin,
+        rope_cos,
+        config,
+        debug,
+        &mut recorder,
+    )
+}
+
+#[allow(clippy::too_many_arguments, reason = "forward ABI")]
+/// Forward pass using abstract context and recording the graph to `recorder`.
+pub fn cpu_layer_forward_with_ctx_recorder<C: CpuExecutionContext>(
+    ctx: &mut C,
+    hidden: &mut [f32],
+    weights: &CpuLayerWeights,
+    kv: &mut CpuKvCache,
+    scratch: &mut CpuForwardScratch,
+    layer: usize,
+    pos: usize,
+    rope_sin: &[f32],
+    rope_cos: &[f32],
+    config: &ModelConfig,
+    debug: bool,
+    recorder: &mut ForwardGraphRecorder,
+) -> Result<(), CpuError> {
+    let mut recorder_opt: Option<&mut ForwardGraphRecorder> = Some(recorder);
+    cpu_layer_forward_with_ctx_impl(
+        ctx,
+        hidden,
+        weights,
+        kv,
+        scratch,
+        layer,
+        pos,
+        rope_sin,
+        rope_cos,
+        config,
+        debug,
+        &mut recorder_opt,
+    )
+}
+
 // ── Full forward pass ────────────────────────────────────────────────────────────
 
 /// Complete forward pass through all transformer layers.
 ///
 /// After this function, `scratch.logits` contains the output logits.
-pub fn cpu_full_forward(
+fn cpu_full_forward_impl(
     hidden: &mut [f32],
     weights: &CpuModelWeights,
     kv: &mut CpuKvCache,
     scratch: &mut CpuForwardScratch,
     pos: usize,
     config: &ModelConfig,
+    recorder: &mut Option<&mut ForwardGraphRecorder>,
 ) -> Result<(), CpuError> {
     // Debug: input hidden statistics
     let debug = std::env::var("ROCMFORGE_DEBUG").is_ok();
@@ -886,7 +1127,8 @@ pub fn cpu_full_forward(
 
     // Process all transformer layers
     for layer_idx in 0..config.num_layers {
-        cpu_layer_forward(
+        cpu_layer_forward_with_ctx_impl(
+            &mut DirectContext,
             hidden,
             weights.layer(layer_idx),
             kv,
@@ -897,6 +1139,7 @@ pub fn cpu_full_forward(
             rope_cos,
             config,
             debug,
+            &mut *recorder,
         )?;
 
         // Debug: show hidden state after each layer
@@ -997,6 +1240,15 @@ pub fn cpu_full_forward(
         }
     }
 
+    if let Some(recorder) = recorder.as_mut() {
+        recorder.record_node(
+            TraceComponent::Logits,
+            config.num_layers,
+            Some(pos),
+            &scratch.logits[..config.vocab_size],
+        );
+    }
+
     // Debug: show logits statistics
     if debug {
         let mean: f32 = scratch.logits.iter().copied().sum::<f32>() / scratch.logits.len() as f32;
@@ -1019,12 +1271,39 @@ pub fn cpu_full_forward(
     Ok(())
 }
 
+/// Complete forward pass through all transformer layers (no tracing).
+pub fn cpu_full_forward(
+    hidden: &mut [f32],
+    weights: &CpuModelWeights,
+    kv: &mut CpuKvCache,
+    scratch: &mut CpuForwardScratch,
+    pos: usize,
+    config: &ModelConfig,
+) -> Result<(), CpuError> {
+    let mut recorder: Option<&mut ForwardGraphRecorder> = None;
+    cpu_full_forward_impl(hidden, weights, kv, scratch, pos, config, &mut recorder)
+}
+
+/// Complete forward pass through all transformer layers with graph tracing.
+pub fn cpu_full_forward_recorder(
+    hidden: &mut [f32],
+    weights: &CpuModelWeights,
+    kv: &mut CpuKvCache,
+    scratch: &mut CpuForwardScratch,
+    pos: usize,
+    config: &ModelConfig,
+    recorder: &mut ForwardGraphRecorder,
+) -> Result<(), CpuError> {
+    let mut recorder_opt: Option<&mut ForwardGraphRecorder> = Some(recorder);
+    cpu_full_forward_impl(hidden, weights, kv, scratch, pos, config, &mut recorder_opt)
+}
+
 /// Full transformer decode forward pass with a pluggable execution context.
 ///
 /// This is identical to `cpu_full_forward` but records every captured op
 /// through `ctx`. It is the hook used to turn a real inference session into a
 /// `GraphMap` when `ctx` is a `CaptureContext`.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, reason = "forward ABI")]
 pub fn cpu_full_forward_with_ctx<C: CpuExecutionContext>(
     ctx: &mut C,
     hidden: &mut [f32],
@@ -1459,6 +1738,9 @@ pub fn cpu_embed_token(
         }
         GgmlType::Q5_0 => {
             super::quant::embed_q5_0(token_id as usize, &weights.token_emb, &mut hidden[..h], h);
+        }
+        GgmlType::Q5_1 => {
+            super::quant::embed_q5_1(token_id as usize, &weights.token_emb, &mut hidden[..h], h);
         }
         GgmlType::Q6_K => {
             super::quant::embed_q6_k(token_id as usize, &weights.token_emb, &mut hidden[..h], h);

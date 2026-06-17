@@ -15,7 +15,7 @@ use crate::cpu::cache::{CpuForwardScratch, CpuKvCache};
 use crate::cpu::forward::cpu_prefill;
 use crate::cpu::weights::CpuModelWeights;
 use crate::cpu::CpuError;
-use crate::tokenizer::BpeTokenizer;
+use crate::tokenizer::Tokenizer;
 
 use super::value_head::{BranchValueExample, BranchValueHead};
 use super::{GraphMap, GraphSummarizer};

@@ -74,7 +74,7 @@ impl GpuCapabilities {
 
         let (free_vram, _) = ffi::hip_get_mem_info(device_id).ok()?;
 
-        // Parse architecture from device info (currently returns Unknown since FFI uses placeholder)
+        // Parse architecture from device info; unknown strings stay mapped to Unknown(0)
         let architecture =
             GpuArchitecture::from_name(&info.arch_name).unwrap_or(GpuArchitecture::Unknown(0));
 

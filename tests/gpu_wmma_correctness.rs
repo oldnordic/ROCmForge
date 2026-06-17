@@ -2,8 +2,6 @@
 //! WMMA fused kernel correctness tests
 
 use rocmforge::gpu::device::GpuDevice;
-use rocmforge::gpu::error::GpuResult;
-use rocmforge::gpu::kernels::gemv_norm_qkv_rope_kvwrite_q4_0_f32_wmma_on_stream;
 
 #[cfg(feature = "gpu")]
 mod tests {
@@ -21,7 +19,6 @@ mod tests {
                 "Skipping: Test requires RDNA3 (gfx1100), got {}",
                 device_name
             );
-            return;
         }
 
         // Mock parameters (just to test launch, not full execution)

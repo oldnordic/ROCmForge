@@ -18,11 +18,22 @@ __device__ inline float vec_dot_q5_0(const void* block_ptr, const float* vec, in
 
     float sum = 0.0f;
 
-    for (int i = 0; i < QK5_0; ++i) {
-        const uint8_t high_bit = ((qh[i / 8] >> (i % 8)) & 1) << 4;
-        const uint8_t low_bits = (qs[i / 2] >> ((i % 2) * 4)) & 0x0F;
-        const int q = (int)(high_bit | low_bits) - 16;
-        sum += d * (float)q * vec[offset + i];
+    // Q5_0 packs 32 values into 16 nibble bytes using the GGUF/llama.cpp
+    // layout (same as Q4_0): byte i holds element i (low nibble) and
+    // element i+16 (high nibble). Each value also has a high bit in qh.
+    for (int i = 0; i < QK5_0 / 2; ++i) {
+        // element i: low nibble of qs[i], high bit i of qh
+        const uint8_t high_bit_0 = ((qh[i / 8] >> (i % 8)) & 1) << 4;
+        const uint8_t low_bits_0 = qs[i] & 0x0F;
+        const int q0 = (int)(high_bit_0 | low_bits_0) - 16;
+
+        // element i+16: high nibble of qs[i], high bit (i+16) of qh
+        const uint8_t high_bit_1 = ((qh[i / 8 + 2] >> (i % 8)) & 1) << 4;
+        const uint8_t low_bits_1 = (qs[i] >> 4) & 0x0F;
+        const int q1 = (int)(high_bit_1 | low_bits_1) - 16;
+
+        sum += d * (float)q0 * vec[offset + i] +
+               d * (float)q1 * vec[offset + i + 16];
     }
 
     return sum;
@@ -49,7 +60,10 @@ __global__ void gemm_q5_0_f32_kernel(
     const int n_blocks = n_rows / QK5_0;
     float sum = 0.0f;
 
-    for (int block_idx = 0; block_idx < n_blocks; ++block_idx) {
+    // Distribute Q5_0 blocks across the 32 lanes; vec_dot_q5_0 computes a
+    // full block per thread, so each lane sums its assigned blocks and the
+    // warp shuffle combines partials into the correct full-column result.
+    for (int block_idx = tid; block_idx < n_blocks; block_idx += 32) {
         const void* block_ptr = col_base + block_idx * Q5_0_BLOCK_SIZE;
         sum += vec_dot_q5_0(block_ptr, input_batch, block_idx * QK5_0);
     }
@@ -84,7 +98,10 @@ __global__ void gemm_q5_0_f32_generic_kernel(
     const int n_blocks = n_rows / QK5_0;
     float sum = 0.0f;
 
-    for (int block_idx = 0; block_idx < n_blocks; ++block_idx) {
+    // Distribute Q5_0 blocks across the 32 lanes; vec_dot_q5_0 computes a
+    // full block per thread, so each lane sums its assigned blocks and the
+    // warp shuffle combines partials into the correct full-column result.
+    for (int block_idx = tid; block_idx < n_blocks; block_idx += 32) {
         const void* block_ptr = col_base + block_idx * Q5_0_BLOCK_SIZE;
         sum += vec_dot_q5_0(block_ptr, input_batch, block_idx * QK5_0);
     }

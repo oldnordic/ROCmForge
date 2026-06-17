@@ -38,10 +38,10 @@ fn real_q4_k_scalar_gemv_matches_dequant_reference() {
     gemv_q4_k_q8_k(tv.data, &x, &mut y_kernel, out_dim, in_dim);
 
     let mut y_ref = vec![0.0f32; out_dim];
-    for row in 0..out_dim {
+    for (row, y) in y_ref.iter_mut().enumerate().take(out_dim) {
         let mut deq = vec![0.0f32; in_dim];
         embed_q4_k(row, tv.data, &mut deq, in_dim);
-        y_ref[row] = deq.iter().zip(&x).map(|(w, xi)| w * xi).sum::<f32>();
+        *y = deq.iter().zip(&x).map(|(w, xi)| w * xi).sum::<f32>();
     }
 
     let max_err = max_abs_err(&y_kernel, &y_ref);
@@ -160,10 +160,10 @@ fn real_q6_k_gemm_matches_dequant_reference() {
     gemm_q6_k_fallback(tv.data, &x, &mut y_kernel, out_dim, in_dim);
 
     let mut y_ref = vec![0.0f32; out_dim];
-    for row in 0..out_dim {
+    for (row, y) in y_ref.iter_mut().enumerate().take(out_dim) {
         let mut deq = vec![0.0f32; in_dim];
         embed_q6_k(row, tv.data, &mut deq, in_dim);
-        y_ref[row] = deq.iter().zip(&x).map(|(w, xi)| w * xi).sum::<f32>();
+        *y = deq.iter().zip(&x).map(|(w, xi)| w * xi).sum::<f32>();
     }
 
     let max_err = max_abs_err(&y_kernel, &y_ref);

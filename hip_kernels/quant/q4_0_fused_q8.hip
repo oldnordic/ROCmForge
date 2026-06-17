@@ -37,8 +37,8 @@ __global__ void gemv_gate_up_q4_0_q8_0_vulkan_style_kernel(
     int n_ff
 ) {
     const int tid = threadIdx.x;
-    const int wave_id = tid / WARP_SIZE_COMPTIME;
-    const int lane_id = tid % WARP_SIZE_COMPTIME;
+    const int wave_id = tid / 32;
+    const int lane_id = tid % 32;
     const int ff_idx_base = (blockIdx.x * N_WAVES + wave_id) * 2;
     const int n_blocks_total = n_rows / QK4_0;
 
@@ -115,12 +115,12 @@ __global__ void gemv_gate_up_q4_0_q8_0_vulkan_style_kernel(
     }
 
     #pragma unroll
-    for (int offset = WARP_SIZE_COMPTIME / 2; offset > 0; offset >>= 1) {
-        sum_gate0 += __shfl_down(sum_gate0, offset, WARP_SIZE_COMPTIME);
-        sum_up0 += __shfl_down(sum_up0, offset, WARP_SIZE_COMPTIME);
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        sum_gate0 += __shfl_down(sum_gate0, offset, 32);
+        sum_up0 += __shfl_down(sum_up0, offset, 32);
         if (has_ff1) {
-            sum_gate1 += __shfl_down(sum_gate1, offset, WARP_SIZE_COMPTIME);
-            sum_up1 += __shfl_down(sum_up1, offset, WARP_SIZE_COMPTIME);
+            sum_gate1 += __shfl_down(sum_gate1, offset, 32);
+            sum_up1 += __shfl_down(sum_up1, offset, 32);
         }
     }
 
@@ -144,8 +144,8 @@ __global__ void gemv_gate_up_swiglu_q4_0_q8_0_vulkan_style_kernel(
     int n_ff
 ) {
     const int tid = threadIdx.x;
-    const int wave_id = tid / WARP_SIZE_COMPTIME;
-    const int lane_id = tid % WARP_SIZE_COMPTIME;
+    const int wave_id = tid / 32;
+    const int lane_id = tid % 32;
     const int ff_idx_base = (blockIdx.x * N_WAVES + wave_id) * 2;
     const int n_blocks_total = n_rows / QK4_0;
 
@@ -222,12 +222,12 @@ __global__ void gemv_gate_up_swiglu_q4_0_q8_0_vulkan_style_kernel(
     }
 
     #pragma unroll
-    for (int offset = WARP_SIZE_COMPTIME / 2; offset > 0; offset >>= 1) {
-        sum_gate0 += __shfl_down(sum_gate0, offset, WARP_SIZE_COMPTIME);
-        sum_up0 += __shfl_down(sum_up0, offset, WARP_SIZE_COMPTIME);
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        sum_gate0 += __shfl_down(sum_gate0, offset, 32);
+        sum_up0 += __shfl_down(sum_up0, offset, 32);
         if (has_ff1) {
-            sum_gate1 += __shfl_down(sum_gate1, offset, WARP_SIZE_COMPTIME);
-            sum_up1 += __shfl_down(sum_up1, offset, WARP_SIZE_COMPTIME);
+            sum_gate1 += __shfl_down(sum_gate1, offset, 32);
+            sum_up1 += __shfl_down(sum_up1, offset, 32);
         }
     }
 
@@ -249,8 +249,8 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_q8_inline_vulkan_style_kernel(
     int n_ff
 ) {
     const int tid = threadIdx.x;
-    const int wave_id = tid / WARP_SIZE_COMPTIME;
-    const int lane_id = tid % WARP_SIZE_COMPTIME;
+    const int wave_id = tid / 32;
+    const int lane_id = tid % 32;
     const int ff_idx_base = (blockIdx.x * N_WAVES + wave_id) * 2;
     const int n_blocks_total = n_rows / QK4_0;
 
@@ -263,8 +263,8 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_q8_inline_vulkan_style_kernel(
         float max_val = fabsf(val);
 
         #pragma unroll
-        for (int offset = WARP_SIZE_COMPTIME / 2; offset > 0; offset >>= 1) {
-            max_val = fmaxf(max_val, __shfl_down(max_val, offset, WARP_SIZE_COMPTIME));
+        for (int offset = 16; offset > 0; offset >>= 1) {
+            max_val = fmaxf(max_val, __shfl_down(max_val, offset, 32));
         }
 
         const float scale = fmaxf(__shfl(max_val, 0, 32) / 127.0f, 1e-30f);
@@ -276,7 +276,7 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_q8_inline_vulkan_style_kernel(
 
         const float inv_scale = 1.0f / scale_f;
         const float qf = fminf(fmaxf(val * inv_scale, -127.0f), 127.0f);
-        s_input_q8[block_idx].qs[lane_id] = static_cast<int8_t>(qf);
+        s_input_q8[block_idx].qs[lane_id] = static_cast<int8_t>(roundf(qf));
     }
     __syncthreads();
 
@@ -341,12 +341,12 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_q8_inline_vulkan_style_kernel(
     }
 
     #pragma unroll
-    for (int offset = WARP_SIZE_COMPTIME / 2; offset > 0; offset >>= 1) {
-        sum_gate0 += __shfl_down(sum_gate0, offset, WARP_SIZE_COMPTIME);
-        sum_up0 += __shfl_down(sum_up0, offset, WARP_SIZE_COMPTIME);
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        sum_gate0 += __shfl_down(sum_gate0, offset, 32);
+        sum_up0 += __shfl_down(sum_up0, offset, 32);
         if (has_ff1) {
-            sum_gate1 += __shfl_down(sum_gate1, offset, WARP_SIZE_COMPTIME);
-            sum_up1 += __shfl_down(sum_up1, offset, WARP_SIZE_COMPTIME);
+            sum_gate1 += __shfl_down(sum_gate1, offset, 32);
+            sum_up1 += __shfl_down(sum_up1, offset, 32);
         }
     }
 
@@ -368,8 +368,8 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_q8_inline_vulkan_style_v2_kernel(
     int n_ff
 ) {
     const int tid = threadIdx.x;
-    const int wave_id = tid / WARP_SIZE_COMPTIME;
-    const int lane_id = tid % WARP_SIZE_COMPTIME;
+    const int wave_id = tid / 32;
+    const int lane_id = tid % 32;
     const int ff_idx_base = (blockIdx.x * N_WAVES + wave_id) * 4;
     const int n_blocks_total = n_rows / QK4_0;
 
@@ -382,8 +382,8 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_q8_inline_vulkan_style_v2_kernel(
         float max_val = fabsf(val);
 
         #pragma unroll
-        for (int offset = WARP_SIZE_COMPTIME / 2; offset > 0; offset >>= 1) {
-            max_val = fmaxf(max_val, __shfl_down(max_val, offset, WARP_SIZE_COMPTIME));
+        for (int offset = 16; offset > 0; offset >>= 1) {
+            max_val = fmaxf(max_val, __shfl_down(max_val, offset, 32));
         }
 
         const float scale = fmaxf(__shfl(max_val, 0, 32) / 127.0f, 1e-30f);
@@ -395,7 +395,7 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_q8_inline_vulkan_style_v2_kernel(
 
         const float inv_scale = 1.0f / scale_f;
         const float qf = fminf(fmaxf(val * inv_scale, -127.0f), 127.0f);
-        s_input_q8[block_idx].qs[lane_id] = static_cast<int8_t>(qf);
+        s_input_q8[block_idx].qs[lane_id] = static_cast<int8_t>(roundf(qf));
     }
     __syncthreads();
 
@@ -443,14 +443,10 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_q8_inline_vulkan_style_v2_kernel(
 
     #pragma unroll
     for (int c = 0; c < 4; ++c) {
-        for (int offset = WARP_SIZE_COMPTIME / 2; offset > 0; offset >>= 1) {
-            sum_gate[c] += __shfl_down(sum_gate[c], offset, WARP_SIZE_COMPTIME);
-            sum_up[c] += __shfl_down(sum_up[c], offset, WARP_SIZE_COMPTIME);
+        for (int offset = 16; offset > 0; offset >>= 1) {
+            sum_gate[c] += __shfl_down(sum_gate[c], offset, 32);
+            sum_up[c] += __shfl_down(sum_up[c], offset, 32);
         }
-    }
-
-    if (lane_id == 0 && blockIdx.x == 0 && wave_id == 0) {
-        printf("GPU KERNEL: ff_idx_base=%d, sum_gate[0]=%f, sum_up[0]=%f\n", ff_idx_base, sum_gate[0], sum_up[0]);
     }
 
     if (lane_id == 0) {
@@ -470,8 +466,8 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_vulkan_style_
     int n_ff
 ) {
     const int tid = threadIdx.x;
-    const int wave_id = tid / WARP_SIZE_COMPTIME;
-    const int lane_id = tid % WARP_SIZE_COMPTIME;
+    const int wave_id = tid / 32;
+    const int lane_id = tid % 32;
     const int ff_idx_base = (blockIdx.x * N_WAVES + wave_id) * 4;
     const int n_blocks_total = n_rows / QK4_0;
 
@@ -484,8 +480,8 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_vulkan_style_
         float max_val = fabsf(val);
 
         #pragma unroll
-        for (int offset = WARP_SIZE_COMPTIME / 2; offset > 0; offset >>= 1) {
-            max_val = fmaxf(max_val, __shfl_down(max_val, offset, WARP_SIZE_COMPTIME));
+        for (int offset = 16; offset > 0; offset >>= 1) {
+            max_val = fmaxf(max_val, __shfl_down(max_val, offset, 32));
         }
 
         const float scale = fmaxf(__shfl(max_val, 0, 32) / 127.0f, 1e-30f);
@@ -497,7 +493,7 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_vulkan_style_
 
         const float inv_scale = 1.0f / scale_f;
         const float qf = fminf(fmaxf(val * inv_scale, -127.0f), 127.0f);
-        s_input_q8[block_idx].qs[lane_id] = static_cast<int8_t>(qf);
+        s_input_q8[block_idx].qs[lane_id] = static_cast<int8_t>(roundf(qf));
     }
     __syncthreads();
 
@@ -543,9 +539,9 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_vulkan_style_
 
     #pragma unroll
     for (int c = 0; c < 4; ++c) {
-        for (int offset = WARP_SIZE_COMPTIME / 2; offset > 0; offset >>= 1) {
-            sum_gate[c] += __shfl_down(sum_gate[c], offset, WARP_SIZE_COMPTIME);
-            sum_up[c] += __shfl_down(sum_up[c], offset, WARP_SIZE_COMPTIME);
+        for (int offset = 16; offset > 0; offset >>= 1) {
+            sum_gate[c] += __shfl_down(sum_gate[c], offset, 32);
+            sum_up[c] += __shfl_down(sum_up[c], offset, 32);
         }
     }
 
@@ -569,8 +565,8 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_tile4_vulkan_
     int n_ff
 ) {
     const int tid = threadIdx.x;
-    const int wave_id = tid / WARP_SIZE_COMPTIME;
-    const int lane_id = tid % WARP_SIZE_COMPTIME;
+    const int wave_id = tid / 32;
+    const int lane_id = tid % 32;
     const int ff_idx_base = (blockIdx.x * N_WAVES + wave_id) * 4;
     const int n_blocks_total = n_rows / QK4_0;
 
@@ -583,8 +579,8 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_tile4_vulkan_
         float max_val = fabsf(val);
 
         #pragma unroll
-        for (int offset = WARP_SIZE_COMPTIME / 2; offset > 0; offset >>= 1) {
-            max_val = fmaxf(max_val, __shfl_down(max_val, offset, WARP_SIZE_COMPTIME));
+        for (int offset = 16; offset > 0; offset >>= 1) {
+            max_val = fmaxf(max_val, __shfl_down(max_val, offset, 32));
         }
 
         const float scale = fmaxf(__shfl(max_val, 0, 32) / 127.0f, 1e-30f);
@@ -596,7 +592,7 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_tile4_vulkan_
 
         const float inv_scale = 1.0f / scale_f;
         const float qf = fminf(fmaxf(val * inv_scale, -127.0f), 127.0f);
-        s_input_q8[block_idx].qs[lane_id] = static_cast<int8_t>(qf);
+        s_input_q8[block_idx].qs[lane_id] = static_cast<int8_t>(roundf(qf));
     }
     __syncthreads();
 
@@ -639,9 +635,9 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_tile4_vulkan_
 
     #pragma unroll
     for (int c = 0; c < 4; ++c) {
-        for (int offset = WARP_SIZE_COMPTIME / 2; offset > 0; offset >>= 1) {
-            sum_gate[c] += __shfl_down(sum_gate[c], offset, WARP_SIZE_COMPTIME);
-            sum_up[c] += __shfl_down(sum_up[c], offset, WARP_SIZE_COMPTIME);
+        for (int offset = 16; offset > 0; offset >>= 1) {
+            sum_gate[c] += __shfl_down(sum_gate[c], offset, 32);
+            sum_up[c] += __shfl_down(sum_up[c], offset, 32);
         }
     }
 

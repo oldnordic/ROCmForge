@@ -40,10 +40,7 @@ pub fn dot_q4_k_q8_k_block_scalar(q4_block: &BlockQ4K, q8_block: &BlockQ8K) -> f
 
     // Copy bsums to local array to avoid packed struct reference issues
     let mut bsums_local = [0i16; 16];
-    #[allow(
-        clippy::manual_memcpy,
-        reason = "packed struct field copy requires loop to avoid unaligned reference"
-    )]
+    #[allow(clippy::manual_memcpy, reason = "packed copy")]
     for i in 0..16 {
         bsums_local[i] = q8_block.bsums[i];
     }
@@ -76,11 +73,11 @@ pub fn dot_q4_k_q8_k_block_scalar(q4_block: &BlockQ4K, q8_block: &BlockQ8K) -> f
     let mut q8_ptr = 0;
     let mut aux_ptr = 0;
 
-    for scale_idx in 0..8 {
+    for &scale_byte in &scales_bytes {
         let mut aux32 = [0i32; 8];
 
         // Scale for this 32-element sub-block is an unsigned 6-bit value.
-        let scale = (scales_bytes[scale_idx] & 0x3F) as i32;
+        let scale = (scale_byte & 0x3F) as i32;
 
         // Process 4 groups of 8 elements
         for _ in 0..4 {

@@ -19,7 +19,7 @@ fn test_q4_0_multirow_residual_matches_single() {
     // TODO: Implement multi-row kernel first
     // This test will verify multi-row residual output matches single-column
 
-    let model_path = "/home/feanor/Projects/Memoria/models/qwen2.5-0.5b-instruct-q4_0.gguf";
+    let model_path = "/home/feanor/Projects/models/qwen2.5-0.5b-instruct-q4_0.gguf";
 
     // Run inference with single-column kernel (current implementation)
     let output_single = run_inference(model_path, "single");

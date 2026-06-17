@@ -7,7 +7,8 @@ use std::collections::HashMap;
 use rocmforge::config::ModelConfig;
 use rocmforge::cpu::{
     cache::{CpuForwardScratch, CpuKvCache},
-    forward::{cpu_embed_token, cpu_full_forward},
+    forward::{cpu_embed_token, cpu_full_forward, cpu_full_forward_recorder},
+    forward_graph_trace::{ForwardGraphRecorder, TraceComponent},
     sampler::{cpu_sample_greedy, cpu_sample_top_p},
     weights::CpuModelWeights,
     CpuError,
@@ -54,6 +55,7 @@ pub(crate) fn run_cpu_decode_loop(
     scratch: &mut CpuForwardScratch,
     use_greedy: bool,
     n_prompt: usize,
+    mut recorder: Option<&mut ForwardGraphRecorder>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut pos = n_prompt;
     let mut n_generated = 0usize;
@@ -75,6 +77,10 @@ pub(crate) fn run_cpu_decode_loop(
             break;
         }
 
+        if let Some(recorder) = recorder.as_mut() {
+            recorder.record_confidence(pos, next_token, &scratch.logits);
+        }
+
         let text = tok.decode_token(next_token);
         if args.debug {
             print_decode_token_debug(next_token, &text);
@@ -83,14 +89,32 @@ pub(crate) fn run_cpu_decode_loop(
         std::io::stdout().flush().ok();
         n_generated += 1;
 
+        if let Some(recorder) = recorder.as_mut() {
+            recorder.push_token(next_token);
+        }
+
         cpu_embed_token(next_token, weights, &mut hidden, config, Some(scratch));
+
+        if let Some(recorder) = recorder.as_mut() {
+            recorder.record_node(
+                TraceComponent::InputEmbedding,
+                0,
+                Some(pos),
+                &hidden[..config.hidden_size],
+            );
+        }
 
         if args.debug && n_generated <= 3 {
             print_hidden_stats(n_generated, next_token, &hidden);
         }
 
-        cpu_full_forward(&mut hidden, weights, kv, scratch, pos, config)
-            .map_err(|e: CpuError| format!("decode: {}", e))?;
+        if let Some(recorder) = recorder.as_mut() {
+            cpu_full_forward_recorder(&mut hidden, weights, kv, scratch, pos, config, recorder)
+                .map_err(|e: CpuError| format!("decode: {}", e))?;
+        } else {
+            cpu_full_forward(&mut hidden, weights, kv, scratch, pos, config)
+                .map_err(|e: CpuError| format!("decode: {}", e))?;
+        }
         pos += 1;
 
         if args.debug && n_generated <= 3 {

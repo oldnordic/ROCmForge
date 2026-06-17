@@ -27,7 +27,7 @@ use serial_test::serial;
 // - qwen2-1.5b-instruct-q6_k.gguf (1.2GB)
 // - qwen3-4b-instruct-q6_k.gguf (3.1GB)
 // - Qwen2.5-14B-Instruct-1M-q6_k_m.gguf (12GB - too large for testing)
-const Q6_K_MODEL_PATH: &str = "/home/feanor/Projects/Memoria/models/qwen2-0.5b-instruct-q6_k.gguf";
+const Q6_K_MODEL_PATH: &str = "/home/feanor/Projects/models/qwen2.5-0.5b-instruct-q6_k.gguf";
 
 const REQUIRED_VRAM_GB: u64 = 5; // Must leave 5GB free
 const TIMEOUT_SECONDS: u64 = 30; // Timeout for all tests

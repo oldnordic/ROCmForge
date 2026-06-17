@@ -17,7 +17,7 @@ use std::process::Command;
 const CANDIDATE_PATHS: &[&str] = &[
     "/home/feanor/Projects/models/qwen2.5-0.5b-instruct-q8_0.gguf",
     "/home/feanor/Projects/llama.cpp/models/llama3.2-1b-instruct-q4_0.gguf",
-    "/home/feanor/Projects/Memoria/models/qwen2.5-0.5b-instruct-q4_0.gguf",
+    "/home/feanor/Projects/models/qwen2.5-0.5b-instruct-q4_0.gguf",
 ];
 
 fn find_available_model() -> Option<&'static str> {

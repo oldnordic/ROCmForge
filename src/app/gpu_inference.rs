@@ -1,6 +1,7 @@
 use std::io::Write;
 use std::time::Instant;
 
+use rocmforge::cpu::forward_graph_trace::{ForwardGraphRecorder, TraceComponent};
 use rocmforge::cpu::sampler::{cpu_sample_greedy, cpu_sample_top_p};
 use rocmforge::gpu;
 
@@ -103,6 +104,17 @@ pub(crate) fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::E
     let tok = setup.tok;
     let prompt_tokens = setup.prompt_tokens;
     let max_seq = setup.max_seq;
+
+    let mut recorder = args
+        .forward_graph_trace
+        .as_ref()
+        .map(|_| ForwardGraphRecorder::new(&prompt_tokens));
+    if let (Some(recorder), Some(json)) = (recorder.as_mut(), args.expected_attention.as_ref()) {
+        let value: serde_json::Value = serde_json::from_str(json)
+            .map_err(|e| format!("--expected-attention is not valid JSON: {}", e))?;
+        recorder.set_expected_attention(value);
+    }
+
     eprintln!(
         "[Tokenizer] bos_id={:?} eos_id={:?} add_bos={} add_eos={}",
         tok.bos_id(),
@@ -124,7 +136,6 @@ pub(crate) fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::E
     let mut host_scratch = setup_state.host_scratch;
     let use_greedy = setup_state.use_greedy;
     let use_gpu_greedy_fastpath = setup_state.use_gpu_greedy_fastpath;
-    let final_prompt_logits_mode = setup_state.final_prompt_logits_mode;
     let t_prefill = Instant::now();
 
     #[cfg(feature = "cpu-graph")]
@@ -147,9 +158,23 @@ pub(crate) fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::E
     #[cfg(feature = "cpu-graph")]
     let mut gpu_score_log: Vec<(u64, ScoreMetric, f32)> = Vec::new();
 
+    // Forward-graph tracing requires the standard decode path (host logits and
+    // the instrumented attention kernel), so disable fastpaths when tracing.
+    let use_gpu_greedy_fastpath = use_gpu_greedy_fastpath && recorder.is_none();
+    let final_prompt_logits_mode = if use_gpu_greedy_fastpath {
+        gpu::GpuLogitsMode::GreedyArgmax
+    } else {
+        gpu::GpuLogitsMode::DownloadToHost
+    };
+
     // ── Hotpath Router ────────────────────────────────────────────────────────────
     let profile = gpu::ModelProfile::from_weights(&gpu_weights, &config);
     let path = gpu::select_path(&profile, prompt_tokens.len(), &vram_session);
+    let path = if recorder.is_some() {
+        gpu::InferencePath::DecodeStyle
+    } else {
+        path
+    };
     eprintln!("[Router] Model profile: {}", profile.summary());
     eprintln!("[Router] Selected path: {}", path);
 
@@ -344,6 +369,8 @@ pub(crate) fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::E
 
     println!();
 
+    gpu_scratch.set_forward_graph_recorder(recorder.as_mut());
+
     loop {
         if tok.is_eog(next_token) || n_generated >= args.max_tokens || pos >= max_seq {
             break;
@@ -372,6 +399,20 @@ pub(crate) fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::E
             &config,
         )
         .map_err(|e| format!("gpu embed: {}", e))?;
+
+        if let Some(recorder) = recorder.as_mut() {
+            let hidden = gpu_scratch
+                .hidden
+                .copy_to_host_vec()
+                .map_err(|e| format!("download hidden for trace: {}", e))?;
+            recorder.record_node(
+                TraceComponent::InputEmbedding,
+                0,
+                Some(pos),
+                &hidden[..config.hidden_size],
+            );
+        }
+
         let logits_mode = if use_gpu_greedy_fastpath {
             gpu::GpuLogitsMode::GreedyArgmax
         } else {
@@ -389,7 +430,6 @@ pub(crate) fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::E
             logits_mode,
         )
         .map_err(|e| format!("gpu decode: {}", e))?;
-        pos += 1;
 
         #[cfg(feature = "cpu-graph")]
         if args.graph_map_dir.is_some() {
@@ -428,6 +468,16 @@ pub(crate) fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::E
             }
         };
 
+        if let Some(recorder) = recorder.as_mut() {
+            recorder.record_confidence(
+                pos,
+                sampled_token,
+                &host_scratch.logits[..config.vocab_size],
+            );
+            recorder.push_token(sampled_token);
+        }
+        pos += 1;
+
         #[cfg(feature = "cpu-graph")]
         if args.graph_map_dir.is_some() {
             let score = gpu_score_log.last().map(|(_, _, s)| *s).unwrap_or(0.0);
@@ -444,6 +494,12 @@ pub(crate) fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::E
     }
 
     println!();
+
+    gpu_scratch.clear_forward_graph_recorder();
+    if let (Some(path), Some(recorder)) = (args.forward_graph_trace.as_ref(), recorder) {
+        recorder.write_jsonl(path)?;
+        eprintln!("Wrote forward graph trace to {}", path);
+    }
 
     #[cfg(feature = "cpu-graph")]
     if let Some(save_dir) = &args.graph_map_dir {

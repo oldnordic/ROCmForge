@@ -1,4 +1,5 @@
 use super::{GpuBuffer, GpuError, GpuKvCache, GpuResult};
+use crate::gpu::ffi::hip_memcpy_d2h;
 
 fn layer_bounds_error(layer: usize, num_layers: usize) -> GpuError {
     GpuError::HipApiError {
@@ -64,6 +65,44 @@ impl GpuKvCache {
         } else {
             Ok(None)
         }
+    }
+
+    /// Copy the populated prefix of K/V cache for a layer back to host memory.
+    ///
+    /// `dst_k` and `dst_v` must each have length `seq_len * effective_kv`, where
+    /// `effective_kv` is `kv_lora_dim` when LoRA compression is enabled and
+    /// `kv_size` otherwise.
+    pub fn copy_kv_prefix_to_host(
+        &self,
+        layer: usize,
+        seq_len: usize,
+        dst_k: &mut [f32],
+        dst_v: &mut [f32],
+    ) -> GpuResult<()> {
+        if layer >= self.num_layers {
+            return Err(layer_bounds_error(layer, self.num_layers));
+        }
+        let effective_kv = self.kv_lora_dim.unwrap_or(self.kv_size);
+        let expected = seq_len.saturating_mul(effective_kv);
+        if dst_k.len() != expected || dst_v.len() != expected {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: format!(
+                    "kv prefix size mismatch: expected {} floats, got k={} v={}",
+                    expected,
+                    dst_k.len(),
+                    dst_v.len()
+                ),
+            });
+        }
+        if expected == 0 {
+            return Ok(());
+        }
+        let bytes = expected * std::mem::size_of::<f32>();
+        let k_ptr = self.k[layer].as_ptr();
+        let v_ptr = self.v[layer].as_ptr();
+        hip_memcpy_d2h(dst_k.as_mut_ptr() as *mut u8, k_ptr, bytes)?;
+        hip_memcpy_d2h(dst_v.as_mut_ptr() as *mut u8, v_ptr, bytes)
     }
 }
 

@@ -31,7 +31,7 @@ pub enum SequenceState {
     Decoding,
     /// Slot emitted EOS or hit max_tokens — waiting for caller to remove it.
     Completed,
-    /// Slot was removed (temporary state until next add_sequence overwrites it).
+    /// Slot was removed and remains idle until the next add_sequence call.
     Freed,
 }
 

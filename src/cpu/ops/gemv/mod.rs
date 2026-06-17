@@ -268,14 +268,29 @@ pub fn gemv_q4_0_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, 
     let _ = out_dim;
 }
 
-pub fn gemv_q4_1_transposed(
-    _w: &[u8],
-    _x: &[f32],
-    _y: &mut [f32],
-    _out_dim: usize,
-    _in_dim: usize,
-) {
-    // Placeholder for symmetry, usually not needed for tied embeddings
+pub fn gemv_q4_1_transposed(w: &[u8], x: &[f32], y: &mut [f32], out_dim: usize, in_dim: usize) {
+    let num_blocks = in_dim / Q4_1_BLOCK_ELEMS;
+    let col_bytes = num_blocks * Q4_1_BLOCK_BYTES;
+    y.par_iter_mut().enumerate().for_each(|(v, out)| {
+        let mut acc = 0.0f32;
+        let col_offset = v * col_bytes;
+        for b in 0..num_blocks {
+            let block =
+                &w[col_offset + b * Q4_1_BLOCK_BYTES..col_offset + (b + 1) * Q4_1_BLOCK_BYTES];
+            let scale = load_f16_scale(&block[0..2]);
+            let min = load_f16_scale(&block[2..4]);
+            let qs = &block[4..20];
+            let xb = &x[b * Q4_1_BLOCK_ELEMS..];
+            for i in 0..16 {
+                let q0 = (qs[i] & 0x0F) as f32;
+                let q1 = (qs[i] >> 4) as f32;
+                acc += (scale * q0 + min) * xb[i];
+                acc += (scale * q1 + min) * xb[i + 16];
+            }
+        }
+        *out = acc;
+    });
+    let _ = out_dim;
 }
 
 pub fn dispatch_gemv_transposed(

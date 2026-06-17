@@ -1275,9 +1275,8 @@ fn test_q4_k_gemm_matches_cpu_oracle() {
     require_vram!(4);
 
     use gpu_test_utils::assert_close;
-    use rocmforge::gpu::{
-        dequantize_q4_k, detect, gemm_q4_k_f32, GpuBuffer, GpuQuant, Q4_K_BLOCK_SIZE, QK_K,
-    };
+    use rocmforge::cpu::kernels::gemm_q4k_q8_scalar::gemv_q4_k_q8_k;
+    use rocmforge::gpu::{detect, gemm_q4_k_f32, GpuBuffer, GpuQuant, Q4_K_BLOCK_SIZE, QK_K};
 
     let caps = detect().expect("GPU required for Q4_K GEMM test");
     let device =
@@ -1308,8 +1307,6 @@ fn test_q4_k_gemm_matches_cpu_oracle() {
         .expect("Failed to allocate quantized buffer");
     let d_output = GpuBuffer::alloc(ncols_dst * batch_size * std::mem::size_of::<f32>())
         .expect("Failed to allocate output buffer");
-    let d_dequantized = GpuBuffer::alloc(n_rows * ncols_dst * std::mem::size_of::<f32>())
-        .expect("Failed to allocate dequantized buffer");
 
     d_weights
         .copy_from_host(unsafe {
@@ -1344,31 +1341,6 @@ fn test_q4_k_gemm_matches_cpu_oracle() {
             .unwrap();
     }
 
-    // Dequantize back to f32 for the CPU oracle (one column at a time)
-    for col in 0..ncols_dst {
-        let col_quantized_ptr = unsafe {
-            d_quantized
-                .as_ptr()
-                .add(col * (n_rows / QK_K) * Q4_K_BLOCK_SIZE)
-        };
-        let col_dequantized_ptr = unsafe {
-            d_dequantized
-                .as_ptr()
-                .add(col * n_rows * std::mem::size_of::<f32>())
-        };
-        dequantize_q4_k(col_quantized_ptr, col_dequantized_ptr as *mut f32, n_rows).unwrap();
-    }
-
-    let mut dequantized_weights = vec![0.0f32; n_rows * ncols_dst];
-    d_dequantized
-        .copy_to_host(unsafe {
-            std::slice::from_raw_parts_mut(
-                dequantized_weights.as_mut_ptr() as *mut u8,
-                dequantized_weights.len() * std::mem::size_of::<f32>(),
-            )
-        })
-        .unwrap();
-
     // Launch GEMM
     gemm_q4_k_f32(
         d_quantized.as_ptr(),
@@ -1379,6 +1351,11 @@ fn test_q4_k_gemm_matches_cpu_oracle() {
         batch_size,
     )
     .expect("GPU Q4_K GEMM should succeed");
+
+    let mut quantized_bytes = vec![0u8; (n_rows / QK_K) * ncols_dst * Q4_K_BLOCK_SIZE];
+    d_quantized
+        .copy_to_host(&mut quantized_bytes)
+        .expect("download q4_k weights");
 
     let mut actual_full = vec![0.0f32; ncols_dst * batch_size];
     d_output
@@ -1393,16 +1370,13 @@ fn test_q4_k_gemm_matches_cpu_oracle() {
     for b in 0..batch_size {
         let mut expected = vec![0.0f32; ncols_dst];
         let input_batch = &input_data[b * n_rows..(b + 1) * n_rows];
-
-        // Simple matrix-vector multiplication for oracle
-        for col in 0..ncols_dst {
-            let mut sum = 0.0f32;
-            let col_weights = &dequantized_weights[col * n_rows..(col + 1) * n_rows];
-            for row in 0..n_rows {
-                sum += col_weights[row] * input_batch[row];
-            }
-            expected[col] = sum;
-        }
+        gemv_q4_k_q8_k(
+            &quantized_bytes,
+            input_batch,
+            &mut expected,
+            ncols_dst,
+            n_rows,
+        );
 
         let actual = &actual_full[b * ncols_dst..(b + 1) * ncols_dst];
         assert_close(&expected, actual, 1e-3);
@@ -1416,9 +1390,8 @@ fn test_q5_k_gemm_matches_cpu_oracle() {
     require_vram!(4);
 
     use gpu_test_utils::assert_close;
-    use rocmforge::gpu::{
-        dequantize_q5_k, detect, gemm_q5_k_f32, GpuBuffer, GpuQuant, Q5_K_BLOCK_SIZE, QK_K,
-    };
+    use rocmforge::cpu::ops::gemv_q5_k;
+    use rocmforge::gpu::{detect, gemm_q5_k_f32, GpuBuffer, GpuQuant, Q5_K_BLOCK_SIZE, QK_K};
 
     let caps = detect().expect("GPU required for Q5_K GEMM test");
     let device =
@@ -1449,8 +1422,6 @@ fn test_q5_k_gemm_matches_cpu_oracle() {
         .expect("Failed to allocate quantized buffer");
     let d_output = GpuBuffer::alloc(ncols_dst * batch_size * std::mem::size_of::<f32>())
         .expect("Failed to allocate output buffer");
-    let d_dequantized = GpuBuffer::alloc(n_rows * ncols_dst * std::mem::size_of::<f32>())
-        .expect("Failed to allocate dequantized buffer");
 
     d_weights
         .copy_from_host(unsafe {
@@ -1459,7 +1430,7 @@ fn test_q5_k_gemm_matches_cpu_oracle() {
                 weight_data.len() * std::mem::size_of::<f32>(),
             )
         })
-        .unwrap();
+        .expect("upload q5_k weights");
     d_input
         .copy_from_host(unsafe {
             std::slice::from_raw_parts(
@@ -1467,7 +1438,7 @@ fn test_q5_k_gemm_matches_cpu_oracle() {
                 input_data.len() * std::mem::size_of::<f32>(),
             )
         })
-        .unwrap();
+        .expect("upload q5_k input");
 
     for col in 0..ncols_dst {
         let col_weights_ptr = unsafe {
@@ -1482,33 +1453,8 @@ fn test_q5_k_gemm_matches_cpu_oracle() {
         };
         gpu_quant
             .quantize_q5_k(col_weights_ptr as *const f32, col_quantized_ptr, n_rows)
-            .unwrap();
+            .expect("quantize q5_k column");
     }
-
-    // Dequantize back to f32 for the CPU oracle
-    for col in 0..ncols_dst {
-        let col_quantized_ptr = unsafe {
-            d_quantized
-                .as_ptr()
-                .add(col * (n_rows / QK_K) * Q5_K_BLOCK_SIZE)
-        };
-        let col_dequantized_ptr = unsafe {
-            d_dequantized
-                .as_ptr()
-                .add(col * n_rows * std::mem::size_of::<f32>())
-        };
-        dequantize_q5_k(col_quantized_ptr, col_dequantized_ptr as *mut f32, n_rows).unwrap();
-    }
-
-    let mut dequantized_weights = vec![0.0f32; n_rows * ncols_dst];
-    d_dequantized
-        .copy_to_host(unsafe {
-            std::slice::from_raw_parts_mut(
-                dequantized_weights.as_mut_ptr() as *mut u8,
-                dequantized_weights.len() * std::mem::size_of::<f32>(),
-            )
-        })
-        .unwrap();
 
     // Launch GEMM
     gemm_q5_k_f32(
@@ -1520,6 +1466,11 @@ fn test_q5_k_gemm_matches_cpu_oracle() {
         batch_size,
     )
     .expect("GPU Q5_K GEMM should succeed");
+
+    let mut quantized_bytes = vec![0u8; (n_rows / QK_K) * ncols_dst * Q5_K_BLOCK_SIZE];
+    d_quantized
+        .copy_to_host(&mut quantized_bytes)
+        .expect("download q5_k weights");
 
     let mut actual_full = vec![0.0f32; ncols_dst * batch_size];
     d_output
@@ -1534,15 +1485,13 @@ fn test_q5_k_gemm_matches_cpu_oracle() {
     for b in 0..batch_size {
         let mut expected = vec![0.0f32; ncols_dst];
         let input_batch = &input_data[b * n_rows..(b + 1) * n_rows];
-
-        for col in 0..ncols_dst {
-            let mut sum = 0.0f32;
-            let col_weights = &dequantized_weights[col * n_rows..(col + 1) * n_rows];
-            for row in 0..n_rows {
-                sum += col_weights[row] * input_batch[row];
-            }
-            expected[col] = sum;
-        }
+        gemv_q5_k(
+            &quantized_bytes,
+            input_batch,
+            &mut expected,
+            ncols_dst,
+            n_rows,
+        );
 
         let actual = &actual_full[b * ncols_dst..(b + 1) * ncols_dst];
         assert_close(&expected, actual, 1e-3);
@@ -1662,7 +1611,7 @@ fn test_q4_1_gemv_large_shape_matches_cpu_oracle() {
 
 #[test]
 #[serial]
-fn test_q4_1_gemv_residual_in_place_matches_cpu_oracle() {
+fn test_q4_1_gemv_residual_matches_cpu_oracle() {
     require_gpu!();
     require_vram!(4);
 
@@ -1701,7 +1650,9 @@ fn test_q4_1_gemv_residual_in_place_matches_cpu_oracle() {
         GpuBuffer::alloc(n_rows * std::mem::size_of::<f32>()).expect("Failed to allocate input");
     let d_quantized = GpuBuffer::alloc((n_rows / QK4_1) * ncols_dst * Q4_1_BLOCK_SIZE)
         .expect("Failed to allocate quantized buffer");
-    let mut d_output = GpuBuffer::alloc(ncols_dst * std::mem::size_of::<f32>())
+    let mut d_residual = GpuBuffer::alloc(ncols_dst * std::mem::size_of::<f32>())
+        .expect("Failed to allocate residual buffer");
+    let d_output = GpuBuffer::alloc(ncols_dst * std::mem::size_of::<f32>())
         .expect("Failed to allocate output buffer");
 
     let weight_bytes: &[u8] = unsafe {
@@ -1730,7 +1681,7 @@ fn test_q4_1_gemv_residual_in_place_matches_cpu_oracle() {
             ncols_dst * std::mem::size_of::<f32>(),
         )
     };
-    d_output
+    d_residual
         .copy_from_host(residual_bytes)
         .expect("Failed to upload residual");
 
@@ -1753,7 +1704,7 @@ fn test_q4_1_gemv_residual_in_place_matches_cpu_oracle() {
     rocmforge::gpu::kernels::quant::gemv_q4_1_f32_residual_on_stream(
         d_quantized.as_ptr(),
         d_input.as_ptr() as *const f32,
-        d_output.as_ptr() as *const f32,
+        d_residual.as_ptr() as *const f32,
         d_output.as_ptr() as *mut f32,
         n_rows,
         ncols_dst,
@@ -3252,6 +3203,9 @@ fn test_flash_attn_prefill_strided_kernel_correctness() {
         num_heads,
         num_kv_heads,
         head_dim,
+        0,
+        0.0,
+        scale,
     );
 
     let mut gpu_q = GpuBuffer::alloc(seq_len * q_size * 4).unwrap();

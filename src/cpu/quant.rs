@@ -240,14 +240,20 @@ pub fn embed_q5_0(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usi
         let qs = &block[6..22]; // 16 bytes, 32 nibbles (low 4 bits)
         let base = b * Q5_0_BLOCK_ELEMS;
 
-        for i in 0..32 {
-            // Get high bit from qh
-            let high_bit = ((qh[i / 8] >> (i % 8)) & 1) << 4;
-            // Get low 4 bits from qs
-            let low_bits = qs[i / 2] >> ((i % 2) * 4) & 0x0F;
-            // Combine to get 5-bit value (0-31), then shift to signed range (-16 to 15)
-            let q = ((high_bit | low_bits) as i32) - 16;
-            out[base + i] = d * (q as f32);
+        // Q5_0 nibble packing matches GGUF/llama.cpp (and Q4_0): byte i
+        // holds element i (low nibble) and element i+16 (high nibble).
+        for i in 0..16 {
+            // element i: low nibble of qs[i], high bit i of qh
+            let high_bit_0 = ((qh[i / 8] >> (i % 8)) & 1) << 4;
+            let low_bits_0 = qs[i] & 0x0F;
+            let q0 = ((high_bit_0 | low_bits_0) as i32) - 16;
+            out[base + i] = d * (q0 as f32);
+
+            // element i+16: high nibble of qs[i], high bit (i+16) of qh
+            let high_bit_1 = ((qh[i / 8 + 2] >> (i % 8)) & 1) << 4;
+            let low_bits_1 = (qs[i] >> 4) & 0x0F;
+            let q1 = ((high_bit_1 | low_bits_1) as i32) - 16;
+            out[base + i + 16] = d * (q1 as f32);
         }
     }
 }
@@ -277,14 +283,20 @@ pub fn embed_q5_1(token_id: usize, emb: &[u8], out: &mut [f32], hidden_size: usi
         let qs = &block[8..24]; // 16 bytes, 32 nibbles (low 4 bits)
         let base = b * Q5_1_BLOCK_ELEMS;
 
-        for i in 0..32 {
-            // Get high bit from qh
-            let high_bit = ((qh[i / 8] >> (i % 8)) & 1) << 4;
-            // Get low 4 bits from qs
-            let low_bits = qs[i / 2] >> ((i % 2) * 4) & 0x0F;
-            // Combine to get 5-bit value (0-31)
-            let q = (high_bit | low_bits) as f32;
-            out[base + i] = d * q + m;
+        // Q5_1 nibble packing matches GGUF/llama.cpp (and Q4_1): byte i
+        // holds element i (low nibble) and element i+16 (high nibble).
+        for i in 0..16 {
+            // element i: low nibble of qs[i], high bit i of qh
+            let high_bit_0 = ((qh[i / 8] >> (i % 8)) & 1) << 4;
+            let low_bits_0 = qs[i] & 0x0F;
+            let q0 = ((high_bit_0 | low_bits_0) as i32) as f32;
+            out[base + i] = d * q0 + m;
+
+            // element i+16: high nibble of qs[i], high bit (i+16) of qh
+            let high_bit_1 = ((qh[i / 8 + 2] >> (i % 8)) & 1) << 4;
+            let low_bits_1 = (qs[i] >> 4) & 0x0F;
+            let q1 = ((high_bit_1 | low_bits_1) as i32) as f32;
+            out[base + i + 16] = d * q1 + m;
         }
     }
 }

@@ -4,6 +4,7 @@ use rocmforge::config::ModelConfig;
 use rocmforge::cpu::{
     cache::{CpuForwardScratch, CpuKvCache},
     forward::cpu_embed_token,
+    forward_graph_trace::{ForwardGraphRecorder, TraceComponent},
     prefill::cpu_prefill_forward_parallel,
     weights::CpuModelWeights,
     CpuError,
@@ -31,6 +32,7 @@ pub(crate) fn run_cpu_prefill(
     prompt_tokens: &[u32],
     kv: &mut CpuKvCache,
     scratch: &mut CpuForwardScratch,
+    recorder: Option<&mut ForwardGraphRecorder>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let t_prefill = Instant::now();
     let n_prompt = prompt_tokens.len();
@@ -45,6 +47,25 @@ pub(crate) fn run_cpu_prefill(
 
     cpu_prefill_forward_parallel(prompt_tokens, weights, kv, scratch, 0, config, batch_config)
         .map_err(|e: CpuError| format!("prefill: {}", e))?;
+
+    if let Some(recorder) = recorder {
+        let mut hidden = vec![0.0f32; config.hidden_size];
+        for (pos, &token_id) in prompt_tokens.iter().enumerate() {
+            hidden.fill(0.0);
+            cpu_embed_token(token_id, weights, &mut hidden, config, None);
+            recorder.record_node(
+                TraceComponent::InputEmbedding,
+                0,
+                Some(pos),
+                &hidden[..config.hidden_size],
+            );
+            // Token IDs are already seeded in the recorder; make sure the length
+            // matches the prompt in case the caller constructs the recorder lazily.
+            if pos >= recorder.len() {
+                recorder.push_token(token_id);
+            }
+        }
+    }
 
     if args.debug {
         print_top_logits_debug(0, &scratch.logits, tok, 10);

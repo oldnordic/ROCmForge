@@ -52,7 +52,7 @@ pub fn rope_partial(
         "rope cos length mismatch (partial RoPE)"
     );
     debug_assert!(
-        rotated_dims <= head_dim && rotated_dims % 2 == 0,
+        rotated_dims <= head_dim && rotated_dims.is_multiple_of(2),
         "invalid rotated_dims"
     );
 

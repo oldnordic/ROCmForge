@@ -132,7 +132,7 @@ pub fn gpu_dispatch_gemm(
 
     Err(GpuError::UnsupportedOperation {
         operation: format!("gpu_dispatch_gemm for {:?} seq_len={}", meta.wtype, seq_len),
-        reason: "GEMM kernel not implemented for this quant type. Use GEMV (seq_len=1) for now."
+        reason: "GEMM kernel not implemented for this quant type. Use GEMV when seq_len=1."
             .to_string(),
     })
 }

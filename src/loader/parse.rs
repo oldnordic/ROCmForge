@@ -178,10 +178,7 @@ fn read_byte_array<R: Read>(r: &mut R) -> Result<Vec<Vec<u8>>, LoadError> {
 
 /// Read an array of merge rules (for tokenizer.ggml.merges).
 /// Each element is a GGUF string with format "first second"; split on first space.
-#[allow(
-    clippy::type_complexity,
-    reason = "GGUF loader returns complex type by spec"
-)]
+#[allow(clippy::type_complexity, reason = "GGUF tuple")]
 fn read_merge_array<R: Read>(r: &mut R) -> Result<Vec<(Vec<u8>, Vec<u8>)>, LoadError> {
     let _elem_type = read_u32(r)?;
     let count = read_u64(r)? as usize;
@@ -249,8 +246,8 @@ fn read_i32_array<R: Read>(r: &mut R) -> Result<Vec<i32>, LoadError> {
 /// Read a GGUF array as a vector of element strings.
 ///
 /// The caller has already consumed the value_type (9); this function reads the
-/// element type and count, then each element.  Nested arrays are flattened to
-/// a single placeholder string per element.
+/// element type and count, then each element. Nested arrays are flattened to
+/// a compact summary string per element.
 fn read_array_as_strings<R: Read>(r: &mut R) -> Result<Vec<String>, LoadError> {
     let elem_type = read_u32(r)?;
     let count = read_u64(r)? as usize;
@@ -287,7 +284,7 @@ fn read_array_as_strings<R: Read>(r: &mut R) -> Result<Vec<String>, LoadError> {
             }
             8 => read_string(r)?,
             9 => {
-                // Nested array: read and flatten to placeholder
+                // Nested array: read and flatten to a compact summary
                 let nested = read_array_as_strings(r)?;
                 format!("[{}]", nested.len())
             }
@@ -313,7 +310,7 @@ fn read_array_as_strings<R: Read>(r: &mut R) -> Result<Vec<String>, LoadError> {
 }
 
 /// Reads a KV value, converting it to a string.
-/// Arrays that are not intercepted above get a placeholder.
+/// Arrays that are not intercepted above get a compact summary marker.
 fn read_value_as_string<R: Read>(r: &mut R, value_type: u32) -> Result<String, LoadError> {
     match value_type {
         0 | 1 | 7 => {

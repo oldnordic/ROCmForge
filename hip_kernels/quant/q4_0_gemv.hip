@@ -3,51 +3,22 @@
 // Q4_0 constants
 #define QK4_0 32
 #define Q4_0_BLOCK_SIZE 18
-#define Q8_0_BLOCK_SIZE 36  // Changed from 34 to 36 (4 bytes float + 32 bytes qs)
+#define Q8_0_BLOCK_SIZE 34
 constexpr int Q4_0_MULTI_ROW_COLS = 4;
 constexpr int Q4_0_MULTI_ROW_SHARED_MEM_LIMIT = 32 * 1024;
 constexpr int Q4_0_SMALL_WAVES = 4;
 constexpr int Q4_0_FIXED_WAVES = 8;
-constexpr int Q4_0_HIGH_WAVES = 16;
 constexpr int Q4_0_THREADS_PER_BLOCK = Q4_0_FIXED_WAVES * WARP_SIZE;
-constexpr float LAUNCH_MARKER_VALUE = 999999.0f;  // OBVIOUS marker for launch function
-
-// Global counter to track launch function calls
-__device__ int launch_call_counter = 0;
 
 struct Q4_0_block {
     half d;
-    uint8_t qs[16];
+    int8_t qs[16];
 };
 
 struct Q8_0_block {
-    float d;  // Changed from half to float to fix conversion bug
+    half d;
     int8_t qs[QK4_0];
 };
-
-__device__ void debug_q4_0_block(const Q4_0_block* block, int block_idx, int thread_id) {
-    if (block_idx == 0 && thread_id == 0) {
-        // Read the scale as __half first, then convert
-        const __half d_half = block->d;
-        const float d = __half2float(d_half);
-
-        printf("[GPU KERNEL] Block 0 scale (__half raw): 0x%04x\n", *(reinterpret_cast<const uint16_t*>(&d_half)));
-        printf("[GPU KERNEL] Block 0 scale (converted): %f\n", d);
-
-        // Print first 8 bytes of qs array
-        printf("[GPU KERNEL] First 8 QS bytes: %02x %02x %02x %02x %02x %02x %02x %02x\n",
-               block->qs[0], block->qs[1], block->qs[2], block->qs[3],
-               block->qs[4], block->qs[5], block->qs[6], block->qs[7]);
-
-        // Dequantize first value manually
-        const uint8_t q0 = block->qs[0];
-        const float val0_lo = d * (static_cast<float>(q0 & 0x0F) - 8.0f);
-        const float val0_hi = d * (static_cast<float>((q0 >> 4) & 0x0F) - 8.0f);
-
-        printf("[GPU KERNEL] First Q[0] (lo): quant=%d, dequant=%f\n", q0 & 0x0F, val0_lo);
-        printf("[GPU KERNEL] First Q[1] (hi): quant=%d, dequant=%f\n", (q0 >> 4) & 0x0F, val0_hi);
-    }
-}
 
 static inline int select_multi_row_waves_q4_0(int /* ncols_dst */) {
     // The last documented fast decode baseline on this tree used the
@@ -71,11 +42,10 @@ __device__ __forceinline__ int q4_0_q8_0_block_dot(
     const int8_t* __restrict__ x_qs
 ) {
     int block_sum = 0;
-    const uint32_t* packed_words = reinterpret_cast<const uint32_t*>(w_block->qs);
-
     #pragma unroll
     for (int i = 0; i < 4; ++i) {
-        const uint32_t packed_word = packed_words[i];
+        uint32_t packed_word;
+        __builtin_memcpy(&packed_word, w_block->qs + i * 4, 4);
         const int base = i * 4;
 
         const uint8_t b0 = static_cast<uint8_t>(packed_word & 0xFF);
@@ -97,11 +67,10 @@ __device__ __forceinline__ int q4_0_q8_0_block_dot(
     return block_sum;
 }
 
+// ── Wavefront-Parallel Multi-Column GEMV (Fast Path) ──────────────────────────────
 
-// Loads input in 4096-element (16KB) chunks to stay within LDS limits.
 template<int N_WAVES>
-__launch_bounds__(Q4_0_THREADS_PER_BLOCK, 1)
-__global__ void gemv_q4_0_f32_chunked_kernel(
+__global__ void gemv_q4_0_f32_wave_parallel_kernel(
     const void* __restrict__ weights_q4_0,
     const float* __restrict__ input,
     float* __restrict__ output,
@@ -116,10 +85,107 @@ __global__ void gemv_q4_0_f32_chunked_kernel(
 
     if (col >= ncols_dst) return;
 
-    // DIAGNOSTIC: Write marker to output to confirm kernel execution
-    if (col == 0 && lane_id == 0) {
-        output[col] = -88888.0f;  // Unique marker for chunked kernel
+    extern __shared__ __attribute__((aligned(16))) float s_input[];
+    for (int i = tid; i < n_rows; i += blockDim.x) {
+        s_input[i] = input[i];
     }
+    __syncthreads();
+
+    const Q4_0_block* w_col = reinterpret_cast<const Q4_0_block*>(
+        static_cast<const uint8_t*>(weights_q4_0) + (col * n_blocks_total) * Q4_0_BLOCK_SIZE
+    );
+
+    float sum = 0.0f;
+    for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += WARP_SIZE) {
+        const Q4_0_block* b = &w_col[block_idx];
+        const float d = __half2float(b->d);
+        const int row_offset = block_idx * QK4_0;
+        
+        #pragma unroll
+        for (int l = 0; l < 16; ++l) {
+            const uint8_t q = static_cast<uint8_t>(b->qs[l]);
+            sum += d * (static_cast<float>(q & 0x0F) - 8.0f) * s_input[row_offset + l];
+            sum += d * (static_cast<float>(q >> 4) - 8.0f) * s_input[row_offset + l + 16];
+        }
+    }
+
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
+        sum += __shfl_down(sum, offset, 32);
+    }
+
+    if (lane_id == 0) {
+        output[col] = sum;
+    }
+}
+
+template<int N_WAVES>
+__global__ void gemv_q4_0_f32_residual_wave_parallel_kernel(
+    const void* __restrict__ weights_q4_0,
+    const float* __restrict__ input,
+    const float* __restrict__ residual,
+    float* __restrict__ output,
+    int n_rows,
+    int ncols_dst
+) {
+    const int tid = threadIdx.x;
+    const int wave_id = tid / WARP_SIZE;
+    const int lane_id = tid % WARP_SIZE;
+    const int col = blockIdx.x * N_WAVES + wave_id;
+    const int n_blocks_total = n_rows / QK4_0;
+
+    if (col >= ncols_dst) return;
+
+    extern __shared__ __attribute__((aligned(16))) float s_input[];
+    for (int i = tid; i < n_rows; i += blockDim.x) {
+        s_input[i] = input[i];
+    }
+    __syncthreads();
+
+    const Q4_0_block* w_col = reinterpret_cast<const Q4_0_block*>(
+        static_cast<const uint8_t*>(weights_q4_0) + (col * n_blocks_total) * Q4_0_BLOCK_SIZE
+    );
+
+    float sum = 0.0f;
+    for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += WARP_SIZE) {
+        const Q4_0_block* b = &w_col[block_idx];
+        const float d = __half2float(b->d);
+        const int row_offset = block_idx * QK4_0;
+
+        #pragma unroll
+        for (int l = 0; l < 16; ++l) {
+            const uint8_t q = static_cast<uint8_t>(b->qs[l]);
+            sum += d * (static_cast<float>(q & 0x0F) - 8.0f) * s_input[row_offset + l];
+            sum += d * (static_cast<float>(q >> 4) - 8.0f) * s_input[row_offset + l + 16];
+        }
+    }
+
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
+        sum += __shfl_down(sum, offset, 32);
+    }
+
+    if (lane_id == 0) {
+        output[col] = sum + residual[col];
+    }
+}
+
+// ── Chunked GEMV for Large Input Vectors (Fallback Path) ──────────────────────────
+
+// Loads input in 4096-element (16KB) chunks to stay within LDS limits.
+template<int N_WAVES>
+__global__ void gemv_q4_0_f32_chunked_kernel(
+    const void* __restrict__ weights_q4_0,
+    const float* __restrict__ input,
+    float* __restrict__ output,
+    int n_rows,
+    int ncols_dst
+) {
+    const int tid = threadIdx.x;
+    const int wave_id = tid / WARP_SIZE;
+    const int lane_id = tid % WARP_SIZE;
+    const int col = blockIdx.x * N_WAVES + wave_id;
+    const int n_blocks_total = n_rows / QK4_0;
+
+    if (col >= ncols_dst) return;
 
     const Q4_0_block* w_col = reinterpret_cast<const Q4_0_block*>(
         static_cast<const uint8_t*>(weights_q4_0) + (col * n_blocks_total) * Q4_0_BLOCK_SIZE
@@ -147,19 +213,12 @@ __global__ void gemv_q4_0_f32_chunked_kernel(
             const float d = __half2float(b->d);
             const int lds_offset = (block_idx - block_start) * QK4_0;
             
-            float sum_x = 0.0f;
-            float dot_q_x = 0.0f;
-
             #pragma unroll
             for (int l = 0; l < 16; ++l) {
                 const uint8_t q = static_cast<uint8_t>(b->qs[l]);
-                float xl = s_input_chunk[lds_offset + l];
-                float xh = s_input_chunk[lds_offset + l + 16];
-                sum_x += xl + xh;
-                dot_q_x += static_cast<float>(q & 0x0F) * xl;
-                dot_q_x += static_cast<float>(q >> 4) * xh;
+                sum += d * (static_cast<float>(q & 0x0F) - 8.0f) * s_input_chunk[lds_offset + l];
+                sum += d * (static_cast<float>(q >> 4) - 8.0f) * s_input_chunk[lds_offset + l + 16];
             }
-            sum += d * (dot_q_x - 8.0f * sum_x);
         }
         __syncthreads();
     }
@@ -169,16 +228,11 @@ __global__ void gemv_q4_0_f32_chunked_kernel(
     }
 
     if (lane_id == 0) {
-        // DIAGNOSTIC: Add marker to confirm chunked kernel execution
-        if (col == 0) {
-            sum += 200000.0f;  // Unique marker
-        }
         output[col] = sum;
     }
 }
 
 template<int N_WAVES>
-__launch_bounds__(Q4_0_THREADS_PER_BLOCK, 1)
 __global__ void gemv_q4_0_f32_residual_chunked_kernel(
     const void* __restrict__ weights_q4_0,
     const float* __restrict__ input,
@@ -219,19 +273,12 @@ __global__ void gemv_q4_0_f32_residual_chunked_kernel(
             const float d = __half2float(b->d);
             const int lds_offset = (block_idx - block_start) * QK4_0;
 
-            float sum_x = 0.0f;
-            float dot_q_x = 0.0f;
-            
             #pragma unroll
             for (int l = 0; l < 16; ++l) {
                 const uint8_t q = static_cast<uint8_t>(b->qs[l]);
-                float xl = s_input_chunk[lds_offset + l];
-                float xh = s_input_chunk[lds_offset + l + 16];
-                sum_x += xl + xh;
-                dot_q_x += static_cast<float>(q & 0x0F) * xl;
-                dot_q_x += static_cast<float>(q >> 4) * xh;
+                sum += d * (static_cast<float>(q & 0x0F) - 8.0f) * s_input_chunk[lds_offset + l];
+                sum += d * (static_cast<float>(q >> 4) - 8.0f) * s_input_chunk[lds_offset + l + 16];
             }
-            sum += d * (dot_q_x - 8.0f * sum_x);
         }
         __syncthreads();
     }
@@ -259,14 +306,14 @@ __global__ void gemv_q4_0_f32_multi_row_kernel(
     const int tid = threadIdx.x;
     const int wave_id = tid / WARP_SIZE;
     const int lane_id = tid % WARP_SIZE;
-
+    
     // Each wave processes 4 output columns
     const int col_base = (blockIdx.x * N_WAVES + wave_id) * 4;
     const int n_blocks_total = n_rows / QK4_0;
 
     if (col_base >= ncols_dst) return;
 
-    extern __shared__ float s_input[];
+    extern __shared__ __attribute__((aligned(16))) float s_input[];
     for (int i = tid; i < n_rows; i += blockDim.x) {
         s_input[i] = input[i];
     }
@@ -285,41 +332,28 @@ __global__ void gemv_q4_0_f32_multi_row_kernel(
 
     for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += WARP_SIZE) {
         const int row_offset = block_idx * QK4_0;
-
-        float sum_x = 0.0f;
-        float dot_q_x[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-
+        
         #pragma unroll
         for (int i = 0; i < 4; ++i) {
             float4 in_l = reinterpret_cast<float4*>(&s_input[row_offset + 4*i])[0];
             float4 in_h = reinterpret_cast<float4*>(&s_input[row_offset + 4*i + 16])[0];
 
-            sum_x += in_l.x + in_l.y + in_l.z + in_l.w + in_h.x + in_h.y + in_h.z + in_h.w;
-
             #pragma unroll
             for (int c = 0; c < 4; ++c) {
                 if (w_cols[c]) {
                     const Q4_0_block* b = &w_cols[c][block_idx];
-                    const uint32_t q = reinterpret_cast<const uint32_t*>(b->qs)[i];
+                    const float d = __half2float(b->d);
+                    uint32_t q; __builtin_memcpy(&q, b->qs + i * 4, 4);
 
-                    dot_q_x[c] += static_cast<float>( q        & 0x0Fu) * in_l.x;
-                    dot_q_x[c] += static_cast<float>((q >>  8) & 0x0Fu) * in_l.y;
-                    dot_q_x[c] += static_cast<float>((q >> 16) & 0x0Fu) * in_l.z;
-                    dot_q_x[c] += static_cast<float>((q >> 24) & 0x0Fu) * in_l.w;
-                    dot_q_x[c] += static_cast<float>((q >>  4) & 0x0Fu) * in_h.x;
-                    dot_q_x[c] += static_cast<float>((q >> 12) & 0x0Fu) * in_h.y;
-                    dot_q_x[c] += static_cast<float>((q >> 20) & 0x0Fu) * in_h.z;
-                    dot_q_x[c] += static_cast<float>((q >> 28) & 0x0Fu) * in_h.w;
+                    sums[c] += d * (static_cast<float>( q        & 0x0F) - 8.0f) * in_l.x;
+                    sums[c] += d * (static_cast<float>((q >>  8) & 0x0F) - 8.0f) * in_l.y;
+                    sums[c] += d * (static_cast<float>((q >> 16) & 0x0F) - 8.0f) * in_l.z;
+                    sums[c] += d * (static_cast<float>((q >> 24) & 0x0F) - 8.0f) * in_l.w;
+                    sums[c] += d * (static_cast<float>((q >>  4) & 0x0F) - 8.0f) * in_h.x;
+                    sums[c] += d * (static_cast<float>((q >> 12) & 0x0F) - 8.0f) * in_h.y;
+                    sums[c] += d * (static_cast<float>((q >> 20) & 0x0F) - 8.0f) * in_h.z;
+                    sums[c] += d * (static_cast<float>((q >> 28) & 0x0F) - 8.0f) * in_h.w;
                 }
-            }
-        }
-
-        #pragma unroll
-        for (int c = 0; c < 4; ++c) {
-            if (w_cols[c]) {
-                const Q4_0_block* b = &w_cols[c][block_idx];
-                const float d = __half2float(b->d);
-                sums[c] += d * (dot_q_x[c] - 8.0f * sum_x);
             }
         }
     }
@@ -360,7 +394,7 @@ __global__ void gemv_q4_0_f32_residual_multi_row_kernel(
 
     if (col_base >= ncols_dst) return;
 
-    extern __shared__ float s_input[];
+    extern __shared__ __attribute__((aligned(16))) float s_input[];
     for (int i = tid; i < n_rows; i += blockDim.x) {
         s_input[i] = input[i];
     }
@@ -379,41 +413,28 @@ __global__ void gemv_q4_0_f32_residual_multi_row_kernel(
 
     for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += WARP_SIZE) {
         const int row_offset = block_idx * QK4_0;
-
-        float sum_x = 0.0f;
-        float dot_q_x[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-
+        
         #pragma unroll
         for (int i = 0; i < 4; ++i) {
             float4 in_l = reinterpret_cast<float4*>(&s_input[row_offset + 4*i])[0];
             float4 in_h = reinterpret_cast<float4*>(&s_input[row_offset + 4*i + 16])[0];
 
-            sum_x += in_l.x + in_l.y + in_l.z + in_l.w + in_h.x + in_h.y + in_h.z + in_h.w;
-
             #pragma unroll
             for (int c = 0; c < 4; ++c) {
                 if (w_cols[c]) {
                     const Q4_0_block* b = &w_cols[c][block_idx];
-                    const uint32_t q = reinterpret_cast<const uint32_t*>(b->qs)[i];
+                    const float d = __half2float(b->d);
+                    uint32_t q; __builtin_memcpy(&q, b->qs + i * 4, 4);
 
-                    dot_q_x[c] += static_cast<float>( q        & 0x0Fu) * in_l.x;
-                    dot_q_x[c] += static_cast<float>((q >>  8) & 0x0Fu) * in_l.y;
-                    dot_q_x[c] += static_cast<float>((q >> 16) & 0x0Fu) * in_l.z;
-                    dot_q_x[c] += static_cast<float>((q >> 24) & 0x0Fu) * in_l.w;
-                    dot_q_x[c] += static_cast<float>((q >>  4) & 0x0Fu) * in_h.x;
-                    dot_q_x[c] += static_cast<float>((q >> 12) & 0x0Fu) * in_h.y;
-                    dot_q_x[c] += static_cast<float>((q >> 20) & 0x0Fu) * in_h.z;
-                    dot_q_x[c] += static_cast<float>((q >> 28) & 0x0Fu) * in_h.w;
+                    sums[c] += d * (static_cast<float>( q        & 0x0F) - 8.0f) * in_l.x;
+                    sums[c] += d * (static_cast<float>((q >>  8) & 0x0F) - 8.0f) * in_l.y;
+                    sums[c] += d * (static_cast<float>((q >> 16) & 0x0F) - 8.0f) * in_l.z;
+                    sums[c] += d * (static_cast<float>((q >> 24) & 0x0F) - 8.0f) * in_l.w;
+                    sums[c] += d * (static_cast<float>((q >>  4) & 0x0F) - 8.0f) * in_h.x;
+                    sums[c] += d * (static_cast<float>((q >> 12) & 0x0F) - 8.0f) * in_h.y;
+                    sums[c] += d * (static_cast<float>((q >> 20) & 0x0F) - 8.0f) * in_h.z;
+                    sums[c] += d * (static_cast<float>((q >> 28) & 0x0F) - 8.0f) * in_h.w;
                 }
-            }
-        }
-
-        #pragma unroll
-        for (int c = 0; c < 4; ++c) {
-            if (w_cols[c]) {
-                const Q4_0_block* b = &w_cols[c][block_idx];
-                const float d = __half2float(b->d);
-                sums[c] += d * (dot_q_x[c] - 8.0f * sum_x);
             }
         }
     }
@@ -477,7 +498,7 @@ __global__ void gemv_q4_0_q8_0_residual_multi_row_kernel(
 
     for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += WARP_SIZE) {
         const Q8_0_block* x_block = &s_input_q8[block_idx];
-        const float x_scale = x_block->d;  // Now float32, no conversion needed
+        const float x_scale = __half2float(x_block->d);
         const int8_t* x_qs = x_block->qs;
 
         #pragma unroll
@@ -542,14 +563,15 @@ __global__ void gemv_q4_0_f32_q8_inline_residual_multi_row_kernel(
         }
 
         const float scale = fmaxf(__shfl(max_val, 0, WARP_SIZE) / 127.0f, 1e-30f);
+        const half scale_h = __float2half(scale);
+        const float scale_f = __half2float(scale_h);
         if (lane_id == 0) {
-            s_input_q8[block_idx].d = scale;
+            s_input_q8[block_idx].d = scale_h;
         }
 
-        const float inv_scale = 1.0f / scale;
-        const float x0_rounded = roundf(val * inv_scale);
-        const float qf = fminf(fmaxf(x0_rounded, -127.0f), 127.0f);
-        s_input_q8[block_idx].qs[lane_id] = static_cast<int8_t>(qf);
+        const float inv_scale = 1.0f / scale_f;
+        const float qf = fminf(fmaxf(val * inv_scale, -127.0f), 127.0f);
+        s_input_q8[block_idx].qs[lane_id] = static_cast<int8_t>(roundf(qf));
     }
     __syncthreads();
 
@@ -566,7 +588,7 @@ __global__ void gemv_q4_0_f32_q8_inline_residual_multi_row_kernel(
 
     for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += WARP_SIZE) {
         const Q8_0_block* x_block = &s_input_q8[block_idx];
-        const float x_scale = x_block->d;  // Now float32, no conversion needed
+        const float x_scale = __half2float(x_block->d);
         const int8_t* x_qs = x_block->qs;
 
         #pragma unroll
@@ -641,7 +663,7 @@ __global__ void gemv_q4_0_q8_0_multi_row_kernel(
 
     for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += WARP_SIZE) {
         const Q8_0_block* x_block = &s_input_q8[block_idx];
-        const float x_scale = x_block->d;  // Now float32, no conversion needed
+        const float x_scale = __half2float(x_block->d);
         const int8_t* x_qs = x_block->qs;
 
         #pragma unroll
@@ -815,23 +837,17 @@ extern "C" hipError_t gemv_q4_0_f32_q8_inline_residual_variant_launch(
         return hipErrorInvalidValue;
     }
 
-    // variant 0 = heuristic select, variant 1 = force Q4_0_SMALL_WAVES, variant 2 = force Q4_0_HIGH_WAVES
-    if (variant != 0 && variant != 1 && variant != 2) {
+    // variant 0 = heuristic select, variant 1 = force Q4_0_SMALL_WAVES
+    if (variant != 0 && variant != 1) {
         return hipErrorInvalidValue;
     }
-    const int n_waves = (variant == 1) ? Q4_0_SMALL_WAVES :
-                        (variant == 2) ? Q4_0_HIGH_WAVES :
-                        select_multi_row_waves_q4_0_q8(n_blocks_total);
+    const int n_waves = (variant == 1) ? Q4_0_SMALL_WAVES : select_multi_row_waves_q4_0_q8(n_blocks_total);
     const int threads_per_block = n_waves * WARP_SIZE;
     const int n_blocks_x =
         (ncols_dst + (n_waves * Q4_0_MULTI_ROW_COLS) - 1) / (n_waves * Q4_0_MULTI_ROW_COLS);
 
     if (n_waves == Q4_0_SMALL_WAVES) {
         gemv_q4_0_f32_q8_inline_residual_multi_row_kernel<Q4_0_SMALL_WAVES><<<n_blocks_x, threads_per_block, shared_mem, stream>>>(
-            weights_q4_0, input, residual, output, n_rows, ncols_dst
-        );
-    } else if (n_waves == Q4_0_HIGH_WAVES) {
-        gemv_q4_0_f32_q8_inline_residual_multi_row_kernel<Q4_0_HIGH_WAVES><<<n_blocks_x, threads_per_block, shared_mem, stream>>>(
             weights_q4_0, input, residual, output, n_rows, ncols_dst
         );
     } else {
@@ -858,100 +874,6 @@ extern "C" hipError_t gemv_q4_0_f32_q8_inline_residual_launch(
     );
 }
 
-// ── RDNA3 Wave32 High-Occupancy Decode GEMV (Phase 4) ──────────────────────────
-
-#undef DOG
-#define DOG(weight_val, in_l, in_h, d, acc) \
-    { \
-        float block_q_x = 0.0f; \
-        float block_x = 0.0f; \
-        block_q_x += static_cast<float>( weight_val        & 0x0Fu) * (in_l).x; \
-        block_q_x += static_cast<float>((weight_val >>  8) & 0x0Fu) * (in_l).y; \
-        block_q_x += static_cast<float>((weight_val >> 16) & 0x0Fu) * (in_l).z; \
-        block_q_x += static_cast<float>((weight_val >> 24) & 0x0Fu) * (in_l).w; \
-        block_q_x += static_cast<float>((weight_val >>  4) & 0x0Fu) * (in_h).x; \
-        block_q_x += static_cast<float>((weight_val >> 12) & 0x0Fu) * (in_h).y; \
-        block_q_x += static_cast<float>((weight_val >> 20) & 0x0Fu) * (in_h).z; \
-        block_q_x += static_cast<float>((weight_val >> 28) & 0x0Fu) * (in_h).w; \
-        block_x += (in_l).x + (in_l).y + (in_l).z + (in_l).w + (in_h).x + (in_h).y + (in_h).z + (in_h).w; \
-        (acc) += (d) * (block_q_x - 8.0f * block_x); \
-    }
-
-__launch_bounds__(32, 16)
-__global__ void gemv_q4_0_f32_wave32_kernel(
-    const void* __restrict__ weights_q4_0,
-    const float* __restrict__ input,
-    float* __restrict__ output,
-    int n_rows,
-    int ncols_dst
-) {
-    const int row = blockIdx.x;
-    if (row >= ncols_dst) return;
-    const int tid = threadIdx.x;
-
-    const int n_blocks_total = n_rows / QK4_0;
-    const uint8_t* row_ptr = static_cast<const uint8_t*>(weights_q4_0) + (long long)row * n_blocks_total * Q4_0_BLOCK_SIZE;
-
-    float acc = 0.0f;
-
-    for (int b = tid; b < n_blocks_total; b += 32) {
-        const Q4_0_block* b_ptr = reinterpret_cast<const Q4_0_block*>(row_ptr + b * Q4_0_BLOCK_SIZE);
-        float d = __half2float(b_ptr->d);
-        const uint32_t* pk = reinterpret_cast<const uint32_t*>(b_ptr->qs);
-        const float4* in_ptr = reinterpret_cast<const float4*>(&input[b * 32]);
-        DOG(pk[0], in_ptr[0], in_ptr[4], d, acc);
-        DOG(pk[1], in_ptr[1], in_ptr[5], d, acc);
-        DOG(pk[2], in_ptr[2], in_ptr[6], d, acc);
-        DOG(pk[3], in_ptr[3], in_ptr[7], d, acc);
-    }
-
-    for (int offset = 16; offset > 0; offset >>= 1) {
-        acc += __shfl_down(acc, offset, 32);
-    }
-
-    if (tid == 0) {
-        output[row] = acc;
-    }
-}
-
-__launch_bounds__(32, 16)
-__global__ void gemv_q4_0_f32_wave32_residual_kernel(
-    const void* __restrict__ weights_q4_0,
-    const float* __restrict__ input,
-    const float* __restrict__ residual,
-    float* __restrict__ output,
-    int n_rows,
-    int ncols_dst
-) {
-    const int row = blockIdx.x;
-    if (row >= ncols_dst) return;
-    const int tid = threadIdx.x;
-
-    const int n_blocks_total = n_rows / QK4_0;
-    const uint8_t* row_ptr = static_cast<const uint8_t*>(weights_q4_0) + (long long)row * n_blocks_total * Q4_0_BLOCK_SIZE;
-
-    float acc = 0.0f;
-
-    for (int b = tid; b < n_blocks_total; b += 32) {
-        const Q4_0_block* b_ptr = reinterpret_cast<const Q4_0_block*>(row_ptr + b * Q4_0_BLOCK_SIZE);
-        float d = __half2float(b_ptr->d);
-        const uint32_t* pk = reinterpret_cast<const uint32_t*>(b_ptr->qs);
-        const float4* in_ptr = reinterpret_cast<const float4*>(&input[b * 32]);
-        DOG(pk[0], in_ptr[0], in_ptr[4], d, acc);
-        DOG(pk[1], in_ptr[1], in_ptr[5], d, acc);
-        DOG(pk[2], in_ptr[2], in_ptr[6], d, acc);
-        DOG(pk[3], in_ptr[3], in_ptr[7], d, acc);
-    }
-
-    for (int offset = 16; offset > 0; offset >>= 1) {
-        acc += __shfl_down(acc, offset, 32);
-    }
-
-    if (tid == 0) {
-        output[row] = acc + residual[row];
-    }
-}
-
 extern "C" hipError_t gemv_q4_0_f32_wave32_launch(
     const void* weights_q4_0,
     const float* input,
@@ -960,13 +882,7 @@ extern "C" hipError_t gemv_q4_0_f32_wave32_launch(
     int ncols_dst,
     hipStream_t stream
 ) {
-    if (n_rows <= 0 || ncols_dst <= 0) return hipErrorInvalidValue;
-
-    gemv_q4_0_f32_wave32_kernel<<<ncols_dst, 32, 0, stream>>>(
-        weights_q4_0, input, output, n_rows, ncols_dst
-    );
-
-    return hipGetLastError();
+    return gemv_q4_0_f32_launch(weights_q4_0, input, output, n_rows, ncols_dst, stream);
 }
 
 extern "C" hipError_t gemv_q4_0_f32_wave32_residual_launch(
@@ -978,11 +894,5 @@ extern "C" hipError_t gemv_q4_0_f32_wave32_residual_launch(
     int ncols_dst,
     hipStream_t stream
 ) {
-    if (n_rows <= 0 || ncols_dst <= 0 || residual == nullptr) return hipErrorInvalidValue;
-
-    gemv_q4_0_f32_wave32_residual_kernel<<<ncols_dst, 32, 0, stream>>>(
-        weights_q4_0, input, residual, output, n_rows, ncols_dst
-    );
-
-    return hipGetLastError();
+    return gemv_q4_0_f32_residual_launch(weights_q4_0, input, residual, output, n_rows, ncols_dst, stream);
 }

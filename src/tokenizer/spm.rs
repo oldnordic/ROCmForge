@@ -21,11 +21,11 @@ pub struct SpmTokenizer {
     add_eos: bool,
     add_space_prefix: bool,
     /// Per-token scores used by Viterbi.  When the GGUF scores are a uniform
-    /// placeholder (e.g. Gemma4 uses -1000 for every token) we fall back to a
+    /// sentinel value (e.g. Gemma4 uses -1000 for every token) we fall back to a
     /// constant negative cost so that the Viterbi search prefers longer tokens.
     token_score: Vec<f32>,
     /// Use greedy longest-match encoding instead of score-driven Viterbi.
-    /// Set when the stored scores are placeholders (uniform or token-id values)
+    /// Set when the stored scores are synthetic (uniform or token-id values)
     /// instead of real SentencePiece log-probabilities.
     greedy: bool,
 }
@@ -42,10 +42,10 @@ impl SpmTokenizer {
             && data.scores.iter().all(|&s| s == data.scores[0]);
         // Some GGUF files (e.g. Ollama's gemma4:e2b) store scores as
         // 0.0, 1.0, 2.0, ... which are not real log-probabilities.  Detect that
-        // placeholder and fall back to greedy longest-match encoding.
-        let scores_placeholder = data.scores.len() == data.tokens.len()
+        // score sequence and fall back to greedy longest-match encoding.
+        let scores_are_token_indices = data.scores.len() == data.tokens.len()
             && data.scores.iter().enumerate().all(|(i, &s)| s == i as f32);
-        let use_greedy = scores_uniform || scores_placeholder;
+        let use_greedy = scores_uniform || scores_are_token_indices;
 
         for (id, token) in data.tokens.iter().enumerate() {
             let id = id as u32;
@@ -138,7 +138,7 @@ impl SpmTokenizer {
 
     /// Greedy longest-match segmentation.
     ///
-    /// Used when the GGUF scores are placeholders rather than real
+    /// Used when the GGUF scores are synthetic rather than real
     /// log-probabilities.  At each position emit the longest token that matches,
     /// falling back to one token per UTF-8 byte for unknown characters.
     fn encode_text_greedy(&self, text: &str) -> Vec<u32> {
@@ -150,8 +150,8 @@ impl SpmTokenizer {
             let mut best_len = 0usize;
             let mut best_id = None;
             let mut piece = String::new();
-            for j in i..n {
-                piece.push(chars[j]);
+            for (j, &ch) in chars.iter().enumerate().take(n).skip(i) {
+                piece.push(ch);
                 if let Some(&id) = self.token_to_id.get(&piece) {
                     best_len = j - i + 1;
                     best_id = Some(id);

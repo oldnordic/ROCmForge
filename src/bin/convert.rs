@@ -161,16 +161,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(not(target_os = "linux"))]
     let write_target: &mut dyn Write = &mut out_file;
 
-    // Write placeholder header (24 bytes):
+    // Write a provisional header (24 bytes):
     // Magic (4B) + Version (4B) + Metadata Size (8B) + Tensor Table Size (8B)
     let mut file_pos = 0u64;
     write_target.write_all(RFM_MAGIC)?;
     file_pos += 4;
     write_target.write_all(&RFM_VERSION.to_le_bytes())?;
     file_pos += 4;
-    write_target.write_all(&0u64.to_le_bytes())?; // placeholder metadata size
+    write_target.write_all(&0u64.to_le_bytes())?; // metadata size patched after payload write
     file_pos += 8;
-    write_target.write_all(&0u64.to_le_bytes())?; // placeholder tensor table size
+    write_target.write_all(&0u64.to_le_bytes())?; // tensor table size patched after payload write
     file_pos += 8;
 
     // Write metadata JSON
@@ -178,12 +178,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     file_pos += metadata_bytes.len() as u64;
     let metadata_size = metadata_bytes.len() as u64;
 
-    // Write placeholder tensor table
+    // Reserve space for the tensor table
     let table_pos = file_pos;
-    let table_placeholder = vec![b' '; 4 * 1024 * 1024]; // Large enough for full-model tensor indexes.
-    write_target.write_all(&table_placeholder)?;
-    file_pos += table_placeholder.len() as u64;
-    let tensor_table_allocated_size = table_placeholder.len() as u64;
+    let table_reservation = vec![b' '; 4 * 1024 * 1024]; // Large enough for full-model tensor indexes.
+    write_target.write_all(&table_reservation)?;
+    file_pos += table_reservation.len() as u64;
+    let tensor_table_allocated_size = table_reservation.len() as u64;
 
     let mut current_offset = 0u64;
 

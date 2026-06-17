@@ -108,6 +108,74 @@ impl GpuKvCache {
         Ok(())
     }
 
+    /// Scatter on an explicit HIP stream without synchronizing the host.
+    ///
+    /// The caller must ensure that all writes to the contiguous K/V buffers have
+    /// been submitted to `stream` before this call, and must synchronize `stream`
+    /// before reading the paged cache from another stream.
+    pub fn scatter_to_paged_on_stream(
+        &mut self,
+        layer: usize,
+        start_pos: usize,
+        seq_len: usize,
+        stream: crate::gpu::ffi::hipStream_t,
+    ) -> GpuResult<()> {
+        let block_size = self.block_size_tokens;
+        let pos_bytes = self.pos_bytes;
+        let block_bytes = block_size * pos_bytes;
+
+        if seq_len == 0 {
+            return Ok(());
+        }
+        let start_block = start_pos / block_size;
+        let end_block = (start_pos + seq_len - 1) / block_size;
+
+        for logical_block in start_block..=end_block {
+            while logical_block >= self.block_table.block_ids.len() {
+                let physical_block = self.block_allocator.allocate();
+                self.block_table.block_ids.push(physical_block);
+            }
+            let physical_block = self.block_table.block_ids[logical_block];
+            self.ensure_paged_block(layer, physical_block, block_bytes)?;
+
+            if let Some(overlap) = overlap_for_block(start_pos, seq_len, logical_block, block_size)
+            {
+                let k_block = self.paged_k[layer][physical_block]
+                    .as_ref()
+                    .expect("invariant: paged K block allocated above");
+                let v_block = self.paged_v[layer][physical_block]
+                    .as_ref()
+                    .expect("invariant: paged V block allocated above");
+
+                let contig_offset = overlap.overlap_start * pos_bytes;
+                let block_offset =
+                    (overlap.overlap_start - overlap.logical_block_start_token) * pos_bytes;
+                let copy_size = overlap.overlap_tokens * pos_bytes;
+
+                unsafe {
+                    let contig_k_ptr = (self.k[layer].as_ptr() as *const u8).add(contig_offset);
+                    let block_k_ptr = (k_block.as_ptr() as *mut u8).add(block_offset);
+                    super::super::ffi::hip_memcpy_d2d_async(
+                        block_k_ptr,
+                        contig_k_ptr,
+                        copy_size,
+                        stream,
+                    )?;
+
+                    let contig_v_ptr = (self.v[layer].as_ptr() as *const u8).add(contig_offset);
+                    let block_v_ptr = (v_block.as_ptr() as *mut u8).add(block_offset);
+                    super::super::ffi::hip_memcpy_d2d_async(
+                        block_v_ptr,
+                        contig_v_ptr,
+                        copy_size,
+                        stream,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Sync all blocks from the paged cache back to the contiguous working view for a layer.
     pub fn gather_to_contiguous(&self, layer: usize) -> GpuResult<()> {
         let block_size = self.block_size_tokens;

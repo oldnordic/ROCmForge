@@ -338,6 +338,30 @@ pub fn dot_q4_1_q8_0_block_scalar(qs: &[u8], q8: &[u8], scale: f32, min_offset: 
     (acc as f32) * scale + min_offset * (q8_sum as f32)
 }
 
+/// Scalar Q4_0 × Q8_0 block dot product — one 32-element block.
+pub fn dot_q4_0_q8_0_block_scalar(qs: &[u8], q8: &[u8], scale: f32) -> f32 {
+    debug_assert_eq!(
+        qs.len(),
+        16,
+        "dot_q4_0_q8_0_block_scalar: qs must be 16 bytes"
+    );
+    debug_assert_eq!(
+        q8.len(),
+        Q8_BLOCK_ELEMS,
+        "dot_q4_0_q8_0_block_scalar: q8 must have 32 elements"
+    );
+    let mut acc = 0i32;
+    for i in 0..16 {
+        let q_lo = (qs[i] & 0x0F) as i32 - 8;
+        let q_hi = (qs[i] >> 4) as i32 - 8;
+        let x_lo = q8[i] as i8 as i32;
+        let x_hi = q8[i + 16] as i8 as i32;
+        acc += q_lo * x_lo + q_hi * x_hi;
+    }
+    // Q4_0 is symmetric around 0, no min_offset needed
+    (acc as f32) * scale
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -354,10 +378,10 @@ mod tests {
 
         // 16 weight bytes -> 32 nibbles
         let mut qs = [0u8; 16];
-        for i in 0..16 {
+        for q in qs.iter_mut() {
             let lo: u8 = rng.u8(0..16);
             let hi: u8 = rng.u8(0..16);
-            qs[i] = (hi << 4) | lo;
+            *q = (hi << 4) | lo;
         }
 
         // Build an activation vector and quantize it to Q8_0 (one block).
@@ -422,10 +446,10 @@ mod tests {
         let scale = 0.05_f32;
 
         let mut qs = [0u8; 16];
-        for i in 0..16 {
+        for q in qs.iter_mut() {
             let lo: u8 = rng.u8(0..16);
             let hi: u8 = rng.u8(0..16);
-            qs[i] = (hi << 4) | lo;
+            *q = (hi << 4) | lo;
         }
 
         let mut x = [0.0_f32; Q4_BLOCK_ELEMS];
@@ -459,10 +483,10 @@ mod tests {
         let w_scale = 0.05_f32;
 
         let mut qs = [0u8; 16];
-        for i in 0..16 {
+        for q in qs.iter_mut() {
             let lo: u8 = rng.u8(0..16);
             let hi: u8 = rng.u8(0..16);
-            qs[i] = (hi << 4) | lo;
+            *q = (hi << 4) | lo;
         }
 
         let mut x = [0.0_f32; Q8_BLOCK_ELEMS];
@@ -487,28 +511,4 @@ mod tests {
             (avx2 - scalar).abs()
         );
     }
-}
-
-/// Scalar Q4_0 × Q8_0 block dot product — one 32-element block.
-pub fn dot_q4_0_q8_0_block_scalar(qs: &[u8], q8: &[u8], scale: f32) -> f32 {
-    debug_assert_eq!(
-        qs.len(),
-        16,
-        "dot_q4_0_q8_0_block_scalar: qs must be 16 bytes"
-    );
-    debug_assert_eq!(
-        q8.len(),
-        Q8_BLOCK_ELEMS,
-        "dot_q4_0_q8_0_block_scalar: q8 must have 32 elements"
-    );
-    let mut acc = 0i32;
-    for i in 0..16 {
-        let q_lo = (qs[i] & 0x0F) as i32 - 8;
-        let q_hi = (qs[i] >> 4) as i32 - 8;
-        let x_lo = q8[i] as i8 as i32;
-        let x_hi = q8[i + 16] as i8 as i32;
-        acc += q_lo * x_lo + q_hi * x_hi;
-    }
-    // Q4_0 is symmetric around 0, no min_offset needed
-    (acc as f32) * scale
 }

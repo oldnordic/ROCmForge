@@ -235,6 +235,7 @@ __global__ void flash_attn_decode_strided_multi_head_kernel(
 
 __global__ void flash_attn_decode_strided_multi_head_v2_kernel(
     float* __restrict__ out,
+    float* __restrict__ attn_weights,    // [num_heads, seq_len] optional
     const float* __restrict__ q,
     const float* __restrict__ k_cache,
     const float* __restrict__ v_cache,
@@ -324,10 +325,19 @@ __global__ void flash_attn_decode_strided_multi_head_v2_kernel(
         }
         head_out[i] = val * inv_sum;
     }
+
+    // 5. Optionally write normalized attention weights for tracing.
+    if (attn_weights != nullptr) {
+        __syncthreads();
+        for (int pos = tid; pos < seq_len; pos += blockDim.x) {
+            attn_weights[head_idx * seq_len + pos] = s_scores[pos] * inv_sum;
+        }
+    }
 }
 
 __global__ void flash_attn_decode_strided_multi_head_state_kernel(
     float* __restrict__ out,
+    float* __restrict__ attn_weights,    // [num_heads, seq_len] optional
     const float* __restrict__ q,
     const float* __restrict__ k_cache,
     const float* __restrict__ v_cache,
@@ -413,10 +423,18 @@ __global__ void flash_attn_decode_strided_multi_head_state_kernel(
         }
         head_out[i] = val * inv_sum;
     }
+
+    if (attn_weights != nullptr) {
+        __syncthreads();
+        for (int pos = tid; pos < seq_len; pos += blockDim.x) {
+            attn_weights[head_idx * seq_len + pos] = s_scores[pos] * inv_sum;
+        }
+    }
 }
 
 extern "C" hipError_t gpu_flash_attn_decode_strided_multi_head(
     float* d_out,
+    float* d_attn_weights,
     const float* d_q,
     const float* d_k_cache,
     const float* d_v_cache,
@@ -439,7 +457,7 @@ extern "C" hipError_t gpu_flash_attn_decode_strided_multi_head(
     const size_t smem_size = (kDecodeScoreCapacity + kDecodeReductionScratch) * sizeof(float);
 
     flash_attn_decode_strided_multi_head_v2_kernel<<<num_heads, threads_per_block, smem_size, stream>>>(
-        d_out, d_q, d_k_cache, d_v_cache, seq_len, num_heads, num_kv_heads, head_dim, scale,
+        d_out, d_attn_weights, d_q, d_k_cache, d_v_cache, seq_len, num_heads, num_kv_heads, head_dim, scale,
         kv_lora_dim, adastate_anchors_enabled, w_up_k, w_up_v
     );
 
@@ -448,6 +466,7 @@ extern "C" hipError_t gpu_flash_attn_decode_strided_multi_head(
 
 extern "C" hipError_t gpu_flash_attn_decode_strided_multi_head_state(
     float* d_out,
+    float* d_attn_weights,
     const float* d_q,
     const float* d_k_cache,
     const float* d_v_cache,
@@ -470,7 +489,7 @@ extern "C" hipError_t gpu_flash_attn_decode_strided_multi_head_state(
     const size_t smem_size = (kDecodeScoreCapacity + kDecodeReductionScratch) * sizeof(float);
 
     flash_attn_decode_strided_multi_head_state_kernel<<<num_heads, threads_per_block, smem_size, stream>>>(
-        d_out, d_q, d_k_cache, d_v_cache, d_seq_len, num_heads, num_kv_heads, head_dim, scale,
+        d_out, d_attn_weights, d_q, d_k_cache, d_v_cache, d_seq_len, num_heads, num_kv_heads, head_dim, scale,
         kv_lora_dim, adastate_anchors_enabled, w_up_k, w_up_v
     );
 

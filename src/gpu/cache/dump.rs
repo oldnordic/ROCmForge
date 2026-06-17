@@ -214,7 +214,7 @@ mod tests {
         f.write_all(&num_tokens.to_le_bytes())?;
         f.write_all(&[0u8; 8])?; // padding
 
-        // Write placeholder data (zeros)
+        // Write zero-filled payload bytes
         let floats_per_layer = num_tokens as usize * num_kv_heads as usize * head_dim as usize;
         let zeros = vec![0u8; floats_per_layer * 4 * 2 * num_layers as usize];
         f.write_all(&zeros)?;

@@ -5,6 +5,7 @@ use std::os::raw::c_int;
 
 pub fn flash_attn_decode_strided_multi_head(
     d_out: *mut f32,
+    d_attn_weights: *mut f32,
     d_q: *const f32,
     d_k_cache: *const f32,
     d_v_cache: *const f32,
@@ -20,6 +21,7 @@ pub fn flash_attn_decode_strided_multi_head(
 ) -> GpuResult<()> {
     flash_attn_decode_strided_multi_head_on_stream(
         d_out,
+        d_attn_weights,
         d_q,
         d_k_cache,
         d_v_cache,
@@ -38,6 +40,7 @@ pub fn flash_attn_decode_strided_multi_head(
 
 pub fn flash_attn_decode_strided_multi_head_on_stream(
     d_out: *mut f32,
+    d_attn_weights: *mut f32,
     d_q: *const f32,
     d_k_cache: *const f32,
     d_v_cache: *const f32,
@@ -55,6 +58,7 @@ pub fn flash_attn_decode_strided_multi_head_on_stream(
     let result = unsafe {
         gpu_flash_attn_decode_strided_multi_head(
             d_out,
+            d_attn_weights,
             d_q,
             d_k_cache,
             d_v_cache,
@@ -83,6 +87,7 @@ pub fn flash_attn_decode_strided_multi_head_on_stream(
 
 pub fn flash_attn_decode_strided_multi_head_from_state_on_stream(
     d_out: *mut f32,
+    d_attn_weights: *mut f32,
     d_q: *const f32,
     d_k_cache: *const f32,
     d_v_cache: *const f32,
@@ -100,6 +105,7 @@ pub fn flash_attn_decode_strided_multi_head_from_state_on_stream(
     let result = unsafe {
         gpu_flash_attn_decode_strided_multi_head_state(
             d_out,
+            d_attn_weights,
             d_q,
             d_k_cache,
             d_v_cache,
@@ -137,6 +143,7 @@ pub fn flash_attn_decode(
 ) -> GpuResult<()> {
     flash_attn_decode_strided_multi_head(
         d_out,
+        std::ptr::null_mut(),
         d_q,
         d_k_cache,
         d_v_cache,
@@ -168,6 +175,7 @@ pub fn flash_attn_decode_strided(
     let num_kv_heads = kv_size / head_dim;
     flash_attn_decode_strided_multi_head(
         d_out,
+        std::ptr::null_mut(),
         d_q,
         d_k_offset,
         d_v_offset,

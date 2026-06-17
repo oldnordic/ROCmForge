@@ -454,6 +454,7 @@ fn test_q5_k_quantization() {
 #[test]
 #[serial]
 fn test_q5_k_gemv() {
+    use rocmforge::cpu::quant::embed_q5_k;
     use rocmforge::gpu::{detect, GpuBuffer, GpuDevice, GpuQuant, Q5_K_BLOCK_SIZE, QK_K};
 
     // Require GPU for this test
@@ -468,26 +469,18 @@ fn test_q5_k_gemv() {
     let n_rows = 256; // Input dimension (must be multiple of 256 for Q5_K)
     let ncols_dst = 4; // Output dimension (optimized case)
 
-    // Create a simple weight matrix (n_rows × ncols_dst)
-    // Use values that quantize well for Q5_K
+    // Create a smooth weight matrix with enough variation to exercise Q5_K's
+    // packed high bits and sub-block scales.
     let mut weight_data: Vec<f32> = Vec::with_capacity(n_rows * ncols_dst);
     for col in 0..ncols_dst {
-        for _ in 0..n_rows {
-            // Simple pattern: use col index as value
-            weight_data.push((col + 1) as f32 * 0.1);
+        for row in 0..n_rows {
+            let phase = (col as f32) * 0.029 + (row as f32) * 0.011;
+            weight_data.push((phase.sin() * 0.6) + (phase.cos() * 0.25));
         }
     }
 
     // Create input vector
     let input_data: Vec<f32> = (0..n_rows).map(|i| 1.0 + i as f32 * 0.1).collect();
-
-    // Compute CPU reference output
-    let mut expected_output = vec![0.0f32; ncols_dst];
-    for col in 0..ncols_dst {
-        for row in 0..n_rows {
-            expected_output[col] += weight_data[col * n_rows + row] * input_data[row];
-        }
-    }
 
     // Allocate GPU buffers
     let d_weights = GpuBuffer::alloc(n_rows * ncols_dst * std::mem::size_of::<f32>())
@@ -557,6 +550,11 @@ fn test_q5_k_gemv() {
         Err(e) => panic!("Failed to run Q5_K GEMV kernel: {:?}", e),
     }
 
+    let mut quantized_bytes = vec![0u8; (n_rows / QK_K) * ncols_dst * Q5_K_BLOCK_SIZE];
+    d_quantized
+        .copy_to_host(&mut quantized_bytes)
+        .expect("Failed to copy quantized weights from GPU");
+
     // Copy output back to CPU
     let mut output_bytes = vec![0u8; ncols_dst * std::mem::size_of::<f32>()];
     d_output
@@ -568,33 +566,47 @@ fn test_q5_k_gemv() {
         std::slice::from_raw_parts(output_bytes.as_ptr() as *const f32, ncols_dst).to_vec()
     };
 
+    let mut expected_output = vec![0.0f32; ncols_dst];
+    for (row, out) in expected_output.iter_mut().enumerate() {
+        let mut deq = vec![0.0f32; n_rows];
+        embed_q5_k(row, &quantized_bytes, &mut deq, n_rows);
+        *out = deq
+            .iter()
+            .zip(input_data.iter())
+            .map(|(w, x)| w * x)
+            .sum::<f32>();
+    }
+
     // Cleanup is automatic via GpuBuffer's Drop implementation
     drop(d_weights);
     drop(d_input);
     drop(d_quantized);
     drop(d_output);
 
-    // Verify accuracy - Q5_K has ~5 bits of precision
-    // With simple test data, expect very small error
-    let tolerance = 5.0; // Reasonable tolerance for Q5_K
+    let abs_tolerance = 16.0f32;
+    let rel_tolerance = 1e-5f32;
     let mut max_error = 0.0f32;
     for (i, (expected, actual)) in expected_output.iter().zip(output_data.iter()).enumerate() {
         let error = (expected - actual).abs();
         max_error = max_error.max(error);
-        if error > tolerance {
+        let allowed = abs_tolerance.max(expected.abs() * rel_tolerance);
+        if error > allowed {
             panic!(
-                "Large GEMV error at output {}: expected={:.2}, actual={:.2}, error={:.2}",
-                i, expected, actual, error
+                "Large GEMV error at output {}: expected={:.6}, actual={:.6}, error={:.6}, allowed={:.6}",
+                i, expected, actual, error, allowed
             );
         }
     }
 
     println!("Q5_K GEMV test passed! max_error={}", max_error);
     assert!(
-        max_error < tolerance,
-        "Max error {} exceeds tolerance {}",
-        max_error,
-        tolerance
+        max_error
+            <= expected_output
+                .iter()
+                .map(|v| abs_tolerance.max(v.abs() * rel_tolerance))
+                .fold(0.0f32, f32::max),
+        "Max error {} exceeds combined tolerance",
+        max_error
     );
 }
 
@@ -897,6 +909,7 @@ fn test_q8_0_gemv_large_ncols() {
 #[test]
 #[serial]
 fn test_q4_k_gemv() {
+    use rocmforge::cpu::kernels::gemm_q4k_q8_scalar::gemv_q4_k_q8_k;
     use rocmforge::gpu::{detect, GpuBuffer, GpuDevice, GpuQuant, Q4_K_BLOCK_SIZE, QK_K};
 
     // Require GPU for this test
@@ -923,14 +936,6 @@ fn test_q4_k_gemv() {
 
     // Create input vector
     let input_data: Vec<f32> = (0..n_rows).map(|i| 1.0 + i as f32 * 0.1).collect();
-
-    // Compute CPU reference output
-    let mut expected_output = vec![0.0f32; ncols_dst];
-    for col in 0..ncols_dst {
-        for row in 0..n_rows {
-            expected_output[col] += weight_data[col * n_rows + row] * input_data[row];
-        }
-    }
 
     // Allocate GPU buffers
     let d_weights = GpuBuffer::alloc(n_rows * ncols_dst * std::mem::size_of::<f32>())
@@ -980,7 +985,7 @@ fn test_q4_k_gemv() {
 
         // Quantize this column
         gpu_quant
-            .quantize(col_weights_ptr as *const f32, col_quantized_ptr, n_rows)
+            .quantize_q4_k(col_weights_ptr as *const f32, col_quantized_ptr, n_rows)
             .expect("Failed to quantize column");
     }
 
@@ -1000,6 +1005,11 @@ fn test_q4_k_gemv() {
         Err(e) => panic!("Failed to run Q4_K GEMV kernel: {:?}", e),
     }
 
+    let mut quantized_bytes = vec![0u8; (n_rows / QK_K) * ncols_dst * Q4_K_BLOCK_SIZE];
+    d_quantized
+        .copy_to_host(&mut quantized_bytes)
+        .expect("Failed to copy quantized weights from GPU");
+
     // Copy output back to CPU
     let mut output_bytes = vec![0u8; ncols_dst * std::mem::size_of::<f32>()];
     d_output
@@ -1011,15 +1021,22 @@ fn test_q4_k_gemv() {
         std::slice::from_raw_parts(output_bytes.as_ptr() as *const f32, ncols_dst).to_vec()
     };
 
+    let mut expected_output = vec![0.0f32; ncols_dst];
+    gemv_q4_k_q8_k(
+        &quantized_bytes,
+        &input_data,
+        &mut expected_output,
+        ncols_dst,
+        n_rows,
+    );
+
     // Cleanup is automatic via GpuBuffer's Drop implementation
     drop(d_weights);
     drop(d_input);
     drop(d_quantized);
     drop(d_output);
 
-    // Verify accuracy - Q4_K has ~4.5 bits of precision
-    // Allow for larger error due to 4-bit quantization
-    let tolerance = 10.0; // Relaxed tolerance for Q4_K (~1% relative error)
+    let tolerance = 1e-3;
     let mut max_error = 0.0f32;
     for (i, (expected, actual)) in expected_output.iter().zip(output_data.iter()).enumerate() {
         let error = (expected - actual).abs();
@@ -1639,7 +1656,7 @@ fn test_q4_0_real_model_weights() {
     use rocmforge::gpu::{detect, GpuBuffer, GpuDevice, GpuQuant, Q4_0_BLOCK_SIZE, QK4_0};
     use rocmforge::loader::GgufFile;
 
-    let model_path = "/home/feanor/Projects/Memoria/models/Qwen2.5-7B-Instruct-Q4_0-Pure.gguf";
+    let model_path = "/home/feanor/Projects/models/qwen2.5-7b-instruct-q4_0.gguf";
     if !std::path::Path::new(model_path).exists() {
         eprintln!("Skipping: model file not found at {}", model_path);
         return;

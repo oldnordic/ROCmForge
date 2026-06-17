@@ -18,7 +18,7 @@ use rocmforge::tokenizer::BpeTokenizer;
 use serial_test::serial;
 use std::path::Path;
 
-const MODEL_PATH: &str = "/home/feanor/Projects/Memoria/models/qwen2.5-0.5b-instruct-q4_0.gguf";
+const MODEL_PATH: &str = "/home/feanor/Projects/models/qwen2.5-0.5b-instruct-q4_0.gguf";
 const TOLERANCE: f32 = 1e-3; // Allow small floating-point differences
 
 fn skip_if_model_missing() -> bool {

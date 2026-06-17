@@ -24,7 +24,7 @@ fn encode_paris_is_the() {
             );
         }
     }
-    let tok = SpmTokenizer::from_gguf(&data);
+    let tok = SpmTokenizer::from_gguf(data);
     let ids = tok.encode("Paris is the", false);
     println!("encoded {:?}", ids);
     for &id in &ids {

@@ -50,18 +50,23 @@ __device__ inline float vec_dot_q5_k(const void* block_ptr, const float* vec, in
         const float d2 = d * sc2;
         const float min2 = dmin * m2;
 
+        // qh holds one high bit per element in a transposed layout: each byte
+        // covers 8 consecutive values, and bit position encodes the chunk/half.
         const int l = tid;
+        const int qh_byte = l >> 3;
+
         const uint8_t q4 = ql[l] & 0x0F;
-        const uint8_t high_bit = (qh[l] & u1) ? 16 : 0;
-        const float val1 = static_cast<float>(q4 + high_bit) / d1 + min1;
+        const uint8_t high_bit = (qh[qh_byte] & u1) ? 16 : 0;
+        const float val1 = d1 * static_cast<float>(q4 + high_bit) - min1;
         sum += val1 * vec[offset + j + l];
 
         const uint8_t q4_2 = (ql[l] >> 4) & 0x0F;
-        const uint8_t high_bit_2 = (qh[l] & u2) ? 16 : 0;
-        const float val2 = static_cast<float>(q4_2 + high_bit_2) / d2 + min2;
+        const uint8_t high_bit_2 = (qh[qh_byte] & u2) ? 16 : 0;
+        const float val2 = d2 * static_cast<float>(q4_2 + high_bit_2) - min2;
         sum += val2 * vec[offset + j + 32 + l];
 
         ql += 32;
+        qh += 8;
         is += 2;
         u1 <<= 2;
         u2 <<= 2;

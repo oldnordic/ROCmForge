@@ -19,7 +19,7 @@ fn test_q8_0_multirow_4col_matches_single() {
     // TODO: Implement multi-row kernel first
     // This test will verify 4-column multi-row output matches single-column
 
-    let model_path = "/home/feanor/Projects/Memoria/models/qwen2.5-0.5b-instruct-q8_0.gguf";
+    let model_path = "/home/feanor/Projects/models/qwen2.5-0.5b-instruct-q8_0.gguf";
 
     // Run inference with single-column kernel (current implementation)
     let output_single = run_inference(model_path, "single");
@@ -58,7 +58,7 @@ fn test_q8_0_multirow_8col_matches_single() {
     // TODO: Implement multi-row kernel first
     // This test will verify 8-column multi-row output matches single-column
 
-    let model_path = "/home/feanor/Projects/Memoria/models/qwen2.5-0.5b-instruct-q8_0.gguf";
+    let model_path = "/home/feanor/Projects/models/qwen2.5-0.5b-instruct-q8_0.gguf";
 
     // Run inference with single-column kernel (current implementation)
     let output_single = run_inference(model_path, "single");

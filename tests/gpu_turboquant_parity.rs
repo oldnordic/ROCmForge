@@ -40,6 +40,7 @@ mod turboquant_tests {
             kv_quant_bits: Some(3),
             turboquant_centroids: Some(vec![-3.0, -1.8, -1.0, -0.4, 0.4, 1.0, 1.8, 3.0]),
             qjl_scale: Some(0.25),
+            ..Default::default()
         }
     }
 

@@ -498,7 +498,7 @@ pub fn gpu_prefill_shortconv_layer_on_stream(
     )?;
 
     // 2. in_proj batched GEMM: [seq_len, h] x [h, 3h] -> [seq_len, 3h]
-    // We use scratch.gate as temporary for [seq_len, 3h].
+    // Reuse scratch.gate as transient storage for [seq_len, 3h].
     // Ensure ff_size is at least 3*h.
     let ff_size = config.intermediate_size;
     if ff_size < 3 * h {

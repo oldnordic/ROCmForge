@@ -2,11 +2,13 @@ use half::f16;
 use rocmforge::config::{
     AttentionLayout, FfnLayout, ModelConfig, TensorNameRegistry, TensorNamingScheme, TensorRole,
 };
-use rocmforge::gpu::error::GpuResult;
-use rocmforge::gpu::weights::{GpuLayerType, GpuShortconvWeights};
-use rocmforge::gpu::{GpuBuffer, GpuLayerWeights, WeightMeta};
+use rocmforge::gpu::{GpuBuffer, WeightMeta};
 use rocmforge::loader::GgmlType;
 
+#[allow(
+    dead_code,
+    reason = "shared test helper used by selected GPU integration tests"
+)]
 pub fn mock_model_config() -> ModelConfig {
     ModelConfig {
         num_layers: 2,
@@ -37,9 +39,14 @@ pub fn mock_model_config() -> ModelConfig {
         kv_quant_bits: None,
         turboquant_centroids: None,
         qjl_scale: None,
+        ..Default::default()
     }
 }
 
+#[allow(
+    dead_code,
+    reason = "shared test helper used by selected GPU integration tests"
+)]
 pub fn mock_gpu_meta(rows: usize, cols: usize, wtype: GgmlType, role: TensorRole) -> WeightMeta {
     WeightMeta {
         wtype,
@@ -50,6 +57,10 @@ pub fn mock_gpu_meta(rows: usize, cols: usize, wtype: GgmlType, role: TensorRole
     }
 }
 
+#[allow(
+    dead_code,
+    reason = "shared test helper used by selected GPU integration tests"
+)]
 pub fn mock_cpu_meta(
     rows: usize,
     cols: usize,
@@ -65,6 +76,10 @@ pub fn mock_cpu_meta(
     }
 }
 
+#[allow(
+    dead_code,
+    reason = "shared test helper used by selected GPU integration tests"
+)]
 pub fn upload_f32(device_id: i32, data: &[f32]) -> GpuBuffer {
     let bytes: Vec<u8> = data
         .iter()
@@ -76,6 +91,10 @@ pub fn upload_f32(device_id: i32, data: &[f32]) -> GpuBuffer {
     buf
 }
 
+#[allow(
+    dead_code,
+    reason = "shared test helper used by selected GPU integration tests"
+)]
 pub fn download_f32(buf: &GpuBuffer, count: usize) -> Vec<f32> {
     let mut bytes = vec![0u8; count * 4];
     buf.copy_to_host(&mut bytes).expect("helper: copy_to_host");
@@ -91,6 +110,10 @@ pub fn download_f32(buf: &GpuBuffer, count: usize) -> Vec<f32> {
     out
 }
 
+#[allow(
+    dead_code,
+    reason = "shared test helper used by selected GPU integration tests"
+)]
 pub fn upload_raw(device_id: i32, bytes: &[u8]) -> GpuBuffer {
     let mut buf =
         GpuBuffer::alloc_for_device(bytes.len(), device_id).expect("helper: upload_raw alloc");
@@ -98,9 +121,13 @@ pub fn upload_raw(device_id: i32, bytes: &[u8]) -> GpuBuffer {
     buf
 }
 
+#[allow(
+    dead_code,
+    reason = "shared test helper used by selected GPU integration tests"
+)]
 pub fn quantize_q4_0(data: &[f32]) -> Vec<u8> {
     let n = data.len();
-    assert!(n % 32 == 0);
+    assert!(n.is_multiple_of(32));
     let num_blocks = n / 32;
     let mut out = vec![0u8; num_blocks * 18];
     for b in 0..num_blocks {
@@ -129,6 +156,10 @@ pub fn quantize_q4_0(data: &[f32]) -> Vec<u8> {
     out
 }
 
+#[allow(
+    dead_code,
+    reason = "shared test helper used by selected GPU integration tests"
+)]
 pub fn max_abs_error(a: &[f32], b: &[f32]) -> f32 {
     a.iter()
         .zip(b.iter())

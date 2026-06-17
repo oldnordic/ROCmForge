@@ -50,7 +50,7 @@ mod prefill_tests {
     fn interleave_prefill_and_decode_slots() {
         let mut batch = DecodeBatch::new(4);
         let slot_prefill = batch
-            .add_sequence_with_prompt(42, &vec![1, 2, 3, 4, 5], 256)
+            .add_sequence_with_prompt(42, &[1, 2, 3, 4, 5], 256)
             .expect("add prefill");
         let slot_decode = batch.add_sequence(43, 256).expect("add decode");
 
@@ -157,7 +157,7 @@ mod prefill_tests {
         let mut batch = DecodeBatch::new(4);
         assert!(!batch.any_prefilling());
         batch
-            .add_sequence_with_prompt(42, &vec![1, 2, 3], 256)
+            .add_sequence_with_prompt(42, &[1, 2, 3], 256)
             .expect("add prefill");
         assert!(batch.any_prefilling());
         batch.prefill_next_chunk(0, 3).expect("prefill");

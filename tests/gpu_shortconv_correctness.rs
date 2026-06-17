@@ -71,6 +71,12 @@ fn test_gpu_shortconv_decode_parity() {
         shortconv: None,
         moe: None,
         weight_type: GgmlType::F32,
+        inp_gate: None,
+        proj: None,
+        post_attention_norm: None,
+        post_ffw_norm: None,
+        post_norm: None,
+        layer_output_scale: None,
     };
 
     let in_proj_data = (0..3 * h * h)
@@ -268,6 +274,12 @@ fn test_gpu_shortconv_prefill_parity() {
         shortconv: None,
         moe: None,
         weight_type: GgmlType::Q4_0,
+        inp_gate: None,
+        proj: None,
+        post_attention_norm: None,
+        post_ffw_norm: None,
+        post_norm: None,
+        layer_output_scale: None,
     };
 
     cpu_layer.shortconv = Some(CpuShortconvWeights {

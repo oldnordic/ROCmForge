@@ -112,10 +112,7 @@ pub unsafe fn dot_q4_k_q8_k_block_avx512(q4_block: &BlockQ4K, q8_block: &BlockQ8
 
     // Copy bsums to local array
     let mut bsums_local = [0i16; 16];
-    #[allow(
-        clippy::manual_memcpy,
-        reason = "packed struct field copy requires loop to avoid unaligned reference"
-    )]
+    #[allow(clippy::manual_memcpy, reason = "packed copy")]
     for i in 0..16 {
         bsums_local[i] = q8_block.bsums[i];
     }

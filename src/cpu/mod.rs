@@ -18,6 +18,7 @@ pub mod cache;
 pub mod error;
 pub mod features;
 pub mod forward;
+pub mod forward_graph_trace;
 pub mod graph;
 pub mod kernels;
 pub mod ops;

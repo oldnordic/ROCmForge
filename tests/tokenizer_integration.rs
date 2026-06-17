@@ -5,7 +5,7 @@
 use rocmforge::loader::GgufFile;
 use rocmforge::tokenizer::BpeTokenizer;
 
-const MODEL_PATH: &str = "/home/feanor/Projects/Memoria/models/qwen2.5-0.5b-instruct-q8_0.gguf";
+const MODEL_PATH: &str = "/home/feanor/Projects/models/qwen2.5-0.5b-instruct-q8_0.gguf";
 
 fn skip_if_model_missing() -> bool {
     !std::path::Path::new(MODEL_PATH).exists()

@@ -4,6 +4,16 @@
 #define QK_K 256
 #define Q4_K_BLOCK_SIZE 144
 
+__device__ inline void get_scale_min_k4(int j, const uint8_t* q, uint8_t* d, uint8_t* m) {
+    if (j < 4) {
+        *d = q[j] & 63;
+        *m = q[j + 4] & 63;
+    } else {
+        *d = (q[j + 4] & 0xF) | ((q[j - 4] >> 6) << 4);
+        *m = (q[j + 4] >> 4) | ((q[j] >> 6) << 4);
+    }
+}
+
 __device__ inline float vec_dot_q4_k(const void* block_ptr, const float* vec, int offset) {
     const int tid = threadIdx.x;
     const uint8_t* block_bytes = static_cast<const uint8_t*>(block_ptr);
@@ -15,14 +25,29 @@ __device__ inline float vec_dot_q4_k(const void* block_ptr, const float* vec, in
     const float dmin = __half2float(dmin_half);
 
     const uint8_t* qs = block_bytes + 16;
+    const uint8_t* scales = block_bytes + 4;
     if (fabsf(d) < 1e-7f) return 0.0f;
 
     float sum = 0.0f;
     for (int l = 0; l < 8; ++l) {
         const int i = tid * 8 + l;
-        const uint8_t packed = qs[i / 2];
-        const uint8_t q4 = (i % 2 == 0) ? (packed & 0x0F) : (packed >> 4);
-        sum += (static_cast<float>(q4) / d + dmin) * vec[offset + i];
+        const int chunk = i / 64;
+        const int pos_in_chunk = i % 64;
+        const int scale_idx = chunk * 2 + (pos_in_chunk < 32 ? 0 : 1);
+
+        uint8_t sc, m;
+        get_scale_min_k4(scale_idx, scales, &sc, &m);
+        const float scale = d * static_cast<float>(sc);
+        const float min = dmin * static_cast<float>(m);
+
+        // Q4_K qs layout: groups of 64 values; first 32 use low nibbles of 32
+        // bytes, next 32 use high nibbles of the same 32 bytes.
+        const int group = i / 64;
+        const int half = (i / 32) % 2; // 0 = low nibble, 1 = high nibble
+        const int byte_in_group = i % 32;
+        const uint8_t packed = qs[group * 32 + byte_in_group];
+        const uint8_t q4 = (half == 0) ? (packed & 0x0F) : (packed >> 4);
+        sum += (scale * static_cast<float>(q4) - min) * vec[offset + i];
     }
     return sum;
 }

@@ -27,6 +27,8 @@ pub(crate) struct Args {
     pub rerank_beam_length_penalty: f32,
     pub train_value_head_from_traces: Option<String>,
     pub save_value_head: Option<String>,
+    pub forward_graph_trace: Option<String>,
+    pub expected_attention: Option<String>,
 }
 
 fn usage() -> ! {
@@ -86,6 +88,12 @@ fn usage() -> ! {
         "  --draft-model <path>   Path to draft GGUF/RFM model file for speculative decoding"
     );
     eprintln!("  --speculative-tokens N Number of draft tokens to speculate per step [default: 4]");
+    eprintln!(
+        "  --forward-graph-trace <path>  Write a JSONL forward-graph trace for visualization"
+    );
+    eprintln!(
+        "  --expected-attention <json>   Optional meta mapping query pos -> expected key positions"
+    );
     eprintln!();
     eprintln!("Server mode:");
     eprintln!("  --server               Start OpenAI-compatible HTTP API server");
@@ -131,6 +139,8 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Args {
     let mut rerank_beam_length_penalty = 1.0f32;
     let mut train_value_head_from_traces: Option<String> = None;
     let mut save_value_head: Option<String> = None;
+    let mut forward_graph_trace: Option<String> = None;
+    let mut expected_attention: Option<String> = None;
 
     while let Some(flag) = args.next() {
         match flag.as_str() {
@@ -250,6 +260,12 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Args {
                     .parse()
                     .unwrap_or_else(|_| usage())
             }
+            "--forward-graph-trace" => {
+                forward_graph_trace = Some(args.next().unwrap_or_else(|| usage()))
+            }
+            "--expected-attention" => {
+                expected_attention = Some(args.next().unwrap_or_else(|| usage()))
+            }
             "-h" | "--help" => usage(),
             other => {
                 eprintln!("Unknown flag: {}", other);
@@ -292,6 +308,8 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Args {
         rerank_beam_length_penalty,
         train_value_head_from_traces,
         save_value_head,
+        forward_graph_trace,
+        expected_attention,
     };
 
     // Touch fields used only in gpu/server code paths to keep clippy happy

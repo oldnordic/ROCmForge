@@ -23,7 +23,29 @@ use crate::gpu::ops::{
     gpu_dispatch_gemv_residual_on_stream, gpu_dispatch_gemv_svd_on_stream,
     gpu_dispatch_gemv_with_fallback_on_stream, gpu_dispatch_rms_norm, supports_gemv_type,
 };
-use crate::gpu::weights::{GpuLayerType, GpuLayerWeights};
+use crate::gpu::weights::{GpuBuffer, GpuLayerType, GpuLayerWeights};
+
+fn layer_intermediate_dumps_enabled() -> bool {
+    // Off by default: dump_gpu_f32 forces a device->host sync on every call,
+    // so leaving it on in production adds one sync per dump point per layer.
+    // Set ROCMFORGE_DUMP_LAYER_INTERMEDIATES=1 to re-enable for bisection.
+    std::env::var("ROCMFORGE_DUMP_LAYER_INTERMEDIATES")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+}
+
+fn dump_gpu_f32(name: &str, buf: &GpuBuffer, n: usize) {
+    if !layer_intermediate_dumps_enabled() {
+        return;
+    }
+    let elems = buf.size() / std::mem::size_of::<f32>();
+    let n = n.min(elems);
+    if n == 0 {
+        return;
+    }
+    let v = buf.copy_to_host_vec().expect("dump");
+    eprintln!("[GPU] {}: {:?}", name, &v[..n]);
+}
 
 fn gpu_shortconv_fallback(
     device: &GpuDevice,
@@ -309,15 +331,7 @@ pub fn gpu_layer_forward_hybrid(
             )?;
 
             // 6. Attention decode
-            gpu_attention_decode_from_state(
-                device,
-                scratch,
-                kv,
-                layer_idx,
-                num_q_heads,
-                num_kv_heads,
-                attn_head_dim,
-            )?;
+            gpu_attention_decode_from_state(device, scratch, kv, layer_idx, pos, config)?;
 
             // 7. Attention output projection
             if supports_gemv_type(gpu_layer.attn_o_meta.wtype) {
@@ -555,6 +569,7 @@ pub fn gpu_layer_forward_hybrid(
         eps,
         device.stream(),
     )?;
+    dump_gpu_f32("attn_normed", &scratch.normed, 5);
 
     if supports_gemv_type(gpu_layer.attn_q_meta.wtype)
         && supports_gemv_type(gpu_layer.attn_k_meta.wtype)
@@ -630,6 +645,9 @@ pub fn gpu_layer_forward_hybrid(
             wtype: gpu_layer.attn_q_meta.wtype,
         });
     }
+    dump_gpu_f32("q", &scratch.q, 5);
+    dump_gpu_f32("k", &scratch.k, 5);
+    dump_gpu_f32("v", &scratch.v, 5);
 
     if let Some(q_norm_w) = gpu_layer.attn_q_norm.as_ref() {
         rms_norm_batched(
@@ -675,15 +693,12 @@ pub fn gpu_layer_forward_hybrid(
         device.stream(),
     )?;
 
-    gpu_attention_decode_from_state(
-        device,
-        scratch,
-        kv,
-        layer_idx,
-        num_q_heads,
-        num_kv_heads,
-        attn_head_dim,
-    )?;
+    dump_gpu_f32("q_rope", &scratch.q, 5);
+    dump_gpu_f32("k_rope", &scratch.k, 5);
+    dump_gpu_f32("v_raw", &scratch.v, 5);
+
+    gpu_attention_decode_from_state(device, scratch, kv, layer_idx, pos, config)?;
+    dump_gpu_f32("attn_out", &scratch.attn_out, 5);
 
     if supports_gemv_type(gpu_layer.attn_o_meta.wtype) {
         gpu_dispatch_gemv_on_stream(
@@ -717,8 +732,10 @@ pub fn gpu_layer_forward_hybrid(
             wtype: gpu_layer.attn_o_meta.wtype,
         });
     }
+    dump_gpu_f32("attn_layer_out", &scratch.layer_out, 5);
 
     residual_add_inplace(device, &scratch.hidden, &scratch.layer_out, h)?;
+    dump_gpu_f32("after_attn_resid", &scratch.hidden, 5);
 
     gpu_dispatch_rms_norm(
         device,
@@ -729,6 +746,7 @@ pub fn gpu_layer_forward_hybrid(
         eps,
         device.stream(),
     )?;
+    dump_gpu_f32("ffn_normed", &scratch.normed, 5);
 
     if gpu_dispatch_moe_ffn_on_stream(device, gpu_layer, scratch, h, ff_size, config)? {
         return Ok(());
@@ -804,6 +822,8 @@ pub fn gpu_layer_forward_hybrid(
                 wtype: gate_meta.wtype,
             });
         }
+        dump_gpu_f32("ffn_gate_silu", &scratch.gate, 5);
+        dump_gpu_f32("ffn_swiglu", &scratch.swiglu, 5);
     } else {
         // Standard FFN (non-SwiGLU): up -> gelu -> down
         if supports_gemv_type(gpu_layer.ffn_up_meta.wtype) {
@@ -877,8 +897,10 @@ pub fn gpu_layer_forward_hybrid(
             wtype: gpu_layer.ffn_down_meta.wtype,
         });
     }
+    dump_gpu_f32("ffn_down_out", &scratch.gate, 5);
 
     residual_add_inplace(device, &scratch.hidden, &scratch.gate, h)?;
+    dump_gpu_f32("after_ffn_resid", &scratch.hidden, 5);
 
     Ok(())
 }

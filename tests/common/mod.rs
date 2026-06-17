@@ -9,6 +9,10 @@ const DEFAULT_GPU_TEST_LOCK_TIMEOUT_SECS: u64 = 30;
 
 pub mod helpers;
 
+#[allow(
+    dead_code,
+    reason = "shared test macro support; referenced only by some GPU tests"
+)]
 pub const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
 
 fn gpu_test_lock_timeout_secs() -> u64 {
@@ -70,16 +74,17 @@ pub fn get_safe_test_vram_budget() -> Option<u64> {
 ///
 /// This intentionally returns the guarded test budget rather than raw free
 /// VRAM so existing callers inherit the safer semantics automatically.
+#[allow(dead_code, reason = "shared backward-compatible test helper")]
 pub fn get_free_vram() -> Option<u64> {
     get_safe_test_vram_budget()
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared test macro support")]
 pub fn real_model_gpu_tests_enabled() -> bool {
     rocmforge::gpu::real_model_gpu_tests_enabled()
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared test macro support")]
 pub fn experimental_gpu_tests_enabled() -> bool {
     rocmforge::gpu::run_experimental_gpu_tests_enabled()
         && rocmforge::gpu::experimental_gpu_kernels_enabled()
@@ -88,7 +93,7 @@ pub fn experimental_gpu_tests_enabled() -> bool {
 /// Check if GPU CLI safe runner is available.
 ///
 /// Verifies that scripts/gpu_safe_run.sh exists and is executable.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared test macro support")]
 pub fn gpu_safe_runner_available() -> bool {
     let runner_path = std::path::Path::new("scripts/gpu_safe_run.sh");
     runner_path.exists() && runner_path.is_file()

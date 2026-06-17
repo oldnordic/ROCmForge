@@ -50,6 +50,9 @@ pub fn gpu_full_forward_hybrid(
         }
     }
 
+    // Run all layers back-to-back on the same HIP stream.  Kernels and the
+    // per-layer paged-cache scatter are asynchronous, so the CPU queues the
+    // entire token instead of waiting after each layer.
     for layer_idx in 0..config.num_layers {
         layer::gpu_layer_forward_hybrid(
             device,
@@ -63,27 +66,9 @@ pub fn gpu_full_forward_hybrid(
             config,
         )?;
 
-        // CRITICAL: Synchronize between layers to prevent buffer reuse race condition
-        // All layers share the same scratch buffers (hidden, normed, q, k, v, etc.)
-        // Without synchronization, layer N+1 can start writing to these buffers before
-        // layer N's kernels finish reading from them, causing corruption.
-        device.synchronize()?;
-
-        let mut check_hidden = vec![0.0f32; config.hidden_size];
-        utils::download_f32(&scratch.hidden, &mut check_hidden)?;
-        for (idx, &val) in check_hidden.iter().enumerate() {
-            if val.is_nan() {
-                return Err(GpuError::InvalidOperation {
-                    message: format!(
-                        "NaN detected in scratch.hidden after layer {} at index {}",
-                        layer_idx, idx
-                    ),
-                });
-            }
-        }
-
-        // Scatter the newly written token at `pos` to the paged cache
-        kv.scatter_to_paged(layer_idx, pos, 1)?;
+        // Move the just-written token from the contiguous working view to the
+        // paged KV cache on the same stream; no host synchronization here.
+        kv.scatter_to_paged_on_stream(layer_idx, pos, 1, device.stream())?;
     }
 
     if matches!(logits_mode, GpuLogitsMode::Skip) {
@@ -104,18 +89,6 @@ pub fn gpu_full_forward_hybrid(
                     config.rms_norm_eps,
                     device.stream(),
                 )?;
-                let mut check_normed = vec![0.0f32; h];
-                utils::download_f32(&scratch.normed, &mut check_normed)?;
-                for (idx, &val) in check_normed.iter().enumerate() {
-                    if val.is_nan() {
-                        return Err(GpuError::InvalidOperation {
-                            message: format!(
-                                "NaN detected in scratch.normed (after output norm) at index {}",
-                                idx
-                            ),
-                        });
-                    }
-                }
                 if let Some(dense) = gpu_weights.lm_head.as_dense() {
                     gpu_dispatch_gemv_on_stream(
                         device,

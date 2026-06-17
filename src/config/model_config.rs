@@ -442,7 +442,7 @@ fn configure_gemma4(
     // Layer type pattern from metadata; fall back to shape-based heuristic.
     let sliding_pattern = meta
         .resolve_bool_array(&["attention.sliding_window_pattern"])
-        .unwrap_or_else(Vec::new);
+        .unwrap_or_default();
 
     let rope_theta_full = meta.rope_freq_base(config.rope_theta);
     let rope_theta_swa = meta.rope_freq_base_swa().unwrap_or(10_000.0);
@@ -488,17 +488,13 @@ fn configure_gemma4(
             .map(|t| t.dims[1] as usize)
             .unwrap_or(config.intermediate_size);
 
-        let q_head_dim_layer = if num_heads > 0 { q_size / num_heads } else { 0 };
-        let kv_head_dim_layer = if num_kv_heads > 0 {
-            kv_size / num_kv_heads
-        } else {
-            0
-        };
+        let q_head_dim_layer = q_size.checked_div(num_heads).unwrap_or(0);
+        let kv_head_dim_layer = kv_size.checked_div(num_kv_heads).unwrap_or(0);
 
         let is_sliding = sliding_pattern
             .get(layer)
             .copied()
-            .unwrap_or_else(|| q_head_dim_layer == q_head_dim);
+            .unwrap_or(q_head_dim_layer == q_head_dim);
 
         let (theta, partial_factor, window) = if is_sliding {
             (rope_theta_swa, 1.0f32, sliding_window)

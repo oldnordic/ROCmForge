@@ -185,15 +185,7 @@ pub(in crate::gpu::forward) fn gpu_layer_forward_from_state_on_stream(
             )?;
 
             // 6. Attention decode
-            gpu_attention_decode_from_state(
-                device,
-                scratch,
-                kv,
-                layer_idx,
-                num_q_heads,
-                num_kv_heads,
-                attn_head_dim,
-            )?;
+            gpu_attention_decode_from_state(device, scratch, kv, layer_idx, 0, config)?;
 
             // 7. Attention output projection
             gpu_dispatch_gemv_on_stream(
@@ -512,15 +504,7 @@ pub(in crate::gpu::forward) fn gpu_layer_forward_from_state_on_stream(
 
     // Note: RoPE and KV-write are now handled inside the conditional blocks above
 
-    gpu_attention_decode_from_state(
-        device,
-        scratch,
-        kv,
-        layer_idx,
-        num_q_heads,
-        num_kv_heads,
-        attn_head_dim,
-    )?;
+    gpu_attention_decode_from_state(device, scratch, kv, layer_idx, 0, config)?;
 
     let mut attn_residual_fused = false;
     if gpu_layer.attn_o_svd.is_none() {

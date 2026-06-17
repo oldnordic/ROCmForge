@@ -26,10 +26,7 @@ fn logits_mode_for_prompt_pos(
 }
 
 #[cfg(feature = "gpu")]
-#[allow(
-    clippy::too_many_arguments,
-    reason = "CLI prompt path passes many GPU/CPU/context handles together"
-)]
+#[allow(clippy::too_many_arguments, reason = "CLI shape")]
 pub(crate) fn run_decode_style_prompt_path(
     device: &gpu::GpuDevice,
     gpu_weights: &GpuModelWeights,

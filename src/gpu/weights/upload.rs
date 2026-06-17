@@ -13,6 +13,8 @@ pub(super) fn supports_gpu_matrix_type(wtype: GgmlType) -> bool {
             | GgmlType::Q4_0
             | GgmlType::Q4_1
             | GgmlType::Q4_K
+            | GgmlType::Q5_0
+            | GgmlType::Q5_1
             | GgmlType::Q5_K
             | GgmlType::Q6_K
             | GgmlType::Q8_0
@@ -366,6 +368,7 @@ mod matrix_meta_tests {
             kv_quant_bits: None,
             turboquant_centroids: None,
             qjl_scale: None,
+            ..Default::default()
         }
     }
 
@@ -380,7 +383,7 @@ mod matrix_meta_tests {
             true,
             false,
         )
-        .unwrap();
+        .expect("lm head matrix meta");
 
         assert!(!meta.needs_transpose);
         assert_eq!(meta.role, TensorRole::LmHead);
@@ -397,10 +400,36 @@ mod matrix_meta_tests {
             true,
             true,
         )
-        .unwrap();
+        .expect("tied lm head matrix meta");
 
         assert!(!meta.needs_transpose);
         assert_eq!(meta.role, TensorRole::TiedLmHead);
+    }
+
+    #[test]
+    fn supports_q5_matrix_types() {
+        let config = make_test_config();
+        let meta_q5_0 = build_matrix_meta(
+            "blk.0.attn_q.weight",
+            &[1024, 1024],
+            GgmlType::Q5_0,
+            &config,
+            false,
+            false,
+        )
+        .expect("q5_0 matrix meta");
+        assert_eq!(meta_q5_0.wtype, GgmlType::Q5_0);
+
+        let meta_q5_1 = build_matrix_meta(
+            "blk.0.attn_q.weight",
+            &[1024, 1024],
+            GgmlType::Q5_1,
+            &config,
+            false,
+            false,
+        )
+        .expect("q5_1 matrix meta");
+        assert_eq!(meta_q5_1.wtype, GgmlType::Q5_1);
     }
 
     #[test]
@@ -409,7 +438,7 @@ mod matrix_meta_tests {
         let err = build_matrix_meta(
             "blk.0.attn_q.weight",
             &[1024, 1024],
-            GgmlType::Q5_0,
+            GgmlType::BF16,
             &config,
             false,
             false,

@@ -47,7 +47,7 @@ pub fn gpu_unpack_q4_split(
 }
 
 /// GPU-accelerated unpacking of fused FFN gate-up block groups into gate, up, interleaved, and tile4 layouts.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, reason = "launch ABI")]
 pub fn gpu_unpack_q4_fused_gate_up(
     input_fused: *const u8,
     output_gate: *mut u8,
