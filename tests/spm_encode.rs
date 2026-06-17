@@ -1,10 +1,21 @@
 use rocmforge::loader::{GgufFile, TokenizerData};
 use rocmforge::tokenizer::SpmTokenizer;
+use std::path::Path;
+
+const MODEL_PATH: &str = "/home/feanor/Projects/models/gemma-4-e2b-ollama.gguf";
+
+fn skip_if_model_missing() -> bool {
+    !Path::new(MODEL_PATH).exists()
+}
 
 #[test]
 fn encode_paris_is_the() {
-    let path = "/home/feanor/Projects/models/gemma-4-e2b-ollama.gguf";
-    let file = GgufFile::open(path).expect("open ollama gemma4 gguf");
+    if skip_if_model_missing() {
+        eprintln!("{} missing, skipping test.", MODEL_PATH);
+        return;
+    }
+
+    let file = GgufFile::open(MODEL_PATH).expect("open ollama gemma4 gguf");
     let data: &TokenizerData = file.tokenizer_data();
     println!("model={:?} pre={:?}", data.model, data.pre);
     println!(
