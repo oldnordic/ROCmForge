@@ -32,11 +32,13 @@ pub fn desktop_vram_reservation() -> usize {
 /// Safety margin for VRAM allocations (10% of free VRAM).
 pub const VRAM_SAFETY_MARGIN_RATIO: f64 = 0.1;
 
-/// Additional guardrail for full model loads.
+/// Model load should use actual available VRAM minus small margin.
 ///
-/// Model loading performs many allocations back-to-back, so keep a larger
-/// buffer than the one-off allocation guard.
-pub const MODEL_LOAD_SAFE_RATIO: f64 = 0.7;
+/// Changed from arbitrary 70% ratio to 95% to use actual VRAM math:
+/// - Model needs: weights + KV cache + scratch buffers
+/// - Available: total VRAM - currently used
+/// - Only reject if model needs > actual available (with 5% fragmentation margin)
+pub const MODEL_LOAD_SAFE_RATIO: f64 = 0.95;
 
 #[derive(Clone, Copy, Debug)]
 pub struct VramBudget {
