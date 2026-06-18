@@ -141,6 +141,10 @@ pub fn gpu_layer_forward_hybrid(
     pos: usize,
     token_id: u32,
     config: &ModelConfig,
+    // Gemma4 PLE: shared model-level buffers (optional)
+    shared_ple_token_emb: Option<&GpuBuffer>,
+    shared_ple_model_proj: Option<&GpuBuffer>,
+    shared_ple_proj_norm: Option<&GpuBuffer>,
 ) -> GpuResult<()> {
     record_layer_invocation();
 
@@ -185,22 +189,31 @@ pub fn gpu_layer_forward_hybrid(
             // 0. Per-Layer Embedding (PLE) for Gemma4
             if config.architecture == "gemma4" && config.hidden_size_per_layer_input > 0 {
                 use crate::gpu::forward::ple::gpu_compute_ple_inputs_on_stream;
+
+                // Use shared model-level PLE buffers if layer-level is None (optimization)
+                let ple_token_emb = gpu_layer
+                    .per_layer_token_emb
+                    .as_ref()
+                    .map(|b| b.as_ptr() as *const f32)
+                    .or_else(|| shared_ple_token_emb.map(|b| b.as_ptr() as *const f32));
+                let ple_model_proj = gpu_layer
+                    .per_layer_model_proj
+                    .as_ref()
+                    .map(|b| b.as_ptr() as *const f32)
+                    .or_else(|| shared_ple_model_proj.map(|b| b.as_ptr() as *const f32));
+                let ple_proj_norm = gpu_layer
+                    .per_layer_proj_norm
+                    .as_ref()
+                    .map(|b| b.as_ptr() as *const f32)
+                    .or_else(|| shared_ple_proj_norm.map(|b| b.as_ptr() as *const f32));
+
                 gpu_compute_ple_inputs_on_stream(
                     device,
                     token_id,
                     scratch.hidden.as_ptr() as *const f32,
-                    gpu_layer
-                        .per_layer_token_emb
-                        .as_ref()
-                        .map(|b| b.as_ptr() as *const f32),
-                    gpu_layer
-                        .per_layer_model_proj
-                        .as_ref()
-                        .map(|b| b.as_ptr() as *const f32),
-                    gpu_layer
-                        .per_layer_proj_norm
-                        .as_ref()
-                        .map(|b| b.as_ptr() as *const f32),
+                    ple_token_emb,
+                    ple_model_proj,
+                    ple_proj_norm,
                     scratch.ple_input.as_ref().map(|b| b.as_ptr() as *mut f32),
                     layer_idx,
                     config,

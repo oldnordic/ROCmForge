@@ -57,6 +57,11 @@ pub fn gpu_full_forward_hybrid(
     // per-layer paged-cache scatter are asynchronous, so the CPU queues the
     // entire token instead of waiting after each layer.
     for layer_idx in 0..config.num_layers {
+        // Extract shared PLE buffers from model-level weights for Gemma4
+        let shared_ple_token_emb = gpu_weights.per_layer_token_emb.as_ref();
+        let shared_ple_model_proj = gpu_weights.per_layer_model_proj.as_ref().and_then(|t| t.as_dense());
+        let shared_ple_proj_norm = gpu_weights.per_layer_proj_norm.as_ref();
+
         layer::gpu_layer_forward_hybrid(
             device,
             gpu_weights.layer(layer_idx),
@@ -68,6 +73,9 @@ pub fn gpu_full_forward_hybrid(
             pos,
             token_id,
             config,
+            shared_ple_token_emb,
+            shared_ple_model_proj,
+            shared_ple_proj_norm,
         )?;
 
         // Move the just-written token from the contiguous working view to the

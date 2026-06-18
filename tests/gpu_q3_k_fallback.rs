@@ -100,6 +100,9 @@ fn test_gpu_q2k_q3k_fallback_correctness() {
         rope_sin,
         rope_cos,
         &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
         false,
     )
     .expect("CPU layer forward should succeed");
@@ -116,6 +119,9 @@ fn test_gpu_q2k_q3k_fallback_correctness() {
         0,
         0, // token_id (dummy value since hidden is directly uploaded)
         &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
     )
     .expect("GPU hybrid layer forward should succeed");
 

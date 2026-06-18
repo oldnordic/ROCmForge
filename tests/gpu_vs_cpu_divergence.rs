@@ -156,6 +156,9 @@ fn test_cpu_vs_gpu_divergence_qwen() {
         &mut gpu_scratch,
         &mut cpu_scratch,
         &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
     )
     .expect("GPU embed");
     device.synchronize().expect("sync");
@@ -189,6 +192,9 @@ fn test_cpu_vs_gpu_divergence_qwen() {
         &mut cpu_scr,
         0,
         &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
     )
     .expect("CPU full forward");
 
@@ -210,6 +216,9 @@ fn test_cpu_vs_gpu_divergence_qwen() {
         &mut gpu_scr,
         &mut cpu_scr_gpu,
         &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
     )
     .expect("GPU embed");
     gpu::gpu_full_forward_hybrid(
@@ -221,6 +230,9 @@ fn test_cpu_vs_gpu_divergence_qwen() {
         &mut cpu_scr_gpu,
         0,
         &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
         gpu::GpuLogitsMode::GreedyArgmax,
         token_id,
     )
@@ -359,6 +371,9 @@ fn test_cpu_vs_gpu_layer0_stage_divergence_qwen() {
         rope_sin,
         rope_cos,
         &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
         false,
     )
     .expect("CPU layer 0");
@@ -384,6 +399,9 @@ fn test_cpu_vs_gpu_layer0_stage_divergence_qwen() {
         &mut gpu_scratch,
         &mut cpu_scratch_gpu,
         &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
     )
     .expect("GPU embed");
     // overwrite with the same CPU input so the comparison is apples-to-apples
@@ -408,6 +426,9 @@ fn test_cpu_vs_gpu_layer0_stage_divergence_qwen() {
         0,
         0, // token_id (dummy value)
         &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
     )
     .expect("GPU layer 0");
     device.synchronize().expect("sync");
@@ -1192,6 +1213,9 @@ fn test_qwen_gpu_greedy_token_matches_cpu() {
             &rope_sin,
             &rope_cos,
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
             false,
         )
         .expect("CPU layer");
@@ -1230,6 +1254,9 @@ fn test_qwen_gpu_greedy_token_matches_cpu() {
         &mut gpu_scratch,
         &mut cpu_scratch_gpu,
         &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
     )
     .expect("GPU embed");
 
@@ -1245,6 +1272,9 @@ fn test_qwen_gpu_greedy_token_matches_cpu() {
             0,
             0, // token_id (dummy value)
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
         )
         .expect("GPU layer");
     }
@@ -1337,6 +1367,9 @@ fn test_gpu_batched_prefill_matches_cpu_multi_token_qwen() {
             &mut cpu_scratch,
             pos,
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
         )
         .expect("CPU decode step");
     }
@@ -1384,6 +1417,9 @@ fn test_gpu_batched_prefill_matches_cpu_multi_token_qwen() {
         &tokens,
         0,
         &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
         gpu::GpuLogitsMode::DownloadToHost,
     )
     .expect("GPU batched prefill");

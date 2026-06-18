@@ -116,6 +116,9 @@ fn test_gpu_state_accumulation_across_layers() {
             rope_sin,
             rope_cos,
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
             false,
         )
         .expect("CPU layer forward should succeed");
@@ -132,6 +135,9 @@ fn test_gpu_state_accumulation_across_layers() {
             0,
             0, // token_id (dummy value since hidden is directly uploaded)
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
         )
         .expect("GPU layer forward should succeed");
 
@@ -206,6 +212,9 @@ fn test_gpu_state_accumulation_across_layers() {
             rope_sin,
             rope_cos,
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
             false,
         )
         .expect("CPU accumulated layer forward should succeed");
@@ -222,6 +231,9 @@ fn test_gpu_state_accumulation_across_layers() {
             decode_pos,
             0, // token_id (dummy value)
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
         )
         .expect("GPU accumulated layer forward should succeed");
 

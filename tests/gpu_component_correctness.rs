@@ -185,6 +185,9 @@ fn test_gpu_single_layer_forward_matches_cpu() {
         rope_sin,
         rope_cos,
         &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
         false,
     )
     .expect("CPU layer forward should succeed");
@@ -201,6 +204,9 @@ fn test_gpu_single_layer_forward_matches_cpu() {
         0,
         0, // token_id (dummy value)
         &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
     )
     .expect("GPU layer forward should succeed");
 

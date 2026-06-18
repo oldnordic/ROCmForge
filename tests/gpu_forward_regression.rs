@@ -138,6 +138,9 @@ fn test_ffn_down_dimensions_correct_in_hybrid_forward() {
         0, // pos
         0, // token_id (dummy value for this test)
         &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
     )
     .expect("GPU forward should succeed without memory fault");
 

@@ -18,6 +18,9 @@ pub(super) fn load_for_device(
     layer: usize,
     config: &ModelConfig,
     device_id: i32,
+    shared_ple_token_emb: Option<&GpuBuffer>,
+    shared_ple_model_proj: Option<&GpuBuffer>,
+    shared_ple_proj_norm: Option<&GpuBuffer>,
 ) -> GpuResult<GpuLayerWeights> {
     let load_weight = |name: &str| -> GpuResult<(GpuBuffer, WeightMeta)> {
         let t = file
@@ -482,38 +485,12 @@ pub(super) fn load_for_device(
     };
 
     // PLE per-layer token embeddings and projections (optional, only for gemma4)
+    // For Gemma4, use shared model-level PLE buffers to avoid 35x VRAM duplication
     let (per_layer_token_emb, per_layer_model_proj, per_layer_proj_norm) =
         if config.architecture == "gemma4" {
-            let per_layer_token_emb_name = config
-                .tensor_registry
-                .resolve(TensorName::PerLayerTokenEmb, layer);
-            let per_layer_model_proj_name = config
-                .tensor_registry
-                .resolve(TensorName::PerLayerModelProj, layer);
-            let per_layer_proj_norm_name = config
-                .tensor_registry
-                .resolve(TensorName::PerLayerProjNorm, layer);
-
-            let per_layer_token_emb = match load_weight_opt(&per_layer_token_emb_name)? {
-                Some((buf, _meta)) => Some(buf),
-                None => None,
-            };
-
-            let per_layer_model_proj = match load_weight_opt(&per_layer_model_proj_name)? {
-                Some((buf, _meta)) => Some(buf),
-                None => None,
-            };
-
-            let per_layer_proj_norm = match load_f32_opt(&per_layer_proj_norm_name)? {
-                Some(buf) => Some(buf),
-                None => None,
-            };
-
-            (
-                per_layer_token_emb,
-                per_layer_model_proj,
-                per_layer_proj_norm,
-            )
+            // Use model-level shared PLE buffers (passed as parameters)
+            // Store None here - forward pass will check model weights for shared PLE
+            (None, None, None)
         } else {
             (None, None, None)
         };

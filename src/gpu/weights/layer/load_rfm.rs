@@ -16,6 +16,7 @@ use super::{
 };
 use crate::config::{AttentionLayout, ModelConfig, TensorName, TensorNamingScheme};
 use crate::cpu::transpose::compute_transpose_flag;
+use crate::gpu::{GpuWeightTensor};
 use crate::gpu::kernels::quant;
 use crate::loader::{GgmlType, RfmFile, RfmType};
 
@@ -24,6 +25,9 @@ pub(super) fn load_for_device(
     layer: usize,
     config: &ModelConfig,
     device_id: i32,
+    shared_ple_token_emb: Option<&GpuBuffer>,
+    shared_ple_model_proj: Option<&GpuWeightTensor>,
+    shared_ple_proj_norm: Option<&GpuBuffer>,
 ) -> GpuResult<GpuLayerWeights> {
     let load_rfm_weight = |name: &str,
                            needs_transpose: bool|
@@ -800,59 +804,16 @@ pub(super) fn load_for_device(
     };
 
     // PLE per-layer token embeddings and projections (optional, only for gemma4)
+    // For Gemma4, use shared model-level PLE buffers to avoid 35x VRAM duplication
     let (per_layer_token_emb, per_layer_model_proj, per_layer_proj_norm) =
         if config.architecture == "gemma4" {
-            let per_layer_token_emb_name = config
-                .tensor_registry
-                .resolve(TensorName::PerLayerTokenEmb, layer);
-            let per_layer_model_proj_name = config
-                .tensor_registry
-                .resolve(TensorName::PerLayerModelProj, layer);
-            let per_layer_proj_norm_name = config
-                .tensor_registry
-                .resolve(TensorName::PerLayerProjNorm, layer);
+            // Use model-level shared PLE buffers (passed as parameters)
+            // Extract buffer from GpuWeightTensor::Dense for model_proj
+            let shared_proj_buf = shared_ple_model_proj
+                .and_then(|t| t.as_dense());
 
-            let per_layer_token_emb_result = if let Some(t) = file
-                .tensor(&per_layer_token_emb_name)
-                .map_err(|e| GpuError::HipApiError {
-                    code: -1,
-                    description: format!("tensor lookup failed: {}", e),
-                })? {
-                let (buf, _meta, _svd) = load_rfm_weight(&per_layer_token_emb_name, false)?;
-                Some(buf)
-            } else {
-                None
-            };
-
-            let per_layer_model_proj_result = if let Some(t) = file
-                .tensor(&per_layer_model_proj_name)
-                .map_err(|e| GpuError::HipApiError {
-                    code: -1,
-                    description: format!("tensor lookup failed: {}", e),
-                })? {
-                let (buf, _meta, _svd) = load_rfm_weight(&per_layer_model_proj_name, false)?;
-                Some(buf)
-            } else {
-                None
-            };
-
-            let per_layer_proj_norm_result = if let Some(t) = file
-                .tensor(&per_layer_proj_norm_name)
-                .map_err(|e| GpuError::HipApiError {
-                    code: -1,
-                    description: format!("tensor lookup failed: {}", e),
-                })? {
-                let (buf, _meta, _svd) = load_rfm_weight(&per_layer_proj_norm_name, false)?;
-                Some(buf)
-            } else {
-                None
-            };
-
-            (
-                per_layer_token_emb_result,
-                per_layer_model_proj_result,
-                per_layer_proj_norm_result,
-            )
+            // Store None here - forward pass will check model weights for shared PLE
+            (None, None, None)
         } else {
             (None, None, None)
         };

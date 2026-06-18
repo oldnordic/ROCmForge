@@ -134,6 +134,9 @@ fn test_ffn_down_individual_vs_layer_forward() {
         rope_sin,
         rope_cos,
         &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
         false,
     )
     .expect("CPU layer forward should succeed");
@@ -150,6 +153,9 @@ fn test_ffn_down_individual_vs_layer_forward() {
         0,
         0, // token_id (dummy value since hidden is uploaded directly)
         &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
     )
     .expect("GPU layer forward should succeed");
 

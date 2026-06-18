@@ -59,6 +59,9 @@ fn test_q4_0_dequantization_correctness() {
             &mut cpu_scratch,
             pos,
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
         )
         .expect("CPU forward should succeed");
     }
@@ -83,6 +86,9 @@ fn test_q4_0_dequantization_correctness() {
             &mut gpu_scratch,
             &mut host_scratch,
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
         )
         .expect("GPU embed should succeed");
 
@@ -95,6 +101,9 @@ fn test_q4_0_dequantization_correctness() {
             &mut host_scratch,
             pos,
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
             rocmforge::gpu::GpuLogitsMode::DownloadToHost,
             token_id,
         )
@@ -175,6 +184,9 @@ fn test_fusion_kernel_coherence() {
             &mut gpu_scratch,
             &mut host_scratch,
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
         )
         .expect("GPU embed should succeed");
 
@@ -187,6 +199,9 @@ fn test_fusion_kernel_coherence() {
             &mut host_scratch,
             pos,
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
             rocmforge::gpu::GpuLogitsMode::DownloadToHost,
             token_id,
         )
@@ -220,6 +235,9 @@ fn test_fusion_kernel_coherence() {
             &mut gpu_scratch,
             &mut host_scratch,
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
         )
         .expect("GPU embed should succeed");
 
@@ -232,6 +250,9 @@ fn test_fusion_kernel_coherence() {
             &mut host_scratch,
             pos,
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
             rocmforge::gpu::GpuLogitsMode::DownloadToHost,
             current_token,
         )
@@ -326,6 +347,9 @@ fn test_single_layer_correctness() {
         rope_sin,
         rope_cos,
         &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
         false,
     )
     .expect("CPU layer forward should succeed");
@@ -358,6 +382,9 @@ fn test_single_layer_correctness() {
         0,
         0, // token_id (dummy value)
         &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
     )
     .expect("GPU layer forward should succeed");
 

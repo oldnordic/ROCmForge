@@ -3,6 +3,7 @@ use super::super::vram_budget::active_or_default_device_id;
 use super::buffer::GpuBuffer;
 use super::metadata::WeightMeta;
 use crate::config::ModelConfig;
+use crate::gpu::GpuWeightTensor;
 use crate::loader::{GgufFile, RfmFile};
 
 #[path = "layer/estimate.rs"]
@@ -185,7 +186,15 @@ impl GpuLayerWeights {
     /// Returns error if any allocation or transfer fails.
     /// On error, all allocated memory is freed via Drop.
     pub fn load(file: &GgufFile, layer: usize, config: &ModelConfig) -> GpuResult<Self> {
-        Self::load_for_device(file, layer, config, active_or_default_device_id())
+        Self::load_for_device(
+            file,
+            layer,
+            config,
+            active_or_default_device_id(),
+            None,
+            None,
+            None,
+        )
     }
 
     pub fn load_for_device(
@@ -193,13 +202,32 @@ impl GpuLayerWeights {
         layer: usize,
         config: &ModelConfig,
         device_id: i32,
+        shared_ple_token_emb: Option<&GpuBuffer>,
+        shared_ple_model_proj: Option<&GpuBuffer>,
+        shared_ple_proj_norm: Option<&GpuBuffer>,
     ) -> GpuResult<Self> {
-        load_gguf::load_for_device(file, layer, config, device_id)
+        load_gguf::load_for_device(
+            file,
+            layer,
+            config,
+            device_id,
+            shared_ple_token_emb,
+            shared_ple_model_proj,
+            shared_ple_proj_norm,
+        )
     }
 
     /// Load a single layer's weights from an RFM model file into GPU memory.
     pub fn load_rfm(file: &RfmFile, layer: usize, config: &ModelConfig) -> GpuResult<Self> {
-        Self::load_rfm_for_device(file, layer, config, active_or_default_device_id())
+        Self::load_rfm_for_device(
+            file,
+            layer,
+            config,
+            active_or_default_device_id(),
+            None,
+            None,
+            None,
+        )
     }
 
     pub fn load_rfm_for_device(
@@ -207,8 +235,19 @@ impl GpuLayerWeights {
         layer: usize,
         config: &ModelConfig,
         device_id: i32,
+        shared_ple_token_emb: Option<&GpuBuffer>,
+        shared_ple_model_proj: Option<&GpuWeightTensor>,
+        shared_ple_proj_norm: Option<&GpuBuffer>,
     ) -> GpuResult<Self> {
-        load_rfm::load_for_device(file, layer, config, device_id)
+        load_rfm::load_for_device(
+            file,
+            layer,
+            config,
+            device_id,
+            shared_ple_token_emb,
+            shared_ple_model_proj,
+            shared_ple_proj_norm,
+        )
     }
 }
 

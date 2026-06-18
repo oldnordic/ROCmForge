@@ -136,6 +136,9 @@ fn test_gpu_embed_real_model_matches_cpu_hidden() {
         &mut gpu_scratch,
         &mut host_scratch,
         &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
     )
     .expect("GPU embedding should succeed");
 
@@ -192,6 +195,9 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
             &mut gpu_scratch,
             &mut host_scratch,
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
         )
         .expect("GPU embed should succeed");
         gpu::gpu_full_forward_hybrid(
@@ -203,6 +209,9 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
             &mut host_scratch,
             pos,
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
             gpu::GpuLogitsMode::DownloadToHost,
             token_id,
         )
@@ -244,6 +253,9 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
             rope_sin_l0,
             rope_cos_l0,
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
             false,
         )
         .expect("CPU layer 0 should succeed");
@@ -260,6 +272,9 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
             &mut gpu_scratch_l0,
             &mut gpu_host_scratch_l0,
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
         )
         .expect("GPU layer-0 embed should succeed");
         gpu::gpu_layer_forward_hybrid(
@@ -273,6 +288,9 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
             0,
             first_token,
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
         )
         .expect("GPU layer 0 should succeed");
 
@@ -333,6 +351,9 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
                 &cpu_weights,
                 &mut cpu_hidden_diag,
                 &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
                 None,
             );
             for i in 0..half {
@@ -353,6 +374,9 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
                 &mut gpu_scratch_diag,
                 &mut gpu_host_diag,
                 &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
             )
             .expect("diag GPU embed should succeed");
 
@@ -367,6 +391,9 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
                     rope_sin_diag,
                     rope_cos_diag,
                     &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
                     false,
                 )
                 .expect("diag CPU layer should succeed");
@@ -381,6 +408,9 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
                     diag_pos,
                     diag_token_id,
                     &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
                 )
                 .expect("diag GPU layer should succeed");
 
@@ -495,6 +525,9 @@ fn test_gpu_greedy_decode_populates_cached_graph() {
             &mut gpu_scratch,
             &mut host_scratch,
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
         )
         .expect("GPU embed should succeed");
         gpu::gpu_full_forward_hybrid(
@@ -506,6 +539,9 @@ fn test_gpu_greedy_decode_populates_cached_graph() {
             &mut host_scratch,
             pos,
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
             gpu::GpuLogitsMode::GreedyArgmax,
             token_id,
         )
@@ -575,6 +611,9 @@ fn test_gpu_greedy_decode_profile_real_model() {
             &mut gpu_scratch,
             &mut host_scratch,
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
         )
         .expect("GPU embed should succeed");
         next_token = gpu::gpu_full_forward_hybrid(
@@ -586,6 +625,9 @@ fn test_gpu_greedy_decode_profile_real_model() {
             &mut host_scratch,
             pos,
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
             gpu::GpuLogitsMode::GreedyArgmax,
             token_id,
         )
@@ -604,6 +646,9 @@ fn test_gpu_greedy_decode_profile_real_model() {
             &mut gpu_scratch,
             &mut host_scratch,
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
         )
         .expect("GPU embed should succeed");
         token = gpu::gpu_full_forward_hybrid(
@@ -615,6 +660,9 @@ fn test_gpu_greedy_decode_profile_real_model() {
             &mut host_scratch,
             prompt_tokens.len() + step,
             &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
             gpu::GpuLogitsMode::GreedyArgmax,
             token,
         )
@@ -745,6 +793,9 @@ fn test_gpu_greedy_decode_benchmark_real_model_multi_run() {
                 &mut gpu_scratch,
                 &mut host_scratch,
                 &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
             )
             .expect("GPU embed should succeed");
             next_token = gpu::gpu_full_forward_hybrid(
@@ -756,6 +807,9 @@ fn test_gpu_greedy_decode_benchmark_real_model_multi_run() {
                 &mut host_scratch,
                 pos,
                 &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
                 gpu::GpuLogitsMode::GreedyArgmax,
                 token_id,
             )
@@ -774,6 +828,9 @@ fn test_gpu_greedy_decode_benchmark_real_model_multi_run() {
                 &mut gpu_scratch,
                 &mut host_scratch,
                 &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
             )
             .expect("GPU embed should succeed");
             token = gpu::gpu_full_forward_hybrid(
@@ -785,6 +842,9 @@ fn test_gpu_greedy_decode_benchmark_real_model_multi_run() {
                 &mut host_scratch,
                 prompt_tokens.len() + step,
                 &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
                 gpu::GpuLogitsMode::GreedyArgmax,
                 token,
             )
@@ -896,6 +956,9 @@ fn test_gpu_prefill_real_model_matches_cpu_greedy_token() {
         &prompt_tokens,
         0,
         &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
         gpu::GpuLogitsMode::DownloadToHost,
     );
     println!("DEBUG: Batched prefill result: {:?}", prefill_res);
@@ -976,6 +1039,9 @@ fn test_gpu_ffn_down_real_model_matches_cpu_layer0_projection() {
         rope_sin,
         rope_cos,
         &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
         false,
     )
     .expect("CPU layer 0 should succeed");
@@ -1090,6 +1156,9 @@ fn test_dp4a_kernel_real_model() {
                 &mut gpu_scratch,
                 &mut host_scratch,
                 &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
             )
             .expect("GPU embed should succeed");
             gpu::gpu_full_forward_hybrid(
@@ -1101,6 +1170,9 @@ fn test_dp4a_kernel_real_model() {
                 &mut host_scratch,
                 pos,
                 &config,
+        None, // shared_ple_token_emb
+        None, // shared_ple_model_proj
+        None, // shared_ple_proj_norm
                 gpu::GpuLogitsMode::DownloadToHost,
                 token_id,
             )

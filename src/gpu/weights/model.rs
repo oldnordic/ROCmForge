@@ -394,7 +394,15 @@ impl GpuModelWeights {
             eprintln!("[GPU weights] Loading layer {}/{}", i + 1, n);
             let layer_vram = GpuLayerWeights::estimate_vram_usage_from_file(file, i, config)?;
             check_model_load_headroom(budget, estimated_vram_used, layer_vram)?;
-            let layer = GpuLayerWeights::load_for_device(file, i, config, device_id)?;
+            let layer = GpuLayerWeights::load_for_device(
+                file,
+                i,
+                config,
+                device_id,
+                per_layer_token_emb.as_ref(),
+                per_layer_model_proj.as_ref().and_then(|t| t.as_dense()),
+                per_layer_proj_norm.as_ref(),
+            )?;
             estimated_vram_used += layer_vram;
 
             layers.push(layer);
@@ -878,7 +886,15 @@ impl GpuModelWeights {
             eprintln!("[GPU weights] Loading layer {}/{} from RFM", i + 1, n);
             let layer_vram = estimate_rfm_layer_vram(file, i)?;
             check_model_load_headroom(budget, estimated_vram_used, layer_vram)?;
-            let layer = GpuLayerWeights::load_rfm_for_device(file, i, config, device_id)?;
+            let layer = GpuLayerWeights::load_rfm_for_device(
+                file,
+                i,
+                config,
+                device_id,
+                per_layer_token_emb.as_ref(),
+                per_layer_model_proj.as_ref(),
+                per_layer_proj_norm.as_ref(),
+            )?;
             estimated_vram_used += layer_vram;
             layers.push(layer);
         }
