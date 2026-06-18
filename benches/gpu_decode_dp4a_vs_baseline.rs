@@ -131,6 +131,7 @@ impl DecodeBenchContext {
                 pos,
                 &self.config,
                 gpu::GpuLogitsMode::GreedyArgmax,
+                token,
             )
             .map_err(|err| format!("GPU prefill failed: {}", err))?;
         }
@@ -159,6 +160,7 @@ impl DecodeBenchContext {
                 self.prompt_tokens.len() + step,
                 &self.config,
                 gpu::GpuLogitsMode::GreedyArgmax,
+                token,
             )
             .map_err(|err| format!("GPU decode failed: {}", err))?
             .ok_or_else(|| "decode step produced no greedy token".to_string())?;
