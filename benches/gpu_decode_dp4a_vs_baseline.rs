@@ -131,7 +131,7 @@ impl DecodeBenchContext {
                 pos,
                 &self.config,
                 gpu::GpuLogitsMode::GreedyArgmax,
-                token,
+                token_id,
             )
             .map_err(|err| format!("GPU prefill failed: {}", err))?;
         }
