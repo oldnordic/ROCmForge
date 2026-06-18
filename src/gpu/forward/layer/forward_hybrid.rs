@@ -93,7 +93,7 @@ fn gpu_shortconv_fallback(
         .moe
         .as_ref()
         .map(|m| m.ff_size)
-        .unwrap_or(config.intermediate_size);
+        .unwrap_or(config.intermediate_size_for_layer(layer_idx));
     ensure_size(&mut cpu_s.gate, ff_size);
     ensure_size(&mut cpu_s.swiglu, ff_size);
 
@@ -168,17 +168,13 @@ pub fn gpu_layer_forward_hybrid(
         }
         GpuLayerType::AttentionFusedQkv => {
             let h = config.hidden_size;
-            let attn_head_dim = config.head_dim;
+            let attn_head_dim = config.head_dim_for_layer(layer_idx);
+            let kv_head_dim = config.kv_head_dim_for_layer(layer_idx);
             let num_q_heads = config.num_heads;
-            let num_kv_heads = config.num_kv_heads;
+            let num_kv_heads = config.num_kv_heads_for_layer(layer_idx);
             let q_size = num_q_heads * attn_head_dim;
-            let kv_size = num_kv_heads * attn_head_dim;
+            let kv_size = num_kv_heads * kv_head_dim;
             let eps = config.rms_norm_eps;
-
-            eprintln!(
-                "DEBUG forward_hybrid: Starting AttentionFusedQkv layer {}",
-                layer_idx
-            );
 
             // Upload decode state first so pos_ptr has correct pos
             scratch.upload_decode_state(pos, pos + 1, device.stream())?;
@@ -317,7 +313,7 @@ pub fn gpu_layer_forward_hybrid(
                     scratch.k.as_ptr() as *const f32,
                     k_norm_w.as_ptr() as *const f32,
                     scratch.k.as_ptr() as *mut f32,
-                    attn_head_dim,
+                    kv_head_dim,
                     eps,
                     num_kv_heads,
                 )?;
@@ -411,7 +407,7 @@ pub fn gpu_layer_forward_hybrid(
             })?;
 
             // 10. FFN
-            let ff_size = config.intermediate_size;
+            let ff_size = config.intermediate_size_for_layer(layer_idx);
             if let (Some(gate_buf), Some(gate_meta)) = (
                 gpu_layer.ffn_gate.as_ref(),
                 gpu_layer.ffn_gate_meta.as_ref(),
@@ -587,7 +583,8 @@ pub fn gpu_layer_forward_hybrid(
     }
 
     let h = config.hidden_size;
-    let attn_head_dim = config.head_dim;
+    let attn_head_dim = config.head_dim_for_layer(layer_idx);
+    let kv_head_dim = config.kv_head_dim_for_layer(layer_idx);
     let (q_size, kv_size) = {
         let q_dims = &gpu_layer.attn_q_meta.dims;
         let k_dims = &gpu_layer.attn_k_meta.dims;
@@ -604,9 +601,9 @@ pub fn gpu_layer_forward_hybrid(
         (qs, ks)
     };
     let num_q_heads = config.num_heads;
-    let num_kv_heads = kv_size / attn_head_dim;
+    let num_kv_heads = kv_size / kv_head_dim;
     let attn_out_size = num_q_heads * attn_head_dim;
-    let ff_size = config.intermediate_size;
+    let ff_size = config.intermediate_size_for_layer(layer_idx);
     let eps = config.rms_norm_eps;
 
     // Standard hybrid path

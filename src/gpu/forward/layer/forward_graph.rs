@@ -50,11 +50,12 @@ pub(in crate::gpu::forward) fn gpu_layer_forward_from_state_on_stream(
         }
         GpuLayerType::AttentionFusedQkv => {
             let h = config.hidden_size;
-            let attn_head_dim = config.head_dim;
+            let attn_head_dim = config.head_dim_for_layer(layer_idx);
             let num_q_heads = config.num_heads;
-            let num_kv_heads = config.num_kv_heads;
+            let kv_size = config.kv_size(layer_idx);
+            let kv_head_dim = config.kv_head_dim_for_layer(layer_idx);
+            let num_kv_heads = kv_size / kv_head_dim;
             let q_size = num_q_heads * attn_head_dim;
-            let kv_size = num_kv_heads * attn_head_dim;
             let eps = config.rms_norm_eps;
 
             // 1. RMSNorm
@@ -161,7 +162,7 @@ pub(in crate::gpu::forward) fn gpu_layer_forward_from_state_on_stream(
                     scratch.k.as_ptr() as *const f32,
                     k_norm_w.as_ptr() as *const f32,
                     scratch.k.as_ptr() as *mut f32,
-                    attn_head_dim,
+                    kv_head_dim,
                     eps,
                     num_kv_heads,
                 )?;
@@ -233,7 +234,7 @@ pub(in crate::gpu::forward) fn gpu_layer_forward_from_state_on_stream(
             })?;
 
             // 10. FFN
-            let ff_size = config.intermediate_size;
+            let ff_size = config.intermediate_size_for_layer(layer_idx);
             if let (Some(gate_buf), Some(gate_meta)) = (
                 gpu_layer.ffn_gate.as_ref(),
                 gpu_layer.ffn_gate_meta.as_ref(),
@@ -304,7 +305,8 @@ pub(in crate::gpu::forward) fn gpu_layer_forward_from_state_on_stream(
     // For hybrid models (e.g. Qwen 3.5), config.num_kv_heads may reflect SSM head count
     // while attention layers have fewer KV heads. The K weight is authoritative for kv_size.
     // Use config.head_dim as attn_head_dim (256 for qwen35, correct for attention layers).
-    let attn_head_dim = config.head_dim; // 256 for qwen35 (correct for attention)
+    let attn_head_dim = config.head_dim_for_layer(layer_idx);
+    let kv_head_dim = config.kv_head_dim_for_layer(layer_idx);
     let (q_size, kv_size) = {
         let q_dims = &gpu_layer.attn_q_meta.dims;
         let k_dims = &gpu_layer.attn_k_meta.dims;
@@ -323,10 +325,10 @@ pub(in crate::gpu::forward) fn gpu_layer_forward_from_state_on_stream(
     // num_q_heads for attention uses config value (metadata authoritative for attention output size)
     let num_q_heads = config.num_heads; // e.g. 16 for qwen35 attention
                                         // num_kv_heads derived from K weight (not config, which may be stale for hybrid models)
-    let num_kv_heads = kv_size / attn_head_dim;
+    let num_kv_heads = kv_size / kv_head_dim;
     // Attention output size: what flash_attn produces and O-proj takes as input
     let attn_out_size = num_q_heads * attn_head_dim;
-    let ff_size = config.intermediate_size;
+    let ff_size = config.intermediate_size_for_layer(layer_idx);
     let eps = config.rms_norm_eps;
 
     // Check GPU features for DP4A/WMMA support and check Q4_0 layout compatibility
@@ -372,9 +374,9 @@ pub(in crate::gpu::forward) fn gpu_layer_forward_from_state_on_stream(
                     v_cache,
                     h,
                     config.num_heads,
-                    config.num_kv_heads,
+                    num_kv_heads,
                     scratch.decode_pos_ptr(),
-                    config.head_dim,
+                    config.head_dim_for_layer(layer_idx),
                     config.rope_theta,
                     config.rope_neox,
                     device.stream(),
@@ -407,9 +409,9 @@ pub(in crate::gpu::forward) fn gpu_layer_forward_from_state_on_stream(
                     v_cache,
                     h,
                     config.num_heads,
-                    config.num_kv_heads,
+                    num_kv_heads,
                     scratch.decode_pos_ptr(),
-                    config.head_dim,
+                    config.head_dim_for_layer(layer_idx),
                     config.rope_theta,
                     config.rope_neox,
                     device.stream(),
@@ -475,7 +477,7 @@ pub(in crate::gpu::forward) fn gpu_layer_forward_from_state_on_stream(
                     scratch.k.as_ptr() as *const f32,
                     k_norm_w.as_ptr() as *const f32,
                     scratch.k.as_ptr() as *mut f32,
-                    attn_head_dim,
+                    kv_head_dim,
                     eps,
                     num_kv_heads,
                 )?;

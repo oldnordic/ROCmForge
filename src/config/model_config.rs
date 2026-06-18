@@ -111,6 +111,13 @@ impl ModelConfig {
             .unwrap_or(self.num_kv_heads * self.head_dim)
     }
 
+    /// Number of KV heads for a layer (handles hybrid models).
+    pub fn num_kv_heads_for_layer(&self, layer: usize) -> usize {
+        let kv_size = self.kv_size(layer);
+        let kv_head_dim = self.kv_head_dim_for_layer(layer);
+        kv_size / kv_head_dim
+    }
+
     /// Query head dimension for a layer.
     pub fn head_dim_for_layer(&self, layer: usize) -> usize {
         self.per_layer_head_dims

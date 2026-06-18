@@ -445,7 +445,7 @@ pub(super) fn gpu_layer_forward_ssm_on_stream(
     }
 
     // 13. FFN execution
-    let ff_size = config.intermediate_size;
+    let ff_size = config.intermediate_size_for_layer(layer_idx);
     gpu_dispatch_rms_norm(
         device,
         scratch.hidden.as_ptr() as *const f32,

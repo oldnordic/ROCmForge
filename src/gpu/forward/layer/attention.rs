@@ -44,8 +44,8 @@ pub(in crate::gpu::forward) fn gpu_attention_decode(
 ) -> GpuResult<()> {
     let seq_len = pos + 1;
     let num_q_heads = config.num_heads;
-    let num_kv_heads = config.num_kv_heads;
-    let head_dim = config.head_dim;
+    let num_kv_heads = config.num_kv_heads_for_layer(layer_idx);
+    let head_dim = config.head_dim_for_layer(layer_idx);
     let scale = 1.0f32 / (head_dim as f32).sqrt();
 
     let k_cache = kv.k_ptr(layer_idx)? as *const f32;
@@ -164,8 +164,8 @@ pub(in crate::gpu::forward) fn gpu_attention_decode_from_state(
     config: &ModelConfig,
 ) -> GpuResult<()> {
     let num_q_heads = config.num_heads;
-    let num_kv_heads = config.num_kv_heads;
-    let head_dim = config.head_dim;
+    let num_kv_heads = config.num_kv_heads_for_layer(layer_idx);
+    let head_dim = config.head_dim_for_layer(layer_idx);
     let scale = 1.0f32 / (head_dim as f32).sqrt();
 
     let k_cache = kv.k_ptr(layer_idx)? as *const f32;

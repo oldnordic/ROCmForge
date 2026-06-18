@@ -47,7 +47,7 @@ pub(crate) fn gpu_shortconv_native_on_stream(
 
     // 2. in_proj: [h] → [3h]
     // We use scratch.gate for [3h]
-    let ff_size = config.intermediate_size;
+    let ff_size = config.intermediate_size_for_layer(layer_idx);
     if ff_size < 3 * h {
         return Err(GpuError::HipApiError {
             code: -1,
