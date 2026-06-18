@@ -74,23 +74,19 @@ fn report(stage: &str, cpu: &[f32], gpu: &[f32]) -> bool {
     let err = max_abs_err(cpu, gpu);
     let cpu_abs = cpu.iter().map(|x| x.abs()).fold(0.0f32, f32::max);
     let gpu_abs = gpu.iter().map(|x| x.abs()).fold(0.0f32, f32::max);
-    let flag = if err > THRESHOLD { " *** BROKEN ***" } else { "" };
+    let flag = if err > THRESHOLD {
+        " *** BROKEN ***"
+    } else {
+        ""
+    };
     eprintln!(
         "  [{:>20}] max_abs_err={:.6}  cpu_max_abs={:.4}  gpu_max_abs={:.4}  n={}{}",
         stage, err, cpu_abs, gpu_abs, n, flag
     );
     // Print first 8 elements of each for visual comparison
     let show = n.min(8);
-    eprintln!(
-        "    cpu[0..{}]: {:?}",
-        show,
-        &cpu[..show]
-    );
-    eprintln!(
-        "    gpu[0..{}]: {:?}",
-        show,
-        &gpu[..show]
-    );
+    eprintln!("    cpu[0..{}]: {:?}", show, &cpu[..show]);
+    eprintln!("    gpu[0..{}]: {:?}", show, &gpu[..show]);
     err > THRESHOLD
 }
 
@@ -112,11 +108,19 @@ fn test_cpu_vs_gpu_divergence_qwen() {
     let cpu_weights = CpuModelWeights::load(&file, &config).expect("load CPU weights");
     let tok = BpeTokenizer::from_gguf(file.tokenizer_data());
 
-    eprintln!("=== Model: arch={} hidden={} layers={} heads={} kv_heads={} head_dim={}",
-        config.architecture, config.hidden_size, config.num_layers,
-        config.num_heads, config.num_kv_heads, config.head_dim);
-    eprintln!("    rope_neox={} rope_theta={} norm_eps={}",
-        config.rope_neox, config.rope_theta, config.rms_norm_eps);
+    eprintln!(
+        "=== Model: arch={} hidden={} layers={} heads={} kv_heads={} head_dim={}",
+        config.architecture,
+        config.hidden_size,
+        config.num_layers,
+        config.num_heads,
+        config.num_kv_heads,
+        config.head_dim
+    );
+    eprintln!(
+        "    rope_neox={} rope_theta={} norm_eps={}",
+        config.rope_neox, config.rope_theta, config.rms_norm_eps
+    );
 
     // ── Token: use "Hello" → first token id ──
     let prompt_tokens = tok.encode("Hello", false);
@@ -145,9 +149,15 @@ fn test_cpu_vs_gpu_divergence_qwen() {
     let mut kv_cpu = CpuKvCache::new(&config, 4);
 
     gpu::gpu_embed_token_hybrid(
-        &device, token_id, &gpu_weights, &cpu_weights,
-        &mut gpu_scratch, &mut cpu_scratch, &config,
-    ).expect("GPU embed");
+        &device,
+        token_id,
+        &gpu_weights,
+        &cpu_weights,
+        &mut gpu_scratch,
+        &mut cpu_scratch,
+        &config,
+    )
+    .expect("GPU embed");
     device.synchronize().expect("sync");
 
     let gpu_hidden = download_f32(&gpu_scratch.hidden, h, &device);
@@ -172,11 +182,20 @@ fn test_cpu_vs_gpu_divergence_qwen() {
     let mut kv_c = CpuKvCache::new(&config, 4);
     let mut cpu_scr = CpuForwardScratch::new(&config);
     use rocmforge::cpu::forward::cpu_full_forward;
-    cpu_full_forward(&mut cpu_h, &cpu_weights, &mut kv_c, &mut cpu_scr, 0, &config)
-        .expect("CPU full forward");
+    cpu_full_forward(
+        &mut cpu_h,
+        &cpu_weights,
+        &mut kv_c,
+        &mut cpu_scr,
+        0,
+        &config,
+    )
+    .expect("CPU full forward");
 
     // --- GPU: full forward, all layers ---
-    unsafe { std::env::set_var("ROCMFORGE_DISABLE_DECODE_GRAPH", "1"); }
+    unsafe {
+        std::env::set_var("ROCMFORGE_DISABLE_DECODE_GRAPH", "1");
+    }
     rocmforge::gpu::refresh_runtime_env_flags();
 
     // Re-embed on GPU (scratch.hidden was overwritten by embedding already)
@@ -184,14 +203,27 @@ fn test_cpu_vs_gpu_divergence_qwen() {
     let mut cpu_scr_gpu = CpuForwardScratch::new(&config);
     let mut kv_g = GpuKvCache::new(&config, 4).expect("GPU KV");
     gpu::gpu_embed_token_hybrid(
-        &device, token_id, &gpu_weights, &cpu_weights,
-        &mut gpu_scr, &mut cpu_scr_gpu, &config,
-    ).expect("GPU embed");
+        &device,
+        token_id,
+        &gpu_weights,
+        &cpu_weights,
+        &mut gpu_scr,
+        &mut cpu_scr_gpu,
+        &config,
+    )
+    .expect("GPU embed");
     gpu::gpu_full_forward_hybrid(
-        &device, &gpu_weights, &cpu_weights,
-        &mut kv_g, &mut gpu_scr, &mut cpu_scr_gpu,
-        0, &config, gpu::GpuLogitsMode::GreedyArgmax,
-    ).expect("GPU full forward");
+        &device,
+        &gpu_weights,
+        &cpu_weights,
+        &mut kv_g,
+        &mut gpu_scr,
+        &mut cpu_scr_gpu,
+        0,
+        &config,
+        gpu::GpuLogitsMode::GreedyArgmax,
+    )
+    .expect("GPU full forward");
     device.synchronize().expect("sync");
 
     let gpu_h = download_f32(&gpu_scr.hidden, h, &device);
@@ -205,19 +237,29 @@ fn test_cpu_vs_gpu_divergence_qwen() {
     // ══════════════════════════════════════
     // STEP 5: Compare final hidden state after all layers
     // ══════════════════════════════════════
-    eprintln!("\n═══ FINAL HIDDEN STATE COMPARISON (after all {} layers) ═══", config.num_layers);
-    eprintln!("    (threshold = {}, Q4_0 dequant noise expected ~0.01-0.03)\n", THRESHOLD);
+    eprintln!(
+        "\n═══ FINAL HIDDEN STATE COMPARISON (after all {} layers) ═══",
+        config.num_layers
+    );
+    eprintln!(
+        "    (threshold = {}, Q4_0 dequant noise expected ~0.01-0.03)\n",
+        THRESHOLD
+    );
 
     let broken = report("hidden_after_all_layers", &cpu_h, &gpu_h);
     if broken {
         eprintln!("\n>>> Hidden state diverges after all layers.");
-        eprintln!(">>> Re-run with ROCMFORGE_DUMP_LAYER_INTERMEDIATES=1 to see per-stage CPU/GPU dumps.");
+        eprintln!(
+            ">>> Re-run with ROCMFORGE_DUMP_LAYER_INTERMEDIATES=1 to see per-stage CPU/GPU dumps."
+        );
         eprintln!(">>> Checking Q4_0 dequant scales...");
         check_q4_0_scales(token_id, &cpu_weights, &config);
     }
 
     // Restore graph default
-    unsafe { std::env::remove_var("ROCMFORGE_DISABLE_DECODE_GRAPH"); }
+    unsafe {
+        std::env::remove_var("ROCMFORGE_DISABLE_DECODE_GRAPH");
+    }
     rocmforge::gpu::refresh_runtime_env_flags();
 }
 
@@ -238,7 +280,10 @@ fn check_q4_0_scales(token_id: u32, weights: &CpuModelWeights, config: &ModelCon
     let num_blocks = h / block_elems;
     let row_offset = token_id as usize * num_blocks * block_bytes;
 
-    eprintln!("\n--- Q4_0 block scales (token {}, first 8 blocks) ---", token_id);
+    eprintln!(
+        "\n--- Q4_0 block scales (token {}, first 8 blocks) ---",
+        token_id
+    );
     eprintln!("    block: scale(f16)  qs[0..4 hex]  dequant[0..4]");
     for b in 0..num_blocks.min(8) {
         let off = row_offset + b * block_bytes;
@@ -318,7 +363,9 @@ fn test_cpu_vs_gpu_layer0_stage_divergence_qwen() {
     .expect("CPU layer 0");
 
     // GPU: embedding then layer 0 (disable graph capture for visibility)
-    unsafe { std::env::set_var("ROCMFORGE_ENABLE_DECODE_GRAPH", "0"); }
+    unsafe {
+        std::env::set_var("ROCMFORGE_ENABLE_DECODE_GRAPH", "0");
+    }
     rocmforge::gpu::refresh_runtime_env_flags();
 
     let caps = gpu::detect().expect("GPU detect");
@@ -329,13 +376,25 @@ fn test_cpu_vs_gpu_layer0_stage_divergence_qwen() {
     let mut gpu_kv = GpuKvCache::new(&config, 4).expect("GPU KV");
 
     gpu::gpu_embed_token_hybrid(
-        &device, token_id, &gpu_weights, &cpu_weights,
-        &mut gpu_scratch, &mut cpu_scratch_gpu, &config,
-    ).expect("GPU embed");
+        &device,
+        token_id,
+        &gpu_weights,
+        &cpu_weights,
+        &mut gpu_scratch,
+        &mut cpu_scratch_gpu,
+        &config,
+    )
+    .expect("GPU embed");
     // overwrite with the same CPU input so the comparison is apples-to-apples
-    gpu_scratch.hidden.copy_from_host(unsafe {
-        std::slice::from_raw_parts(cpu_input.as_ptr() as *const u8, h * std::mem::size_of::<f32>())
-    }).expect("upload CPU input");
+    gpu_scratch
+        .hidden
+        .copy_from_host(unsafe {
+            std::slice::from_raw_parts(
+                cpu_input.as_ptr() as *const u8,
+                h * std::mem::size_of::<f32>(),
+            )
+        })
+        .expect("upload CPU input");
 
     gpu::gpu_layer_forward_hybrid(
         &device,
@@ -352,15 +411,50 @@ fn test_cpu_vs_gpu_layer0_stage_divergence_qwen() {
     device.synchronize().expect("sync");
 
     // Download GPU intermediates and compare with CPU scratch
-    eprintln!("\n═══ LAYER 0 PER-STAGE CPU vs GPU (sizes h={} q={} kv={} ff={}) ═══", h, q_size, kv_size, ff_size);
-    compare_stage("hidden_in", &cpu_input, &download_f32(&gpu_scratch.hidden, h, &device));
-    compare_stage("attn_normed", &cpu_scratch.normed[..h], &download_f32(&gpu_scratch.normed, h, &device));
-    compare_stage("q", &cpu_scratch.q[..q_size], &download_f32(&gpu_scratch.q, q_size, &device));
-    compare_stage("k", &cpu_scratch.k[..kv_size], &download_f32(&gpu_scratch.k, kv_size, &device));
-    compare_stage("v", &cpu_scratch.v[..kv_size], &download_f32(&gpu_scratch.v, kv_size, &device));
-    compare_stage("attn_out", &cpu_scratch.attn_out[..q_size], &download_f32(&gpu_scratch.attn_out, q_size, &device));
-    compare_stage("attn_layer_out", &cpu_scratch.layer_out[..h], &download_f32(&gpu_scratch.layer_out, h, &device));
-    compare_stage("after_attn_resid", &cpu_hidden[..h], &download_f32(&gpu_scratch.hidden, h, &device));
+    eprintln!(
+        "\n═══ LAYER 0 PER-STAGE CPU vs GPU (sizes h={} q={} kv={} ff={}) ═══",
+        h, q_size, kv_size, ff_size
+    );
+    compare_stage(
+        "hidden_in",
+        &cpu_input,
+        &download_f32(&gpu_scratch.hidden, h, &device),
+    );
+    compare_stage(
+        "attn_normed",
+        &cpu_scratch.normed[..h],
+        &download_f32(&gpu_scratch.normed, h, &device),
+    );
+    compare_stage(
+        "q",
+        &cpu_scratch.q[..q_size],
+        &download_f32(&gpu_scratch.q, q_size, &device),
+    );
+    compare_stage(
+        "k",
+        &cpu_scratch.k[..kv_size],
+        &download_f32(&gpu_scratch.k, kv_size, &device),
+    );
+    compare_stage(
+        "v",
+        &cpu_scratch.v[..kv_size],
+        &download_f32(&gpu_scratch.v, kv_size, &device),
+    );
+    compare_stage(
+        "attn_out",
+        &cpu_scratch.attn_out[..q_size],
+        &download_f32(&gpu_scratch.attn_out, q_size, &device),
+    );
+    compare_stage(
+        "attn_layer_out",
+        &cpu_scratch.layer_out[..h],
+        &download_f32(&gpu_scratch.layer_out, h, &device),
+    );
+    compare_stage(
+        "after_attn_resid",
+        &cpu_hidden[..h],
+        &download_f32(&gpu_scratch.hidden, h, &device),
+    );
 
     // Re-run CPU layer on a fresh hidden state to capture FFN intermediates
     // (the CPU scratch fields were overwritten by ffn_down output before residual).
@@ -369,12 +463,30 @@ fn test_cpu_vs_gpu_layer0_stage_divergence_qwen() {
     //   - gate: FFN down projection output (before residual)
     //   - swiglu: SwiGLU output
     //   - hidden: after FFN residual
-    compare_stage("ffn_normed", &cpu_scratch.normed[..h], &download_f32(&gpu_scratch.normed, h, &device));
-    compare_stage("ffn_swiglu", &cpu_scratch.swiglu[..ff_size], &download_f32(&gpu_scratch.swiglu, ff_size, &device));
-    compare_stage("ffn_down_out", &cpu_scratch.gate[..h], &download_f32(&gpu_scratch.gate, h, &device));
-    compare_stage("after_ffn_resid", &cpu_hidden[..h], &download_f32(&gpu_scratch.hidden, h, &device));
+    compare_stage(
+        "ffn_normed",
+        &cpu_scratch.normed[..h],
+        &download_f32(&gpu_scratch.normed, h, &device),
+    );
+    compare_stage(
+        "ffn_swiglu",
+        &cpu_scratch.swiglu[..ff_size],
+        &download_f32(&gpu_scratch.swiglu, ff_size, &device),
+    );
+    compare_stage(
+        "ffn_down_out",
+        &cpu_scratch.gate[..h],
+        &download_f32(&gpu_scratch.gate, h, &device),
+    );
+    compare_stage(
+        "after_ffn_resid",
+        &cpu_hidden[..h],
+        &download_f32(&gpu_scratch.hidden, h, &device),
+    );
 
-    unsafe { std::env::remove_var("ROCMFORGE_ENABLE_DECODE_GRAPH"); }
+    unsafe {
+        std::env::remove_var("ROCMFORGE_ENABLE_DECODE_GRAPH");
+    }
     rocmforge::gpu::refresh_runtime_env_flags();
 }
 
@@ -401,8 +513,16 @@ fn compare_stage(name: &str, cpu: &[f32], gpu: &[f32]) {
     );
     if max_err > 0.001 {
         let show = 4usize;
-        eprintln!("    cpu[{:?}]: {:?}", idx.saturating_sub(show)..(idx + show).min(n), &cpu[idx.saturating_sub(show)..(idx + show).min(n)]);
-        eprintln!("    gpu[{:?}]: {:?}", idx.saturating_sub(show)..(idx + show).min(n), &gpu[idx.saturating_sub(show)..(idx + show).min(n)]);
+        eprintln!(
+            "    cpu[{:?}]: {:?}",
+            idx.saturating_sub(show)..(idx + show).min(n),
+            &cpu[idx.saturating_sub(show)..(idx + show).min(n)]
+        );
+        eprintln!(
+            "    gpu[{:?}]: {:?}",
+            idx.saturating_sub(show)..(idx + show).min(n),
+            &gpu[idx.saturating_sub(show)..(idx + show).min(n)]
+        );
     }
 }
 
@@ -444,10 +564,7 @@ fn download_device_f32(
 ) -> rocmforge::gpu::GpuResult<Vec<f32>> {
     let mut dst = vec![0.0f32; n];
     let bytes = unsafe {
-        std::slice::from_raw_parts_mut(
-            dst.as_mut_ptr() as *mut u8,
-            n * std::mem::size_of::<f32>(),
-        )
+        std::slice::from_raw_parts_mut(dst.as_mut_ptr() as *mut u8, n * std::mem::size_of::<f32>())
     };
     rocmforge::gpu::ffi::hip_memcpy_d2h_async(
         bytes.as_mut_ptr(),
@@ -462,7 +579,12 @@ fn download_device_f32(
 /// Reference int32 per-block accumulation for Q4_0 weights x Q8_0 activations.
 /// Mirrors `rocmforge::cpu::ops::gemv::gemv_q4_0_q8_0` and the llama.cpp
 /// `ggml_vec_dot_q4_0_q8_0_generic` reference.
-fn q4_0_q8_0_cpu_oracle(weights: &[u8], input_q8: &[u8], out_dim: usize, in_dim: usize) -> Vec<f32> {
+fn q4_0_q8_0_cpu_oracle(
+    weights: &[u8],
+    input_q8: &[u8],
+    out_dim: usize,
+    in_dim: usize,
+) -> Vec<f32> {
     let num_blocks = in_dim / Q4_BLOCK_ELEMS;
     let col_bytes = num_blocks * Q4_BLOCK_BYTES;
     assert_eq!(input_q8.len(), num_blocks * 34);
@@ -543,7 +665,9 @@ fn test_rms_norm_parity_real_activations() {
         return;
     }
 
-    unsafe { std::env::set_var("ROCMFORGE_ENABLE_DECODE_GRAPH", "0"); }
+    unsafe {
+        std::env::set_var("ROCMFORGE_ENABLE_DECODE_GRAPH", "0");
+    }
     rocmforge::gpu::refresh_runtime_env_flags();
 
     let file = GgufFile::open(MODEL_PATH).expect("open GGUF");
@@ -611,7 +735,9 @@ fn test_rms_norm_parity_real_activations() {
     eprintln!("\n═══ RMS norm parity (ffn, h={}) ═══", h);
     report("ffn_normed", &cpu_ffn_normed, &gpu_ffn_normed);
 
-    unsafe { std::env::remove_var("ROCMFORGE_ENABLE_DECODE_GRAPH"); }
+    unsafe {
+        std::env::remove_var("ROCMFORGE_ENABLE_DECODE_GRAPH");
+    }
     rocmforge::gpu::refresh_runtime_env_flags();
 }
 
@@ -628,7 +754,9 @@ fn test_q4_0_fused_qkv_parity_real_activations() {
         return;
     }
 
-    unsafe { std::env::set_var("ROCMFORGE_ENABLE_DECODE_GRAPH", "0"); }
+    unsafe {
+        std::env::set_var("ROCMFORGE_ENABLE_DECODE_GRAPH", "0");
+    }
     rocmforge::gpu::refresh_runtime_env_flags();
 
     let file = GgufFile::open(MODEL_PATH).expect("open GGUF");
@@ -659,15 +787,33 @@ fn test_q4_0_fused_qkv_parity_real_activations() {
     let mut cpu_v = vec![0.0f32; kv_size];
     let mut q8_scratch = vec![0u8; rocmforge::gpu::kernels::q8_0_workspace_bytes(h)];
     dispatch_gemv(
-        &layer0.attn_q, &layer0.attn_q_meta, &cpu_attn_normed, &mut cpu_q, q_size, h, Some(&mut q8_scratch),
+        &layer0.attn_q,
+        &layer0.attn_q_meta,
+        &cpu_attn_normed,
+        &mut cpu_q,
+        q_size,
+        h,
+        Some(&mut q8_scratch),
     )
     .expect("CPU Q GEMV");
     dispatch_gemv(
-        &layer0.attn_k, &layer0.attn_k_meta, &cpu_attn_normed, &mut cpu_k, kv_size, h, Some(&mut q8_scratch),
+        &layer0.attn_k,
+        &layer0.attn_k_meta,
+        &cpu_attn_normed,
+        &mut cpu_k,
+        kv_size,
+        h,
+        Some(&mut q8_scratch),
     )
     .expect("CPU K GEMV");
     dispatch_gemv(
-        &layer0.attn_v, &layer0.attn_v_meta, &cpu_attn_normed, &mut cpu_v, kv_size, h, Some(&mut q8_scratch),
+        &layer0.attn_v,
+        &layer0.attn_v_meta,
+        &cpu_attn_normed,
+        &mut cpu_v,
+        kv_size,
+        h,
+        Some(&mut q8_scratch),
     )
     .expect("CPU V GEMV");
 
@@ -676,15 +822,33 @@ fn test_q4_0_fused_qkv_parity_real_activations() {
     let mut cpu_k_f32 = vec![0.0f32; kv_size];
     let mut cpu_v_f32 = vec![0.0f32; kv_size];
     dispatch_gemv(
-        &layer0.attn_q, &layer0.attn_q_meta, &cpu_attn_normed, &mut cpu_q_f32, q_size, h, None,
+        &layer0.attn_q,
+        &layer0.attn_q_meta,
+        &cpu_attn_normed,
+        &mut cpu_q_f32,
+        q_size,
+        h,
+        None,
     )
     .expect("CPU Q f32");
     dispatch_gemv(
-        &layer0.attn_k, &layer0.attn_k_meta, &cpu_attn_normed, &mut cpu_k_f32, kv_size, h, None,
+        &layer0.attn_k,
+        &layer0.attn_k_meta,
+        &cpu_attn_normed,
+        &mut cpu_k_f32,
+        kv_size,
+        h,
+        None,
     )
     .expect("CPU K f32");
     dispatch_gemv(
-        &layer0.attn_v, &layer0.attn_v_meta, &cpu_attn_normed, &mut cpu_v_f32, kv_size, h, None,
+        &layer0.attn_v,
+        &layer0.attn_v_meta,
+        &cpu_attn_normed,
+        &mut cpu_v_f32,
+        kv_size,
+        h,
+        None,
     )
     .expect("CPU V f32");
 
@@ -740,7 +904,9 @@ fn test_q4_0_fused_qkv_parity_real_activations() {
     report("fused_qkv_k_f32_ref", &cpu_k_f32, &gpu_k);
     report("fused_qkv_v_f32_ref", &cpu_v_f32, &gpu_v);
 
-    unsafe { std::env::remove_var("ROCMFORGE_ENABLE_DECODE_GRAPH"); }
+    unsafe {
+        std::env::remove_var("ROCMFORGE_ENABLE_DECODE_GRAPH");
+    }
     rocmforge::gpu::refresh_runtime_env_flags();
 }
 
@@ -757,7 +923,9 @@ fn test_q4_0_gemv_parity_real_activations() {
         return;
     }
 
-    unsafe { std::env::set_var("ROCMFORGE_ENABLE_DECODE_GRAPH", "0"); }
+    unsafe {
+        std::env::set_var("ROCMFORGE_ENABLE_DECODE_GRAPH", "0");
+    }
     rocmforge::gpu::refresh_runtime_env_flags();
 
     let file = GgufFile::open(MODEL_PATH).expect("open GGUF");
@@ -772,7 +940,12 @@ fn test_q4_0_gemv_parity_real_activations() {
 
     // CPU reference RMSNorm for the attention path.
     let mut cpu_attn_normed = vec![0.0f32; h];
-    rms_norm(&cpu_hidden, &cpu_weights.layer(0).attn_norm, &mut cpu_attn_normed, config.rms_norm_eps);
+    rms_norm(
+        &cpu_hidden,
+        &cpu_weights.layer(0).attn_norm,
+        &mut cpu_attn_normed,
+        config.rms_norm_eps,
+    );
 
     let cpu_q8_attn = quantize_q8_0_cpu(&cpu_attn_normed);
 
@@ -780,7 +953,8 @@ fn test_q4_0_gemv_parity_real_activations() {
     let caps = gpu::detect().expect("GPU detect");
     let device = GpuDevice::init(caps.device_id).expect("GPU init");
     let d_normed_f32 = upload_f32(&cpu_attn_normed).expect("upload normed f32");
-    let d_normed_q8 = GpuBuffer::alloc(rocmforge::gpu::kernels::q8_0_workspace_bytes(h)).expect("alloc q8");
+    let d_normed_q8 =
+        GpuBuffer::alloc(rocmforge::gpu::kernels::q8_0_workspace_bytes(h)).expect("alloc q8");
     rocmforge::gpu::kernels::quantize_q8_0_on_stream(
         d_normed_f32.as_ptr() as *const f32,
         d_normed_q8.as_ptr(),
@@ -789,7 +963,8 @@ fn test_q4_0_gemv_parity_real_activations() {
     )
     .expect("GPU quantize Q8");
     device.synchronize().expect("sync after quantize");
-    let gpu_q8_attn = download_u8_from_gpu(&d_normed_q8, cpu_q8_attn.len()).expect("download gpu q8");
+    let gpu_q8_attn =
+        download_u8_from_gpu(&d_normed_q8, cpu_q8_attn.len()).expect("download gpu q8");
 
     // Compare Q8 activations byte-by-byte (ignore tail padding blocks).
     let q8_blocks = h.div_ceil(32);
@@ -807,29 +982,89 @@ fn test_q4_0_gemv_parity_real_activations() {
         }
     }
     eprintln!("\n═══ Q8_0 activation quantization parity (attn_normed) ═══");
-    eprintln!("  blocks={} scale_diff_blocks={} quant_byte_diffs={}", q8_blocks, q8_scale_diffs, q8_byte_diffs);
+    eprintln!(
+        "  blocks={} scale_diff_blocks={} quant_byte_diffs={}",
+        q8_blocks, q8_scale_diffs, q8_byte_diffs
+    );
 
     // Projections to test.  Order: (name, weights, meta, out_dim, in_dim).
     let layer0 = cpu_weights.layer(0);
-    let mut projections: Vec<(&str, &[u8], &rocmforge::cpu::weights::WeightMeta, usize, usize)> = Vec::new();
+    let mut projections: Vec<(
+        &str,
+        &[u8],
+        &rocmforge::cpu::weights::WeightMeta,
+        usize,
+        usize,
+    )> = Vec::new();
     if let Some(ref w) = layer0.attn_qkv {
-        let meta = layer0.attn_qkv_meta.as_ref().expect("attn_qkv weight exists but meta missing");
-        projections.push(("attn_qkv", w.as_slice(), meta, config.num_heads * config.head_dim + 2 * config.num_kv_heads * config.head_dim, h));
+        let meta = layer0
+            .attn_qkv_meta
+            .as_ref()
+            .expect("attn_qkv weight exists but meta missing");
+        projections.push((
+            "attn_qkv",
+            w.as_slice(),
+            meta,
+            config.num_heads * config.head_dim + 2 * config.num_kv_heads * config.head_dim,
+            h,
+        ));
     } else {
-        projections.push(("attn_q", layer0.attn_q.as_slice(), &layer0.attn_q_meta, h, h));
-        projections.push(("attn_k", layer0.attn_k.as_slice(), &layer0.attn_k_meta, config.num_kv_heads * config.head_dim, h));
-        projections.push(("attn_v", layer0.attn_v.as_slice(), &layer0.attn_v_meta, config.num_kv_heads * config.head_dim, h));
+        projections.push((
+            "attn_q",
+            layer0.attn_q.as_slice(),
+            &layer0.attn_q_meta,
+            h,
+            h,
+        ));
+        projections.push((
+            "attn_k",
+            layer0.attn_k.as_slice(),
+            &layer0.attn_k_meta,
+            config.num_kv_heads * config.head_dim,
+            h,
+        ));
+        projections.push((
+            "attn_v",
+            layer0.attn_v.as_slice(),
+            &layer0.attn_v_meta,
+            config.num_kv_heads * config.head_dim,
+            h,
+        ));
     }
-    projections.push(("attn_o", layer0.attn_o.as_slice(), &layer0.attn_o_meta, h, h));
+    projections.push((
+        "attn_o",
+        layer0.attn_o.as_slice(),
+        &layer0.attn_o_meta,
+        h,
+        h,
+    ));
     if let Some(ref w) = layer0.attn_gate {
-        let meta = layer0.attn_gate_meta.as_ref().expect("attn_gate weight exists but meta missing");
-        projections.push(("attn_gate", w.as_slice(), meta, w.len() / (h * Q4_BLOCK_ELEMS / Q4_BLOCK_BYTES), h));
+        let meta = layer0
+            .attn_gate_meta
+            .as_ref()
+            .expect("attn_gate weight exists but meta missing");
+        projections.push((
+            "attn_gate",
+            w.as_slice(),
+            meta,
+            w.len() / (h * Q4_BLOCK_ELEMS / Q4_BLOCK_BYTES),
+            h,
+        ));
     }
     if let Some(ref w) = layer0.ffn_gate {
-        let meta = layer0.ffn_gate_meta.as_ref().expect("ffn_gate weight exists but meta missing");
+        let meta = layer0
+            .ffn_gate_meta
+            .as_ref()
+            .expect("ffn_gate weight exists but meta missing");
         projections.push(("ffn_gate", w.as_slice(), meta, config.intermediate_size, h));
     }
-    projections.push(("ffn_up", layer0.ffn_up.as_slice(), &layer0.ffn_up_meta, config.intermediate_size, h));
+    projections.push((
+        "ffn_up",
+        layer0.ffn_up.as_slice(),
+        &layer0.ffn_up_meta,
+        config.intermediate_size,
+        h,
+    ));
 
     eprintln!("\n═══ Q4_0 GEMV CPU vs GPU (same f32 input, each backend quantizes its own Q8) ═══");
     for (name, cpu_w, cpu_meta, out_dim, in_dim) in projections {
@@ -845,7 +1080,16 @@ fn test_q4_0_gemv_parity_real_activations() {
         // CPU reference GEMV (quantizes input with CPU quantizer).
         let mut cpu_y = vec![0.0f32; out_dim];
         let mut q8_scratch = vec![0u8; rocmforge::gpu::kernels::q8_0_workspace_bytes(in_dim)];
-        dispatch_gemv(cpu_w, cpu_meta, &cpu_attn_normed, &mut cpu_y, out_dim, in_dim, Some(&mut q8_scratch)).expect("CPU GEMV");
+        dispatch_gemv(
+            cpu_w,
+            cpu_meta,
+            &cpu_attn_normed,
+            &mut cpu_y,
+            out_dim,
+            in_dim,
+            Some(&mut q8_scratch),
+        )
+        .expect("CPU GEMV");
 
         // GPU dispatch GEMV (quantizes input with GPU quantizer).
         let d_w = upload_u8(cpu_w).expect("upload weights");
@@ -872,15 +1116,33 @@ fn test_q4_0_gemv_parity_real_activations() {
         let kernel_err = max_abs_err(&gpu_y_expected, &gpu_y);
         eprintln!(
             "  [{:>12}] out={} in={}  full_err={:.6}  kernel_err={:.6}  quantizer_contrib={:.6}",
-            name, out_dim, in_dim, full_err, kernel_err, (full_err - kernel_err).abs()
+            name,
+            out_dim,
+            in_dim,
+            full_err,
+            kernel_err,
+            (full_err - kernel_err).abs()
         );
         if full_err > 0.1 {
-            let idx = cpu_y.iter().zip(&gpu_y).enumerate().map(|(i, (a,b))| (i, (a-b).abs())).max_by(|a,b| a.1.partial_cmp(&b.1).unwrap_or(std::ordering::Equal)).map(|(i,_)| i).next().expect("non-empty iterator");
-            eprintln!("    cpu[{}]={:.6} gpu[{}]={:.6}", idx, cpu_y[idx], idx, gpu_y[idx]);
+            let idx = cpu_y
+                .iter()
+                .zip(&gpu_y)
+                .enumerate()
+                .map(|(i, (a, b))| (i, (a - b).abs()))
+                .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::ordering::Equal))
+                .map(|(i, _)| i)
+                .next()
+                .expect("non-empty iterator");
+            eprintln!(
+                "    cpu[{}]={:.6} gpu[{}]={:.6}",
+                idx, cpu_y[idx], idx, gpu_y[idx]
+            );
         }
     }
 
-    unsafe { std::env::remove_var("ROCMFORGE_ENABLE_DECODE_GRAPH"); }
+    unsafe {
+        std::env::remove_var("ROCMFORGE_ENABLE_DECODE_GRAPH");
+    }
     rocmforge::gpu::refresh_runtime_env_flags();
 }
 
@@ -897,7 +1159,9 @@ fn test_qwen_gpu_greedy_token_matches_cpu() {
         return;
     }
 
-    unsafe { std::env::set_var("ROCMFORGE_ENABLE_DECODE_GRAPH", "0"); }
+    unsafe {
+        std::env::set_var("ROCMFORGE_ENABLE_DECODE_GRAPH", "0");
+    }
     rocmforge::gpu::refresh_runtime_env_flags();
 
     let file = GgufFile::open(MODEL_PATH).expect("open GGUF");
@@ -933,7 +1197,8 @@ fn test_qwen_gpu_greedy_token_matches_cpu() {
     }
 
     // CPU lm_head logits.
-    let vocab_size = cpu_weights.lm_head_meta.dims[0].max(cpu_weights.lm_head_meta.dims[1]) as usize;
+    let vocab_size =
+        cpu_weights.lm_head_meta.dims[0].max(cpu_weights.lm_head_meta.dims[1]) as usize;
     let mut cpu_logits = vec![0.0f32; vocab_size];
     let mut q8_scratch = vec![0u8; rocmforge::gpu::kernels::q8_0_workspace_bytes(h)];
     dispatch_gemv(
@@ -957,8 +1222,13 @@ fn test_qwen_gpu_greedy_token_matches_cpu() {
     let mut gpu_kv = GpuKvCache::new(&config, 4).expect("GPU KV");
 
     gpu::gpu_embed_token_hybrid(
-        &device, token_id, &gpu_weights, &cpu_weights,
-        &mut gpu_scratch, &mut cpu_scratch_gpu, &config,
+        &device,
+        token_id,
+        &gpu_weights,
+        &cpu_weights,
+        &mut gpu_scratch,
+        &mut cpu_scratch_gpu,
+        &config,
     )
     .expect("GPU embed");
 
@@ -983,7 +1253,8 @@ fn test_qwen_gpu_greedy_token_matches_cpu() {
     // GPU lm_head logits.
     let d_input = upload_f32(&gpu_hidden).expect("upload gpu hidden");
     let d_lm_head = gpu_weights.lm_head.as_dense().expect("lm_head dense");
-    let mut d_logits = GpuBuffer::alloc(vocab_size * std::mem::size_of::<f32>()).expect("alloc logits");
+    let mut d_logits =
+        GpuBuffer::alloc(vocab_size * std::mem::size_of::<f32>()).expect("alloc logits");
     gpu::ops::gpu_dispatch_gemv_on_stream(
         &device,
         d_lm_head,
@@ -1000,13 +1271,20 @@ fn test_qwen_gpu_greedy_token_matches_cpu() {
     let gpu_next = argmax(&gpu_logits) as u32;
 
     eprintln!("\n═══ Qwen greedy token (CPU vs GPU) ═══");
-    eprintln!("  CPU next token: {}  GPU next token: {}", cpu_next, gpu_next);
-    eprintln!("  CPU logits max={:.4}  GPU logits max={:.4}",
+    eprintln!(
+        "  CPU next token: {}  GPU next token: {}",
+        cpu_next, gpu_next
+    );
+    eprintln!(
+        "  CPU logits max={:.4}  GPU logits max={:.4}",
         cpu_logits.iter().fold(0.0f32, |m, v| m.max(*v)),
-        gpu_logits.iter().fold(0.0f32, |m, v| m.max(*v)));
+        gpu_logits.iter().fold(0.0f32, |m, v| m.max(*v))
+    );
     assert_eq!(cpu_next, gpu_next, "GPU greedy token diverged from CPU");
 
-    unsafe { std::env::remove_var("ROCMFORGE_ENABLE_DECODE_GRAPH"); }
+    unsafe {
+        std::env::remove_var("ROCMFORGE_ENABLE_DECODE_GRAPH");
+    }
     rocmforge::gpu::refresh_runtime_env_flags();
 }
 
@@ -1070,7 +1348,8 @@ fn test_gpu_batched_prefill_matches_cpu_multi_token_qwen() {
         config.rms_norm_eps,
     );
     let mut cpu_logits = vec![0.0f32; config.vocab_size];
-    let mut q8_scratch = vec![0u8; rocmforge::gpu::kernels::q8_0_workspace_bytes(config.hidden_size)];
+    let mut q8_scratch =
+        vec![0u8; rocmforge::gpu::kernels::q8_0_workspace_bytes(config.hidden_size)];
     dispatch_gemv(
         &cpu_weights.lm_head,
         &cpu_weights.lm_head_meta,
@@ -1090,8 +1369,7 @@ fn test_gpu_batched_prefill_matches_cpu_multi_token_qwen() {
 
     let mut kv_gpu = GpuKvCache::new(&config, tokens.len().max(1)).expect("GPU KV");
     let mut gpu_prefill_scratch =
-        rocmforge::gpu::GpuPrefillScratch::new(&config, tokens.len())
-            .expect("GPU prefill scratch");
+        rocmforge::gpu::GpuPrefillScratch::new(&config, tokens.len()).expect("GPU prefill scratch");
     let mut host_scratch = CpuForwardScratch::new(&config);
 
     gpu::gpu_batched_prefill_forward(
@@ -1134,10 +1412,7 @@ fn test_gpu_batched_prefill_matches_cpu_multi_token_qwen() {
         &cpu_logits[..config.vocab_size],
         &host_scratch.logits[..config.vocab_size],
     );
-    eprintln!(
-        "═══ batched prefill parity (seq_len={}) ═══",
-        tokens.len()
-    );
+    eprintln!("═══ batched prefill parity (seq_len={}) ═══", tokens.len());
     eprintln!(
         "  CPU token={}  GPU token={}  hidden_err={:.6}  logits_err={:.6}",
         cpu_token, gpu_token, hidden_err, logits_err
@@ -1192,8 +1467,14 @@ fn check_gate_weights_layer_0(
 
     // Verify metadata matches
     eprintln!("  Metadata check:");
-    eprintln!("    CPU wtype={:?} dims={:?}", cpu_gate_meta.wtype, cpu_gate_meta.dims);
-    eprintln!("    GPU wtype={:?} dims={:?}", gpu_gate_meta.wtype, gpu_gate_meta.dims);
+    eprintln!(
+        "    CPU wtype={:?} dims={:?}",
+        cpu_gate_meta.wtype, cpu_gate_meta.dims
+    );
+    eprintln!(
+        "    GPU wtype={:?} dims={:?}",
+        gpu_gate_meta.wtype, gpu_gate_meta.dims
+    );
 
     if cpu_gate_meta.wtype != gpu_gate_meta.wtype {
         eprintln!("  ERROR: Weight type mismatch!");
@@ -1221,21 +1502,30 @@ fn check_gate_weights_layer_0(
         if cpu_gate_data[i] != gpu_gate_bytes[i] {
             diff_count += 1;
             if diff_count <= 10 {
-                eprintln!("  Byte {}: CPU={:02x} GPU={:02x}", i, cpu_gate_data[i], gpu_gate_bytes[i]);
+                eprintln!(
+                    "  Byte {}: CPU={:02x} GPU={:02x}",
+                    i, cpu_gate_data[i], gpu_gate_bytes[i]
+                );
             }
         }
     }
 
-    eprintln!("  Byte comparison (first {} bytes): {} differences", compare_len, diff_count);
+    eprintln!(
+        "  Byte comparison (first {} bytes): {} differences",
+        compare_len, diff_count
+    );
 
     // Check if GPU weights are all zero
     let gpu_zero_count = gpu_gate_bytes.iter().filter(|&&b| b == 0).count();
     let cpu_zero_count = cpu_gate_data.iter().filter(|&&b| b == 0).count();
 
-    eprintln!("  Zero bytes: CPU={} / {} ({:.1}%), GPU={} / {} ({:.1}%)",
-        cpu_zero_count, cpu_gate_data.len(),
+    eprintln!(
+        "  Zero bytes: CPU={} / {} ({:.1}%), GPU={} / {} ({:.1}%)",
+        cpu_zero_count,
+        cpu_gate_data.len(),
         100.0 * cpu_zero_count as f32 / cpu_gate_data.len() as f32,
-        gpu_zero_count, gpu_gate_bytes.len(),
+        gpu_zero_count,
+        gpu_gate_bytes.len(),
         100.0 * gpu_zero_count as f32 / gpu_gate_bytes.len() as f32
     );
 
@@ -1245,6 +1535,9 @@ fn check_gate_weights_layer_0(
     } else if diff_count == 0 {
         eprintln!("  *** VERDICT: GPU gate weights match CPU exactly - OK ***");
     } else {
-        eprintln!("  *** VERDICT: GPU gate weights differ from CPU - {} differences ***", diff_count);
+        eprintln!(
+            "  *** VERDICT: GPU gate weights differ from CPU - {} differences ***",
+            diff_count
+        );
     }
 }

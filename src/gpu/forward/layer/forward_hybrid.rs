@@ -175,7 +175,10 @@ pub fn gpu_layer_forward_hybrid(
             let kv_size = num_kv_heads * attn_head_dim;
             let eps = config.rms_norm_eps;
 
-            eprintln!("DEBUG forward_hybrid: Starting AttentionFusedQkv layer {}", layer_idx);
+            eprintln!(
+                "DEBUG forward_hybrid: Starting AttentionFusedQkv layer {}",
+                layer_idx
+            );
 
             // Upload decode state first so pos_ptr has correct pos
             scratch.upload_decode_state(pos, pos + 1, device.stream())?;

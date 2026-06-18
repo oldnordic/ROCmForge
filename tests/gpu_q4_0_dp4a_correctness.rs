@@ -145,12 +145,16 @@ fn test_dp4a_matches_scalar_path() {
     let d_input_q8_0 = GpuBuffer::alloc(num_blocks * 34).expect("Failed to alloc Q8_0 buffer");
 
     gpu_quant
-        .quantize_q8_0(d_input.as_ptr() as *const f32, d_input_q8_0.as_ptr() as *mut u8, in_dim)
+        .quantize_q8_0(
+            d_input.as_ptr() as *const f32,
+            d_input_q8_0.as_ptr() as *mut u8,
+            in_dim,
+        )
         .expect("Q8_0 quantization failed");
 
     // Allocate output buffer
-    let d_output_scalar = GpuBuffer::alloc(out_dim * std::mem::size_of::<f32>())
-        .expect("Failed to allocate output");
+    let d_output_scalar =
+        GpuBuffer::alloc(out_dim * std::mem::size_of::<f32>()).expect("Failed to allocate output");
 
     // Test scalar path (DP4A disabled)
     unsafe {
@@ -173,11 +177,12 @@ fn test_dp4a_matches_scalar_path() {
 
     device.synchronize().expect("Stream sync failed");
 
-    let output_scalar = download_f32(&d_output_scalar, out_dim).expect("Failed to download scalar output");
+    let output_scalar =
+        download_f32(&d_output_scalar, out_dim).expect("Failed to download scalar output");
 
     // Test DP4A path (DP4A enabled)
-    let d_output_dp4a = GpuBuffer::alloc(out_dim * std::mem::size_of::<f32>())
-        .expect("Failed to allocate output");
+    let d_output_dp4a =
+        GpuBuffer::alloc(out_dim * std::mem::size_of::<f32>()).expect("Failed to allocate output");
 
     unsafe {
         std::env::set_var("ROCMFORGE_Q4_0_Q8_DP4A", "1");
@@ -199,18 +204,23 @@ fn test_dp4a_matches_scalar_path() {
 
     device.synchronize().expect("Stream sync failed");
 
-    let output_dp4a = download_f32(&d_output_dp4a, out_dim).expect("Failed to download DP4A output");
+    let output_dp4a =
+        download_f32(&d_output_dp4a, out_dim).expect("Failed to download DP4A output");
 
     // Compare against CPU oracle
     let weights_bytes = {
         let mut buf = vec![0u8; d_weights_q4_0.size()];
-        d_weights_q4_0.copy_to_host(&mut buf).expect("Failed to download weights");
+        d_weights_q4_0
+            .copy_to_host(&mut buf)
+            .expect("Failed to download weights");
         buf
     };
 
     let input_q8_bytes = {
         let mut buf = vec![0u8; d_input_q8_0.size()];
-        d_input_q8_0.copy_to_host(&mut buf).expect("Failed to download input Q8_0");
+        d_input_q8_0
+            .copy_to_host(&mut buf)
+            .expect("Failed to download input Q8_0");
         buf
     };
 
@@ -221,9 +231,15 @@ fn test_dp4a_matches_scalar_path() {
     let error_dp4a_vs_cpu = max_abs_error(&output_dp4a, &cpu_oracle);
     let error_scalar_vs_dp4a = max_abs_error(&output_scalar, &output_dp4a);
 
-    println!("Max absolute error (scalar vs CPU): {}", error_scalar_vs_cpu);
+    println!(
+        "Max absolute error (scalar vs CPU): {}",
+        error_scalar_vs_cpu
+    );
     println!("Max absolute error (DP4A vs CPU): {}", error_dp4a_vs_cpu);
-    println!("Max absolute error (scalar vs DP4A): {}", error_scalar_vs_dp4a);
+    println!(
+        "Max absolute error (scalar vs DP4A): {}",
+        error_scalar_vs_dp4a
+    );
 
     // Both paths should match CPU oracle within floating point tolerance
     const TOLERANCE: f32 = 1e-4;
@@ -294,7 +310,11 @@ fn test_dp4a_residual_matches_scalar_path() {
     let d_input_q8_0 = GpuBuffer::alloc(num_blocks * 34).expect("Failed to alloc Q8_0 buffer");
 
     gpu_quant
-        .quantize_q8_0(d_input.as_ptr() as *const f32, d_input_q8_0.as_ptr() as *mut u8, in_dim)
+        .quantize_q8_0(
+            d_input.as_ptr() as *const f32,
+            d_input_q8_0.as_ptr() as *mut u8,
+            in_dim,
+        )
         .expect("Q8_0 quantization failed");
 
     let _d_residual = upload_f32(&residual).expect("Failed to upload residual");
@@ -327,7 +347,8 @@ fn test_dp4a_residual_matches_scalar_path() {
 
     device.synchronize().expect("Stream sync failed");
 
-    let output_gate_scalar = download_f32(&d_output_gate_scalar, out_dim).expect("Failed to download scalar gate output");
+    let output_gate_scalar = download_f32(&d_output_gate_scalar, out_dim)
+        .expect("Failed to download scalar gate output");
 
     // Test DP4A path
     let d_output_gate_dp4a = GpuBuffer::alloc(out_dim * std::mem::size_of::<f32>())
@@ -357,11 +378,15 @@ fn test_dp4a_residual_matches_scalar_path() {
 
     device.synchronize().expect("Stream sync failed");
 
-    let output_gate_dp4a = download_f32(&d_output_gate_dp4a, out_dim).expect("Failed to download DP4A gate output");
+    let output_gate_dp4a =
+        download_f32(&d_output_gate_dp4a, out_dim).expect("Failed to download DP4A gate output");
 
     let error_scalar_vs_dp4a = max_abs_error(&output_gate_scalar, &output_gate_dp4a);
 
-    println!("Max absolute error (scalar vs DP4A, residual): {}", error_scalar_vs_dp4a);
+    println!(
+        "Max absolute error (scalar vs DP4A, residual): {}",
+        error_scalar_vs_dp4a
+    );
 
     assert!(
         error_scalar_vs_dp4a < 1e-6,

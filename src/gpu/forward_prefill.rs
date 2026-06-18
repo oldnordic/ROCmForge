@@ -147,12 +147,17 @@ pub fn gpu_batched_prefill_forward(
                 });
             }
             for pos in 0..seq_len {
-                let input_row =
-                    unsafe { (scratch.normed.as_ptr() as *const f32).add(pos * h) };
-                let qkv_row =
-                    unsafe { (scratch.gate.as_ptr() as *mut f32).add(pos * qkv_dim) };
+                let input_row = unsafe { (scratch.normed.as_ptr() as *const f32).add(pos * h) };
+                let qkv_row = unsafe { (scratch.gate.as_ptr() as *mut f32).add(pos * qkv_dim) };
                 gpu_dispatch_gemv_on_stream(
-                    device, qkv_w, qkv_m, input_row, qkv_row, qkv_dim, h, device.stream(),
+                    device,
+                    qkv_w,
+                    qkv_m,
+                    input_row,
+                    qkv_row,
+                    qkv_dim,
+                    h,
+                    device.stream(),
                 )?;
             }
             // Split fused QKV into separate Q/K/V buffers.

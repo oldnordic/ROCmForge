@@ -10,8 +10,8 @@ mod gemv_residual;
 mod norm;
 mod qkv;
 
-pub use gate_up::{gpu_dispatch_fused_gate_up, gpu_dispatch_fused_gate_up_on_stream};
 pub(crate) use gate_up::gpu_dispatch_gate_up_raw_on_stream;
+pub use gate_up::{gpu_dispatch_fused_gate_up, gpu_dispatch_fused_gate_up_on_stream};
 pub use gemm::gpu_dispatch_gemm;
 pub use gemv::{
     gpu_dispatch_gemv, gpu_dispatch_gemv_on_stream, gpu_dispatch_gemv_ptr_on_stream,
