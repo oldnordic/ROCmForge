@@ -7,6 +7,7 @@ use super::super::kernels::{
     gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_on_stream,
     gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_tile4_on_stream,
     gemv_gate_up_swiglu_q4_0_f32_q8_inline_on_stream_variant,
+    gemv_gate_up_swiglu_q4_0_f32_single_row_on_stream,
     gemv_q4_0_f32_q8_inline_residual_on_stream, gemv_q4_0_q8_0_on_stream,
     gemv_q4_0_q8_0_residual_on_stream, q8_0_workspace_bytes, quantize_q8_0_on_stream,
 };
@@ -173,6 +174,26 @@ pub(super) fn try_q4_0_q8_0_fused_gate_up_fastpath_variant(
         h,
         ff_size,
         variant,
+        stream,
+    )
+}
+
+pub(super) fn try_q4_0_q8_0_fused_gate_up_single_row_fastpath(
+    w_gate: &GpuBuffer,
+    w_up: &GpuBuffer,
+    input: *const f32,
+    output: *mut f32,
+    h: usize,
+    ff_size: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    gemv_gate_up_swiglu_q4_0_f32_single_row_on_stream(
+        w_gate.as_ptr() as *const u8,
+        w_up.as_ptr() as *const u8,
+        input,
+        output,
+        h,
+        ff_size,
         stream,
     )
 }

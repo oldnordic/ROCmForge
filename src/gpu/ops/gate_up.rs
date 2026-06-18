@@ -12,7 +12,8 @@ use crate::loader::GgmlType;
 use super::fastpath::{
     q8_fastpath_ok, try_q4_0_q8_0_fused_gate_up_fastpath,
     try_q4_0_q8_0_fused_gate_up_interleaved_fastpath,
-    try_q4_0_q8_0_fused_gate_up_interleaved_tile4_fastpath, try_q4_0_q8_0_gate_up_fastpath,
+    try_q4_0_q8_0_fused_gate_up_interleaved_tile4_fastpath,
+    try_q4_0_q8_0_fused_gate_up_single_row_fastpath, try_q4_0_q8_0_gate_up_fastpath,
 };
 use super::gemv::gpu_dispatch_gemv_on_stream;
 use super::validate_gemv_layout;
@@ -114,6 +115,19 @@ pub(crate) fn gpu_dispatch_fused_gate_up_with_scratch_on_stream(
 
     if gate_meta.wtype == GgmlType::Q4_0 && up_meta.wtype == GgmlType::Q4_0 {
         if experimental_q8_activation_fastpath_enabled() {
+            // Hipfire-derived single-row high-occupancy path. Env-gated while we
+            // validate it against the existing tile4/interleaved fastpaths.
+            if std::env::var("ROCMFORGE_GATE_UP_SINGLE_ROW").is_ok() {
+                if q8_fastpath_ok(
+                    "gemv_gate_up_swiglu_q4_0_f32_single_row",
+                    try_q4_0_q8_0_fused_gate_up_single_row_fastpath(
+                        w_gate, w_up, input, output, h, ff_size, stream,
+                    ),
+                ) {
+                    return Ok(());
+                }
+            }
+
             let capture_active = matches!(
                 hip_stream_is_capturing(stream),
                 Err(_)

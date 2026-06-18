@@ -1,4 +1,6 @@
 #include "common.hip"
+#include <cstdlib>
+#include <cstring>
 
 // Q4_0 constants
 #define QK4_0 32
@@ -347,6 +349,83 @@ __global__ void gemv_qkv_q4_0_f32_wave_parallel_v3_kernel(
     }
 }
 
+// ── Single-Row Fused QKV Kernel (no LDS, high occupancy) ──────────────────────────
+// One warp per output column. Loads the input vector directly from global memory,
+// computes the Q/K/V projection for that column, and writes the result. This mirrors
+// the gate/up single-row optimization for the QKV projection bottleneck on RDNA3.
+
+__launch_bounds__(WARP_SIZE, 20)
+__global__ void gemv_qkv_q4_0_f32_single_row_kernel(
+    const void* __restrict__ w_q,
+    const void* __restrict__ w_k,
+    const void* __restrict__ w_v,
+    const float* __restrict__ bias_q,
+    const float* __restrict__ bias_k,
+    const float* __restrict__ bias_v,
+    const float* __restrict__ input,
+    float* __restrict__ out_q,
+    float* __restrict__ out_k,
+    float* __restrict__ out_v,
+    int n_rows,
+    int n_q,
+    int n_kv
+) {
+    const int col = blockIdx.x;
+    const int total_cols = n_q + 2 * n_kv;
+    if (col >= total_cols) return;
+
+    const int lane_id = threadIdx.x;
+    const int n_blocks_total = n_rows / QK4_0;
+
+    const void* weights;
+    int out_col;
+    float* out;
+    const float* bias;
+    if (col < n_q) {
+        weights = w_q;
+        out_col = col;
+        out = out_q;
+        bias = bias_q;
+    } else if (col < n_q + n_kv) {
+        weights = w_k;
+        out_col = col - n_q;
+        out = out_k;
+        bias = bias_k;
+    } else {
+        weights = w_v;
+        out_col = col - n_q - n_kv;
+        out = out_v;
+        bias = bias_v;
+    }
+
+    const Q4_0_block* w_col = reinterpret_cast<const Q4_0_block*>(
+        static_cast<const uint8_t*>(weights) + (static_cast<size_t>(out_col) * n_blocks_total) * Q4_0_BLOCK_SIZE
+    );
+
+    float sum = 0.0f;
+    for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += WARP_SIZE) {
+        const Q4_0_block* b = &w_col[block_idx];
+        const float d = __half2float(b->d);
+        const int row_offset = block_idx * QK4_0;
+
+        #pragma unroll
+        for (int l = 0; l < 16; ++l) {
+            const uint8_t q = static_cast<uint8_t>(b->qs[l]);
+            sum += d * (static_cast<float>(q & 0x0F) - 8.0f) * input[row_offset + l];
+            sum += d * (static_cast<float>(q >> 4) - 8.0f) * input[row_offset + l + 16];
+        }
+    }
+
+    #pragma unroll
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
+        sum += __shfl_down(sum, offset, WARP_SIZE);
+    }
+
+    if (lane_id == 0) {
+        out[out_col] = sum + (bias ? bias[out_col] : 0.0f);
+    }
+}
+
 // ── Wavefront-Parallel Fused Gate/Up + SwiGLU Kernel (Fast Path) ────────────────────
 
 template<int N_WAVES>
@@ -676,6 +755,39 @@ __global__ void gemv_gate_up_q4_0_f32_chunked_kernel(
 
 // ── Dispatch Functions ─────────────────────────────────────────────────────────────
 
+static bool use_single_row_qkv() {
+    static int cached = -1;
+    if (cached == -1) {
+        const char* val = std::getenv("ROCMFORGE_QKV_SINGLE_ROW");
+        if (val != nullptr && (
+            std::strcmp(val, "1") == 0 ||
+            std::strcmp(val, "true") == 0 ||
+            std::strcmp(val, "yes") == 0 ||
+            std::strcmp(val, "on") == 0)) {
+            cached = 1;
+        } else {
+            cached = 0;
+        }
+    }
+    return cached == 1;
+}
+
+static hipError_t gemv_qkv_q4_0_f32_single_row_dispatch(
+    const void* w_q, const void* w_k, const void* w_v,
+    const float* bias_q, const float* bias_k, const float* bias_v,
+    const float* input,
+    float* out_q, float* out_k, float* out_v,
+    int n_rows, int n_q, int n_kv,
+    hipStream_t stream
+) {
+    const int total_cols = n_q + 2 * n_kv;
+    gemv_qkv_q4_0_f32_single_row_kernel<<<total_cols, WARP_SIZE, 0, stream>>>(
+        w_q, w_k, w_v, bias_q, bias_k, bias_v, input,
+        out_q, out_k, out_v, n_rows, n_q, n_kv
+    );
+    return hipGetLastError();
+}
+
 extern "C" hipError_t gemv_qkv_q4_0_f32_launch(
     const void* w_q, const void* w_k, const void* w_v,
     const float* bias_q, const float* bias_k, const float* bias_v,
@@ -684,6 +796,13 @@ extern "C" hipError_t gemv_qkv_q4_0_f32_launch(
     int n_rows, int n_q, int n_kv,
     hipStream_t stream
 ) {
+    if (use_single_row_qkv()) {
+        return gemv_qkv_q4_0_f32_single_row_dispatch(
+            w_q, w_k, w_v, bias_q, bias_k, bias_v, input,
+            out_q, out_k, out_v, n_rows, n_q, n_kv, stream
+        );
+    }
+
     const int N_WAVES = 8;
     int total_cols = n_q + 2 * n_kv;
     const bool use_v3 =
@@ -727,6 +846,13 @@ extern "C" hipError_t gemv_qkv_q4_0_f32_variant_launch(
     int variant,
     hipStream_t stream
 ) {
+    if (use_single_row_qkv()) {
+        return gemv_qkv_q4_0_f32_single_row_dispatch(
+            w_q, w_k, w_v, bias_q, bias_k, bias_v, input,
+            out_q, out_k, out_v, n_rows, n_q, n_kv, stream
+        );
+    }
+
     const int N_WAVES = 8;
     int total_cols = n_q + 2 * n_kv;
     // variant=0 keeps the old 0.5B-tuned row cap; variant=1 uses the

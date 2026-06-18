@@ -64,6 +64,10 @@ pub struct GpuForwardScratch {
     /// Optional scratch buffer for normalized attention weights when tracing.
     /// Sized to [num_heads * max_seq_len] f32 and allocated on first use.
     attn_weights: Option<GpuBuffer>,
+    /// Position indices for multi-token prefill. Sized to [max_seq_len] i32.
+    positions: GpuBuffer,
+    /// Pinned host staging for positions upload.
+    positions_host: GpuPinnedBuffer,
 }
 
 /// Pre-allocated GPU buffers for uploading one expert's compressed data at decode time.
@@ -152,8 +156,10 @@ impl GpuForwardScratch {
         let v = config.vocab_size;
         let argmax_partials = v.div_ceil(GPU_ARGMAX_ITEMS_PER_BLOCK);
         let attn_weights = config.num_heads * config.max_seq_len;
+        let positions = config.max_seq_len;
         std::mem::size_of::<f32>()
             * (3 * h + 2 * q + 2 * kv + 2 * ff + 32 + v + 2 * argmax_partials + 3 + attn_weights)
+            + positions * std::mem::size_of::<i32>()
     }
 
     /// Allocate expert scratch buffers for compressed MoE dispatch.
@@ -277,6 +283,20 @@ impl GpuForwardScratch {
                 }
             })?;
 
+        // Allocate positions buffer for multi-token prefill
+        let max_seq = config.max_seq_len;
+        let positions = GpuBuffer::alloc(max_seq * std::mem::size_of::<i32>()).map_err(|e| {
+            GpuError::CacheAllocationFailed {
+                reason: format!("positions buffer allocation failed: {}", e),
+            }
+        })?;
+        let positions_host =
+            GpuPinnedBuffer::alloc(max_seq * std::mem::size_of::<i32>()).map_err(|e| {
+                GpuError::CacheAllocationFailed {
+                    reason: format!("positions host allocation failed: {}", e),
+                }
+            })?;
+
         crate::gpu::ffi::hip_memset(hidden.as_ptr(), 0, hidden.size())?;
         crate::gpu::ffi::hip_memset(normed.as_ptr(), 0, normed.size())?;
         crate::gpu::ffi::hip_memset(q_buf.as_ptr(), 0, q_buf.size())?;
@@ -304,6 +324,7 @@ impl GpuForwardScratch {
             argmax_result_device.size(),
         )?;
         crate::gpu::ffi::hip_memset(decode_state.as_ptr(), 0, decode_state.size())?;
+        crate::gpu::ffi::hip_memset(positions.as_ptr(), 0, positions.size())?;
 
         Ok(Self {
             hidden,
@@ -329,6 +350,8 @@ impl GpuForwardScratch {
             expert_scratch: None,
             forward_graph_recorder: None,
             attn_weights: None,
+            positions,
+            positions_host,
         })
     }
 
@@ -489,6 +512,55 @@ impl GpuForwardScratch {
         self.decode_state
             .copy_from_host_on_stream(state_bytes, stream)?;
         self.decode_state_next_pos = Some(pos);
+        Ok(())
+    }
+
+    /// Get pointer to positions buffer for multi-token prefill.
+    pub fn positions_ptr(&self) -> *const i32 {
+        self.positions.as_ptr() as *const i32
+    }
+
+    /// Upload position indices for multi-token prefill.
+    ///
+    /// Populates the entire positions buffer with [0, 1, 2, ..., max_seq-1].
+    /// The positions buffer is sized to max_seq and must be completely filled
+    /// to match the allocated GPU buffer size. This is used when combining
+    /// existing cache entries (seq_len) with new prefill tokens (num_prefill)
+    /// for attention computation.
+    pub fn upload_positions(
+        &mut self,
+        seq_len: usize,
+        num_prefill: usize,
+        max_seq: usize,
+        stream: hipStream_t,
+    ) -> GpuResult<()> {
+        let total_len = seq_len + num_prefill;
+        if total_len > max_seq {
+            return Err(GpuError::HipApiError {
+                code: -1,
+                description: format!(
+                    "positions length {}+{}={} exceeds max_seq {}",
+                    seq_len, num_prefill, total_len, max_seq
+                ),
+            });
+        }
+
+        let positions_host = self.positions_host.as_slice_mut::<i32>();
+        for i in 0..max_seq {
+            positions_host[i] = i32::try_from(i).map_err(|_| GpuError::HipApiError {
+                code: -1,
+                description: format!("position index {} exceeds i32 range", i),
+            })?;
+        }
+
+        let positions_bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(
+                self.positions_host.as_ptr() as *const u8,
+                max_seq * std::mem::size_of::<i32>(),
+            )
+        };
+        self.positions
+            .copy_from_host_on_stream(positions_bytes, stream)?;
         Ok(())
     }
 

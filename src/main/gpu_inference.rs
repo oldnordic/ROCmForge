@@ -401,6 +401,37 @@ pub(crate) fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::E
         eprintln!("\n[EOS on first token]");
     }
 
+    // Print per-stage decode profile if the runtime collected any samples.
+    // Stage profiling is disabled by decode graph replay, so this only prints
+    // meaningful data when ROCMFORGE_DISABLE_DECODE_GRAPH=1.
+    let stage_profile = gpu::decode_stage_profile_snapshot();
+    if stage_profile.layer_invocations > 0 || stage_profile.tail_invocations > 0 {
+        eprintln!("\nDecode stage profile ({} layer invocations, {} tail invocations):", "
+                  stage_profile.layer_invocations, stage_profile.tail_invocations);
+        let stages = [
+            ("attn_norm", stage_profile.attn_norm_ns),
+            ("qkv", stage_profile.qkv_ns),
+            ("q_rope", stage_profile.q_rope_ns),
+            ("k_rope", stage_profile.k_rope_ns),
+            ("kv_write", stage_profile.kv_write_ns),
+            ("attention", stage_profile.attention_ns),
+            ("attn_proj", stage_profile.attn_proj_ns),
+            ("attn_residual", stage_profile.attn_residual_ns),
+            ("ffn_norm", stage_profile.ffn_norm_ns),
+            ("gate_up", stage_profile.gate_up_ns),
+            ("ffn_down", stage_profile.ffn_down_ns),
+            ("ffn_residual", stage_profile.ffn_residual_ns),
+            ("logits_norm", stage_profile.logits_norm_ns),
+            ("logits_proj", stage_profile.logits_proj_ns),
+            ("argmax", stage_profile.argmax_ns),
+        ];
+        let total_ns: u128 = stages.iter().map(|(_, ns)| ns).sum();
+        for (name, ns) in stages {
+            let pct = if total_ns > 0 { (ns as f64 / total_ns as f64) * 100.0 } else { 0.0 };
+            eprintln!("  {:15} {:8.3} ms ({:5.1}%)", name, ns as f64 / 1_000_000.0, pct);
+        }
+    }
+
     Ok(())
 }
 

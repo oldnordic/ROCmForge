@@ -1,4 +1,6 @@
 #include "common.hip"
+#include <cstdlib>
+#include <cstring>
 
 #define QK4_0 32
 #define Q4_0_BLOCK_SIZE 18
@@ -649,6 +651,70 @@ __global__ void gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_tile4_vulkan_
     }
 }
 
+// ── Single-Row Gate+Up+SwiGLU (no LDS, high occupancy) ─────────────────────────────
+// One warp per output column. Loads the input vector directly from global memory,
+// computes both the gate and up dot products against Q4_0 weights, applies SwiGLU,
+// and writes the single fused output. This is the hipfire-style geometry: many tiny
+// blocks keep the CU full on RDNA3 when the per-column work is small.
+
+__launch_bounds__(WARP_SIZE, 20)
+__global__ void gemv_gate_up_swiglu_q4_0_f32_single_row_kernel(
+    const void* __restrict__ w_gate,
+    const void* __restrict__ w_up,
+    const float* __restrict__ input,
+    float* __restrict__ out_swiglu,
+    int n_rows,
+    int n_ff
+) {
+    const int col = blockIdx.x;
+    if (col >= n_ff) return;
+
+    const int lane_id = threadIdx.x;
+    const int n_blocks_total = n_rows / QK4_0;
+
+    const Q4_0_block* gate_col = reinterpret_cast<const Q4_0_block*>(
+        static_cast<const uint8_t*>(w_gate) + (static_cast<size_t>(col) * n_blocks_total) * Q4_0_BLOCK_SIZE
+    );
+    const Q4_0_block* up_col = reinterpret_cast<const Q4_0_block*>(
+        static_cast<const uint8_t*>(w_up) + (static_cast<size_t>(col) * n_blocks_total) * Q4_0_BLOCK_SIZE
+    );
+
+    float sum_gate = 0.0f;
+    float sum_up = 0.0f;
+
+    for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += WARP_SIZE) {
+        const Q4_0_block* gate_block = &gate_col[block_idx];
+        const Q4_0_block* up_block = &up_col[block_idx];
+
+        const float d_gate = __half2float(gate_block->d);
+        const float d_up = __half2float(up_block->d);
+        const int row_offset = block_idx * QK4_0;
+
+        #pragma unroll
+        for (int i = 0; i < 16; ++i) {
+            const uint8_t q_gate = static_cast<uint8_t>(gate_block->qs[i]);
+            const uint8_t q_up = static_cast<uint8_t>(up_block->qs[i]);
+            const float x_lo = input[row_offset + i];
+            const float x_hi = input[row_offset + i + 16];
+
+            sum_gate += d_gate * (static_cast<float>(q_gate & 0x0F) - 8.0f) * x_lo;
+            sum_gate += d_gate * (static_cast<float>(q_gate >> 4) - 8.0f) * x_hi;
+            sum_up += d_up * (static_cast<float>(q_up & 0x0F) - 8.0f) * x_lo;
+            sum_up += d_up * (static_cast<float>(q_up >> 4) - 8.0f) * x_hi;
+        }
+    }
+
+    #pragma unroll
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
+        sum_gate += __shfl_down(sum_gate, offset, WARP_SIZE);
+        sum_up += __shfl_down(sum_up, offset, WARP_SIZE);
+    }
+
+    if (lane_id == 0) {
+        out_swiglu[col] = silu_q8(sum_gate) * sum_up;
+    }
+}
+
 extern "C" hipError_t gemv_gate_up_q4_0_q8_0_launch(
     const void* w_gate, const void* w_up,
     const void* input_q8_0,
@@ -905,5 +971,63 @@ extern "C" hipError_t gemv_gate_up_swiglu_q4_0_f32_q8_inline_launch(
 ) {
     return gemv_gate_up_swiglu_q4_0_f32_q8_inline_variant_launch(
         w_gate, w_up, input, out_swiglu, n_rows, n_ff, 0, stream
+    );
+}
+
+static bool use_single_row_gate_up() {
+    static int cached = -1;
+    if (cached == -1) {
+        const char* val = std::getenv("ROCMFORGE_GATE_UP_SINGLE_ROW");
+        if (val != nullptr && (
+            std::strcmp(val, "1") == 0 ||
+            std::strcmp(val, "true") == 0 ||
+            std::strcmp(val, "yes") == 0 ||
+            std::strcmp(val, "on") == 0)) {
+            cached = 1;
+        } else {
+            cached = 0;
+        }
+    }
+    return cached == 1;
+}
+
+extern "C" hipError_t gemv_gate_up_swiglu_q4_0_f32_single_row_launch(
+    const void* w_gate, const void* w_up,
+    const float* input,
+    float* out_swiglu,
+    int n_rows, int n_ff,
+    hipStream_t stream
+) {
+    CHECK_NULL(w_gate);
+    CHECK_NULL(w_up);
+    CHECK_NULL(input);
+    CHECK_NULL(out_swiglu);
+    if (n_rows <= 0 || n_ff <= 0) {
+        return hipErrorInvalidValue;
+    }
+    if (n_rows % QK4_0 != 0) {
+        return hipErrorInvalidValue;
+    }
+
+    gemv_gate_up_swiglu_q4_0_f32_single_row_kernel<<<n_ff, WARP_SIZE, 0, stream>>>(
+        w_gate, w_up, input, out_swiglu, n_rows, n_ff
+    );
+    return hipGetLastError();
+}
+
+extern "C" hipError_t gemv_gate_up_swiglu_q4_0_f32_q8_inline_or_single_row_launch(
+    const void* w_gate, const void* w_up,
+    const float* input,
+    float* out_swiglu,
+    int n_rows, int n_ff,
+    hipStream_t stream
+) {
+    if (use_single_row_gate_up()) {
+        return gemv_gate_up_swiglu_q4_0_f32_single_row_launch(
+            w_gate, w_up, input, out_swiglu, n_rows, n_ff, stream
+        );
+    }
+    return gemv_gate_up_swiglu_q4_0_f32_q8_inline_launch(
+        w_gate, w_up, input, out_swiglu, n_rows, n_ff, stream
     );
 }

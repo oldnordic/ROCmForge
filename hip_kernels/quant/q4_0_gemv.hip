@@ -1,4 +1,6 @@
 #include "common.hip"
+#include <cstdlib>
+#include <cstring>
 
 // Q4_0 constants
 #define QK4_0 32
@@ -697,6 +699,217 @@ __global__ void gemv_q4_0_q8_0_multi_row_kernel(
     }
 }
 
+// ── Single-Row Wave-Parallel GEMV (No Shared Memory) ──────────────────────────────
+// Hipfire-derived high-occupancy path for RDNA3 decode: one warp per output column,
+// loads the input vector directly from global memory, and reduces with warp shuffles.
+// No LDS keeps register pressure low and lets the CU host many resident warps.
+
+__launch_bounds__(WARP_SIZE, 20)
+__global__ void gemv_q4_0_f32_single_row_kernel(
+    const void* __restrict__ weights_q4_0,
+    const float* __restrict__ input,
+    float* __restrict__ output,
+    int n_rows,
+    int ncols_dst
+) {
+    const int col = blockIdx.x;
+    if (col >= ncols_dst) return;
+
+    const int lane_id = threadIdx.x;
+    const int n_blocks_total = n_rows / QK4_0;
+
+    const Q4_0_block* w_col = reinterpret_cast<const Q4_0_block*>(
+        static_cast<const uint8_t*>(weights_q4_0) + (static_cast<size_t>(col) * n_blocks_total) * Q4_0_BLOCK_SIZE
+    );
+
+    float sum = 0.0f;
+    for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += WARP_SIZE) {
+        const Q4_0_block* b = &w_col[block_idx];
+        const float d = __half2float(b->d);
+        const int row_offset = block_idx * QK4_0;
+
+        #pragma unroll
+        for (int l = 0; l < 16; ++l) {
+            const uint8_t q = static_cast<uint8_t>(b->qs[l]);
+            sum += d * (static_cast<float>(q & 0x0F) - 8.0f) * input[row_offset + l];
+            sum += d * (static_cast<float>(q >> 4) - 8.0f) * input[row_offset + l + 16];
+        }
+    }
+
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
+        sum += __shfl_down(sum, offset, WARP_SIZE);
+    }
+
+    if (lane_id == 0) {
+        output[col] = sum;
+    }
+}
+
+__launch_bounds__(WARP_SIZE, 20)
+__global__ void gemv_q4_0_f32_residual_single_row_kernel(
+    const void* __restrict__ weights_q4_0,
+    const float* __restrict__ input,
+    const float* __restrict__ residual,
+    float* __restrict__ output,
+    int n_rows,
+    int ncols_dst
+) {
+    const int col = blockIdx.x;
+    if (col >= ncols_dst) return;
+
+    const int lane_id = threadIdx.x;
+    const int n_blocks_total = n_rows / QK4_0;
+
+    const Q4_0_block* w_col = reinterpret_cast<const Q4_0_block*>(
+        static_cast<const uint8_t*>(weights_q4_0) + (static_cast<size_t>(col) * n_blocks_total) * Q4_0_BLOCK_SIZE
+    );
+
+    float sum = 0.0f;
+    for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += WARP_SIZE) {
+        const Q4_0_block* b = &w_col[block_idx];
+        const float d = __half2float(b->d);
+        const int row_offset = block_idx * QK4_0;
+
+        #pragma unroll
+        for (int l = 0; l < 16; ++l) {
+            const uint8_t q = static_cast<uint8_t>(b->qs[l]);
+            sum += d * (static_cast<float>(q & 0x0F) - 8.0f) * input[row_offset + l];
+            sum += d * (static_cast<float>(q >> 4) - 8.0f) * input[row_offset + l + 16];
+        }
+    }
+
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
+        sum += __shfl_down(sum, offset, WARP_SIZE);
+    }
+
+    if (lane_id == 0) {
+        output[col] = sum + residual[col];
+    }
+}
+
+// ── Single-Row Q4_0 × Q8_0 GEMV (no LDS, high occupancy) ─────────────────────────
+
+__launch_bounds__(WARP_SIZE, 20)
+__global__ void gemv_q4_0_q8_0_single_row_kernel(
+    const void* __restrict__ weights_q4_0,
+    const void* __restrict__ input_q8_0,
+    float* __restrict__ output,
+    int n_rows,
+    int ncols_dst
+) {
+    const int col = blockIdx.x;
+    if (col >= ncols_dst) return;
+
+    const int lane_id = threadIdx.x;
+    const int n_blocks_total = n_rows / QK4_0;
+
+    const Q4_0_block* w_col = reinterpret_cast<const Q4_0_block*>(
+        static_cast<const uint8_t*>(weights_q4_0) + (static_cast<size_t>(col) * n_blocks_total) * Q4_0_BLOCK_SIZE
+    );
+    const Q8_0_block* x_blocks = reinterpret_cast<const Q8_0_block*>(input_q8_0);
+
+    float sum = 0.0f;
+    for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += WARP_SIZE) {
+        const Q4_0_block* w_block = &w_col[block_idx];
+        const Q8_0_block* x_block = &x_blocks[block_idx];
+        const float combined_scale = __half2float(w_block->d) * __half2float(x_block->d);
+        const int8_t* x_qs = x_block->qs;
+
+        #pragma unroll
+        for (int i = 0; i < 16; ++i) {
+            const uint8_t q = static_cast<uint8_t>(w_block->qs[i]);
+            sum += combined_scale * (static_cast<float>(q & 0x0F) - 8.0f) * static_cast<float>(x_qs[i]);
+            sum += combined_scale * (static_cast<float>(q >> 4) - 8.0f) * static_cast<float>(x_qs[i + 16]);
+        }
+    }
+
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
+        sum += __shfl_down(sum, offset, WARP_SIZE);
+    }
+
+    if (lane_id == 0) {
+        output[col] = sum;
+    }
+}
+
+__launch_bounds__(WARP_SIZE, 20)
+__global__ void gemv_q4_0_q8_0_residual_single_row_kernel(
+    const void* __restrict__ weights_q4_0,
+    const void* __restrict__ input_q8_0,
+    const float* __restrict__ residual,
+    float* __restrict__ output,
+    int n_rows,
+    int ncols_dst
+) {
+    const int col = blockIdx.x;
+    if (col >= ncols_dst) return;
+
+    const int lane_id = threadIdx.x;
+    const int n_blocks_total = n_rows / QK4_0;
+
+    const Q4_0_block* w_col = reinterpret_cast<const Q4_0_block*>(
+        static_cast<const uint8_t*>(weights_q4_0) + (static_cast<size_t>(col) * n_blocks_total) * Q4_0_BLOCK_SIZE
+    );
+    const Q8_0_block* x_blocks = reinterpret_cast<const Q8_0_block*>(input_q8_0);
+
+    float sum = 0.0f;
+    for (int block_idx = lane_id; block_idx < n_blocks_total; block_idx += WARP_SIZE) {
+        const Q4_0_block* w_block = &w_col[block_idx];
+        const Q8_0_block* x_block = &x_blocks[block_idx];
+        const float combined_scale = __half2float(w_block->d) * __half2float(x_block->d);
+        const int8_t* x_qs = x_block->qs;
+
+        #pragma unroll
+        for (int i = 0; i < 16; ++i) {
+            const uint8_t q = static_cast<uint8_t>(w_block->qs[i]);
+            sum += combined_scale * (static_cast<float>(q & 0x0F) - 8.0f) * static_cast<float>(x_qs[i]);
+            sum += combined_scale * (static_cast<float>(q >> 4) - 8.0f) * static_cast<float>(x_qs[i + 16]);
+        }
+    }
+
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
+        sum += __shfl_down(sum, offset, WARP_SIZE);
+    }
+
+    if (lane_id == 0) {
+        output[col] = sum + residual[col];
+    }
+}
+
+static bool use_single_row_q4_0_gemv() {
+    static int cached = -1;
+    if (cached == -1) {
+        const char* val = std::getenv("ROCMFORGE_Q4_0_SINGLE_ROW");
+        if (val != nullptr && (
+            std::strcmp(val, "1") == 0 ||
+            std::strcmp(val, "true") == 0 ||
+            std::strcmp(val, "yes") == 0 ||
+            std::strcmp(val, "on") == 0)) {
+            cached = 1;
+        } else {
+            cached = 0;
+        }
+    }
+    return cached == 1;
+}
+
+static bool use_single_row_q4_0_q8() {
+    static int cached = -1;
+    if (cached == -1) {
+        const char* val = std::getenv("ROCMFORGE_Q4_0_Q8_SINGLE_ROW");
+        if (val != nullptr && (
+            std::strcmp(val, "1") == 0 ||
+            std::strcmp(val, "true") == 0 ||
+            std::strcmp(val, "yes") == 0 ||
+            std::strcmp(val, "on") == 0)) {
+            cached = 1;
+        } else {
+            cached = 0;
+        }
+    }
+    return cached == 1;
+}
+
 extern "C" hipError_t gemv_q4_0_f32_launch(
     const void* weights_q4_0,
     const float* input,
@@ -706,6 +919,13 @@ extern "C" hipError_t gemv_q4_0_f32_launch(
     hipStream_t stream
 ) {
     if (n_rows <= 0 || ncols_dst <= 0) return hipErrorInvalidValue;
+
+    if (use_single_row_q4_0_gemv()) {
+        gemv_q4_0_f32_single_row_kernel<<<ncols_dst, WARP_SIZE, 0, stream>>>(
+            weights_q4_0, input, output, n_rows, ncols_dst
+        );
+        return hipGetLastError();
+    }
 
     const int n_waves = select_multi_row_waves_q4_0(ncols_dst);
     const int threads_per_block = n_waves * WARP_SIZE;
@@ -739,6 +959,13 @@ extern "C" hipError_t gemv_q4_0_f32_residual_launch(
 ) {
     if (n_rows <= 0 || ncols_dst <= 0 || residual == nullptr) return hipErrorInvalidValue;
 
+    if (use_single_row_q4_0_gemv()) {
+        gemv_q4_0_f32_residual_single_row_kernel<<<ncols_dst, WARP_SIZE, 0, stream>>>(
+            weights_q4_0, input, residual, output, n_rows, ncols_dst
+        );
+        return hipGetLastError();
+    }
+
     const int n_waves = select_multi_row_waves_q4_0(ncols_dst);
     const int threads_per_block = n_waves * WARP_SIZE;
     const int n_blocks_x =
@@ -770,6 +997,13 @@ extern "C" hipError_t gemv_q4_0_q8_0_launch(
     if (n_rows <= 0 || ncols_dst <= 0) return hipErrorInvalidValue;
     if (n_rows % QK4_0 != 0 || input_q8_0 == nullptr) return hipErrorInvalidValue;
 
+    if (use_single_row_q4_0_q8()) {
+        gemv_q4_0_q8_0_single_row_kernel<<<ncols_dst, WARP_SIZE, 0, stream>>>(
+            weights_q4_0, input_q8_0, output, n_rows, ncols_dst
+        );
+        return hipGetLastError();
+    }
+
     const int n_blocks_total = n_rows / QK4_0;
     const size_t shared_mem = n_blocks_total * Q8_0_BLOCK_SIZE;
     if (shared_mem > Q4_0_MULTI_ROW_SHARED_MEM_LIMIT) return hipErrorInvalidValue;
@@ -797,6 +1031,13 @@ extern "C" hipError_t gemv_q4_0_q8_0_residual_launch(
 ) {
     if (n_rows <= 0 || ncols_dst <= 0 || residual == nullptr) return hipErrorInvalidValue;
     if (n_rows % QK4_0 != 0 || input_q8_0 == nullptr) return hipErrorInvalidValue;
+
+    if (use_single_row_q4_0_q8()) {
+        gemv_q4_0_q8_0_residual_single_row_kernel<<<ncols_dst, WARP_SIZE, 0, stream>>>(
+            weights_q4_0, input_q8_0, residual, output, n_rows, ncols_dst
+        );
+        return hipGetLastError();
+    }
 
     const int n_blocks_total = n_rows / QK4_0;
     const size_t shared_mem = n_blocks_total * Q8_0_BLOCK_SIZE;

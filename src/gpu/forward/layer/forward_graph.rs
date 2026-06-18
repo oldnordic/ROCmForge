@@ -304,11 +304,16 @@ pub(in crate::gpu::forward) fn gpu_layer_forward_from_state_on_stream(
 
     // Check GPU features for DP4A/WMMA support and check Q4_0 layout compatibility
     let features = crate::gpu::features::GpuFeatures::detect(device)?;
+    // The fused norm+QKV+RoPE+KV-write kernel is optimized for MHA. On GQA it
+    // launches only one block per KV head, leaving most of the GPU idle, so
+    // fall through to the separate RMSNorm + fused QKV + RoPE + KV-write path
+    // which has full GQA support and historically hits the documented baseline.
     let use_fused = (gpu_layer.attn_q_meta.wtype == GgmlType::Q4_0)
         && (gpu_layer.attn_k_meta.wtype == GgmlType::Q4_0)
         && (gpu_layer.attn_v_meta.wtype == GgmlType::Q4_0)
         && (features.has_dp4a || features.has_wmma)
-        && crate::gpu::safety::use_dp4a_enabled();
+        && crate::gpu::safety::use_dp4a_enabled()
+        && (num_q_heads == num_kv_heads);
 
     if use_fused {
         let k_cache = kv.k_ptr(layer_idx)?;

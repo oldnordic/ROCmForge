@@ -630,6 +630,126 @@ pub fn gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_tile4_on_stream(
     Ok(())
 }
 
+pub fn gemv_gate_up_swiglu_q4_0_f32_single_row_on_stream(
+    w_gate_q4_0: *const u8,
+    w_up_q4_0: *const u8,
+    input: *const f32,
+    out_swiglu: *mut f32,
+    n_rows: usize,
+    n_ff: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    if n_rows == 0 || n_ff == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description:
+                "gemv_gate_up_swiglu_q4_0_f32_single_row: n_rows and n_ff cannot be zero"
+                    .to_string(),
+        });
+    }
+    if !n_rows.is_multiple_of(QK4_0) {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!(
+                "gemv_gate_up_swiglu_q4_0_f32_single_row: n_rows must be multiple of {}, got {}",
+                QK4_0, n_rows
+            ),
+        });
+    }
+    if w_gate_q4_0.is_null() || w_up_q4_0.is_null() || input.is_null() || out_swiglu.is_null() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description:
+                "gemv_gate_up_swiglu_q4_0_f32_single_row: kernel pointers must be non-null"
+                    .to_string(),
+        });
+    }
+
+    let result = unsafe {
+        gemv_gate_up_swiglu_q4_0_f32_single_row_launch(
+            w_gate_q4_0 as *const c_void,
+            w_up_q4_0 as *const c_void,
+            input,
+            out_swiglu,
+            n_rows as c_int,
+            n_ff as c_int,
+            stream,
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!(
+                "gemv_gate_up_swiglu_q4_0_f32_single_row kernel failed: {:?}",
+                result
+            ),
+        });
+    }
+
+    Ok(())
+}
+
+pub fn gemv_gate_up_swiglu_q4_0_f32_q8_inline_or_single_row_on_stream(
+    w_gate_q4_0: *const u8,
+    w_up_q4_0: *const u8,
+    input: *const f32,
+    out_swiglu: *mut f32,
+    n_rows: usize,
+    n_ff: usize,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    if n_rows == 0 || n_ff == 0 {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description:
+                "gemv_gate_up_swiglu_q4_0_f32_q8_inline_or_single_row: n_rows and n_ff cannot be zero"
+                    .to_string(),
+        });
+    }
+    if !n_rows.is_multiple_of(QK4_0) {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description: format!(
+                "gemv_gate_up_swiglu_q4_0_f32_q8_inline_or_single_row: n_rows must be multiple of {}, got {}",
+                QK4_0, n_rows
+            ),
+        });
+    }
+    if w_gate_q4_0.is_null() || w_up_q4_0.is_null() || input.is_null() || out_swiglu.is_null() {
+        return Err(GpuError::HipApiError {
+            code: -1,
+            description:
+                "gemv_gate_up_swiglu_q4_0_f32_q8_inline_or_single_row: kernel pointers must be non-null"
+                    .to_string(),
+        });
+    }
+
+    let result = unsafe {
+        gemv_gate_up_swiglu_q4_0_f32_q8_inline_or_single_row_launch(
+            w_gate_q4_0 as *const c_void,
+            w_up_q4_0 as *const c_void,
+            input,
+            out_swiglu,
+            n_rows as c_int,
+            n_ff as c_int,
+            stream,
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!(
+                "gemv_gate_up_swiglu_q4_0_f32_q8_inline_or_single_row kernel failed: {:?}",
+                result
+            ),
+        });
+    }
+
+    Ok(())
+}
+
 unsafe extern "C" {
     fn quantize_q8_0_on_stream_kernel(
         input: *const f32,
@@ -729,6 +849,24 @@ unsafe extern "C" {
     ) -> hipError_t;
     fn gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_tile4_launch(
         w_gate_up_interleaved_tile4_q4_0: *const c_void,
+        input: *const f32,
+        out_swiglu: *mut f32,
+        n_rows: c_int,
+        n_ff: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+    fn gemv_gate_up_swiglu_q4_0_f32_single_row_launch(
+        w_gate_q4_0: *const c_void,
+        w_up_q4_0: *const c_void,
+        input: *const f32,
+        out_swiglu: *mut f32,
+        n_rows: c_int,
+        n_ff: c_int,
+        stream: hipStream_t,
+    ) -> hipError_t;
+    fn gemv_gate_up_swiglu_q4_0_f32_q8_inline_or_single_row_launch(
+        w_gate_q4_0: *const c_void,
+        w_up_q4_0: *const c_void,
         input: *const f32,
         out_swiglu: *mut f32,
         n_rows: c_int,
