@@ -170,6 +170,10 @@ ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH=1 \
   --prompt Hello --no-template --top-p 1.0 --temperature 0.0 --max-tokens 64
 ```
 
+## Known limitations
+
+- **Gemma4 E2B GPU crash:** Gemma4 E2B (2.3B effective parameters, hybrid attention with mixed head dimensions) loads successfully with optimized PLE VRAM allocation (4.3GB, 35× improvement) but crashes during decode with GPU memory access faults. Root cause: flash attention kernel assumes uniform cache stride incompatible with hybrid attention's mixed head_dim (256/512 across layers). Use Gemma4 12B or CPU fallback for E2B models until specialized kernel support is implemented.
+
 ## Measured results (local)
 
 Machine path references in this section are from local runs on April 10, 2026.

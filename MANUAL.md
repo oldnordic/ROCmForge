@@ -231,7 +231,9 @@ Observed:
 
 What works now:
 
-- End-to-end local inference on AMD GPU with Qwen2.5 GGUF and `.rfm` models
+- End-to-end local inference on AMD GPU with Qwen2.5, Gemma4 GGUF and `.rfm` models
+- Gemma4 12B Q4_0 with hybrid attention and per-layer embeddings (PLE)
+- PLE VRAM optimization (35× reduction for Gemma4 models)
 - Decode graph replay path with zero dynamic allocations in the generation hotpath
 - DP4A int8 dot-product acceleration for Q4_0 × Q8_0 kernels on RDNA2/RDNA3
 - High-occupancy multi-head prefill attention kernel
@@ -241,9 +243,10 @@ What works now:
 
 What still needs work:
 
+- Gemma4 E2B hybrid attention support (flash attention kernel incompatible with mixed head_dim)
 - Further decode throughput improvements for other quantization styles (K-quants)
 - Cleaner and lower-noise profiling workflow
-- Broader model-family validation beyond the current Qwen-first scope
+- Broader model-family validation beyond the current Qwen/Gemma4 scope
 - Automatic feature dispatch based on detected GPU architecture
 
 ## 9. Troubleshooting
