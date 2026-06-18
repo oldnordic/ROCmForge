@@ -1248,9 +1248,9 @@ fn test_qwen_gpu_greedy_token_matches_cpu() {
             0,
             0, // token_id (dummy value)
             &config,
-        None, // shared_ple_token_emb
-        None, // shared_ple_model_proj
-        None, // shared_ple_proj_norm
+            None, // shared_ple_token_emb
+            None, // shared_ple_model_proj
+            None, // shared_ple_proj_norm
         )
         .expect("GPU layer");
     }

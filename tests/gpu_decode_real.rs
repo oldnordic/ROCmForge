@@ -356,7 +356,7 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
                 &mut gpu_scratch_diag,
                 &mut gpu_host_diag,
                 &config,
-        )
+            )
             .expect("diag GPU embed should succeed");
 
             for layer_idx in 0..config.num_layers {
@@ -751,7 +751,7 @@ fn test_gpu_greedy_decode_benchmark_real_model_multi_run() {
                 &mut gpu_scratch,
                 &mut host_scratch,
                 &config,
-        )
+            )
             .expect("GPU embed should succeed");
             next_token = gpu::gpu_full_forward_hybrid(
                 &device,
@@ -780,7 +780,7 @@ fn test_gpu_greedy_decode_benchmark_real_model_multi_run() {
                 &mut gpu_scratch,
                 &mut host_scratch,
                 &config,
-        )
+            )
             .expect("GPU embed should succeed");
             token = gpu::gpu_full_forward_hybrid(
                 &device,
@@ -1096,7 +1096,7 @@ fn test_dp4a_kernel_real_model() {
                 &mut gpu_scratch,
                 &mut host_scratch,
                 &config,
-        )
+            )
             .expect("GPU embed should succeed");
             gpu::gpu_full_forward_hybrid(
                 &device,

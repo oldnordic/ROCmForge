@@ -16,8 +16,8 @@ use super::{
 };
 use crate::config::{AttentionLayout, ModelConfig, TensorName, TensorNamingScheme};
 use crate::cpu::transpose::compute_transpose_flag;
-use crate::gpu::{GpuWeightTensor};
 use crate::gpu::kernels::quant;
+use crate::gpu::GpuWeightTensor;
 use crate::loader::{GgmlType, RfmFile, RfmType};
 
 pub(super) fn load_for_device(
@@ -809,8 +809,7 @@ pub(super) fn load_for_device(
         if config.architecture == "gemma4" {
             // Use model-level shared PLE buffers (passed as parameters)
             // Extract buffer from GpuWeightTensor::Dense for model_proj
-            let shared_proj_buf = shared_ple_model_proj
-                .and_then(|t| t.as_dense());
+            let shared_proj_buf = shared_ple_model_proj.and_then(|t| t.as_dense());
 
             // Store None here - forward pass will check model weights for shared PLE
             (None, None, None)

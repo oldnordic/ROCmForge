@@ -116,9 +116,9 @@ fn test_multi_layer_divergence_isolation() {
             0,
             0, // token_id (dummy value)
             &config,
-        None, // shared_ple_token_emb
-        None, // shared_ple_model_proj
-        None, // shared_ple_proj_norm
+            None, // shared_ple_token_emb
+            None, // shared_ple_model_proj
+            None, // shared_ple_proj_norm
         )
         .expect("GPU layer forward should succeed");
 
