@@ -458,7 +458,7 @@ __global__ void gemv_q4_0_f32_residual_multi_row_kernel(
     }
 }
 
-template<int N_WAVES>
+template<int N_WAVES, bool UseDp4a>
 __launch_bounds__(Q4_0_THREADS_PER_BLOCK, 1)
 __global__ void gemv_q4_0_q8_0_residual_multi_row_kernel(
     const void* __restrict__ weights_q4_0,
@@ -511,7 +511,13 @@ __global__ void gemv_q4_0_q8_0_residual_multi_row_kernel(
 
             const Q4_0_block* w_block = &w_cols[c][block_idx];
             const float combined_scale = __half2float(w_block->d) * x_scale;
-            const int block_sum = q4_0_q8_0_block_dot(w_block, x_qs);
+
+            int block_sum;
+            if constexpr (UseDp4a) {
+                block_sum = q4_0_q8_0_block_dot_dp4a(w_block->qs, x_qs);
+            } else {
+                block_sum = q4_0_q8_0_block_dot(w_block, x_qs);
+            }
 
             sums[c] += combined_scale * static_cast<float>(block_sum);
         }
@@ -534,7 +540,7 @@ __global__ void gemv_q4_0_q8_0_residual_multi_row_kernel(
     }
 }
 
-template<int N_WAVES>
+template<int N_WAVES, bool UseDp4a>
 __launch_bounds__(Q4_0_THREADS_PER_BLOCK, 1)
 __global__ void gemv_q4_0_f32_q8_inline_residual_multi_row_kernel(
     const void* __restrict__ weights_q4_0,
@@ -601,7 +607,13 @@ __global__ void gemv_q4_0_f32_q8_inline_residual_multi_row_kernel(
 
             const Q4_0_block* w_block = &w_cols[c][block_idx];
             const float combined_scale = __half2float(w_block->d) * x_scale;
-            const int block_sum = q4_0_q8_0_block_dot(w_block, x_qs);
+
+            int block_sum;
+            if constexpr (UseDp4a) {
+                block_sum = q4_0_q8_0_block_dot_dp4a(w_block->qs, x_qs);
+            } else {
+                block_sum = q4_0_q8_0_block_dot(w_block, x_qs);
+            }
 
             sums[c] += combined_scale * static_cast<float>(block_sum);
         }
@@ -624,7 +636,7 @@ __global__ void gemv_q4_0_f32_q8_inline_residual_multi_row_kernel(
     }
 }
 
-template<int N_WAVES>
+template<int N_WAVES, bool UseDp4a>
 __launch_bounds__(Q4_0_THREADS_PER_BLOCK, 1)
 __global__ void gemv_q4_0_q8_0_multi_row_kernel(
     const void* __restrict__ weights_q4_0,
@@ -676,7 +688,13 @@ __global__ void gemv_q4_0_q8_0_multi_row_kernel(
 
             const Q4_0_block* w_block = &w_cols[c][block_idx];
             const float combined_scale = __half2float(w_block->d) * x_scale;
-            const int block_sum = q4_0_q8_0_block_dot(w_block, x_qs);
+
+            int block_sum;
+            if constexpr (UseDp4a) {
+                block_sum = q4_0_q8_0_block_dot_dp4a(w_block->qs, x_qs);
+            } else {
+                block_sum = q4_0_q8_0_block_dot(w_block, x_qs);
+            }
 
             sums[c] += combined_scale * static_cast<float>(block_sum);
         }
@@ -789,6 +807,7 @@ __global__ void gemv_q4_0_f32_residual_single_row_kernel(
 
 // ── Single-Row Q4_0 × Q8_0 GEMV (no LDS, high occupancy) ─────────────────────────
 
+template<bool UseDp4a>
 __launch_bounds__(WARP_SIZE, 20)
 __global__ void gemv_q4_0_q8_0_single_row_kernel(
     const void* __restrict__ weights_q4_0,
@@ -813,14 +832,21 @@ __global__ void gemv_q4_0_q8_0_single_row_kernel(
         const Q4_0_block* w_block = &w_col[block_idx];
         const Q8_0_block* x_block = &x_blocks[block_idx];
         const float combined_scale = __half2float(w_block->d) * __half2float(x_block->d);
-        const int8_t* x_qs = x_block->qs;
 
-        #pragma unroll
-        for (int i = 0; i < 16; ++i) {
-            const uint8_t q = static_cast<uint8_t>(w_block->qs[i]);
-            sum += combined_scale * (static_cast<float>(q & 0x0F) - 8.0f) * static_cast<float>(x_qs[i]);
-            sum += combined_scale * (static_cast<float>(q >> 4) - 8.0f) * static_cast<float>(x_qs[i + 16]);
+        int block_dot;
+        if constexpr (UseDp4a) {
+            block_dot = q4_0_q8_0_block_dot_dp4a(w_block->qs, x_block->qs);
+        } else {
+            const int8_t* x_qs = x_block->qs;
+            block_dot = 0;
+            #pragma unroll
+            for (int i = 0; i < 16; ++i) {
+                const uint8_t q = static_cast<uint8_t>(w_block->qs[i]);
+                block_dot += (static_cast<int>(q & 0x0F) - 8) * static_cast<int>(x_qs[i]);
+                block_dot += (static_cast<int>(q >> 4) - 8) * static_cast<int>(x_qs[i + 16]);
+            }
         }
+        sum += combined_scale * static_cast<float>(block_dot);
     }
 
     for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
@@ -832,6 +858,7 @@ __global__ void gemv_q4_0_q8_0_single_row_kernel(
     }
 }
 
+template<bool UseDp4a>
 __launch_bounds__(WARP_SIZE, 20)
 __global__ void gemv_q4_0_q8_0_residual_single_row_kernel(
     const void* __restrict__ weights_q4_0,
@@ -857,14 +884,21 @@ __global__ void gemv_q4_0_q8_0_residual_single_row_kernel(
         const Q4_0_block* w_block = &w_col[block_idx];
         const Q8_0_block* x_block = &x_blocks[block_idx];
         const float combined_scale = __half2float(w_block->d) * __half2float(x_block->d);
-        const int8_t* x_qs = x_block->qs;
 
-        #pragma unroll
-        for (int i = 0; i < 16; ++i) {
-            const uint8_t q = static_cast<uint8_t>(w_block->qs[i]);
-            sum += combined_scale * (static_cast<float>(q & 0x0F) - 8.0f) * static_cast<float>(x_qs[i]);
-            sum += combined_scale * (static_cast<float>(q >> 4) - 8.0f) * static_cast<float>(x_qs[i + 16]);
+        int block_dot;
+        if constexpr (UseDp4a) {
+            block_dot = q4_0_q8_0_block_dot_dp4a(w_block->qs, x_block->qs);
+        } else {
+            const int8_t* x_qs = x_block->qs;
+            block_dot = 0;
+            #pragma unroll
+            for (int i = 0; i < 16; ++i) {
+                const uint8_t q = static_cast<uint8_t>(w_block->qs[i]);
+                block_dot += (static_cast<int>(q & 0x0F) - 8) * static_cast<int>(x_qs[i]);
+                block_dot += (static_cast<int>(q >> 4) - 8) * static_cast<int>(x_qs[i + 16]);
+            }
         }
+        sum += combined_scale * static_cast<float>(block_dot);
     }
 
     for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
@@ -876,9 +910,25 @@ __global__ void gemv_q4_0_q8_0_residual_single_row_kernel(
     }
 }
 
+// Whether the Q4_0 GEMV uses the single-row kernel (one block per output
+// column, WARP_SIZE threads, warp-shuffle reduction, no shared memory) or the
+// 8-subwave multi-row kernel.
+//
+// Default: OFF (8-subwave multi-row). The multi-row path is the measured-fast
+// decode baseline on this tree. hipfire measures single-row as optimal on
+// RDNA3 (gfx1100), but rocmforge's single-row kernel has NOT yet matched that
+// — on Qwen2.5-7B Q4_0 (hidden=3584, the bandwidth-bound regime) single-row
+// is consistently ~2% SLOWER than 8-subwave (50.3 vs 51.6 tok/s, measured
+// 2026-06-17). The gap is under investigation (likely inner-loop dequant
+// quality or input-vector caching). Single-row remains opt-in until the kernel
+// is brought to hipfire parity.
+//
+//   ROCMFORGE_Q4_0_SINGLE_ROW=1/true/yes/on  → single-row
+//   ROCMFORGE_Q4_0_FORCE_8WAVE=1              → 8-subwave multi-row (explicit)
 static bool use_single_row_q4_0_gemv() {
     static int cached = -1;
     if (cached == -1) {
+        cached = 0;  // default OFF: 8-subwave multi-row is the measured-fast baseline
         const char* val = std::getenv("ROCMFORGE_Q4_0_SINGLE_ROW");
         if (val != nullptr && (
             std::strcmp(val, "1") == 0 ||
@@ -886,8 +936,6 @@ static bool use_single_row_q4_0_gemv() {
             std::strcmp(val, "yes") == 0 ||
             std::strcmp(val, "on") == 0)) {
             cached = 1;
-        } else {
-            cached = 0;
         }
     }
     return cached == 1;
@@ -998,9 +1046,15 @@ extern "C" hipError_t gemv_q4_0_q8_0_launch(
     if (n_rows % QK4_0 != 0 || input_q8_0 == nullptr) return hipErrorInvalidValue;
 
     if (use_single_row_q4_0_q8()) {
-        gemv_q4_0_q8_0_single_row_kernel<<<ncols_dst, WARP_SIZE, 0, stream>>>(
-            weights_q4_0, input_q8_0, output, n_rows, ncols_dst
-        );
+        if (use_dp4a_q4_0_q8()) {
+            gemv_q4_0_q8_0_single_row_kernel<true><<<ncols_dst, WARP_SIZE, 0, stream>>>(
+                weights_q4_0, input_q8_0, output, n_rows, ncols_dst
+            );
+        } else {
+            gemv_q4_0_q8_0_single_row_kernel<false><<<ncols_dst, WARP_SIZE, 0, stream>>>(
+                weights_q4_0, input_q8_0, output, n_rows, ncols_dst
+            );
+        }
         return hipGetLastError();
     }
 
@@ -1013,9 +1067,15 @@ extern "C" hipError_t gemv_q4_0_q8_0_launch(
     const int n_blocks_x =
         (ncols_dst + (n_waves * Q4_0_MULTI_ROW_COLS) - 1) / (n_waves * Q4_0_MULTI_ROW_COLS);
 
-    gemv_q4_0_q8_0_multi_row_kernel<Q4_0_FIXED_WAVES><<<n_blocks_x, threads_per_block, shared_mem, stream>>>(
-        weights_q4_0, input_q8_0, output, n_rows, ncols_dst
-    );
+    if (use_dp4a_q4_0_q8()) {
+        gemv_q4_0_q8_0_multi_row_kernel<Q4_0_FIXED_WAVES, true><<<n_blocks_x, threads_per_block, shared_mem, stream>>>(
+            weights_q4_0, input_q8_0, output, n_rows, ncols_dst
+        );
+    } else {
+        gemv_q4_0_q8_0_multi_row_kernel<Q4_0_FIXED_WAVES, false><<<n_blocks_x, threads_per_block, shared_mem, stream>>>(
+            weights_q4_0, input_q8_0, output, n_rows, ncols_dst
+        );
+    }
 
     return hipGetLastError();
 }
@@ -1033,9 +1093,15 @@ extern "C" hipError_t gemv_q4_0_q8_0_residual_launch(
     if (n_rows % QK4_0 != 0 || input_q8_0 == nullptr) return hipErrorInvalidValue;
 
     if (use_single_row_q4_0_q8()) {
-        gemv_q4_0_q8_0_residual_single_row_kernel<<<ncols_dst, WARP_SIZE, 0, stream>>>(
-            weights_q4_0, input_q8_0, residual, output, n_rows, ncols_dst
-        );
+        if (use_dp4a_q4_0_q8()) {
+            gemv_q4_0_q8_0_residual_single_row_kernel<true><<<ncols_dst, WARP_SIZE, 0, stream>>>(
+                weights_q4_0, input_q8_0, residual, output, n_rows, ncols_dst
+            );
+        } else {
+            gemv_q4_0_q8_0_residual_single_row_kernel<false><<<ncols_dst, WARP_SIZE, 0, stream>>>(
+                weights_q4_0, input_q8_0, residual, output, n_rows, ncols_dst
+            );
+        }
         return hipGetLastError();
     }
 
@@ -1048,9 +1114,15 @@ extern "C" hipError_t gemv_q4_0_q8_0_residual_launch(
     const int n_blocks_x =
         (ncols_dst + (n_waves * Q4_0_MULTI_ROW_COLS) - 1) / (n_waves * Q4_0_MULTI_ROW_COLS);
 
-    gemv_q4_0_q8_0_residual_multi_row_kernel<Q4_0_FIXED_WAVES><<<n_blocks_x, threads_per_block, shared_mem, stream>>>(
-        weights_q4_0, input_q8_0, residual, output, n_rows, ncols_dst
-    );
+    if (use_dp4a_q4_0_q8()) {
+        gemv_q4_0_q8_0_residual_multi_row_kernel<Q4_0_FIXED_WAVES, true><<<n_blocks_x, threads_per_block, shared_mem, stream>>>(
+            weights_q4_0, input_q8_0, residual, output, n_rows, ncols_dst
+        );
+    } else {
+        gemv_q4_0_q8_0_residual_multi_row_kernel<Q4_0_FIXED_WAVES, false><<<n_blocks_x, threads_per_block, shared_mem, stream>>>(
+            weights_q4_0, input_q8_0, residual, output, n_rows, ncols_dst
+        );
+    }
 
     return hipGetLastError();
 }
@@ -1088,13 +1160,25 @@ extern "C" hipError_t gemv_q4_0_f32_q8_inline_residual_variant_launch(
         (ncols_dst + (n_waves * Q4_0_MULTI_ROW_COLS) - 1) / (n_waves * Q4_0_MULTI_ROW_COLS);
 
     if (n_waves == Q4_0_SMALL_WAVES) {
-        gemv_q4_0_f32_q8_inline_residual_multi_row_kernel<Q4_0_SMALL_WAVES><<<n_blocks_x, threads_per_block, shared_mem, stream>>>(
-            weights_q4_0, input, residual, output, n_rows, ncols_dst
-        );
+        if (use_dp4a_q4_0_q8()) {
+            gemv_q4_0_f32_q8_inline_residual_multi_row_kernel<Q4_0_SMALL_WAVES, true><<<n_blocks_x, threads_per_block, shared_mem, stream>>>(
+                weights_q4_0, input, residual, output, n_rows, ncols_dst
+            );
+        } else {
+            gemv_q4_0_f32_q8_inline_residual_multi_row_kernel<Q4_0_SMALL_WAVES, false><<<n_blocks_x, threads_per_block, shared_mem, stream>>>(
+                weights_q4_0, input, residual, output, n_rows, ncols_dst
+            );
+        }
     } else {
-        gemv_q4_0_f32_q8_inline_residual_multi_row_kernel<Q4_0_FIXED_WAVES><<<n_blocks_x, threads_per_block, shared_mem, stream>>>(
-            weights_q4_0, input, residual, output, n_rows, ncols_dst
-        );
+        if (use_dp4a_q4_0_q8()) {
+            gemv_q4_0_f32_q8_inline_residual_multi_row_kernel<Q4_0_FIXED_WAVES, true><<<n_blocks_x, threads_per_block, shared_mem, stream>>>(
+                weights_q4_0, input, residual, output, n_rows, ncols_dst
+            );
+        } else {
+            gemv_q4_0_f32_q8_inline_residual_multi_row_kernel<Q4_0_FIXED_WAVES, false><<<n_blocks_x, threads_per_block, shared_mem, stream>>>(
+                weights_q4_0, input, residual, output, n_rows, ncols_dst
+            );
+        }
     }
 
     return hipGetLastError();

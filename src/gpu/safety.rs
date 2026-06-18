@@ -18,6 +18,7 @@ pub const ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH_ENV: &str =
     "ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH";
 pub const ENABLE_LAUNCH_AUTOTUNE_ENV: &str = "ROCMFORGE_ENABLE_LAUNCH_AUTOTUNE";
 pub const USE_DP4A_ENV: &str = "ROCMFORGE_USE_DP4A";
+pub const Q4_0_Q8_DP4A_ENV: &str = "ROCMFORGE_Q4_0_Q8_DP4A";
 pub const FORCE_WAVE32_ENV: &str = "ROCMFORGE_FORCE_WAVE32";
 pub const DISABLE_WAVE32_ENV: &str = "ROCMFORGE_DISABLE_WAVE32";
 pub const GPU_SAFE_MODE_ENV: &str = "ROCMFORGE_GPU_SAFE_MODE";
@@ -76,6 +77,7 @@ static ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH_FLAG: CachedEnvFlag =
 static ENABLE_LAUNCH_AUTOTUNE_FLAG: CachedEnvFlag =
     CachedEnvFlag::new(ENABLE_LAUNCH_AUTOTUNE_ENV, true);
 static USE_DP4A_FLAG: CachedEnvFlag = CachedEnvFlag::new(USE_DP4A_ENV, true);
+static Q4_0_Q8_DP4A_FLAG: CachedEnvFlag = CachedEnvFlag::new(Q4_0_Q8_DP4A_ENV, false);
 static FORCE_WAVE32_FLAG: CachedEnvFlag = CachedEnvFlag::new(FORCE_WAVE32_ENV, false);
 static DISABLE_WAVE32_FLAG: CachedEnvFlag = CachedEnvFlag::new(DISABLE_WAVE32_ENV, false);
 static GPU_SAFE_MODE_FLAG: CachedEnvFlag = CachedEnvFlag::new(GPU_SAFE_MODE_ENV, false);
@@ -110,6 +112,7 @@ pub fn refresh_runtime_env_flags() {
     ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH_FLAG.reset();
     ENABLE_LAUNCH_AUTOTUNE_FLAG.reset();
     USE_DP4A_FLAG.reset();
+    Q4_0_Q8_DP4A_FLAG.reset();
     FORCE_WAVE32_FLAG.reset();
     DISABLE_WAVE32_FLAG.reset();
     GPU_SAFE_MODE_FLAG.reset();
@@ -121,6 +124,7 @@ pub fn refresh_runtime_env_flags() {
     DECODE_GRAPH_RUNTIME_DISABLE_LOGGED.store(false, Ordering::Relaxed);
     Q8_FASTPATH_RUNTIME_DISABLE_LOGGED.store(false, Ordering::Relaxed);
     super::decode_profile::refresh_decode_profile_env_flag();
+    super::decode_graph_health::refresh_decode_graph_health_env_flag();
 }
 
 pub fn decode_graph_enabled() -> bool {
@@ -169,6 +173,13 @@ pub fn use_dp4a_enabled() -> bool {
     !gpu_safe_mode_enabled() && USE_DP4A_FLAG.enabled()
 }
 
+/// Enable the DP4A Q4_0 × Q8_0 decode kernels (GEMV, gate-up, SwiGLU).
+///
+/// Default: enabled. Set `ROCMFORGE_Q4_0_Q8_DP4A=0` to force the scalar fallback.
+pub fn q4_0_q8_dp4a_enabled() -> bool {
+    !gpu_safe_mode_enabled() && Q4_0_Q8_DP4A_FLAG.enabled()
+}
+
 /// Force wave32 kernels on all architectures (may crash on wave64-only hardware).
 ///
 /// Default: off. Set `ROCMFORGE_FORCE_WAVE32=1` to opt in.
@@ -209,6 +220,7 @@ pub fn q8_activation_fastpath_runtime_disabled() -> bool {
 
 pub fn disable_decode_graph_runtime(reason: &str) {
     DECODE_GRAPH_RUNTIME_DISABLED.store(true, Ordering::Relaxed);
+    super::decode_graph_health::record_decode_graph_runtime_disabled(reason);
     if !DECODE_GRAPH_RUNTIME_DISABLE_LOGGED.swap(true, Ordering::Relaxed) {
         eprintln!(
             "[rocmforge][gpu safety] decode graph auto-disabled for this process: {}",
@@ -256,12 +268,12 @@ mod tests {
         assert!(!parse_env_flag(Some("no".to_string()), true));
     }
 
-    use std::sync::Mutex;
+    use parking_lot::Mutex;
     static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn refresh_runtime_env_flags_reloads_cached_defaults() {
-        let _guard = ENV_MUTEX.lock().expect("env test mutex poisoned");
+        let _guard = ENV_MUTEX.lock();
         unsafe {
             std::env::set_var(ENABLE_EXPERIMENTAL_FFN_FASTPATH_ENV, "0");
         }
@@ -289,7 +301,7 @@ mod tests {
 
     #[test]
     fn runtime_disable_decode_graph_is_process_local_until_refresh() {
-        let _guard = ENV_MUTEX.lock().expect("env test mutex poisoned");
+        let _guard = ENV_MUTEX.lock();
         unsafe {
             std::env::set_var(ENABLE_DECODE_GRAPH_ENV, "1");
         }
@@ -311,7 +323,7 @@ mod tests {
 
     #[test]
     fn runtime_disable_q8_fastpath_is_process_local_until_refresh() {
-        let _guard = ENV_MUTEX.lock().expect("env test mutex poisoned");
+        let _guard = ENV_MUTEX.lock();
         unsafe {
             std::env::set_var(ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH_ENV, "1");
         }
@@ -333,7 +345,7 @@ mod tests {
 
     #[test]
     fn gpu_safe_mode_forces_conservative_feature_set() {
-        let _guard = ENV_MUTEX.lock().expect("env test mutex poisoned");
+        let _guard = ENV_MUTEX.lock();
         unsafe {
             std::env::set_var(ENABLE_DECODE_GRAPH_ENV, "1");
             std::env::set_var(ENABLE_EXPERIMENTAL_FFN_FASTPATH_ENV, "1");
@@ -364,7 +376,7 @@ mod tests {
 
     #[test]
     fn use_dp4a_env_flag_respected() {
-        let _guard = ENV_MUTEX.lock().expect("env test mutex poisoned");
+        let _guard = ENV_MUTEX.lock();
         unsafe {
             std::env::set_var(USE_DP4A_ENV, "0");
         }
@@ -385,7 +397,7 @@ mod tests {
 
     #[test]
     fn force_wave32_env_flag_respected() {
-        let _guard = ENV_MUTEX.lock().expect("env test mutex poisoned");
+        let _guard = ENV_MUTEX.lock();
         unsafe {
             std::env::set_var(FORCE_WAVE32_ENV, "1");
         }
@@ -406,7 +418,7 @@ mod tests {
 
     #[test]
     fn disable_wave32_env_flag_respected() {
-        let _guard = ENV_MUTEX.lock().expect("env test mutex poisoned");
+        let _guard = ENV_MUTEX.lock();
         unsafe {
             std::env::set_var(super::DISABLE_WAVE32_ENV, "1");
         }

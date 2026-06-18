@@ -642,9 +642,8 @@ pub fn gemv_gate_up_swiglu_q4_0_f32_single_row_on_stream(
     if n_rows == 0 || n_ff == 0 {
         return Err(GpuError::HipApiError {
             code: -1,
-            description:
-                "gemv_gate_up_swiglu_q4_0_f32_single_row: n_rows and n_ff cannot be zero"
-                    .to_string(),
+            description: "gemv_gate_up_swiglu_q4_0_f32_single_row: n_rows and n_ff cannot be zero"
+                .to_string(),
         });
     }
     if !n_rows.is_multiple_of(QK4_0) {

@@ -7,9 +7,9 @@ use super::super::kernels::{
     gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_on_stream,
     gemv_gate_up_swiglu_q4_0_f32_q8_inline_interleaved_tile4_on_stream,
     gemv_gate_up_swiglu_q4_0_f32_q8_inline_on_stream_variant,
-    gemv_gate_up_swiglu_q4_0_f32_single_row_on_stream,
-    gemv_q4_0_f32_q8_inline_residual_on_stream, gemv_q4_0_q8_0_on_stream,
-    gemv_q4_0_q8_0_residual_on_stream, q8_0_workspace_bytes, quantize_q8_0_on_stream,
+    gemv_gate_up_swiglu_q4_0_f32_single_row_on_stream, gemv_q4_0_f32_q8_inline_residual_on_stream,
+    gemv_q4_0_q8_0_on_stream, gemv_q4_0_q8_0_residual_on_stream, q8_0_workspace_bytes,
+    quantize_q8_0_on_stream,
 };
 use super::super::safety::disable_q8_activation_fastpath_runtime;
 use super::super::weights::GpuBuffer;

@@ -5,8 +5,9 @@
 
 use super::device::GpuDevice;
 use super::error::GpuResult;
+use parking_lot::Mutex;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 use std::time::Instant;
 
 pub(crate) const PROFILE_DECODE_STAGES_ENV: &str = "ROCMFORGE_PROFILE_DECODE_STAGES";
@@ -89,9 +90,7 @@ pub(crate) fn refresh_decode_profile_env_flag() {
 }
 
 fn record_decode_stage(stage: DecodeStage, elapsed_ns: u128) {
-    let mut guard = decode_stage_profile_store()
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
+    let mut guard = decode_stage_profile_store().lock();
     match stage {
         DecodeStage::AttnNorm => guard.attn_norm_ns += elapsed_ns,
         DecodeStage::Qkv => guard.qkv_ns += elapsed_ns,
@@ -112,16 +111,12 @@ fn record_decode_stage(stage: DecodeStage, elapsed_ns: u128) {
 }
 
 pub(crate) fn record_tail_invocation() {
-    let mut guard = decode_stage_profile_store()
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
+    let mut guard = decode_stage_profile_store().lock();
     guard.tail_invocations += 1;
 }
 
 pub(crate) fn record_layer_invocation() {
-    let mut guard = decode_stage_profile_store()
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
+    let mut guard = decode_stage_profile_store().lock();
     guard.layer_invocations += 1;
 }
 
@@ -142,14 +137,10 @@ pub(crate) fn profile_decode_stage<T>(
 }
 
 pub fn reset_decode_stage_profile() {
-    let mut guard = decode_stage_profile_store()
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
+    let mut guard = decode_stage_profile_store().lock();
     *guard = GpuDecodeStageProfileSnapshot::default();
 }
 
 pub fn decode_stage_profile_snapshot() -> GpuDecodeStageProfileSnapshot {
-    *decode_stage_profile_store()
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
+    *decode_stage_profile_store().lock()
 }

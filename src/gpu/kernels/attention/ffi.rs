@@ -80,6 +80,25 @@ unsafe extern "C" {
         w_up_v: *const f32,
     ) -> hipError_t;
 
+    pub fn gpu_flash_attn_prefill_strided_multi_head(
+        d_out: *mut f32,
+        d_q: *const f32,
+        d_k: *const f32,
+        d_v: *const f32,
+        seq_len: c_int,
+        num_heads: c_int,
+        num_kv_heads: c_int,
+        head_dim: c_int,
+        out_stride: c_int,
+        q_stride: c_int,
+        kv_stride: c_int,
+        scale: c_float,
+        kv_lora_dim: c_int,
+        w_up_k: *const f32,
+        w_up_v: *const f32,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
     pub fn gpu_flash_attn_decode_strided_multi_head(
         d_out: *mut f32,
         d_attn_weights: *mut f32,

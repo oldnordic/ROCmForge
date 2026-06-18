@@ -84,6 +84,19 @@ ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH=1 \
 # Disable graph capture to fall back to the standard decode loop
 ROCMFORGE_DISABLE_DECODE_GRAPH=1 \
 ./target/release/rocmforge --model /path/to/model.gguf --prompt "Hello" --gpu --top-p 1.0
+
+# Enable DP4A int8 dot-product for Q4_0/Q8_0 kernels (gfx1030/gfx1100+, opt-in)
+# On 7B-class Q4_0 models this gives a large decode speedup over the scalar fastpath.
+ROCMFORGE_Q4_0_Q8_DP4A=1 \
+./target/release/rocmforge --model /path/to/model.gguf --prompt "Hello" --gpu
+
+# Merge split GGUF shards (e.g. 7B Q4_0 downloaded in two parts)
+llama-gguf-split --merge qwen2.5-7b-instruct-q4_0-00001-of-00002.gguf \
+    qwen2.5-7b-instruct-q4_0.gguf
+
+# Observe decode graph health telemetry
+ROCMFORGE_OBSERVE_DECODE_GRAPH_HEALTH=1 \
+./target/release/rocmforge --model /path/to/model.gguf --prompt "Hello" --gpu
 ```
 
 ### VRAM Management (display-attached GPU safety)
@@ -220,6 +233,9 @@ What works now:
 
 - End-to-end local inference on AMD GPU with Qwen2.5 GGUF and `.rfm` models
 - Decode graph replay path with zero dynamic allocations in the generation hotpath
+- DP4A int8 dot-product acceleration for Q4_0 × Q8_0 kernels on RDNA2/RDNA3
+- High-occupancy multi-head prefill attention kernel
+- Decode graph health telemetry for capture/replay/fallback observability
 - Parity/outperformance vs native `llama.cpp` for supported quantizations (e.g. Q8_0, Q4_0)
 - Profiling and benchmark scripts in-repo
 
@@ -228,6 +244,7 @@ What still needs work:
 - Further decode throughput improvements for other quantization styles (K-quants)
 - Cleaner and lower-noise profiling workflow
 - Broader model-family validation beyond the current Qwen-first scope
+- Automatic feature dispatch based on detected GPU architecture
 
 ## 9. Troubleshooting
 
@@ -237,8 +254,10 @@ If performance is unexpectedly low:
 2. Confirm `--gpu` is used.
 3. Check whether `ROCMFORGE_GPU_SAFE_MODE` is set.
 4. Check whether decode graph is enabled when expected.
-5. Confirm your ROCm runtime environment is loaded so the binary can resolve `libamdhip64.so.7`.
-6. Re-run section 6.1 benchmark and compare against this manual.
+5. Try enabling DP4A on RDNA2/RDNA3: `ROCMFORGE_Q4_0_Q8_DP4A=1`.
+6. Try the single-row high-occupancy launch: `ROCMFORGE_Q4_0_Q8_SINGLE_ROW=1`.
+7. Confirm your ROCm runtime environment is loaded so the binary can resolve `libamdhip64.so.7`.
+8. Re-run section 6.1 benchmark and compare against this manual.
 
 If the process aborts with GPU fault / desktop crash:
 
@@ -248,6 +267,13 @@ If the process aborts with GPU fault / desktop crash:
 4. Check if the model uses sparse/MPO weights — these use experimental kernels.
 5. Run with `ROCMFORGE_GPU_SAFE_MODE=1` to disable all fastpaths and graphs.
 6. Report the `[Router] Selected path: ...` line from the output — this tells us which code path faulted.
+
+If decode graph health counters show repeated cache misses or fallbacks:
+
+1. Look at the snapshot from `src/gpu/decode_graph_health.rs`.
+2. A high `cache_misses` count means shapes/strides are changing per token; check the model config.
+3. A high `fallbacks` count means capture failed or was disabled; review the VRAM budget and safety flags.
+4. Enable observability with `ROCMFORGE_OBSERVE_DECODE_GRAPH_HEALTH=1` and capture output during the failing run.
 
 ## 10. Model Selection & Quantization Guidelines (TurboQuant Invariants)
 

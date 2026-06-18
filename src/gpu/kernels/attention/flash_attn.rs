@@ -239,3 +239,52 @@ pub fn flash_attn_prefill_strided(
 
     Ok(())
 }
+
+pub fn flash_attn_prefill_strided_multi_head(
+    d_out: *mut f32,
+    d_q: *const f32,
+    d_k: *const f32,
+    d_v: *const f32,
+    seq_len: usize,
+    num_heads: usize,
+    num_kv_heads: usize,
+    head_dim: usize,
+    out_stride: usize,
+    q_stride: usize,
+    kv_stride: usize,
+    scale: f32,
+    kv_lora_dim: usize,
+    w_up_k: *const f32,
+    w_up_v: *const f32,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    let result = unsafe {
+        gpu_flash_attn_prefill_strided_multi_head(
+            d_out,
+            d_q,
+            d_k,
+            d_v,
+            seq_len as c_int,
+            num_heads as c_int,
+            num_kv_heads as c_int,
+            head_dim as c_int,
+            out_stride as c_int,
+            q_stride as c_int,
+            kv_stride as c_int,
+            scale,
+            kv_lora_dim as c_int,
+            w_up_k,
+            w_up_v,
+            stream,
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("flash_attn_prefill_multi_head kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}

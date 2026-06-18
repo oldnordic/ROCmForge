@@ -199,21 +199,11 @@ pub(super) fn load_for_device(
                 .resolve_optional(TensorName::AttnVBias, layer)
                 .unwrap_or_default(),
         )?;
-        let (attn_o, attn_o_meta) = if layer_has_fused_qkv {
-            let meta = attn_qkv_meta
-                .as_ref()
-                .ok_or_else(|| GpuError::HipApiError {
-                    code: -1,
-                    description: "attn_qkv_meta missing for fused QKV layer".to_string(),
-                })?;
-            (GpuBuffer::empty(), meta.clone())
-        } else {
-            load_weight(
-                &config
-                    .tensor_registry
-                    .resolve(TensorName::AttnOutput, layer),
-            )?
-        };
+        let (attn_o, attn_o_meta) = load_weight(
+            &config
+                .tensor_registry
+                .resolve(TensorName::AttnOutput, layer),
+        )?;
         let (attn_gate, attn_gate_meta, ssm) = if layer_has_fused_qkv {
             let attn_gate_name = format!("blk.{}.attn_gate.weight", layer);
             if file.has_tensor(&attn_gate_name) {

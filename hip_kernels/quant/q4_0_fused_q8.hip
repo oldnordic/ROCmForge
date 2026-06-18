@@ -28,7 +28,7 @@ __device__ inline int dot_q4_0_q8_0_byte(uint8_t q, int8_t x_lo, int8_t x_hi) {
     return lo * static_cast<int>(x_lo) + hi * static_cast<int>(x_hi);
 }
 
-template<int N_WAVES>
+template<int N_WAVES, bool UseDp4a>
 __global__ void gemv_gate_up_q4_0_q8_0_vulkan_style_kernel(
     const void* __restrict__ w_gate,
     const void* __restrict__ w_up,
@@ -87,24 +87,33 @@ __global__ void gemv_gate_up_q4_0_q8_0_vulkan_style_kernel(
         int gate1_block_sum = 0;
         int up1_block_sum = 0;
 
-        #pragma unroll
-        for (int i = 0; i < 16; ++i) {
-            const uint8_t q_gate0 = static_cast<uint8_t>(gate0->qs[i]);
-            gate0_block_sum += (static_cast<int>(q_gate0 & 0x0F) - 8) * static_cast<int>(x_qs[i]);
-            gate0_block_sum += (static_cast<int>(q_gate0 >> 4) - 8) * static_cast<int>(x_qs[i + 16]);
-
-            const uint8_t q_up0 = static_cast<uint8_t>(up0->qs[i]);
-            up0_block_sum += (static_cast<int>(q_up0 & 0x0F) - 8) * static_cast<int>(x_qs[i]);
-            up0_block_sum += (static_cast<int>(q_up0 >> 4) - 8) * static_cast<int>(x_qs[i + 16]);
-
+        if constexpr (UseDp4a) {
+            gate0_block_sum = q4_0_q8_0_block_dot_dp4a(gate0->qs, x_qs);
+            up0_block_sum = q4_0_q8_0_block_dot_dp4a(up0->qs, x_qs);
             if (has_ff1) {
-                const uint8_t q_gate1 = static_cast<uint8_t>(w_gate_col1[block_idx].qs[i]);
-                gate1_block_sum += (static_cast<int>(q_gate1 & 0x0F) - 8) * static_cast<int>(x_qs[i]);
-                gate1_block_sum += (static_cast<int>(q_gate1 >> 4) - 8) * static_cast<int>(x_qs[i + 16]);
+                gate1_block_sum = q4_0_q8_0_block_dot_dp4a(w_gate_col1[block_idx].qs, x_qs);
+                up1_block_sum = q4_0_q8_0_block_dot_dp4a(w_up_col1[block_idx].qs, x_qs);
+            }
+        } else {
+            #pragma unroll
+            for (int i = 0; i < 16; ++i) {
+                const uint8_t q_gate0 = static_cast<uint8_t>(gate0->qs[i]);
+                gate0_block_sum += (static_cast<int>(q_gate0 & 0x0F) - 8) * static_cast<int>(x_qs[i]);
+                gate0_block_sum += (static_cast<int>(q_gate0 >> 4) - 8) * static_cast<int>(x_qs[i + 16]);
 
-                const uint8_t q_up1 = static_cast<uint8_t>(w_up_col1[block_idx].qs[i]);
-                up1_block_sum += (static_cast<int>(q_up1 & 0x0F) - 8) * static_cast<int>(x_qs[i]);
-                up1_block_sum += (static_cast<int>(q_up1 >> 4) - 8) * static_cast<int>(x_qs[i + 16]);
+                const uint8_t q_up0 = static_cast<uint8_t>(up0->qs[i]);
+                up0_block_sum += (static_cast<int>(q_up0 & 0x0F) - 8) * static_cast<int>(x_qs[i]);
+                up0_block_sum += (static_cast<int>(q_up0 >> 4) - 8) * static_cast<int>(x_qs[i + 16]);
+
+                if (has_ff1) {
+                    const uint8_t q_gate1 = static_cast<uint8_t>(w_gate_col1[block_idx].qs[i]);
+                    gate1_block_sum += (static_cast<int>(q_gate1 & 0x0F) - 8) * static_cast<int>(x_qs[i]);
+                    gate1_block_sum += (static_cast<int>(q_gate1 >> 4) - 8) * static_cast<int>(x_qs[i + 16]);
+
+                    const uint8_t q_up1 = static_cast<uint8_t>(w_up_col1[block_idx].qs[i]);
+                    up1_block_sum += (static_cast<int>(q_up1 & 0x0F) - 8) * static_cast<int>(x_qs[i]);
+                    up1_block_sum += (static_cast<int>(q_up1 >> 4) - 8) * static_cast<int>(x_qs[i + 16]);
+                }
             }
         }
 
@@ -136,7 +145,7 @@ __global__ void gemv_gate_up_q4_0_q8_0_vulkan_style_kernel(
     }
 }
 
-template<int N_WAVES>
+template<int N_WAVES, bool UseDp4a>
 __global__ void gemv_gate_up_swiglu_q4_0_q8_0_vulkan_style_kernel(
     const void* __restrict__ w_gate,
     const void* __restrict__ w_up,
@@ -194,24 +203,33 @@ __global__ void gemv_gate_up_swiglu_q4_0_q8_0_vulkan_style_kernel(
         int gate1_block_sum = 0;
         int up1_block_sum = 0;
 
-        #pragma unroll
-        for (int i = 0; i < 16; ++i) {
-            const uint8_t q_gate0 = static_cast<uint8_t>(gate0->qs[i]);
-            gate0_block_sum += (static_cast<int>(q_gate0 & 0x0F) - 8) * static_cast<int>(x_qs[i]);
-            gate0_block_sum += (static_cast<int>(q_gate0 >> 4) - 8) * static_cast<int>(x_qs[i + 16]);
-
-            const uint8_t q_up0 = static_cast<uint8_t>(up0->qs[i]);
-            up0_block_sum += (static_cast<int>(q_up0 & 0x0F) - 8) * static_cast<int>(x_qs[i]);
-            up0_block_sum += (static_cast<int>(q_up0 >> 4) - 8) * static_cast<int>(x_qs[i + 16]);
-
+        if constexpr (UseDp4a) {
+            gate0_block_sum = q4_0_q8_0_block_dot_dp4a(gate0->qs, x_qs);
+            up0_block_sum = q4_0_q8_0_block_dot_dp4a(up0->qs, x_qs);
             if (has_ff1) {
-                const uint8_t q_gate1 = static_cast<uint8_t>(w_gate_col1[block_idx].qs[i]);
-                gate1_block_sum += (static_cast<int>(q_gate1 & 0x0F) - 8) * static_cast<int>(x_qs[i]);
-                gate1_block_sum += (static_cast<int>(q_gate1 >> 4) - 8) * static_cast<int>(x_qs[i + 16]);
+                gate1_block_sum = q4_0_q8_0_block_dot_dp4a(w_gate_col1[block_idx].qs, x_qs);
+                up1_block_sum = q4_0_q8_0_block_dot_dp4a(w_up_col1[block_idx].qs, x_qs);
+            }
+        } else {
+            #pragma unroll
+            for (int i = 0; i < 16; ++i) {
+                const uint8_t q_gate0 = static_cast<uint8_t>(gate0->qs[i]);
+                gate0_block_sum += (static_cast<int>(q_gate0 & 0x0F) - 8) * static_cast<int>(x_qs[i]);
+                gate0_block_sum += (static_cast<int>(q_gate0 >> 4) - 8) * static_cast<int>(x_qs[i + 16]);
 
-                const uint8_t q_up1 = static_cast<uint8_t>(w_up_col1[block_idx].qs[i]);
-                up1_block_sum += (static_cast<int>(q_up1 & 0x0F) - 8) * static_cast<int>(x_qs[i]);
-                up1_block_sum += (static_cast<int>(q_up1 >> 4) - 8) * static_cast<int>(x_qs[i + 16]);
+                const uint8_t q_up0 = static_cast<uint8_t>(up0->qs[i]);
+                up0_block_sum += (static_cast<int>(q_up0 & 0x0F) - 8) * static_cast<int>(x_qs[i]);
+                up0_block_sum += (static_cast<int>(q_up0 >> 4) - 8) * static_cast<int>(x_qs[i + 16]);
+
+                if (has_ff1) {
+                    const uint8_t q_gate1 = static_cast<uint8_t>(w_gate_col1[block_idx].qs[i]);
+                    gate1_block_sum += (static_cast<int>(q_gate1 & 0x0F) - 8) * static_cast<int>(x_qs[i]);
+                    gate1_block_sum += (static_cast<int>(q_gate1 >> 4) - 8) * static_cast<int>(x_qs[i + 16]);
+
+                    const uint8_t q_up1 = static_cast<uint8_t>(w_up_col1[block_idx].qs[i]);
+                    up1_block_sum += (static_cast<int>(q_up1 & 0x0F) - 8) * static_cast<int>(x_qs[i]);
+                    up1_block_sum += (static_cast<int>(q_up1 >> 4) - 8) * static_cast<int>(x_qs[i + 16]);
+                }
             }
         }
 
@@ -743,15 +761,27 @@ extern "C" hipError_t gemv_gate_up_q4_0_q8_0_launch(
     if (n_rows <= 1024) {
         const int N_WAVES = 4;
         int n_blocks_x = (n_ff + (N_WAVES * 2) - 1) / (N_WAVES * 2);
-        gemv_gate_up_q4_0_q8_0_vulkan_style_kernel<N_WAVES><<<n_blocks_x, 128, shared_mem, stream>>>(
-            w_gate, w_up, input_q8_0, out_gate, out_up, n_rows, n_ff
-        );
+        if (use_dp4a_q4_0_q8()) {
+            gemv_gate_up_q4_0_q8_0_vulkan_style_kernel<N_WAVES, true><<<n_blocks_x, 128, shared_mem, stream>>>(
+                w_gate, w_up, input_q8_0, out_gate, out_up, n_rows, n_ff
+            );
+        } else {
+            gemv_gate_up_q4_0_q8_0_vulkan_style_kernel<N_WAVES, false><<<n_blocks_x, 128, shared_mem, stream>>>(
+                w_gate, w_up, input_q8_0, out_gate, out_up, n_rows, n_ff
+            );
+        }
     } else {
         const int N_WAVES = 8;
         int n_blocks_x = (n_ff + (N_WAVES * 2) - 1) / (N_WAVES * 2);
-        gemv_gate_up_q4_0_q8_0_vulkan_style_kernel<N_WAVES><<<n_blocks_x, 256, shared_mem, stream>>>(
-            w_gate, w_up, input_q8_0, out_gate, out_up, n_rows, n_ff
-        );
+        if (use_dp4a_q4_0_q8()) {
+            gemv_gate_up_q4_0_q8_0_vulkan_style_kernel<N_WAVES, true><<<n_blocks_x, 256, shared_mem, stream>>>(
+                w_gate, w_up, input_q8_0, out_gate, out_up, n_rows, n_ff
+            );
+        } else {
+            gemv_gate_up_q4_0_q8_0_vulkan_style_kernel<N_WAVES, false><<<n_blocks_x, 256, shared_mem, stream>>>(
+                w_gate, w_up, input_q8_0, out_gate, out_up, n_rows, n_ff
+            );
+        }
     }
     return hipGetLastError();
 }
@@ -780,18 +810,32 @@ extern "C" hipError_t gemv_gate_up_swiglu_q4_0_q8_0_launch(
         return hipErrorInvalidValue;
     }
 
+    const bool use_dp4a = use_dp4a_q4_0_q8();
+
     if (n_rows <= 1024) {
         const int N_WAVES = 4;
         int n_blocks_x = (n_ff + (N_WAVES * 2) - 1) / (N_WAVES * 2);
-        gemv_gate_up_swiglu_q4_0_q8_0_vulkan_style_kernel<N_WAVES><<<n_blocks_x, 128, shared_mem, stream>>>(
-            w_gate, w_up, input_q8_0, out_swiglu, n_rows, n_ff
-        );
+        if (use_dp4a) {
+            gemv_gate_up_swiglu_q4_0_q8_0_vulkan_style_kernel<N_WAVES, true><<<n_blocks_x, 128, shared_mem, stream>>>(
+                w_gate, w_up, input_q8_0, out_swiglu, n_rows, n_ff
+            );
+        } else {
+            gemv_gate_up_swiglu_q4_0_q8_0_vulkan_style_kernel<N_WAVES, false><<<n_blocks_x, 128, shared_mem, stream>>>(
+                w_gate, w_up, input_q8_0, out_swiglu, n_rows, n_ff
+            );
+        }
     } else {
         const int N_WAVES = 8;
         int n_blocks_x = (n_ff + (N_WAVES * 2) - 1) / (N_WAVES * 2);
-        gemv_gate_up_swiglu_q4_0_q8_0_vulkan_style_kernel<N_WAVES><<<n_blocks_x, 256, shared_mem, stream>>>(
-            w_gate, w_up, input_q8_0, out_swiglu, n_rows, n_ff
-        );
+        if (use_dp4a) {
+            gemv_gate_up_swiglu_q4_0_q8_0_vulkan_style_kernel<N_WAVES, true><<<n_blocks_x, 256, shared_mem, stream>>>(
+                w_gate, w_up, input_q8_0, out_swiglu, n_rows, n_ff
+            );
+        } else {
+            gemv_gate_up_swiglu_q4_0_q8_0_vulkan_style_kernel<N_WAVES, false><<<n_blocks_x, 256, shared_mem, stream>>>(
+                w_gate, w_up, input_q8_0, out_swiglu, n_rows, n_ff
+            );
+        }
     }
     return hipGetLastError();
 }

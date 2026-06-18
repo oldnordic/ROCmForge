@@ -22,10 +22,10 @@ pub use attention::{
     flash_attn_decode, flash_attn_decode_strided, flash_attn_decode_strided_multi_head,
     flash_attn_decode_strided_multi_head_from_state_on_stream,
     flash_attn_decode_strided_multi_head_on_stream, flash_attn_decode_turboquant,
-    flash_attn_prefill_strided, kv_write, kv_write_batched, kv_write_batched_compressed,
-    kv_write_compressed, kv_write_from_state_on_stream, kv_write_on_stream,
-    kv_write_rope_from_state_on_stream, kv_write_rope_on_stream, kv_write_turboquant,
-    reconstruct_kv_cache_prefix_sum,
+    flash_attn_prefill_strided, flash_attn_prefill_strided_multi_head, kv_write, kv_write_batched,
+    kv_write_batched_compressed, kv_write_compressed, kv_write_from_state_on_stream,
+    kv_write_on_stream, kv_write_rope_from_state_on_stream, kv_write_rope_on_stream,
+    kv_write_turboquant, reconstruct_kv_cache_prefix_sum,
 };
 pub use elementwise::{
     add, add_batched, add_on_stream, argmax_f32, argmax_f32_on_stream,
@@ -41,10 +41,10 @@ pub use q8_decode::{
     gemv_gate_up_swiglu_q4_0_f32_q8_inline_on_stream,
     gemv_gate_up_swiglu_q4_0_f32_q8_inline_on_stream_variant,
     gemv_gate_up_swiglu_q4_0_f32_q8_inline_or_single_row_on_stream,
-    gemv_gate_up_swiglu_q4_0_f32_single_row_on_stream,
-    gemv_gate_up_swiglu_q4_0_q8_0_on_stream, gemv_q4_0_f32_q8_inline_residual_on_stream,
-    gemv_q4_0_f32_q8_inline_residual_on_stream_variant, gemv_q4_0_q8_0_on_stream,
-    gemv_q4_0_q8_0_residual_on_stream, q8_0_workspace_bytes, quantize_q8_0_on_stream,
+    gemv_gate_up_swiglu_q4_0_f32_single_row_on_stream, gemv_gate_up_swiglu_q4_0_q8_0_on_stream,
+    gemv_q4_0_f32_q8_inline_residual_on_stream, gemv_q4_0_f32_q8_inline_residual_on_stream_variant,
+    gemv_q4_0_q8_0_on_stream, gemv_q4_0_q8_0_residual_on_stream, q8_0_workspace_bytes,
+    quantize_q8_0_on_stream,
 };
 pub use q8_gemv::{
     gemv_q8_0_f32, gemv_q8_0_f32_lm_head, gemv_q8_0_f32_lm_head_on_stream,

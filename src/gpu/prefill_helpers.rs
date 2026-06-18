@@ -9,6 +9,7 @@ use super::weights::{GpuBuffer, GpuModelWeights, WeightMeta};
 use crate::config::ModelConfig;
 use crate::cpu::forward::cpu_embed_token;
 use crate::cpu::weights::CpuModelWeights;
+use crate::gpu::ops::gpu_dispatch_gemv_on_stream;
 use crate::loader::GgmlType;
 
 /// Batched QKV projection for prefill processing (type-aware).
@@ -49,9 +50,39 @@ pub fn gpu_batched_qkv_projection(
     q_dim: usize,
     kv_dim: usize,
     seq_len: usize,
-    _stream: hipStream_t,
+    stream: hipStream_t,
 ) -> GpuResult<()> {
     validate_batched_qkv_dims(hidden_dim, q_dim, kv_dim, seq_len)?;
+
+    // For Q4_0, the existing batched GEMM kernels dequantize weights in f32
+    // per element and accumulate in f32. That matches a CPU f32 fallback but
+    // diverges from the CPU decode reference, which uses int32 per-block
+    // accumulation over Q8_0-quantized activations. Fall back to the same
+    // per-token GEMV dispatch the decode path uses so prefill and decode see
+    // the same numerics and both match the CPU reference.
+    if q_meta.wtype == GgmlType::Q4_0
+        && k_meta.wtype == GgmlType::Q4_0
+        && v_meta.wtype == GgmlType::Q4_0
+        && seq_len > 1
+    {
+        for pos in 0..seq_len {
+            let input_row = unsafe { input.add(pos * hidden_dim) };
+            let q_row = unsafe { q_output.add(pos * q_dim) };
+            let k_row = unsafe { k_output.add(pos * kv_dim) };
+            let v_row = unsafe { v_output.add(pos * kv_dim) };
+
+            gpu_dispatch_gemv_on_stream(
+                device, q_weights, q_meta, input_row, q_row, q_dim, hidden_dim, stream,
+            )?;
+            gpu_dispatch_gemv_on_stream(
+                device, k_weights, k_meta, input_row, k_row, kv_dim, hidden_dim, stream,
+            )?;
+            gpu_dispatch_gemv_on_stream(
+                device, v_weights, v_meta, input_row, v_row, kv_dim, hidden_dim, stream,
+            )?;
+        }
+        return Ok(());
+    }
 
     use crate::gpu::ops::gpu_dispatch_gemm;
 

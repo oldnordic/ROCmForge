@@ -20,6 +20,9 @@ pub(crate) struct CpuLayer0Activations {
     pub swiglu: Vec<f32>,
     pub layer_out_ffn: Vec<f32>,
     pub hidden_out: Vec<f32>,
+    pub q_bias: Vec<f32>,
+    pub k_bias: Vec<f32>,
+    pub v_bias: Vec<f32>,
 }
 
 pub(crate) fn download_gpu_buffer(buf: &crate::gpu::GpuBuffer, len: usize) -> Vec<f32> {
@@ -281,6 +284,11 @@ pub(crate) fn compute_layer0_cpu_reference(
         hidden_out[pos * h..(pos + 1) * h].copy_from_slice(&cpu_hidden);
     }
 
+    let layer0_weights = cpu_weights.layer(0);
+    let q_bias = layer0_weights.attn_q_bias.clone().unwrap_or_default();
+    let k_bias = layer0_weights.attn_k_bias.clone().unwrap_or_default();
+    let v_bias = layer0_weights.attn_v_bias.clone().unwrap_or_default();
+
     CpuLayer0Activations {
         hidden_in,
         normed_attn,
@@ -297,5 +305,8 @@ pub(crate) fn compute_layer0_cpu_reference(
         swiglu,
         layer_out_ffn,
         hidden_out,
+        q_bias,
+        k_bias,
+        v_bias,
     }
 }

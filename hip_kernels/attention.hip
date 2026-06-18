@@ -496,6 +496,138 @@ extern "C" hipError_t gpu_flash_attn_decode_strided_multi_head_state(
     return hipGetLastError();
 }
 
+// ── Multi-Head Flash Attention Prefill (High-Occupancy) ───────────────────────────
+//
+// Replaces the single-query, single-head prefill kernel that left only thread 0
+// doing the softmax/value update.  Grid is (seq_len, num_heads): one block per
+// (query position, head).  Threads cooperate on the head dimension and on the
+// causal key positions 0..query_pos, giving all warps useful work on RDNA3.
+
+__global__ void flash_attn_prefill_strided_multi_head_kernel(
+    float* __restrict__ out,
+    const float* __restrict__ q,
+    const float* __restrict__ k,
+    const float* __restrict__ v,
+    const int seq_len,
+    const int num_heads,
+    const int num_kv_heads,
+    const int head_dim,
+    const int out_stride,
+    const int q_stride,
+    const int kv_stride,
+    const float scale,
+    const int kv_lora_dim,
+    const float* __restrict__ w_up_k,
+    const float* __restrict__ w_up_v
+) {
+    const int query_pos = blockIdx.x;
+    const int head_idx = blockIdx.y;
+    const int tid = threadIdx.x;
+
+    if (query_pos >= seq_len || head_idx >= num_heads) return;
+
+    const int ratio = num_heads / num_kv_heads;
+    const int kv_head_idx = (ratio > 0) ? (head_idx / ratio) : 0;
+    const int kv_size = num_kv_heads * head_dim;
+    const int head_offset = kv_head_idx * head_dim;
+
+    const float* head_q = q + (size_t)query_pos * q_stride + (size_t)head_idx * head_dim;
+    float* head_out = out + (size_t)query_pos * out_stride + (size_t)head_idx * head_dim;
+
+    extern __shared__ float s_scores[];
+    float* s_reduce = s_scores + kDecodeScoreCapacity;
+
+    const int active_len = query_pos + 1; // causal mask: attend to 0..=query_pos
+
+    // 1. Compute scores for all causal positions.  Each thread owns a subset of
+    // positions and does a full q·k dot over the head dimension.
+    for (int pos = tid; pos < active_len; pos += blockDim.x) {
+        float score = 0.0f;
+        if (kv_lora_dim > 0) {
+            for (int i = 0; i < head_dim; ++i) {
+                float k_val = get_reconstructed_k(pos, head_offset + i, k, kv_lora_dim, w_up_k);
+                score += head_q[i] * k_val;
+            }
+        } else {
+            const size_t cache_base = (size_t)pos * kv_stride + head_offset;
+            for (int i = 0; i < head_dim; ++i) {
+                score += head_q[i] * k[cache_base + i];
+            }
+        }
+        score *= scale;
+        s_scores[pos] = score;
+    }
+    __syncthreads();
+
+    // 2. Online softmax: max, exp, sum over causal positions.
+    float local_max = kNegInf;
+    for (int pos = tid; pos < active_len; pos += blockDim.x) {
+        local_max = fmaxf(local_max, s_scores[pos]);
+    }
+    const float m = block_reduce_max(local_max, s_reduce);
+
+    float local_sum = 0.0f;
+    for (int pos = tid; pos < active_len; pos += blockDim.x) {
+        const float weight = expf(s_scores[pos] - m);
+        s_scores[pos] = weight;
+        local_sum += weight;
+    }
+    const float s_sum = block_reduce_sum(local_sum, s_reduce);
+
+    // 3. Weighted sum over values.  Threads split the head dimension and loop
+    // over all causal positions, reusing the shared weights.
+    const float inv_sum = 1.0f / s_sum;
+    for (int i = tid; i < head_dim; i += blockDim.x) {
+        float val = 0.0f;
+        for (int pos = 0; pos < active_len; ++pos) {
+            float v_val = (kv_lora_dim > 0)
+                ? get_reconstructed_v(pos, head_offset + i, v, kv_lora_dim, w_up_v)
+                : v[(size_t)pos * kv_stride + head_offset + i];
+            val += s_scores[pos] * v_val;
+        }
+        head_out[i] = val * inv_sum;
+    }
+}
+
+extern "C" hipError_t gpu_flash_attn_prefill_strided_multi_head(
+    float* d_out,
+    const float* d_q,
+    const float* d_k,
+    const float* d_v,
+    const int seq_len,
+    const int num_heads,
+    const int num_kv_heads,
+    const int head_dim,
+    const int out_stride,
+    const int q_stride,
+    const int kv_stride,
+    const float scale,
+    const int kv_lora_dim,
+    const float* w_up_k,
+    const float* w_up_v,
+    hipStream_t stream
+) {
+    if (seq_len <= 0 || num_heads <= 0 || num_kv_heads <= 0 || head_dim <= 0) {
+        return hipErrorInvalidValue;
+    }
+    if (num_heads % num_kv_heads != 0) {
+        return hipErrorInvalidValue;
+    }
+    if (seq_len > kDecodeScoreCapacity) {
+        return hipErrorInvalidValue;
+    }
+
+    const int threads_per_block = 256;
+    const size_t smem_size = (kDecodeScoreCapacity + kDecodeReductionScratch) * sizeof(float);
+
+    flash_attn_prefill_strided_multi_head_kernel<<<dim3(seq_len, num_heads), threads_per_block, smem_size, stream>>>(
+        d_out, d_q, d_k, d_v, seq_len, num_heads, num_kv_heads, head_dim,
+        out_stride, q_stride, kv_stride, scale, kv_lora_dim, w_up_k, w_up_v
+    );
+
+    return hipGetLastError();
+}
+
 __device__ inline float project_k_no_rope(
     const float* k,
     const float* w_down_k,

@@ -6,7 +6,9 @@ use super::super::kernels::{
     gemv_qkv_q4_0_f32_on_stream_variant,
 };
 use super::super::launch_autotune::{lookup_qkv_variant, select_qkv_variant, VariantId};
-use super::super::safety::{launch_autotune_enabled, use_dp4a_enabled};
+use super::super::safety::{
+    experimental_q8_activation_fastpath_enabled, launch_autotune_enabled, use_dp4a_enabled,
+};
 use super::super::weights::{GpuBuffer, SvdCorrection, WeightMeta};
 use crate::loader::GgmlType;
 
@@ -96,6 +98,28 @@ pub fn gpu_dispatch_fused_qkv_on_stream(
         && k_meta.wtype == GgmlType::Q4_0
         && v_meta.wtype == GgmlType::Q4_0
     {
+        // Prefer the per-projection Q8 activation fastpath when it is enabled.
+        // That path matches the CPU decode (int32 per-block accumulation) and
+        // avoids the small but layer-accumulating divergence produced by the
+        // f32-per-element fused QKV kernel.  The fused f32 path remains available
+        // (and is selected below) when the Q8 fastpath is disabled.
+        if experimental_q8_activation_fastpath_enabled() {
+            gpu_dispatch_gemv_on_stream(device, w_q, q_meta, input, out_q, q_size, h, stream)?;
+            gpu_dispatch_gemv_on_stream(device, w_k, k_meta, input, out_k, kv_size, h, stream)?;
+            gpu_dispatch_gemv_on_stream(device, w_v, v_meta, input, out_v, kv_size, h, stream)?;
+
+            if let Some(bias) = q_bias {
+                add_on_stream(out_q, bias.as_ptr() as *const f32, out_q, q_size, stream)?;
+            }
+            if let Some(bias) = k_bias {
+                add_on_stream(out_k, bias.as_ptr() as *const f32, out_k, kv_size, stream)?;
+            }
+            if let Some(bias) = v_bias {
+                add_on_stream(out_v, bias.as_ptr() as *const f32, out_v, kv_size, stream)?;
+            }
+            return Ok(());
+        }
+
         let capture_active = matches!(
             super::super::ffi::hip_stream_is_capturing(stream),
             Err(_)

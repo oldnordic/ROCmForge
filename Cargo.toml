@@ -123,6 +123,11 @@ harness = false
 required-features = ["gpu"]
 
 [[bench]]
+name = "gpu_decode_dp4a_vs_baseline"
+harness = false
+required-features = ["gpu"]
+
+[[bench]]
 name = "cpu_graph"
 harness = false
 required-features = ["cpu-graph"]

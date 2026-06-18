@@ -5,12 +5,13 @@ use super::super::kernels::{
     gemv_gate_up_q4_0_f32_on_stream, gemv_gate_up_swiglu_q4_0_f32_on_stream, mul_on_stream,
     silu_on_stream,
 };
-use super::super::safety::experimental_q8_activation_fastpath_enabled;
+use super::super::safety::{experimental_q8_activation_fastpath_enabled, q4_0_q8_dp4a_enabled};
 use super::super::weights::{GpuBuffer, WeightMeta};
 use crate::loader::GgmlType;
 
 use super::fastpath::{
     q8_fastpath_ok, try_q4_0_q8_0_fused_gate_up_fastpath,
+    try_q4_0_q8_0_fused_gate_up_fastpath_prequantized,
     try_q4_0_q8_0_fused_gate_up_interleaved_fastpath,
     try_q4_0_q8_0_fused_gate_up_interleaved_tile4_fastpath,
     try_q4_0_q8_0_fused_gate_up_single_row_fastpath, try_q4_0_q8_0_gate_up_fastpath,
@@ -115,6 +116,19 @@ pub(crate) fn gpu_dispatch_fused_gate_up_with_scratch_on_stream(
 
     if gate_meta.wtype == GgmlType::Q4_0 && up_meta.wtype == GgmlType::Q4_0 {
         if experimental_q8_activation_fastpath_enabled() {
+            // DP4A fused gate-up SwiGLU path. This is the highest-throughput
+            // variant on RDNA2/RDNA3 when dequant dominates decode time.
+            if q4_0_q8_dp4a_enabled()
+                && q8_fastpath_ok(
+                    "gemv_gate_up_swiglu_q4_0_q8_0",
+                    try_q4_0_q8_0_fused_gate_up_fastpath_prequantized(
+                        device, w_gate, w_up, input, output, h, ff_size, stream,
+                    ),
+                )
+            {
+                return Ok(());
+            }
+
             // Hipfire-derived single-row high-occupancy path. Env-gated while we
             // validate it against the existing tile4/interleaved fastpaths.
             if std::env::var("ROCMFORGE_GATE_UP_SINGLE_ROW").is_ok() {

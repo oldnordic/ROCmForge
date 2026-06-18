@@ -1,5 +1,12 @@
 use crate::config::ModelConfig;
 use crate::gpu::cache::GpuForwardScratch;
+use crate::gpu::decode_graph_health::{
+    record_decode_graph_cache_hit, record_decode_graph_cache_miss,
+    record_decode_graph_capture_attempted, record_decode_graph_capture_failed,
+    record_decode_graph_capture_succeeded, record_decode_graph_fallback_to_non_graph,
+    record_decode_graph_replay_attempted, record_decode_graph_replay_failed,
+    record_decode_graph_replay_succeeded,
+};
 use crate::gpu::decode_graph_keys::gpu_greedy_logits_graph_key;
 use crate::gpu::device::GpuDevice;
 use crate::gpu::error::{GpuError, GpuResult};
@@ -192,23 +199,38 @@ pub(super) fn gpu_try_greedy_decode_graph(
 
     let key = gpu_greedy_logits_graph_key(device, gpu_weights, config);
     if !scratch.has_decode_graph_for(key) {
+        record_decode_graph_cache_miss();
         scratch.clear_decode_graph();
         let capture_status = match device.stream_capture_status() {
             Ok(status) => status,
-            Err(_) => return gpu_greedy_logits_tail_token(device, gpu_weights, scratch, config),
+            Err(_) => {
+                record_decode_graph_fallback_to_non_graph("stream capture status query failed");
+                return gpu_greedy_logits_tail_token(device, gpu_weights, scratch, config);
+            }
         };
         if capture_status != ffi::hipStreamCaptureStatus::hipStreamCaptureStatusNone {
+            record_decode_graph_fallback_to_non_graph("stream already capturing");
             return gpu_greedy_logits_tail_token(device, gpu_weights, scratch, config);
         }
 
+        record_decode_graph_capture_attempted();
         match gpu_capture_greedy_decode_graph(device, gpu_weights, scratch, config) {
             Ok(graph) => {
+                record_decode_graph_capture_succeeded();
                 scratch.replace_decode_graph(graph);
             }
             Err(err @ GpuError::InvalidWeightLayout { .. })
-            | Err(err @ GpuError::UnsupportedWeightType { .. }) => return Err(err),
-            Err(_) => return gpu_greedy_logits_tail_token(device, gpu_weights, scratch, config),
+            | Err(err @ GpuError::UnsupportedWeightType { .. }) => {
+                record_decode_graph_capture_failed("unsupported weight layout/type");
+                return Err(err);
+            }
+            Err(e) => {
+                record_decode_graph_capture_failed(&format!("{:?}", e));
+                return gpu_greedy_logits_tail_token(device, gpu_weights, scratch, config);
+            }
         }
+    } else {
+        record_decode_graph_cache_hit();
     }
 
     // Check if we have position tracking for decode state updates
@@ -223,20 +245,25 @@ pub(super) fn gpu_try_greedy_decode_graph(
             // The graph captures memory pointers but NOT values like position.
             // We must upload updated decode state before each replay to ensure correctness.
             scratch.upload_decode_state(pos, pos + 1, device.stream())?;
+            scratch.upload_positions(pos + 1, 0, config.max_seq_len, device.stream())?;
 
             // Get graph again after upload
             if let Some(graph) = scratch.decode_graph() {
+                record_decode_graph_replay_attempted();
                 if graph.launch(device.stream()).is_ok() {
                     // Captured graph already includes the fixed argmax D2H readback.
                     // Keep the stream sync before reading pinned host memory.
                     device.synchronize()?;
                     let index = scratch.argmax_result_index.as_slice::<i32>()[0];
+                    record_decode_graph_replay_succeeded();
                     return Ok(index as u32);
                 }
             }
+            record_decode_graph_replay_failed("graph launch failed");
             scratch.clear_decode_graph();
         }
     }
 
+    record_decode_graph_fallback_to_non_graph("graph unavailable after replay failure");
     gpu_greedy_logits_tail_token(device, gpu_weights, scratch, config)
 }

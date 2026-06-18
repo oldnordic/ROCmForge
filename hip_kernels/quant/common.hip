@@ -5,6 +5,8 @@
 #include <hip/hip_fp16.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <cstdlib>
+#include <cstring>
 
 // ── Safety-First Error Handling ─────────────────────────────────────────────────────
 
@@ -251,6 +253,97 @@ extern "C" __device__ int __ockl_sdot4(int a, int b, int c, bool saturate);
     // RDNA1, CDNA: Use portable software fallback
     #define DOT4(a, b, acc) dot4_manual((a), (b), (acc))
 #endif
+
+// ── Q4_0 × Q8_0 DP4A Dot Product ─────────────────────────────────────────────
+/// Compute the integer dot product of one Q4_0 block (16 packed bytes, 32 nibbles)
+/// against one Q8_0 block (32 signed int8 activations).
+///
+/// Q4_0 layout: qs[i] low nibble → element i, high nibble → element i+16.
+/// Each nibble is biased by -8, so the stored value v represents (v - 8).
+/// DOT4 computes signed×signed dot products, so we pack the biased nibbles as
+/// signed int8 values and the Q8_0 activations as-is.
+__device__ inline int q4_0_q8_0_block_dot_dp4a(
+    const int8_t* __restrict__ w_qs,
+    const int8_t* __restrict__ x_qs
+) {
+    int dot = 0;
+    int x_base = 0;
+    int w_base = 0;
+
+    // Process all 16 bytes in 4 iterations of 4 bytes each
+    #pragma unroll
+    for (int i = 0; i < 4; ++i) {
+        // Use memcpy like the scalar path for efficient memory access
+        uint32_t packed_word;
+        __builtin_memcpy(&packed_word, w_qs + w_base, 4);
+        w_base += 4;
+
+        // Extract bytes efficiently (matches scalar pattern)
+        const uint8_t b0 = static_cast<uint8_t>(packed_word & 0xFF);
+        const uint8_t b1 = static_cast<uint8_t>((packed_word >> 8) & 0xFF);
+        const uint8_t b2 = static_cast<uint8_t>((packed_word >> 16) & 0xFF);
+        const uint8_t b3 = static_cast<uint8_t>((packed_word >> 24) & 0xFF);
+
+        // Pack 4 biased low nibbles into a signed int32 (little-endian)
+        const uint32_t w_lo = (
+            (static_cast<uint32_t>((b0 & 0x0F) - 8) & 0xFFU) |
+            ((static_cast<uint32_t>((b1 & 0x0F) - 8) & 0xFFU) << 8) |
+            ((static_cast<uint32_t>((b2 & 0x0F) - 8) & 0xFFU) << 16) |
+            ((static_cast<uint32_t>((b3 & 0x0F) - 8) & 0xFFU) << 24)
+        );
+
+        // Pack 4 biased high nibbles into a signed int32
+        const uint32_t w_hi = (
+            (static_cast<uint32_t>((b0 >> 4) - 8) & 0xFFU) |
+            ((static_cast<uint32_t>((b1 >> 4) - 8) & 0xFFU) << 8) |
+            ((static_cast<uint32_t>((b2 >> 4) - 8) & 0xFFU) << 16) |
+            ((static_cast<uint32_t>((b3 >> 4) - 8) & 0xFFU) << 24)
+        );
+
+        // Pack 4 signed Q8_0 activations into int32 (low nibbles)
+        const uint32_t x_lo = (
+            static_cast<uint32_t>(static_cast<uint8_t>(x_qs[x_base + 0])) |
+            (static_cast<uint32_t>(static_cast<uint8_t>(x_qs[x_base + 1])) << 8) |
+            (static_cast<uint32_t>(static_cast<uint8_t>(x_qs[x_base + 2])) << 16) |
+            (static_cast<uint32_t>(static_cast<uint8_t>(x_qs[x_base + 3])) << 24)
+        );
+
+        // Pack 4 signed Q8_0 activations into int32 (high nibbles)
+        const uint32_t x_hi = (
+            static_cast<uint32_t>(static_cast<uint8_t>(x_qs[x_base + 16 + 0])) |
+            (static_cast<uint32_t>(static_cast<uint8_t>(x_qs[x_base + 16 + 1])) << 8) |
+            (static_cast<uint32_t>(static_cast<uint8_t>(x_qs[x_base + 16 + 2])) << 16) |
+            (static_cast<uint32_t>(static_cast<uint8_t>(x_qs[x_base + 16 + 3])) << 24)
+        );
+
+        x_base += 4;
+
+        // Use DOT4 for hardware acceleration
+        dot = DOT4(static_cast<int>(w_lo), static_cast<int>(x_lo), dot);
+        dot = DOT4(static_cast<int>(w_hi), static_cast<int>(x_hi), dot);
+    }
+
+    return dot;
+}
+
+/// Runtime opt-in for the DP4A Q4_0 × Q8_0 dot-product path.
+/// Mirrors the existing single-row environment flag pattern.
+static inline bool use_dp4a_q4_0_q8() {
+    static int cached = -1;
+    if (cached == -1) {
+        const char* val = std::getenv("ROCMFORGE_Q4_0_Q8_DP4A");
+        if (val != nullptr && (
+            std::strcmp(val, "1") == 0 ||
+            std::strcmp(val, "true") == 0 ||
+            std::strcmp(val, "yes") == 0 ||
+            std::strcmp(val, "on") == 0)) {
+            cached = 1;
+        } else {
+            cached = 0;
+        }
+    }
+    return cached == 1;
+}
 
 // ── WMMA (Wave Matrix Multiply Accumulate) for RDNA3 (gfx1100+) ─────
 #if defined(__AMDGPU__) && (defined(__gfx1100__) || defined(__gfx1101__) || defined(__gfx1102__))

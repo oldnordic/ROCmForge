@@ -19,6 +19,7 @@
 pub mod arch;
 pub mod batch_decode;
 pub mod cache;
+pub mod decode_graph_health;
 pub mod decode_graph_keys;
 pub mod decode_profile;
 pub mod decode_scheduler;
@@ -36,6 +37,7 @@ pub mod kernels;
 pub mod launch_autotune;
 pub mod ops;
 pub mod ops_batched;
+#[cfg(test)]
 mod prefill_debug;
 pub mod prefill_helpers;
 pub mod prefill_layer;
@@ -51,6 +53,10 @@ pub mod weights;
 
 pub use arch::GpuArchitecture;
 pub use cache::{GpuExpertScratch, GpuForwardScratch, GpuKvCache, GpuPrefillScratch};
+pub use decode_graph_health::{
+    decode_graph_health_snapshot, reset_decode_graph_health, GpuDecodeGraphHealthSnapshot,
+    OBSERVE_DECODE_GRAPH_HEALTH_ENV,
+};
 pub use decode_profile::{
     decode_stage_profile_snapshot, reset_decode_stage_profile, GpuDecodeStageProfileSnapshot,
 };
@@ -95,6 +101,7 @@ pub use kernels::{
     flash_attn_decode_strided_multi_head,
     flash_attn_decode_turboquant,
     flash_attn_prefill_strided,
+    flash_attn_prefill_strided_multi_head,
     gelu,
     gemm_q4_0_f32,
     gemm_q4_1_f32,
