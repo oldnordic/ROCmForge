@@ -199,6 +199,7 @@ fn test_gpu_single_layer_forward_matches_cpu() {
         Some(&mut cpu_scratch),
         0,
         0,
+        0, // token_id (dummy value)
         &config,
     )
     .expect("GPU layer forward should succeed");

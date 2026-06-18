@@ -942,6 +942,7 @@ fn test_gpu_loaded_layer0_full_forward_intermediates_match_cpu() {
         Some(&mut host_scratch),
         0,
         0,
+        token_id,
         &config,
     )
     .expect("gpu layer0 forward");

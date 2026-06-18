@@ -114,6 +114,7 @@ fn test_gpu_q2k_q3k_fallback_correctness() {
         Some(&mut cpu_scratch),
         0,
         0,
+        0, // token_id (dummy value since hidden is directly uploaded)
         &config,
     )
     .expect("GPU hybrid layer forward should succeed");

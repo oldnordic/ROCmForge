@@ -96,6 +96,7 @@ fn test_q4_0_dequantization_correctness() {
             pos,
             &config,
             rocmforge::gpu::GpuLogitsMode::DownloadToHost,
+            token_id,
         )
         .expect("GPU forward should succeed");
     }
@@ -187,6 +188,7 @@ fn test_fusion_kernel_coherence() {
             pos,
             &config,
             rocmforge::gpu::GpuLogitsMode::DownloadToHost,
+            token_id,
         )
         .expect("GPU forward should succeed");
     }
@@ -231,6 +233,7 @@ fn test_fusion_kernel_coherence() {
             pos,
             &config,
             rocmforge::gpu::GpuLogitsMode::DownloadToHost,
+            current_token,
         )
         .expect("GPU forward should succeed");
     }
@@ -353,6 +356,7 @@ fn test_single_layer_correctness() {
         Some(&mut cpu_scratch),
         layer_idx,
         0,
+        0, // token_id (dummy value)
         &config,
     )
     .expect("GPU layer forward should succeed");

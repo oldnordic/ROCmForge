@@ -68,6 +68,12 @@ pub struct GpuForwardScratch {
     positions: GpuBuffer,
     /// Pinned host staging for positions upload.
     positions_host: GpuPinnedBuffer,
+    /// Per-layer embedding (PLE) inputs for Gemma4 [num_layers * ple_dim].
+    /// Only allocated for Gemma4 models with hidden_size_per_layer_input > 0.
+    pub ple_input: Option<GpuBuffer>,
+    /// Per-layer embedding (PLE) projection scratch for Gemma4 [num_layers * ple_dim].
+    /// Only allocated for Gemma4 models with hidden_size_per_layer_input > 0.
+    pub ple_proj: Option<GpuBuffer>,
 }
 
 /// Pre-allocated GPU buffers for uploading one expert's compressed data at decode time.
@@ -157,8 +163,13 @@ impl GpuForwardScratch {
         let argmax_partials = v.div_ceil(GPU_ARGMAX_ITEMS_PER_BLOCK);
         let attn_weights = config.num_heads * config.max_seq_len;
         let positions = config.max_seq_len;
+        let ple = if config.architecture == "gemma4" && config.hidden_size_per_layer_input > 0 {
+            2 * config.num_layers * config.hidden_size_per_layer_input // Both ple_input and ple_proj
+        } else {
+            0
+        };
         std::mem::size_of::<f32>()
-            * (3 * h + 2 * q + 2 * kv + 2 * ff + 32 + v + 2 * argmax_partials + 3 + attn_weights)
+            * (3 * h + 2 * q + 2 * kv + 2 * ff + 32 + v + 2 * argmax_partials + 3 + attn_weights + ple)
             + positions * std::mem::size_of::<i32>()
     }
 
@@ -297,6 +308,24 @@ impl GpuForwardScratch {
                 }
             })?;
 
+        // Allocate PLE buffer for Gemma4 if needed
+        let (ple_input, ple_proj) = if config.architecture == "gemma4" && config.hidden_size_per_layer_input > 0 {
+            let ple_size = config.num_layers * config.hidden_size_per_layer_input * std::mem::size_of::<f32>();
+            let ple_input = GpuBuffer::alloc(ple_size).map_err(|e| {
+                GpuError::CacheAllocationFailed {
+                    reason: format!("PLE input buffer allocation failed: {}", e),
+                }
+            })?;
+            let ple_proj = GpuBuffer::alloc(ple_size).map_err(|e| {
+                GpuError::CacheAllocationFailed {
+                    reason: format!("PLE projection buffer allocation failed: {}", e),
+                }
+            })?;
+            (Some(ple_input), Some(ple_proj))
+        } else {
+            (None, None)
+        };
+
         crate::gpu::ffi::hip_memset(hidden.as_ptr(), 0, hidden.size())?;
         crate::gpu::ffi::hip_memset(normed.as_ptr(), 0, normed.size())?;
         crate::gpu::ffi::hip_memset(q_buf.as_ptr(), 0, q_buf.size())?;
@@ -352,6 +381,8 @@ impl GpuForwardScratch {
             attn_weights: None,
             positions,
             positions_host,
+            ple_input,
+            ple_proj,
         })
     }
 

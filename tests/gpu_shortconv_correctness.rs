@@ -169,6 +169,13 @@ fn test_gpu_shortconv_decode_parity() {
         ffn_gate_compressed: None,
         ffn_up_compressed: None,
         ffn_down_compressed: None,
+        inp_gate: None,
+        inp_gate_meta: None,
+        proj: None,
+        proj_meta: None,
+        per_layer_token_emb: None,
+        per_layer_model_proj: None,
+        per_layer_proj_norm: None,
     };
 
     // 3. Setup input
@@ -208,6 +215,7 @@ fn test_gpu_shortconv_decode_parity() {
         Some(&mut cpu_scratch),
         0,
         0,
+        0, // token_id (dummy value)
         &config,
     )
     .expect("gpu forward");
@@ -362,6 +370,13 @@ fn test_gpu_shortconv_prefill_parity() {
         ffn_gate_compressed: None,
         ffn_up_compressed: None,
         ffn_down_compressed: None,
+        inp_gate: None,
+        inp_gate_meta: None,
+        proj: None,
+        proj_meta: None,
+        per_layer_token_emb: None,
+        per_layer_model_proj: None,
+        per_layer_proj_norm: None,
     };
 
     // 3. Setup input sequence

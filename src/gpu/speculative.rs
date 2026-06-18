@@ -257,6 +257,7 @@ impl SpeculativeEngine {
                 pos,
                 &self.target_config,
                 logits_mode,
+                token_id,
             )?;
 
             if pos + 1 == prompt_len {
@@ -291,6 +292,7 @@ impl SpeculativeEngine {
                 pos,
                 &self.draft_config,
                 super::forward::GpuLogitsMode::Skip,
+                token_id,
             )?;
         }
 
@@ -344,6 +346,7 @@ impl SpeculativeEngine {
                 pos,
                 &self.draft_config,
                 super::forward::GpuLogitsMode::GreedyArgmax,
+                current_token,
             )?;
 
             let token = if let Some(t) = opt_token {
@@ -444,6 +447,7 @@ impl SpeculativeEngine {
                 pos,
                 &self.target_config,
                 super::forward::GpuLogitsMode::GreedyArgmax,
+                input_token,
             )?;
 
             let target_token = target_token.unwrap_or_else(|| {
@@ -488,6 +492,7 @@ impl SpeculativeEngine {
                 next_pos,
                 &self.target_config,
                 super::forward::GpuLogitsMode::GreedyArgmax,
+                input_token,
             )?;
             let next_token = next_token.unwrap_or_else(|| {
                 crate::cpu::sampler::cpu_sample_greedy(
@@ -532,6 +537,7 @@ impl SpeculativeEngine {
             sync_pos,
             &self.draft_config,
             super::forward::GpuLogitsMode::Skip,
+            sync_input_token,
         )?;
 
         Ok((accepted_tokens, num_accepted))

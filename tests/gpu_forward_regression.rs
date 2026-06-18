@@ -136,6 +136,7 @@ fn test_ffn_down_dimensions_correct_in_hybrid_forward() {
         Some(&mut cpu_scratch),
         layer_idx,
         0, // pos
+        0, // token_id (dummy value for this test)
         &config,
     )
     .expect("GPU forward should succeed without memory fault");

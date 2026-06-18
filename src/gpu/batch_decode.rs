@@ -92,6 +92,9 @@ pub fn gpu_full_forward_decode_step(
         let scratch = &mut scratches[slot_idx];
         let host = &mut host_scratches[slot_idx];
 
+        // Get the last token from the batch slot
+        let token_id = batch.last_token_for_slot(slot_idx).unwrap_or(0);
+
         let token_opt = gpu_full_forward_hybrid(
             device,
             gpu_weights,
@@ -102,6 +105,7 @@ pub fn gpu_full_forward_decode_step(
             pos,
             config,
             GpuLogitsMode::GreedyArgmax,
+            token_id,
         )?;
 
         if let Some(token) = token_opt {

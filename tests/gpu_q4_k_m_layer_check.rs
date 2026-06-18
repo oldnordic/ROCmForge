@@ -128,6 +128,7 @@ fn test_q4_k_m_layer_0_matches_cpu() {
         Some(&mut host_scratch),
         0,
         0,
+        token_id,
         &config,
     )
     .expect("gpu layer 0 forward");

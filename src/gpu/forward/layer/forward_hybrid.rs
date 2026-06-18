@@ -139,6 +139,7 @@ pub fn gpu_layer_forward_hybrid(
     mut cpu_scratch: Option<&mut CpuForwardScratch>,
     layer_idx: usize,
     pos: usize,
+    token_id: u32,
     config: &ModelConfig,
 ) -> GpuResult<()> {
     record_layer_invocation();
@@ -180,6 +181,23 @@ pub fn gpu_layer_forward_hybrid(
             scratch.upload_decode_state(pos, pos + 1, device.stream())?;
             // Upload positions array for RoPE and KV operations
             scratch.upload_positions(pos + 1, 0, config.max_seq_len, device.stream())?;
+
+            // 0. Per-Layer Embedding (PLE) for Gemma4
+            if config.architecture == "gemma4" && config.hidden_size_per_layer_input > 0 {
+                use crate::gpu::forward::ple::gpu_compute_ple_inputs_on_stream;
+                gpu_compute_ple_inputs_on_stream(
+                    device,
+                    token_id,
+                    scratch.hidden.as_ptr() as *const f32,
+                    gpu_layer.per_layer_token_emb.as_ref().map(|b| b.as_ptr() as *const f32),
+                    gpu_layer.per_layer_model_proj.as_ref().map(|b| b.as_ptr() as *const f32),
+                    gpu_layer.per_layer_proj_norm.as_ref().map(|b| b.as_ptr() as *const f32),
+                    scratch.ple_input.as_ref().map(|b| b.as_ptr() as *mut f32),
+                    layer_idx,
+                    config,
+                    device.stream(),
+                )?;
+            }
 
             // 1. RMSNorm
             profile_decode_stage(device, DecodeStage::AttnNorm, || {

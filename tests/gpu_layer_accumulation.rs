@@ -130,6 +130,7 @@ fn test_gpu_state_accumulation_across_layers() {
             Some(&mut cpu_scratch),
             0,
             0,
+            0, // token_id (dummy value since hidden is directly uploaded)
             &config,
         )
         .expect("GPU layer forward should succeed");
@@ -219,6 +220,7 @@ fn test_gpu_state_accumulation_across_layers() {
             Some(&mut cpu_scratch_accum),
             layer_idx,
             decode_pos,
+            0, // token_id (dummy value)
             &config,
         )
         .expect("GPU accumulated layer forward should succeed");

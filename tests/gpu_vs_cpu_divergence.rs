@@ -222,6 +222,7 @@ fn test_cpu_vs_gpu_divergence_qwen() {
         0,
         &config,
         gpu::GpuLogitsMode::GreedyArgmax,
+        token_id,
     )
     .expect("GPU full forward");
     device.synchronize().expect("sync");
@@ -405,6 +406,7 @@ fn test_cpu_vs_gpu_layer0_stage_divergence_qwen() {
         Some(&mut cpu_scratch_gpu),
         0,
         0,
+        0, // token_id (dummy value)
         &config,
     )
     .expect("GPU layer 0");
@@ -1241,6 +1243,7 @@ fn test_qwen_gpu_greedy_token_matches_cpu() {
             Some(&mut cpu_scratch_gpu),
             layer,
             0,
+            0, // token_id (dummy value)
             &config,
         )
         .expect("GPU layer");

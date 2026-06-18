@@ -428,6 +428,52 @@ pub(super) fn load_for_device(
         attn_qkv.is_some(),
     );
 
+    // Gemma4 Per-Layer Embedding (PLE) weights (optional, only for gemma4)
+    let (inp_gate, inp_gate_meta, proj, proj_meta) = if config.architecture == "gemma4" {
+        let inp_gate_name = config.tensor_registry.resolve(TensorName::InpGate, layer);
+        let proj_name = config.tensor_registry.resolve(TensorName::Proj, layer);
+
+        let inp_gate = match load_weight_opt(&inp_gate_name)? {
+            Some((buf, meta)) => (Some(buf), Some(meta)),
+            None => (None, None),
+        };
+
+        let proj = match load_weight_opt(&proj_name)? {
+            Some((buf, meta)) => (Some(buf), Some(meta)),
+            None => (None, None),
+        };
+
+        (inp_gate.0, inp_gate.1, proj.0, proj.1)
+    } else {
+        (None, None, None, None)
+    };
+
+    // PLE per-layer token embeddings and projections (optional, only for gemma4)
+    let (per_layer_token_emb, per_layer_model_proj, per_layer_proj_norm) = if config.architecture == "gemma4" {
+        let per_layer_token_emb_name = config.tensor_registry.resolve(TensorName::PerLayerTokenEmb, layer);
+        let per_layer_model_proj_name = config.tensor_registry.resolve(TensorName::PerLayerModelProj, layer);
+        let per_layer_proj_norm_name = config.tensor_registry.resolve(TensorName::PerLayerProjNorm, layer);
+
+        let per_layer_token_emb = match load_weight_opt(&per_layer_token_emb_name)? {
+            Some((buf, _meta)) => Some(buf),
+            None => None,
+        };
+
+        let per_layer_model_proj = match load_weight_opt(&per_layer_model_proj_name)? {
+            Some((buf, _meta)) => Some(buf),
+            None => None,
+        };
+
+        let per_layer_proj_norm = match load_weight_opt(&per_layer_proj_norm_name)? {
+            Some((buf, _meta)) => Some(buf),
+            None => None,
+        };
+
+        (per_layer_token_emb, per_layer_model_proj, per_layer_proj_norm)
+    } else {
+        (None, None, None)
+    };
+
     Ok(GpuLayerWeights {
         attn_norm,
         attn_q,
@@ -482,5 +528,12 @@ pub(super) fn load_for_device(
         ffn_gate_compressed: None::<CpuCompressedExperts>,
         ffn_up_compressed: None::<CpuCompressedExperts>,
         ffn_down_compressed: None::<CpuCompressedExperts>,
+        inp_gate,
+        inp_gate_meta,
+        proj,
+        proj_meta,
+        per_layer_token_emb,
+        per_layer_model_proj,
+        per_layer_proj_norm,
     })
 }

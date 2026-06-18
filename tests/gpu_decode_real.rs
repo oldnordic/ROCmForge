@@ -204,6 +204,7 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
             pos,
             &config,
             gpu::GpuLogitsMode::DownloadToHost,
+            token_id,
         )
         .expect("GPU decode should succeed");
     }
@@ -270,6 +271,7 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
             Some(&mut cpu_scratch_l0),
             0,
             0,
+            first_token,
             &config,
         )
         .expect("GPU layer 0 should succeed");
@@ -377,6 +379,7 @@ fn test_gpu_decode_real_model_matches_cpu_greedy_token() {
                     Some(&mut cpu_scratch_diag),
                     layer_idx,
                     diag_pos,
+                    diag_token_id,
                     &config,
                 )
                 .expect("diag GPU layer should succeed");
@@ -504,6 +507,7 @@ fn test_gpu_greedy_decode_populates_cached_graph() {
             pos,
             &config,
             gpu::GpuLogitsMode::GreedyArgmax,
+            token_id,
         )
         .expect("GPU decode should succeed");
     }
@@ -583,6 +587,7 @@ fn test_gpu_greedy_decode_profile_real_model() {
             pos,
             &config,
             gpu::GpuLogitsMode::GreedyArgmax,
+            token_id,
         )
         .expect("GPU prompt decode should succeed");
     }
@@ -611,6 +616,7 @@ fn test_gpu_greedy_decode_profile_real_model() {
             prompt_tokens.len() + step,
             &config,
             gpu::GpuLogitsMode::GreedyArgmax,
+            token,
         )
         .expect("GPU decode should succeed")
         .expect("decode step should produce a greedy token");
@@ -751,6 +757,7 @@ fn test_gpu_greedy_decode_benchmark_real_model_multi_run() {
                 pos,
                 &config,
                 gpu::GpuLogitsMode::GreedyArgmax,
+                token_id,
             )
             .expect("GPU prompt decode should succeed");
         }
@@ -779,6 +786,7 @@ fn test_gpu_greedy_decode_benchmark_real_model_multi_run() {
                 prompt_tokens.len() + step,
                 &config,
                 gpu::GpuLogitsMode::GreedyArgmax,
+                token,
             )
             .expect("GPU decode should succeed")
             .expect("decode step should produce a greedy token");
@@ -1094,6 +1102,7 @@ fn test_dp4a_kernel_real_model() {
                 pos,
                 &config,
                 gpu::GpuLogitsMode::DownloadToHost,
+                token_id,
             )
             .expect("GPU decode should succeed");
         }

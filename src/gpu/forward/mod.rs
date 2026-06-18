@@ -8,10 +8,12 @@ mod decode;
 mod embed;
 mod layer;
 mod logits;
+mod ple;
 mod utils;
 
 pub use embed::gpu_embed_token_hybrid;
 pub use layer::gpu_layer_forward_hybrid;
+pub use ple::gpu_compute_ple_inputs_on_stream;
 pub use utils::GpuLogitsMode;
 
 use crate::config::ModelConfig;
@@ -37,6 +39,7 @@ pub fn gpu_full_forward_hybrid(
     pos: usize,
     config: &ModelConfig,
     logits_mode: GpuLogitsMode,
+    token_id: u32,
 ) -> GpuResult<Option<u32>> {
     if matches!(logits_mode, GpuLogitsMode::GreedyArgmax) {
         if let Some(token) =
@@ -63,6 +66,7 @@ pub fn gpu_full_forward_hybrid(
             Some(host_scratch),
             layer_idx,
             pos,
+            token_id,
             config,
         )?;
 

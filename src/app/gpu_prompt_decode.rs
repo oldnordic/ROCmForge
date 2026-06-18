@@ -62,6 +62,7 @@ pub(crate) fn run_decode_style_prompt_path(
             pos,
             config,
             logits_mode,
+            token_id,
         )
         .map_err(|e| format!("gpu prefill/decode: {}", e))?;
     }

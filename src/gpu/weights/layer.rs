@@ -150,6 +150,17 @@ pub struct GpuLayerWeights {
     pub ffn_gate_compressed: Option<CpuCompressedExperts>,
     pub ffn_up_compressed: Option<CpuCompressedExperts>,
     pub ffn_down_compressed: Option<CpuCompressedExperts>,
+    /// Gemma4 Per-Layer Embedding (PLE) weights (optional, only for gemma4)
+    pub inp_gate: Option<GpuBuffer>,
+    pub inp_gate_meta: Option<WeightMeta>,
+    pub proj: Option<GpuBuffer>,
+    pub proj_meta: Option<WeightMeta>,
+    /// PLE token embedding per-layer lookup (optional, only for gemma4)
+    pub per_layer_token_emb: Option<GpuBuffer>,
+    /// PLE model projection (optional, only for gemma4)
+    pub per_layer_model_proj: Option<GpuBuffer>,
+    /// PLE projection normalization (optional, only for gemma4)
+    pub per_layer_proj_norm: Option<GpuBuffer>,
 }
 
 pub(super) fn try_load_sparse_csr(

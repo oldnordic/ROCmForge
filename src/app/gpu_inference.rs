@@ -428,6 +428,7 @@ pub(crate) fn run_gpu_inference(args: &Args) -> Result<(), Box<dyn std::error::E
             pos,
             &config,
             logits_mode,
+            next_token,
         )
         .map_err(|e| format!("gpu decode: {}", e))?;
 
@@ -660,6 +661,7 @@ pub(crate) fn run_gpu_speculative_inference(
                 pos,
                 &engine.target_config,
                 logits_mode,
+                token_id,
             )
             .map_err(|e| format!("gpu prefill target: {}", e))?;
         }
@@ -721,6 +723,7 @@ pub(crate) fn run_gpu_speculative_inference(
                 pos,
                 &engine.draft_config,
                 gpu::GpuLogitsMode::Skip,
+                token_id,
             )
             .map_err(|e| format!("gpu prefill draft: {}", e))?;
         }
@@ -829,6 +832,7 @@ pub(crate) fn run_gpu_speculative_inference(
                 pos,
                 &engine.target_config,
                 gpu::GpuLogitsMode::GreedyArgmax,
+                next_token,
             )
             .map_err(|e| format!("gpu decode target step: {}", e))?;
 

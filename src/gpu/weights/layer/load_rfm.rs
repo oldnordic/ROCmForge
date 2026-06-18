@@ -689,6 +689,92 @@ pub(super) fn load_for_device(
     let ffn_up_compressed = try_load_compressed_experts(file, &ffn_up_name)?;
     let ffn_down_compressed = try_load_compressed_experts(file, &ffn_down_name)?;
 
+    // Gemma4 Per-Layer Embedding (PLE) weights (optional, only for gemma4)
+    let (inp_gate, inp_gate_meta, proj, proj_meta) = if config.architecture == "gemma4" {
+        let inp_gate_name = config.tensor_registry.resolve(TensorName::InpGate, layer);
+        let proj_name = config.tensor_registry.resolve(TensorName::Proj, layer);
+
+        let inp_gate_result = if let Some(t) = file.tensor(&inp_gate_name).map_err(|e| {
+            GpuError::HipApiError {
+                code: -1,
+                description: format!("tensor lookup failed: {}", e),
+            }
+        })? {
+            let (buf, meta, _svd) = load_rfm_weight(&inp_gate_name, false)?;
+            (Some(buf), Some(meta))
+        } else {
+            (None, None)
+        };
+
+        let proj_result = if let Some(t) = file.tensor(&proj_name).map_err(|e| {
+            GpuError::HipApiError {
+                code: -1,
+                description: format!("tensor lookup failed: {}", e),
+            }
+        })? {
+            let (buf, meta, _svd) = load_rfm_weight(&proj_name, false)?;
+            (Some(buf), Some(meta))
+        } else {
+            (None, None)
+        };
+
+        (
+            inp_gate_result.0,
+            inp_gate_result.1,
+            proj_result.0,
+            proj_result.1,
+        )
+    } else {
+        (None, None, None, None)
+    };
+
+    // PLE per-layer token embeddings and projections (optional, only for gemma4)
+    let (per_layer_token_emb, per_layer_model_proj, per_layer_proj_norm) = if config.architecture == "gemma4" {
+        let per_layer_token_emb_name = config.tensor_registry.resolve(TensorName::PerLayerTokenEmb, layer);
+        let per_layer_model_proj_name = config.tensor_registry.resolve(TensorName::PerLayerModelProj, layer);
+        let per_layer_proj_norm_name = config.tensor_registry.resolve(TensorName::PerLayerProjNorm, layer);
+
+        let per_layer_token_emb_result = if let Some(t) = file.tensor(&per_layer_token_emb_name).map_err(|e| {
+            GpuError::HipApiError {
+                code: -1,
+                description: format!("tensor lookup failed: {}", e),
+            }
+        })? {
+            let (buf, _meta, _svd) = load_rfm_weight(&per_layer_token_emb_name, false)?;
+            Some(buf)
+        } else {
+            None
+        };
+
+        let per_layer_model_proj_result = if let Some(t) = file.tensor(&per_layer_model_proj_name).map_err(|e| {
+            GpuError::HipApiError {
+                code: -1,
+                description: format!("tensor lookup failed: {}", e),
+            }
+        })? {
+            let (buf, _meta, _svd) = load_rfm_weight(&per_layer_model_proj_name, false)?;
+            Some(buf)
+        } else {
+            None
+        };
+
+        let per_layer_proj_norm_result = if let Some(t) = file.tensor(&per_layer_proj_norm_name).map_err(|e| {
+            GpuError::HipApiError {
+                code: -1,
+                description: format!("tensor lookup failed: {}", e),
+            }
+        })? {
+            let (buf, _meta, _svd) = load_rfm_weight(&per_layer_proj_norm_name, false)?;
+            Some(buf)
+        } else {
+            None
+        };
+
+        (per_layer_token_emb_result, per_layer_model_proj_result, per_layer_proj_norm_result)
+    } else {
+        (None, None, None)
+    };
+
     let layer_type = super::GpuLayerType::from_weights_present(
         ssm.is_some(),
         true, // RFM loader currently only handles attention layers
@@ -749,5 +835,12 @@ pub(super) fn load_for_device(
         ffn_gate_compressed,
         ffn_up_compressed,
         ffn_down_compressed,
+        inp_gate,
+        inp_gate_meta,
+        proj,
+        proj_meta,
+        per_layer_token_emb,
+        per_layer_model_proj,
+        per_layer_proj_norm,
     })
 }

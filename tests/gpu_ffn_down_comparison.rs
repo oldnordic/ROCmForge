@@ -148,6 +148,7 @@ fn test_ffn_down_individual_vs_layer_forward() {
         Some(&mut cpu_scratch),
         0,
         0,
+        0, // token_id (dummy value since hidden is uploaded directly)
         &config,
     )
     .expect("GPU layer forward should succeed");

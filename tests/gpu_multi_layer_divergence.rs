@@ -114,6 +114,7 @@ fn test_multi_layer_divergence_isolation() {
             Some(&mut cpu_scratch),
             0,
             0,
+            0, // token_id (dummy value)
             &config,
         )
         .expect("GPU layer forward should succeed");

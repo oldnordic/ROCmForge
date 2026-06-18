@@ -152,6 +152,7 @@ impl DecodeSession {
         let mut results = Vec::new();
         for (slot_idx, seq_id, pos) in active {
             let slot = &mut self.slots[slot_idx];
+            let token_id = self.batch.last_token_for_slot(slot_idx).unwrap_or(0);
             let token_opt = gpu_full_forward_hybrid(
                 device,
                 gpu_weights,
@@ -162,6 +163,7 @@ impl DecodeSession {
                 pos,
                 config,
                 logits_mode,
+                token_id,
             )?;
             if let Some(token) = token_opt {
                 results.push((slot_idx, seq_id, token));
