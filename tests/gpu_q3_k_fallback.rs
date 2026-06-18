@@ -100,9 +100,6 @@ fn test_gpu_q2k_q3k_fallback_correctness() {
         rope_sin,
         rope_cos,
         &config,
-        None, // shared_ple_token_emb
-        None, // shared_ple_model_proj
-        None, // shared_ple_proj_norm
         false,
     )
     .expect("CPU layer forward should succeed");

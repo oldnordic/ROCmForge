@@ -101,11 +101,11 @@ fn test_ffn_down_dimensions_correct_in_hybrid_forward() {
         &mut cpu_kv,
         &mut cpu_scratch,
         layer_idx,
-        0, // pos
+        0,
         rope_sin,
         rope_cos,
         &config,
-        false, // debug
+        false,
     )
     .expect("CPU forward should succeed");
 

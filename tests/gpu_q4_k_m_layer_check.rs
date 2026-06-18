@@ -74,9 +74,6 @@ fn test_q4_k_m_layer_0_matches_cpu() {
         &rope_sin,
         &rope_cos,
         &config,
-        None, // shared_ple_token_emb
-        None, // shared_ple_model_proj
-        None, // shared_ple_proj_norm
         false,
     )
     .expect("CPU layer 0 forward");
@@ -109,9 +106,6 @@ fn test_q4_k_m_layer_0_matches_cpu() {
         &mut gpu_scratch,
         &mut host_scratch,
         &config,
-        None, // shared_ple_token_emb
-        None, // shared_ple_model_proj
-        None, // shared_ple_proj_norm
     )
     .expect("gpu embed");
 

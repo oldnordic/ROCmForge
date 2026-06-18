@@ -55,6 +55,7 @@ fn layer_allocation_error(kind: &str, layer: usize, err: impl std::fmt::Display)
 pub(super) fn compute_layout(config: &ModelConfig, max_seq_len: usize) -> CacheLayout {
     let kv_size = config.num_kv_heads * config.head_dim;
     let effective_kv = config.kv_lora_dim.unwrap_or(kv_size);
+
     let layer_bytes = if let Some(bits) = config.kv_quant_bits {
         let pack_bytes = (effective_kv * bits).div_ceil(8);
         let qjl_bytes = effective_kv.div_ceil(8);
@@ -112,6 +113,7 @@ pub(super) fn allocate_cache_storage(
     config: &ModelConfig,
     layer_bytes: usize,
 ) -> GpuResult<CacheStorage> {
+    // Revert to uniform allocation - per-layer broke 12B model
     let mut k = Vec::with_capacity(config.num_layers);
     for layer in 0..config.num_layers {
         let buf = GpuBuffer::alloc(layer_bytes)

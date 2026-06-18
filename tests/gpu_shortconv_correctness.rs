@@ -201,9 +201,6 @@ fn test_gpu_shortconv_decode_parity() {
         &rope_sin,
         &rope_cos,
         &config,
-        None, // shared_ple_token_emb
-        None, // shared_ple_model_proj
-        None, // shared_ple_proj_norm
         false,
     )
     .expect("cpu forward");
@@ -220,9 +217,9 @@ fn test_gpu_shortconv_decode_parity() {
         0,
         0, // token_id (dummy value)
         &config,
-        None, // shared_ple_token_emb
-        None, // shared_ple_model_proj
-        None, // shared_ple_proj_norm
+        None, // ple_input
+        None, // ple_gate
+        None, // ple_down
     )
     .expect("gpu forward");
     device.synchronize().expect("sync");
@@ -421,9 +418,6 @@ fn test_gpu_shortconv_prefill_parity() {
             &rope_sin,
             &rope_cos,
             &config,
-        None, // shared_ple_token_emb
-        None, // shared_ple_model_proj
-        None, // shared_ple_proj_norm
             false,
         )
         .expect("cpu forward");
@@ -439,9 +433,6 @@ fn test_gpu_shortconv_prefill_parity() {
         0,
         0,
         &config,
-        None, // shared_ple_token_emb
-        None, // shared_ple_model_proj
-        None, // shared_ple_proj_norm
     )
     .expect("gpu prefill");
     device.synchronize().expect("sync");

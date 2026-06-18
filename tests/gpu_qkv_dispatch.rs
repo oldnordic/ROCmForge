@@ -492,9 +492,6 @@ fn test_gpu_dispatch_fused_gate_up_real_layer0_matches_cpu_reference() {
         rope_sin,
         rope_cos,
         &config,
-        None, // shared_ple_token_emb
-        None, // shared_ple_model_proj
-        None, // shared_ple_proj_norm
         false,
     )
     .expect("cpu layer forward");
@@ -626,9 +623,6 @@ fn test_gpu_dispatch_ffn_down_real_layer0_matches_cpu_reference() {
         rope_sin,
         rope_cos,
         &config,
-        None, // shared_ple_token_emb
-        None, // shared_ple_model_proj
-        None, // shared_ple_proj_norm
         false,
     )
     .expect("cpu layer forward");
@@ -839,9 +833,6 @@ fn test_gpu_loaded_layer0_attn_output_matches_cpu_reference() {
         rope_sin,
         rope_cos,
         &config,
-        None, // shared_ple_token_emb
-        None, // shared_ple_model_proj
-        None, // shared_ple_proj_norm
         false,
     )
     .expect("cpu layer forward");
@@ -923,9 +914,6 @@ fn test_gpu_loaded_layer0_full_forward_intermediates_match_cpu() {
         rope_sin,
         rope_cos,
         &config,
-        None, // shared_ple_token_emb
-        None, // shared_ple_model_proj
-        None, // shared_ple_proj_norm
         false,
     )
     .expect("cpu layer0 forward");
@@ -943,9 +931,6 @@ fn test_gpu_loaded_layer0_full_forward_intermediates_match_cpu() {
         &mut gpu_scratch,
         &mut host_scratch,
         &config,
-        None, // shared_ple_token_emb
-        None, // shared_ple_model_proj
-        None, // shared_ple_proj_norm
     )
     .expect("gpu embed");
     rocmforge::gpu::gpu_layer_forward_hybrid(

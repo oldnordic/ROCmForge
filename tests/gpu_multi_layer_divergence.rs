@@ -100,9 +100,6 @@ fn test_multi_layer_divergence_isolation() {
             rope_sin,
             rope_cos,
             &config,
-        None, // shared_ple_token_emb
-        None, // shared_ple_model_proj
-        None, // shared_ple_proj_norm
             false,
         )
         .expect("CPU layer forward should succeed");
