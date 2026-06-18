@@ -171,7 +171,6 @@ __global__ void flash_attn_decode_strided_multi_head_kernel(
     const int num_heads,
     const int num_kv_heads,
     const int head_dim,
-    const int kv_size,                  // Per-layer cache stride for hybrid attention
     const float scale
 ) {
     extern __shared__ float smem[]; // Size: blockDim.x * sizeof(float)
@@ -179,6 +178,7 @@ __global__ void flash_attn_decode_strided_multi_head_kernel(
     const int head_idx = blockIdx.x;
     const int tid = threadIdx.x;
     const int kv_head_idx = head_idx / (num_heads / num_kv_heads);
+    const int kv_size = num_kv_heads * head_dim;
     const int head_offset = kv_head_idx * head_dim;
 
     if (head_idx >= num_heads) return;
@@ -243,7 +243,6 @@ __global__ void flash_attn_decode_strided_multi_head_v2_kernel(
     const int num_heads,
     const int num_kv_heads,
     const int head_dim,
-    const int kv_size,                  // Per-layer cache stride for hybrid attention
     const float scale,
     const int kv_lora_dim,
     const int adastate_anchors_enabled,
@@ -254,7 +253,7 @@ __global__ void flash_attn_decode_strided_multi_head_v2_kernel(
     const int tid = threadIdx.x;
     const int ratio = num_heads / num_kv_heads;
     const int kv_head_idx = (ratio > 0) ? (head_idx / ratio) : 0;
-    // kv_size is now a parameter for hybrid attention support
+    const int kv_size = num_kv_heads * head_dim;
     const int head_offset = kv_head_idx * head_dim;
 
     if (head_idx >= num_heads) return;
@@ -346,7 +345,6 @@ __global__ void flash_attn_decode_strided_multi_head_state_kernel(
     const int num_heads,
     const int num_kv_heads,
     const int head_dim,
-    const int kv_size,                  // Per-layer cache stride for hybrid attention
     const float scale,
     const int kv_lora_dim,
     const int adastate_anchors_enabled,
@@ -358,6 +356,7 @@ __global__ void flash_attn_decode_strided_multi_head_state_kernel(
     const int tid = threadIdx.x;
     const int ratio = num_heads / num_kv_heads;
     const int kv_head_idx = (ratio > 0) ? (head_idx / ratio) : 0;
+    const int kv_size = num_kv_heads * head_dim;
     const int head_offset = kv_head_idx * head_dim;
 
     if (head_idx >= num_heads) return;
@@ -456,10 +455,9 @@ extern "C" hipError_t gpu_flash_attn_decode_strided_multi_head(
 
     const int threads_per_block = 256;
     const size_t smem_size = (kDecodeScoreCapacity + kDecodeReductionScratch) * sizeof(float);
-    const int kv_size = num_kv_heads * head_dim;
 
     flash_attn_decode_strided_multi_head_v2_kernel<<<num_heads, threads_per_block, smem_size, stream>>>(
-        d_out, d_attn_weights, d_q, d_k_cache, d_v_cache, seq_len, num_heads, num_kv_heads, head_dim, kv_size, scale,
+        d_out, d_attn_weights, d_q, d_k_cache, d_v_cache, seq_len, num_heads, num_kv_heads, head_dim, scale,
         kv_lora_dim, adastate_anchors_enabled, w_up_k, w_up_v
     );
 
@@ -489,10 +487,9 @@ extern "C" hipError_t gpu_flash_attn_decode_strided_multi_head_state(
 
     const int threads_per_block = 256;
     const size_t smem_size = (kDecodeScoreCapacity + kDecodeReductionScratch) * sizeof(float);
-    const int kv_size = num_kv_heads * head_dim;
 
     flash_attn_decode_strided_multi_head_state_kernel<<<num_heads, threads_per_block, smem_size, stream>>>(
-        d_out, d_attn_weights, d_q, d_k_cache, d_v_cache, d_seq_len, num_heads, num_kv_heads, head_dim, kv_size, scale,
+        d_out, d_attn_weights, d_q, d_k_cache, d_v_cache, d_seq_len, num_heads, num_kv_heads, head_dim, scale,
         kv_lora_dim, adastate_anchors_enabled, w_up_k, w_up_v
     );
 
@@ -531,7 +528,7 @@ __global__ void flash_attn_prefill_strided_multi_head_kernel(
 
     const int ratio = num_heads / num_kv_heads;
     const int kv_head_idx = (ratio > 0) ? (head_idx / ratio) : 0;
-    // kv_size is now a parameter for hybrid attention support
+    const int kv_size = num_kv_heads * head_dim;
     const int head_offset = kv_head_idx * head_dim;
 
     const float* head_q = q + (size_t)query_pos * q_stride + (size_t)head_idx * head_dim;
@@ -1482,7 +1479,7 @@ __global__ void flash_attn_decode_turboquant_kernel(
     const int tid = threadIdx.x;
     const int ratio = num_heads / num_kv_heads;
     const int kv_head_idx = (ratio > 0) ? (head_idx / ratio) : 0;
-    // kv_size is now a parameter for hybrid attention support
+    const int kv_size = num_kv_heads * head_dim;
     const int head_offset = kv_head_idx * head_dim;
 
     if (head_idx >= num_heads) return;

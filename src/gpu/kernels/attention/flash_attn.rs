@@ -13,7 +13,6 @@ pub fn flash_attn_decode_strided_multi_head(
     num_heads: usize,
     num_kv_heads: usize,
     head_dim: usize,
-    kv_size: usize,                        // Per-layer cache stride for hybrid attention
     scale: f32,
     kv_lora_dim: usize,
     adastate_anchors_enabled: bool,
@@ -30,7 +29,6 @@ pub fn flash_attn_decode_strided_multi_head(
         num_heads,
         num_kv_heads,
         head_dim,
-        kv_size,                              // Pass per-layer cache stride
         scale,
         kv_lora_dim,
         adastate_anchors_enabled,
@@ -50,7 +48,6 @@ pub fn flash_attn_decode_strided_multi_head_on_stream(
     num_heads: usize,
     num_kv_heads: usize,
     head_dim: usize,
-    kv_size: usize,                        // Per-layer cache stride for hybrid attention
     scale: f32,
     kv_lora_dim: usize,
     adastate_anchors_enabled: bool,
@@ -69,7 +66,6 @@ pub fn flash_attn_decode_strided_multi_head_on_stream(
             num_heads as c_int,
             num_kv_heads as c_int,
             head_dim as c_int,
-            kv_size as c_int,              // Pass per-layer cache stride
             scale,
             kv_lora_dim as c_int,
             if adastate_anchors_enabled { 1 } else { 0 },
@@ -99,7 +95,6 @@ pub fn flash_attn_decode_strided_multi_head_from_state_on_stream(
     num_heads: usize,
     num_kv_heads: usize,
     head_dim: usize,
-    kv_size: usize,                        // Per-layer cache stride for hybrid attention
     scale: f32,
     kv_lora_dim: usize,
     adastate_anchors_enabled: bool,
@@ -118,7 +113,6 @@ pub fn flash_attn_decode_strided_multi_head_from_state_on_stream(
             num_heads as c_int,
             num_kv_heads as c_int,
             head_dim as c_int,
-            kv_size as c_int,              // Pass per-layer cache stride
             scale,
             kv_lora_dim as c_int,
             if adastate_anchors_enabled { 1 } else { 0 },
@@ -157,7 +151,6 @@ pub fn flash_attn_decode(
         1,
         1,
         head_dim,
-        head_dim,                           // For single-head case: kv_size = head_dim
         scale,
         0,
         false,
@@ -190,7 +183,6 @@ pub fn flash_attn_decode_strided(
         1,
         num_kv_heads,
         head_dim,
-        kv_size,                           // Pass per-layer cache stride
         scale,
         0,
         false,
