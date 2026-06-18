@@ -504,8 +504,8 @@ pub(super) fn load_for_device(
                 None => None,
             };
 
-            let per_layer_proj_norm = match load_weight_opt(&per_layer_proj_norm_name)? {
-                Some((buf, _meta)) => Some(buf),
+            let per_layer_proj_norm = match load_f32_opt(&per_layer_proj_norm_name)? {
+                Some(buf) => Some(buf),
                 None => None,
             };
 
