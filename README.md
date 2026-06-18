@@ -2,10 +2,11 @@ rocmforge - LLM inference on AMD GPUs (HIP) with a CPU fallback path.
 
 ## Current status
 
-- The project currently works for local Qwen GGUF runs and custom `.rfm` model architectures.
+- The project currently works for local Qwen GGUF runs, Gemma4 models, and custom `.rfm` model architectures.
 - The GPU path is AMD-only and pure HIP. There is no CUDA or cross-vendor backend here.
 - Recent optimization passes introduced features: **GPU Decode Graph**, **F16 Embedding Support**, **TurboQuant KV Cache**, and **Pareto Synthesis** (VideoMLA/AdaState/MPO + GPU SVD + MoE VRAM optimizations).
 - Measured token generation speed for a 0.5B model (e.g., Qwen2.5-0.5B Q8_0) reaches **~340 tok/s** on an AMD Radeon RX 7900 XT via the pre-compiled GPU Decode Graph path.
+- Gemma4 12B Q4_0 achieves **~24 tok/s** decode on AMD RX 7900 XT with hybrid attention support.
 - Robust runtime safety rules dynamically select the fastest inference path based on model-profile routing.
 
 ### Key Features & Optimizations
