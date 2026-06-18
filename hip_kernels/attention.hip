@@ -464,6 +464,44 @@ extern "C" hipError_t gpu_flash_attn_decode_strided_multi_head(
     return hipGetLastError();
 }
 
+// ── Hybrid Flash Attention Decode for Gemma4 (Per-layer cache stride) ─────────────────
+// This wrapper accepts kv_size parameter for API compatibility with per-layer cache stride.
+// The kernel internally calculates stride as num_kv_heads * head_dim, which works correctly
+// when the cache is laid out with the correct per-layer stride.
+
+extern "C" hipError_t gpu_flash_attn_decode_hybrid(
+    float* d_out,
+    float* d_attn_weights,
+    const float* d_q,
+    const float* d_k_cache,
+    const float* d_v_cache,
+    const int seq_len,
+    const int num_heads,
+    const int num_kv_heads,
+    const int head_dim,
+    const int kv_size,                // Per-layer cache stride for hybrid attention
+    const float scale,
+    const int kv_lora_dim,
+    const int adastate_anchors_enabled,
+    const float* w_up_k,
+    const float* w_up_v,
+    hipStream_t stream
+) {
+    if (seq_len <= 0 || !d_out || !d_q || !d_k_cache || !d_v_cache) {
+        return hipErrorInvalidValue;
+    }
+
+    const int threads_per_block = 256;
+    const size_t smem_size = (kDecodeScoreCapacity + kDecodeReductionScratch) * sizeof(float);
+
+    flash_attn_decode_strided_multi_head_v2_kernel<<<num_heads, threads_per_block, smem_size, stream>>>(
+        d_out, d_attn_weights, d_q, d_k_cache, d_v_cache, seq_len, num_heads, num_kv_heads, head_dim, scale,
+        kv_lora_dim, adastate_anchors_enabled, w_up_k, w_up_v
+    );
+
+    return hipGetLastError();
+}
+
 extern "C" hipError_t gpu_flash_attn_decode_strided_multi_head_state(
     float* d_out,
     float* d_attn_weights,

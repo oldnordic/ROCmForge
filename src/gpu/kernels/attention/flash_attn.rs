@@ -288,3 +288,54 @@ pub fn flash_attn_prefill_strided_multi_head(
 
     Ok(())
 }
+
+// ── Hybrid Attention for Gemma4 E2B (Per-layer cache stride) ─────────────────────
+
+pub fn flash_attn_decode_hybrid_on_stream(
+    d_out: *mut f32,
+    d_attn_weights: *mut f32,
+    d_q: *const f32,
+    d_k_cache: *const f32,
+    d_v_cache: *const f32,
+    seq_len: usize,
+    num_heads: usize,
+    num_kv_heads: usize,
+    head_dim: usize,
+    kv_size: usize, // Per-layer cache stride for hybrid attention
+    scale: f32,
+    kv_lora_dim: usize,
+    adastate_anchors_enabled: bool,
+    w_up_k: *const f32,
+    w_up_v: *const f32,
+    stream: hipStream_t,
+) -> GpuResult<()> {
+    let result = unsafe {
+        gpu_flash_attn_decode_hybrid(
+            d_out,
+            d_attn_weights,
+            d_q,
+            d_k_cache,
+            d_v_cache,
+            seq_len as c_int,
+            num_heads as c_int,
+            num_kv_heads as c_int,
+            head_dim as c_int,
+            kv_size as c_int, // Pass per-layer cache stride
+            scale,
+            kv_lora_dim as c_int,
+            adastate_anchors_enabled as c_int,
+            w_up_k,
+            w_up_v,
+            stream,
+        )
+    };
+
+    if result != hipError_t::hipSuccess {
+        return Err(GpuError::HipApiError {
+            code: result as i32,
+            description: format!("flash_attn_decode_hybrid kernel failed: {:?}", result),
+        });
+    }
+
+    Ok(())
+}

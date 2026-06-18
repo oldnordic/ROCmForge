@@ -3,7 +3,7 @@ use crate::gpu::cache::{GpuForwardScratch, GpuKvCache};
 use crate::gpu::device::GpuDevice;
 use crate::gpu::error::{GpuError, GpuResult};
 use crate::gpu::kernels::attention::{
-    flash_attn_decode_strided_multi_head_from_state_on_stream,
+    flash_attn_decode_hybrid_on_stream, flash_attn_decode_strided_multi_head_from_state_on_stream,
     flash_attn_decode_strided_multi_head_on_stream, flash_attn_decode_turboquant,
 };
 
@@ -66,6 +66,7 @@ pub(in crate::gpu::forward) fn gpu_attention_decode(
         .unwrap_or(std::ptr::null());
 
     let trace_active = scratch.forward_graph_recorder().is_some();
+    let seq_len = scratch.decode_state_next_pos().unwrap_or(0) + 1;
 
     if let Some(bits) = kv.kv_quant_bits {
         if trace_active {
@@ -102,23 +103,47 @@ pub(in crate::gpu::forward) fn gpu_attention_decode(
         } else {
             std::ptr::null_mut()
         };
-        flash_attn_decode_strided_multi_head_on_stream(
-            out_base,
-            attn_weights_ptr,
-            q_base,
-            k_cache,
-            v_cache,
-            seq_len,
-            num_q_heads,
-            num_kv_heads,
-            head_dim,
-            scale,
-            kv_lora_dim,
-            kv.adastate_anchors_enabled,
-            w_up_k,
-            w_up_v,
-            device.stream(),
-        )?;
+
+        // Use hybrid kernel for Gemma4 to support per-layer cache stride
+        if config.architecture == "gemma4" {
+            let kv_size = config.kv_size(layer_idx);
+            flash_attn_decode_hybrid_on_stream(
+                out_base,
+                attn_weights_ptr,
+                q_base,
+                k_cache,
+                v_cache,
+                seq_len,
+                num_q_heads,
+                num_kv_heads,
+                head_dim,
+                kv_size, // Pass per-layer cache stride for Gemma4
+                scale,
+                kv_lora_dim,
+                kv.adastate_anchors_enabled,
+                w_up_k,
+                w_up_v,
+                device.stream(),
+            )
+        } else {
+            flash_attn_decode_strided_multi_head_on_stream(
+                out_base,
+                attn_weights_ptr,
+                q_base,
+                k_cache,
+                v_cache,
+                seq_len,
+                num_q_heads,
+                num_kv_heads,
+                head_dim,
+                scale,
+                kv_lora_dim,
+                kv.adastate_anchors_enabled,
+                w_up_k,
+                w_up_v,
+                device.stream(),
+            )
+        }?;
 
         if trace_active {
             device.synchronize()?;
@@ -186,6 +211,7 @@ pub(in crate::gpu::forward) fn gpu_attention_decode_from_state(
         .unwrap_or(std::ptr::null());
 
     let trace_active = scratch.forward_graph_recorder().is_some();
+    let seq_len = scratch.decode_state_next_pos().unwrap_or(0) + 1;
 
     if kv.kv_quant_bits.is_some() {
         if trace_active {
@@ -195,7 +221,6 @@ pub(in crate::gpu::forward) fn gpu_attention_decode_from_state(
                     .to_string(),
             });
         }
-        let seq_len = scratch.decode_state_next_pos().unwrap_or(0) + 1;
         let centroids = kv.centroids_ptr()?;
         let bits = kv.kv_quant_bits.unwrap_or(3);
         let num_centroids = 1 << bits;
@@ -224,23 +249,47 @@ pub(in crate::gpu::forward) fn gpu_attention_decode_from_state(
         } else {
             std::ptr::null_mut()
         };
-        flash_attn_decode_strided_multi_head_from_state_on_stream(
-            out_base,
-            attn_weights_ptr,
-            q_base,
-            k_cache,
-            v_cache,
-            scratch.decode_seq_len_ptr(),
-            num_q_heads,
-            num_kv_heads,
-            head_dim,
-            scale,
-            kv_lora_dim,
-            kv.adastate_anchors_enabled,
-            w_up_k,
-            w_up_v,
-            device.stream(),
-        )?;
+
+        // Use hybrid kernel for Gemma4 to support per-layer cache stride
+        if config.architecture == "gemma4" {
+            let kv_size = config.kv_size(layer_idx);
+            flash_attn_decode_hybrid_on_stream(
+                out_base,
+                attn_weights_ptr,
+                q_base,
+                k_cache,
+                v_cache,
+                seq_len,
+                num_q_heads,
+                num_kv_heads,
+                head_dim,
+                kv_size, // Pass per-layer cache stride for Gemma4
+                scale,
+                kv_lora_dim,
+                kv.adastate_anchors_enabled,
+                w_up_k,
+                w_up_v,
+                device.stream(),
+            )?
+        } else {
+            flash_attn_decode_strided_multi_head_from_state_on_stream(
+                out_base,
+                attn_weights_ptr,
+                q_base,
+                k_cache,
+                v_cache,
+                scratch.decode_seq_len_ptr(),
+                num_q_heads,
+                num_kv_heads,
+                head_dim,
+                scale,
+                kv_lora_dim,
+                kv.adastate_anchors_enabled,
+                w_up_k,
+                w_up_v,
+                device.stream(),
+            )?
+        };
 
         if trace_active {
             device.synchronize()?;

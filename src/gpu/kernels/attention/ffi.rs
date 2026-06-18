@@ -192,6 +192,25 @@ unsafe extern "C" {
         stream: hipStream_t,
     ) -> hipError_t;
 
+    pub fn gpu_flash_attn_decode_hybrid(
+        d_out: *mut f32,
+        d_attn_weights: *mut f32,
+        d_q: *const f32,
+        d_k_cache: *const f32,
+        d_v_cache: *const f32,
+        seq_len: c_int,
+        num_heads: c_int,
+        num_kv_heads: c_int,
+        head_dim: c_int,
+        kv_size: c_int, // Per-layer cache stride for hybrid attention
+        scale: f32,
+        kv_lora_dim: c_int,
+        adastate_anchors_enabled: c_int,
+        w_up_k: *const f32,
+        w_up_v: *const f32,
+        stream: hipStream_t,
+    ) -> hipError_t;
+
     pub fn gpu_kv_write_batched_compressed(
         d_k_cache: *mut u8,
         d_v_cache: *mut u8,
