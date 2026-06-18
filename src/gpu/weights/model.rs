@@ -130,7 +130,8 @@ impl GpuModelWeights {
             } else {
                 if !crate::gpu::ops::supports_gemv_type(layer.attn_q_meta.wtype)
                     || !crate::gpu::ops::supports_gemv_type(layer.attn_k_meta.wtype)
-                    || (!layer.attn_v.is_empty() && !crate::gpu::ops::supports_gemv_type(layer.attn_v_meta.wtype))
+                    || (!layer.attn_v.is_empty()
+                        && !crate::gpu::ops::supports_gemv_type(layer.attn_v_meta.wtype))
                 {
                     return true;
                 }
@@ -274,104 +275,118 @@ impl GpuModelWeights {
         };
 
         // Gemma4 Per-Layer Embedding (PLE) weights (optional, only for gemma4)
-        let (per_layer_token_emb, per_layer_token_emb_meta, per_layer_model_proj, per_layer_model_proj_meta, per_layer_proj_norm) =
-            if config.architecture == "gemma4" {
-                let per_layer_token_emb_name =
-                    config.tensor_registry.resolve(TensorName::PerLayerTokenEmb, 0);
-                let per_layer_model_proj_name =
-                    config.tensor_registry.resolve(TensorName::PerLayerModelProj, 0);
-                let per_layer_proj_norm_name =
-                    config.tensor_registry.resolve(TensorName::PerLayerProjNorm, 0);
+        let (
+            per_layer_token_emb,
+            per_layer_token_emb_meta,
+            per_layer_model_proj,
+            per_layer_model_proj_meta,
+            per_layer_proj_norm,
+        ) = if config.architecture == "gemma4" {
+            let per_layer_token_emb_name = config
+                .tensor_registry
+                .resolve(TensorName::PerLayerTokenEmb, 0);
+            let per_layer_model_proj_name = config
+                .tensor_registry
+                .resolve(TensorName::PerLayerModelProj, 0);
+            let per_layer_proj_norm_name = config
+                .tensor_registry
+                .resolve(TensorName::PerLayerProjNorm, 0);
 
-                let per_layer_token_emb = if file.has_tensor(&per_layer_token_emb_name) {
-                    let per_layer_token_emb_view = file
-                        .tensor(&per_layer_token_emb_name)
-                        .map_err(|e| GpuError::HipApiError {
-                            code: -1,
-                            description: format!("tensor lookup failed: {}", e),
-                        })?
-                        .ok_or_else(|| GpuError::HipApiError {
-                            code: -1,
-                            description: format!("tensor not found: {}", per_layer_token_emb_name),
-                        })?;
-                    check_model_load_headroom(
-                        budget,
-                        estimated_vram_used,
-                        per_layer_token_emb_view.data.len(),
-                    )?;
-                    let (buf, meta) = load_tensor_no_track(
-                        file,
-                        &per_layer_token_emb_name,
-                        config,
-                        false,
-                        false,
-                        device_id,
-                    )?;
-                    estimated_vram_used += buf.size();
-                    (Some(buf), Some(meta))
-                } else {
-                    (None, None)
-                };
-
-                let per_layer_model_proj = if file.has_tensor(&per_layer_model_proj_name) {
-                    let per_layer_model_proj_view = file
-                        .tensor(&per_layer_model_proj_name)
-                        .map_err(|e| GpuError::HipApiError {
-                            code: -1,
-                            description: format!("tensor lookup failed: {}", e),
-                        })?
-                        .ok_or_else(|| GpuError::HipApiError {
-                            code: -1,
-                            description: format!("tensor not found: {}", per_layer_model_proj_name),
-                        })?;
-                    check_model_load_headroom(
-                        budget,
-                        estimated_vram_used,
-                        per_layer_model_proj_view.data.len(),
-                    )?;
-                    let (buf, meta) = load_tensor_no_track(
-                        file,
-                        &per_layer_model_proj_name,
-                        config,
-                        false,
-                        false,
-                        device_id,
-                    )?;
-                    estimated_vram_used += buf.size();
-                    (Some(GpuWeightTensor::Dense(buf)), Some(meta))
-                } else {
-                    (None, None)
-                };
-
-                let per_layer_proj_norm = if file.has_tensor(&per_layer_proj_norm_name) {
-                    let per_layer_proj_norm_view = file
-                        .tensor(&per_layer_proj_norm_name)
-                        .map_err(|e| GpuError::HipApiError {
-                            code: -1,
-                            description: format!("tensor lookup failed: {}", e),
-                        })?
-                        .ok_or_else(|| GpuError::HipApiError {
-                            code: -1,
-                            description: format!("tensor not found: {}", per_layer_proj_norm_name),
-                        })?;
-                    check_model_load_headroom(
-                        budget,
-                        estimated_vram_used,
-                        per_layer_proj_norm_view.data.len(),
-                    )?;
-                    let mut buf =
-                        GpuBuffer::alloc_for_device(per_layer_proj_norm_view.data.len(), device_id)?;
-                    buf.copy_from_host(per_layer_proj_norm_view.data)?;
-                    estimated_vram_used += buf.size();
-                    Some(buf)
-                } else {
-                    None
-                };
-
-                (per_layer_token_emb.0, per_layer_token_emb.1, per_layer_model_proj.0, per_layer_model_proj.1, per_layer_proj_norm)
+            let per_layer_token_emb = if file.has_tensor(&per_layer_token_emb_name) {
+                let per_layer_token_emb_view = file
+                    .tensor(&per_layer_token_emb_name)
+                    .map_err(|e| GpuError::HipApiError {
+                        code: -1,
+                        description: format!("tensor lookup failed: {}", e),
+                    })?
+                    .ok_or_else(|| GpuError::HipApiError {
+                        code: -1,
+                        description: format!("tensor not found: {}", per_layer_token_emb_name),
+                    })?;
+                check_model_load_headroom(
+                    budget,
+                    estimated_vram_used,
+                    per_layer_token_emb_view.data.len(),
+                )?;
+                let (buf, meta) = load_tensor_no_track(
+                    file,
+                    &per_layer_token_emb_name,
+                    config,
+                    false,
+                    false,
+                    device_id,
+                )?;
+                estimated_vram_used += buf.size();
+                (Some(buf), Some(meta))
             } else {
-                (None, None, None, None, None)
+                (None, None)
             };
+
+            let per_layer_model_proj = if file.has_tensor(&per_layer_model_proj_name) {
+                let per_layer_model_proj_view = file
+                    .tensor(&per_layer_model_proj_name)
+                    .map_err(|e| GpuError::HipApiError {
+                        code: -1,
+                        description: format!("tensor lookup failed: {}", e),
+                    })?
+                    .ok_or_else(|| GpuError::HipApiError {
+                        code: -1,
+                        description: format!("tensor not found: {}", per_layer_model_proj_name),
+                    })?;
+                check_model_load_headroom(
+                    budget,
+                    estimated_vram_used,
+                    per_layer_model_proj_view.data.len(),
+                )?;
+                let (buf, meta) = load_tensor_no_track(
+                    file,
+                    &per_layer_model_proj_name,
+                    config,
+                    false,
+                    false,
+                    device_id,
+                )?;
+                estimated_vram_used += buf.size();
+                (Some(GpuWeightTensor::Dense(buf)), Some(meta))
+            } else {
+                (None, None)
+            };
+
+            let per_layer_proj_norm = if file.has_tensor(&per_layer_proj_norm_name) {
+                let per_layer_proj_norm_view = file
+                    .tensor(&per_layer_proj_norm_name)
+                    .map_err(|e| GpuError::HipApiError {
+                        code: -1,
+                        description: format!("tensor lookup failed: {}", e),
+                    })?
+                    .ok_or_else(|| GpuError::HipApiError {
+                        code: -1,
+                        description: format!("tensor not found: {}", per_layer_proj_norm_name),
+                    })?;
+                check_model_load_headroom(
+                    budget,
+                    estimated_vram_used,
+                    per_layer_proj_norm_view.data.len(),
+                )?;
+                let mut buf =
+                    GpuBuffer::alloc_for_device(per_layer_proj_norm_view.data.len(), device_id)?;
+                buf.copy_from_host(per_layer_proj_norm_view.data)?;
+                estimated_vram_used += buf.size();
+                Some(buf)
+            } else {
+                None
+            };
+
+            (
+                per_layer_token_emb.0,
+                per_layer_token_emb.1,
+                per_layer_model_proj.0,
+                per_layer_model_proj.1,
+                per_layer_proj_norm,
+            )
+        } else {
+            (None, None, None, None, None)
+        };
 
         // Load all layers
         let mut layers = Vec::with_capacity(n);
@@ -693,159 +708,169 @@ impl GpuModelWeights {
         };
 
         // Gemma4 Per-Layer Embedding (PLE) weights (optional, only for gemma4)
-        let (per_layer_token_emb, per_layer_token_emb_meta, per_layer_model_proj, per_layer_model_proj_meta, per_layer_proj_norm) =
-            if config.architecture == "gemma4" {
-                let per_layer_token_emb_name = "per_layer_token_embd.weight";
-                let per_layer_model_proj_name = "per_layer_model_proj.weight";
-                let per_layer_proj_norm_name = "per_layer_proj_norm.weight";
+        let (
+            per_layer_token_emb,
+            per_layer_token_emb_meta,
+            per_layer_model_proj,
+            per_layer_model_proj_meta,
+            per_layer_proj_norm,
+        ) = if config.architecture == "gemma4" {
+            let per_layer_token_emb_name = "per_layer_token_embd.weight";
+            let per_layer_model_proj_name = "per_layer_model_proj.weight";
+            let per_layer_proj_norm_name = "per_layer_proj_norm.weight";
 
-                let per_layer_token_emb = if file.has_tensor(per_layer_token_emb_name) {
-                    let per_layer_token_emb_view = file
-                        .tensor(per_layer_token_emb_name)
-                        .map_err(|e| GpuError::HipApiError {
-                            code: -1,
-                            description: format!("tensor error: {}", e),
-                        })?
-                        .ok_or_else(|| GpuError::HipApiError {
-                            code: -1,
-                            description: format!("tensor not found: {}", per_layer_token_emb_name),
-                        })?;
+            let per_layer_token_emb = if file.has_tensor(per_layer_token_emb_name) {
+                let per_layer_token_emb_view = file
+                    .tensor(per_layer_token_emb_name)
+                    .map_err(|e| GpuError::HipApiError {
+                        code: -1,
+                        description: format!("tensor error: {}", e),
+                    })?
+                    .ok_or_else(|| GpuError::HipApiError {
+                        code: -1,
+                        description: format!("tensor not found: {}", per_layer_token_emb_name),
+                    })?;
 
-                    let per_layer_token_emb_wtype = rfm_type_to_ggml(&per_layer_token_emb_view.wtype);
-                    let per_layer_token_emb_unpacked_size = match per_layer_token_emb_view.wtype {
-                        RfmType::Q4Split => (per_layer_token_emb_view.element_count() / 32) * 18,
-                        _ => per_layer_token_emb_view.data.len(),
-                    };
-
-                    check_model_load_headroom(
-                        budget,
-                        estimated_vram_used,
-                        per_layer_token_emb_unpacked_size,
-                    )?;
-
-                    let per_layer_token_emb_buf = match per_layer_token_emb_view.wtype {
-                        RfmType::Q4Split => {
-                            let raw_gpu_buf =
-                                upload_tensor_bytes_for_device(per_layer_token_emb_view.data, device_id)?;
-                            let num_blocks = per_layer_token_emb_view.element_count() / 32;
-                            let out_gpu_buf = GpuBuffer::alloc_for_device(num_blocks * 18, device_id)?;
-                            quant::gpu_unpack_q4_split(
-                                raw_gpu_buf.as_ptr() as *const u8,
-                                out_gpu_buf.as_ptr() as *mut u8,
-                                num_blocks,
-                                hipStream_t::null(),
-                            )?;
-                            out_gpu_buf
-                        }
-                        _ => upload_tensor_bytes_for_device(per_layer_token_emb_view.data, device_id)?,
-                    };
-
-                    let per_layer_token_emb_meta = WeightMeta {
-                        wtype: per_layer_token_emb_wtype,
-                        dims: per_layer_token_emb_view.dims.to_vec(),
-                        needs_transpose: false,
-                        role: TensorRole::Generic,
-                        svd_k: None,
-                    };
-                    estimated_vram_used += per_layer_token_emb_buf.size();
-                    (Some(per_layer_token_emb_buf), Some(per_layer_token_emb_meta))
-                } else {
-                    (None, None)
+                let per_layer_token_emb_wtype = rfm_type_to_ggml(&per_layer_token_emb_view.wtype);
+                let per_layer_token_emb_unpacked_size = match per_layer_token_emb_view.wtype {
+                    RfmType::Q4Split => (per_layer_token_emb_view.element_count() / 32) * 18,
+                    _ => per_layer_token_emb_view.data.len(),
                 };
 
-                let per_layer_model_proj = if file.has_tensor(per_layer_model_proj_name) {
-                    let per_layer_model_proj_view = file
-                        .tensor(per_layer_model_proj_name)
-                        .map_err(|e| GpuError::HipApiError {
-                            code: -1,
-                            description: format!("tensor error: {}", e),
-                        })?
-                        .ok_or_else(|| GpuError::HipApiError {
-                            code: -1,
-                            description: format!("tensor not found: {}", per_layer_model_proj_name),
-                        })?;
+                check_model_load_headroom(
+                    budget,
+                    estimated_vram_used,
+                    per_layer_token_emb_unpacked_size,
+                )?;
 
-                    let per_layer_model_proj_wtype = rfm_type_to_ggml(&per_layer_model_proj_view.wtype);
-                    let per_layer_model_proj_unpacked_size = match per_layer_model_proj_view.wtype {
-                        RfmType::Q4Split => (per_layer_model_proj_view.element_count() / 32) * 18,
-                        _ => per_layer_model_proj_view.data.len(),
-                    };
-
-                    check_model_load_headroom(
-                        budget,
-                        estimated_vram_used,
-                        per_layer_model_proj_unpacked_size,
-                    )?;
-
-                    let per_layer_model_proj_buf = match per_layer_model_proj_view.wtype {
-                        RfmType::Q4Split => {
-                            let raw_gpu_buf = upload_tensor_bytes_for_device(
-                                per_layer_model_proj_view.data,
-                                device_id,
-                            )?;
-                            let num_blocks = per_layer_model_proj_view.element_count() / 32;
-                            let out_gpu_buf = GpuBuffer::alloc_for_device(num_blocks * 18, device_id)?;
-                            quant::gpu_unpack_q4_split(
-                                raw_gpu_buf.as_ptr() as *const u8,
-                                out_gpu_buf.as_ptr() as *mut u8,
-                                num_blocks,
-                                hipStream_t::null(),
-                            )?;
-                            out_gpu_buf
-                        }
-                        _ => upload_tensor_bytes_for_device(per_layer_model_proj_view.data, device_id)?,
-                    };
-
-                    let per_layer_model_proj_meta = WeightMeta {
-                        wtype: per_layer_model_proj_wtype,
-                        dims: per_layer_model_proj_view.dims.to_vec(),
-                        needs_transpose: false,
-                        role: TensorRole::Generic,
-                        svd_k: None,
-                    };
-                    estimated_vram_used += per_layer_model_proj_buf.size();
-                    (
-                        Some(GpuWeightTensor::Dense(per_layer_model_proj_buf)),
-                        Some(per_layer_model_proj_meta),
-                    )
-                } else {
-                    (None, None)
+                let per_layer_token_emb_buf = match per_layer_token_emb_view.wtype {
+                    RfmType::Q4Split => {
+                        let raw_gpu_buf = upload_tensor_bytes_for_device(
+                            per_layer_token_emb_view.data,
+                            device_id,
+                        )?;
+                        let num_blocks = per_layer_token_emb_view.element_count() / 32;
+                        let out_gpu_buf = GpuBuffer::alloc_for_device(num_blocks * 18, device_id)?;
+                        quant::gpu_unpack_q4_split(
+                            raw_gpu_buf.as_ptr() as *const u8,
+                            out_gpu_buf.as_ptr() as *mut u8,
+                            num_blocks,
+                            hipStream_t::null(),
+                        )?;
+                        out_gpu_buf
+                    }
+                    _ => upload_tensor_bytes_for_device(per_layer_token_emb_view.data, device_id)?,
                 };
 
-                let per_layer_proj_norm = if file.has_tensor(per_layer_proj_norm_name) {
-                    let per_layer_proj_norm_view = file
-                        .tensor(per_layer_proj_norm_name)
-                        .map_err(|e| GpuError::HipApiError {
-                            code: -1,
-                            description: format!("tensor error: {}", e),
-                        })?
-                        .ok_or_else(|| GpuError::HipApiError {
-                            code: -1,
-                            description: format!("tensor not found: {}", per_layer_proj_norm_name),
-                        })?;
-
-                    check_model_load_headroom(
-                        budget,
-                        estimated_vram_used,
-                        per_layer_proj_norm_view.data.len(),
-                    )?;
-                    let buf = upload_tensor_bytes_for_device(per_layer_proj_norm_view.data, device_id)?;
-                    estimated_vram_used += buf.size();
-                    Some(buf)
-                } else {
-                    None
+                let per_layer_token_emb_meta = WeightMeta {
+                    wtype: per_layer_token_emb_wtype,
+                    dims: per_layer_token_emb_view.dims.to_vec(),
+                    needs_transpose: false,
+                    role: TensorRole::Generic,
+                    svd_k: None,
                 };
-
+                estimated_vram_used += per_layer_token_emb_buf.size();
                 (
-                    per_layer_token_emb.0,
-                    per_layer_token_emb.1,
-                    per_layer_model_proj.0,
-                    per_layer_model_proj.1,
-                    per_layer_proj_norm,
+                    Some(per_layer_token_emb_buf),
+                    Some(per_layer_token_emb_meta),
                 )
             } else {
-                (None, None, None, None, None)
+                (None, None)
             };
+
+            let per_layer_model_proj = if file.has_tensor(per_layer_model_proj_name) {
+                let per_layer_model_proj_view = file
+                    .tensor(per_layer_model_proj_name)
+                    .map_err(|e| GpuError::HipApiError {
+                        code: -1,
+                        description: format!("tensor error: {}", e),
+                    })?
+                    .ok_or_else(|| GpuError::HipApiError {
+                        code: -1,
+                        description: format!("tensor not found: {}", per_layer_model_proj_name),
+                    })?;
+
+                let per_layer_model_proj_wtype = rfm_type_to_ggml(&per_layer_model_proj_view.wtype);
+                let per_layer_model_proj_unpacked_size = match per_layer_model_proj_view.wtype {
+                    RfmType::Q4Split => (per_layer_model_proj_view.element_count() / 32) * 18,
+                    _ => per_layer_model_proj_view.data.len(),
+                };
+
+                check_model_load_headroom(
+                    budget,
+                    estimated_vram_used,
+                    per_layer_model_proj_unpacked_size,
+                )?;
+
+                let per_layer_model_proj_buf = match per_layer_model_proj_view.wtype {
+                    RfmType::Q4Split => {
+                        let raw_gpu_buf = upload_tensor_bytes_for_device(
+                            per_layer_model_proj_view.data,
+                            device_id,
+                        )?;
+                        let num_blocks = per_layer_model_proj_view.element_count() / 32;
+                        let out_gpu_buf = GpuBuffer::alloc_for_device(num_blocks * 18, device_id)?;
+                        quant::gpu_unpack_q4_split(
+                            raw_gpu_buf.as_ptr() as *const u8,
+                            out_gpu_buf.as_ptr() as *mut u8,
+                            num_blocks,
+                            hipStream_t::null(),
+                        )?;
+                        out_gpu_buf
+                    }
+                    _ => upload_tensor_bytes_for_device(per_layer_model_proj_view.data, device_id)?,
+                };
+
+                let per_layer_model_proj_meta = WeightMeta {
+                    wtype: per_layer_model_proj_wtype,
+                    dims: per_layer_model_proj_view.dims.to_vec(),
+                    needs_transpose: false,
+                    role: TensorRole::Generic,
+                    svd_k: None,
+                };
+                estimated_vram_used += per_layer_model_proj_buf.size();
+                (
+                    Some(GpuWeightTensor::Dense(per_layer_model_proj_buf)),
+                    Some(per_layer_model_proj_meta),
+                )
+            } else {
+                (None, None)
+            };
+
+            let per_layer_proj_norm = if file.has_tensor(per_layer_proj_norm_name) {
+                let per_layer_proj_norm_view = file
+                    .tensor(per_layer_proj_norm_name)
+                    .map_err(|e| GpuError::HipApiError {
+                        code: -1,
+                        description: format!("tensor error: {}", e),
+                    })?
+                    .ok_or_else(|| GpuError::HipApiError {
+                        code: -1,
+                        description: format!("tensor not found: {}", per_layer_proj_norm_name),
+                    })?;
+
+                check_model_load_headroom(
+                    budget,
+                    estimated_vram_used,
+                    per_layer_proj_norm_view.data.len(),
+                )?;
+                let buf = upload_tensor_bytes_for_device(per_layer_proj_norm_view.data, device_id)?;
+                estimated_vram_used += buf.size();
+                Some(buf)
+            } else {
+                None
+            };
+
+            (
+                per_layer_token_emb.0,
+                per_layer_token_emb.1,
+                per_layer_model_proj.0,
+                per_layer_model_proj.1,
+                per_layer_proj_norm,
+            )
+        } else {
+            (None, None, None, None, None)
+        };
 
         // Load all layers
         let mut layers = Vec::with_capacity(n);

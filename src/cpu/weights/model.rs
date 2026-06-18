@@ -1,5 +1,6 @@
 use super::helpers::{
-    copy_f32, copy_f32_from_bytes, copy_f32_opt, copy_tensor_with_meta, copy_tensor_with_meta_opt, rfm_type_to_ggml, rfm_weight_meta,
+    copy_f32, copy_f32_from_bytes, copy_f32_opt, copy_tensor_with_meta, copy_tensor_with_meta_opt,
+    rfm_type_to_ggml, rfm_weight_meta,
 };
 use super::layer::CpuLayerWeights;
 use super::meta::{WeightError, WeightMeta};

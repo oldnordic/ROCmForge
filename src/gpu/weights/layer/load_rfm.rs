@@ -110,8 +110,10 @@ pub(super) fn load_for_device(
     };
 
     let load_rfm_weight_opt = |name: &str,
-                                needs_transpose: bool|
-     -> GpuResult<Option<(GpuBuffer, WeightMeta, Option<SvdCorrection>)>> {
+                               needs_transpose: bool|
+     -> GpuResult<
+        Option<(GpuBuffer, WeightMeta, Option<SvdCorrection>)>,
+    > {
         match file.tensor(name) {
             Ok(Some(t)) => {
                 let wtype = rfm_type_to_ggml(&t.wtype);
@@ -140,9 +142,9 @@ pub(super) fn load_for_device(
                         )?;
                         out_gpu_buf
                     }
-                    RfmType::SparseCsr { .. } | RfmType::SvdSparseCsr { .. } | RfmType::Mpo { .. } => {
-                        upload_tensor_bytes_for_device(t.data, device_id)?
-                    }
+                    RfmType::SparseCsr { .. }
+                    | RfmType::SvdSparseCsr { .. }
+                    | RfmType::Mpo { .. } => upload_tensor_bytes_for_device(t.data, device_id)?,
                     _ => upload_tensor_bytes_for_device(t.data, device_id)?,
                 };
 
@@ -211,107 +213,108 @@ pub(super) fn load_for_device(
         attn_qkv,
         attn_qkv_meta,
         attn_qkv_svd,
-    ) = if layer_has_fused_qkv {
-        let qkv_view = file
-            .tensor(&qkv_name)
-            .map_err(|e| GpuError::HipApiError {
-                code: -1,
-                description: format!("tensor error: {}", e),
-            })?
-            .ok_or_else(|| GpuError::HipApiError {
-                code: -1,
-                description: format!("tensor not found: {}", qkv_name),
-            })?;
-        let qkv_tr = compute_transpose_flag(
-            TensorRole::from_name(&qkv_name, false, false),
-            qkv_view.dims,
-            rfm_type_to_ggml(&qkv_view.wtype),
-            config,
-        );
-        let (qkv, qkv_meta, qkv_svd) = load_rfm_weight(&qkv_name, qkv_tr)?;
-        (
-            GpuBuffer::empty(),
-            qkv_meta.clone(),
-            None,
-            GpuBuffer::empty(),
-            qkv_meta.clone(),
-            None,
-            GpuBuffer::empty(),
-            qkv_meta.clone(),
-            None,
-            Some(qkv),
-            Some(qkv_meta),
-            qkv_svd,
-        )
-    } else {
-        let q_view = file
-            .tensor(&q_name)
-            .map_err(|e| GpuError::HipApiError {
-                code: -1,
-                description: format!("tensor error: {}", e),
-            })?
-            .ok_or_else(|| GpuError::HipApiError {
-                code: -1,
-                description: format!("tensor not found: {}", q_name),
-            })?;
-        let k_view = file
-            .tensor(&k_name)
-            .map_err(|e| GpuError::HipApiError {
-                code: -1,
-                description: format!("tensor error: {}", e),
-            })?
-            .ok_or_else(|| GpuError::HipApiError {
-                code: -1,
-                description: format!("tensor not found: {}", k_name),
-            })?;
-        let v_view = file
-            .tensor(&v_name)
-            .map_err(|e| GpuError::HipApiError {
-                code: -1,
-                description: format!("tensor error: {}", e),
-            })?
-            .ok_or_else(|| GpuError::HipApiError {
-                code: -1,
-                description: format!("tensor not found: {}", v_name),
-            })?;
-        let q_tr = compute_transpose_flag(
-            TensorRole::from_name(&q_name, false, false),
-            q_view.dims,
-            rfm_type_to_ggml(&q_view.wtype),
-            config,
-        );
-        let k_tr = compute_transpose_flag(
-            TensorRole::from_name(&k_name, false, false),
-            k_view.dims,
-            rfm_type_to_ggml(&k_view.wtype),
-            config,
-        );
-        let v_tr = compute_transpose_flag(
-            TensorRole::from_name(&v_name, false, false),
-            v_view.dims,
-            rfm_type_to_ggml(&v_view.wtype),
-            config,
-        );
-        let (attn_q, attn_q_meta, attn_q_svd) = load_rfm_weight(&q_name, q_tr)?;
-        let (attn_k, attn_k_meta, attn_k_svd) = load_rfm_weight(&k_name, k_tr)?;
-        // Gemma4: attn_v is optional for layers using alternative attention
-        let (attn_v, attn_v_meta, attn_v_svd) = load_rfm_weight_opt(&v_name, v_tr)?
-            .unwrap_or((GpuBuffer::empty(), WeightMeta::default(), None));
-        (
-            attn_q,
-            attn_q_meta,
-            attn_q_svd,
-            attn_k,
-            attn_k_meta,
-            attn_k_svd,
-            attn_v,
-            attn_v_meta,
-            attn_v_svd,
-            None,
-            None,
-            None,
-        )
-    };
+    ) =
+        if layer_has_fused_qkv {
+            let qkv_view = file
+                .tensor(&qkv_name)
+                .map_err(|e| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor error: {}", e),
+                })?
+                .ok_or_else(|| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor not found: {}", qkv_name),
+                })?;
+            let qkv_tr = compute_transpose_flag(
+                TensorRole::from_name(&qkv_name, false, false),
+                qkv_view.dims,
+                rfm_type_to_ggml(&qkv_view.wtype),
+                config,
+            );
+            let (qkv, qkv_meta, qkv_svd) = load_rfm_weight(&qkv_name, qkv_tr)?;
+            (
+                GpuBuffer::empty(),
+                qkv_meta.clone(),
+                None,
+                GpuBuffer::empty(),
+                qkv_meta.clone(),
+                None,
+                GpuBuffer::empty(),
+                qkv_meta.clone(),
+                None,
+                Some(qkv),
+                Some(qkv_meta),
+                qkv_svd,
+            )
+        } else {
+            let q_view = file
+                .tensor(&q_name)
+                .map_err(|e| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor error: {}", e),
+                })?
+                .ok_or_else(|| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor not found: {}", q_name),
+                })?;
+            let k_view = file
+                .tensor(&k_name)
+                .map_err(|e| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor error: {}", e),
+                })?
+                .ok_or_else(|| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor not found: {}", k_name),
+                })?;
+            let v_view = file
+                .tensor(&v_name)
+                .map_err(|e| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor error: {}", e),
+                })?
+                .ok_or_else(|| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor not found: {}", v_name),
+                })?;
+            let q_tr = compute_transpose_flag(
+                TensorRole::from_name(&q_name, false, false),
+                q_view.dims,
+                rfm_type_to_ggml(&q_view.wtype),
+                config,
+            );
+            let k_tr = compute_transpose_flag(
+                TensorRole::from_name(&k_name, false, false),
+                k_view.dims,
+                rfm_type_to_ggml(&k_view.wtype),
+                config,
+            );
+            let v_tr = compute_transpose_flag(
+                TensorRole::from_name(&v_name, false, false),
+                v_view.dims,
+                rfm_type_to_ggml(&v_view.wtype),
+                config,
+            );
+            let (attn_q, attn_q_meta, attn_q_svd) = load_rfm_weight(&q_name, q_tr)?;
+            let (attn_k, attn_k_meta, attn_k_svd) = load_rfm_weight(&k_name, k_tr)?;
+            // Gemma4: attn_v is optional for layers using alternative attention
+            let (attn_v, attn_v_meta, attn_v_svd) = load_rfm_weight_opt(&v_name, v_tr)?
+                .unwrap_or((GpuBuffer::empty(), WeightMeta::default(), None));
+            (
+                attn_q,
+                attn_q_meta,
+                attn_q_svd,
+                attn_k,
+                attn_k_meta,
+                attn_k_svd,
+                attn_v,
+                attn_v_meta,
+                attn_v_svd,
+                None,
+                None,
+                None,
+            )
+        };
     let (attn_o, attn_o_meta, attn_o_svd) = if file.has_tensor(&o_name) {
         let o_view = file
             .tensor(&o_name)
@@ -763,24 +766,23 @@ pub(super) fn load_for_device(
         let inp_gate_name = config.tensor_registry.resolve(TensorName::InpGate, layer);
         let proj_name = config.tensor_registry.resolve(TensorName::Proj, layer);
 
-        let inp_gate_result = if let Some(t) = file.tensor(&inp_gate_name).map_err(|e| {
-            GpuError::HipApiError {
-                code: -1,
-                description: format!("tensor lookup failed: {}", e),
-            }
-        })? {
+        let inp_gate_result = if let Some(t) =
+            file.tensor(&inp_gate_name)
+                .map_err(|e| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor lookup failed: {}", e),
+                })? {
             let (buf, meta, _svd) = load_rfm_weight(&inp_gate_name, false)?;
             (Some(buf), Some(meta))
         } else {
             (None, None)
         };
 
-        let proj_result = if let Some(t) = file.tensor(&proj_name).map_err(|e| {
-            GpuError::HipApiError {
+        let proj_result = if let Some(t) =
+            file.tensor(&proj_name).map_err(|e| GpuError::HipApiError {
                 code: -1,
                 description: format!("tensor lookup failed: {}", e),
-            }
-        })? {
+            })? {
             let (buf, meta, _svd) = load_rfm_weight(&proj_name, false)?;
             (Some(buf), Some(meta))
         } else {
@@ -798,51 +800,62 @@ pub(super) fn load_for_device(
     };
 
     // PLE per-layer token embeddings and projections (optional, only for gemma4)
-    let (per_layer_token_emb, per_layer_model_proj, per_layer_proj_norm) = if config.architecture == "gemma4" {
-        let per_layer_token_emb_name = config.tensor_registry.resolve(TensorName::PerLayerTokenEmb, layer);
-        let per_layer_model_proj_name = config.tensor_registry.resolve(TensorName::PerLayerModelProj, layer);
-        let per_layer_proj_norm_name = config.tensor_registry.resolve(TensorName::PerLayerProjNorm, layer);
+    let (per_layer_token_emb, per_layer_model_proj, per_layer_proj_norm) =
+        if config.architecture == "gemma4" {
+            let per_layer_token_emb_name = config
+                .tensor_registry
+                .resolve(TensorName::PerLayerTokenEmb, layer);
+            let per_layer_model_proj_name = config
+                .tensor_registry
+                .resolve(TensorName::PerLayerModelProj, layer);
+            let per_layer_proj_norm_name = config
+                .tensor_registry
+                .resolve(TensorName::PerLayerProjNorm, layer);
 
-        let per_layer_token_emb_result = if let Some(t) = file.tensor(&per_layer_token_emb_name).map_err(|e| {
-            GpuError::HipApiError {
-                code: -1,
-                description: format!("tensor lookup failed: {}", e),
-            }
-        })? {
-            let (buf, _meta, _svd) = load_rfm_weight(&per_layer_token_emb_name, false)?;
-            Some(buf)
+            let per_layer_token_emb_result = if let Some(t) = file
+                .tensor(&per_layer_token_emb_name)
+                .map_err(|e| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor lookup failed: {}", e),
+                })? {
+                let (buf, _meta, _svd) = load_rfm_weight(&per_layer_token_emb_name, false)?;
+                Some(buf)
+            } else {
+                None
+            };
+
+            let per_layer_model_proj_result = if let Some(t) = file
+                .tensor(&per_layer_model_proj_name)
+                .map_err(|e| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor lookup failed: {}", e),
+                })? {
+                let (buf, _meta, _svd) = load_rfm_weight(&per_layer_model_proj_name, false)?;
+                Some(buf)
+            } else {
+                None
+            };
+
+            let per_layer_proj_norm_result = if let Some(t) = file
+                .tensor(&per_layer_proj_norm_name)
+                .map_err(|e| GpuError::HipApiError {
+                    code: -1,
+                    description: format!("tensor lookup failed: {}", e),
+                })? {
+                let (buf, _meta, _svd) = load_rfm_weight(&per_layer_proj_norm_name, false)?;
+                Some(buf)
+            } else {
+                None
+            };
+
+            (
+                per_layer_token_emb_result,
+                per_layer_model_proj_result,
+                per_layer_proj_norm_result,
+            )
         } else {
-            None
+            (None, None, None)
         };
-
-        let per_layer_model_proj_result = if let Some(t) = file.tensor(&per_layer_model_proj_name).map_err(|e| {
-            GpuError::HipApiError {
-                code: -1,
-                description: format!("tensor lookup failed: {}", e),
-            }
-        })? {
-            let (buf, _meta, _svd) = load_rfm_weight(&per_layer_model_proj_name, false)?;
-            Some(buf)
-        } else {
-            None
-        };
-
-        let per_layer_proj_norm_result = if let Some(t) = file.tensor(&per_layer_proj_norm_name).map_err(|e| {
-            GpuError::HipApiError {
-                code: -1,
-                description: format!("tensor lookup failed: {}", e),
-            }
-        })? {
-            let (buf, _meta, _svd) = load_rfm_weight(&per_layer_proj_norm_name, false)?;
-            Some(buf)
-        } else {
-            None
-        };
-
-        (per_layer_token_emb_result, per_layer_model_proj_result, per_layer_proj_norm_result)
-    } else {
-        (None, None, None)
-    };
 
     let layer_type = super::GpuLayerType::from_weights_present(
         ssm.is_some(),

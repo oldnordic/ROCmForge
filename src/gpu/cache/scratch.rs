@@ -169,7 +169,16 @@ impl GpuForwardScratch {
             0
         };
         std::mem::size_of::<f32>()
-            * (3 * h + 2 * q + 2 * kv + 2 * ff + 32 + v + 2 * argmax_partials + 3 + attn_weights + ple)
+            * (3 * h
+                + 2 * q
+                + 2 * kv
+                + 2 * ff
+                + 32
+                + v
+                + 2 * argmax_partials
+                + 3
+                + attn_weights
+                + ple)
             + positions * std::mem::size_of::<i32>()
     }
 
@@ -325,18 +334,19 @@ impl GpuForwardScratch {
             })?;
 
         // Allocate PLE buffer for Gemma4 if needed
-        let (ple_input, ple_proj) = if config.architecture == "gemma4" && config.hidden_size_per_layer_input > 0 {
-            let ple_size = config.num_layers * config.hidden_size_per_layer_input * std::mem::size_of::<f32>();
-            let ple_input = GpuBuffer::alloc(ple_size).map_err(|e| {
-                GpuError::CacheAllocationFailed {
+        let (ple_input, ple_proj) = if config.architecture == "gemma4"
+            && config.hidden_size_per_layer_input > 0
+        {
+            let ple_size =
+                config.num_layers * config.hidden_size_per_layer_input * std::mem::size_of::<f32>();
+            let ple_input =
+                GpuBuffer::alloc(ple_size).map_err(|e| GpuError::CacheAllocationFailed {
                     reason: format!("PLE input buffer allocation failed: {}", e),
-                }
-            })?;
-            let ple_proj = GpuBuffer::alloc(ple_size).map_err(|e| {
-                GpuError::CacheAllocationFailed {
+                })?;
+            let ple_proj =
+                GpuBuffer::alloc(ple_size).map_err(|e| GpuError::CacheAllocationFailed {
                     reason: format!("PLE projection buffer allocation failed: {}", e),
-                }
-            })?;
+                })?;
             (Some(ple_input), Some(ple_proj))
         } else {
             (None, None)

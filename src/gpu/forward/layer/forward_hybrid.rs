@@ -189,9 +189,18 @@ pub fn gpu_layer_forward_hybrid(
                     device,
                     token_id,
                     scratch.hidden.as_ptr() as *const f32,
-                    gpu_layer.per_layer_token_emb.as_ref().map(|b| b.as_ptr() as *const f32),
-                    gpu_layer.per_layer_model_proj.as_ref().map(|b| b.as_ptr() as *const f32),
-                    gpu_layer.per_layer_proj_norm.as_ref().map(|b| b.as_ptr() as *const f32),
+                    gpu_layer
+                        .per_layer_token_emb
+                        .as_ref()
+                        .map(|b| b.as_ptr() as *const f32),
+                    gpu_layer
+                        .per_layer_model_proj
+                        .as_ref()
+                        .map(|b| b.as_ptr() as *const f32),
+                    gpu_layer
+                        .per_layer_proj_norm
+                        .as_ref()
+                        .map(|b| b.as_ptr() as *const f32),
                     scratch.ple_input.as_ref().map(|b| b.as_ptr() as *mut f32),
                     layer_idx,
                     config,

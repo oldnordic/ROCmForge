@@ -167,8 +167,8 @@ impl CpuLayerWeights {
                 let (aq, aq_meta) = load_weight(TensorName::AttnQ)?;
                 let (ak, ak_meta) = load_weight(TensorName::AttnK)?;
                 // Gemma4: attn_v is optional for layers using alternative attention (layers 5,11,17,23,29,35,41,47)
-                let (av, av_meta) = load_opt(TensorName::AttnV)?
-                    .unwrap_or((vec![], WeightMeta::default()));
+                let (av, av_meta) =
+                    load_opt(TensorName::AttnV)?.unwrap_or((vec![], WeightMeta::default()));
                 let (ao, ao_meta) = load_weight(TensorName::AttnOutput)?;
                 (
                     aq, aq_meta, ak, ak_meta, av, av_meta, None, None, ao, ao_meta, None,

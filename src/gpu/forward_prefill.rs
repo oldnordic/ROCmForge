@@ -59,12 +59,18 @@ pub fn gpu_batched_prefill_forward(
     let h = config.hidden_size;
     // For Gemma4, use max per-layer dimensions to handle hybrid attention
     let q_size = if config.architecture == "gemma4" {
-        (0..config.num_layers).map(|l| config.q_size(l)).max().unwrap_or(config.num_heads * config.head_dim)
+        (0..config.num_layers)
+            .map(|l| config.q_size(l))
+            .max()
+            .unwrap_or(config.num_heads * config.head_dim)
     } else {
         config.num_heads * config.head_dim
     };
     let kv_size = if config.architecture == "gemma4" {
-        (0..config.num_layers).map(|l| config.kv_size(l)).max().unwrap_or(config.num_kv_heads * config.head_dim)
+        (0..config.num_layers)
+            .map(|l| config.kv_size(l))
+            .max()
+            .unwrap_or(config.num_kv_heads * config.head_dim)
     } else {
         config.num_kv_heads * config.head_dim
     };
@@ -208,12 +214,24 @@ pub fn gpu_batched_prefill_forward(
                     let k_row = unsafe { (scratch.k.as_ptr() as *mut f32).add(pos * kv_size) };
 
                     gpu_dispatch_gemv_on_stream(
-                        device, &gpu_layer.attn_q, &gpu_layer.attn_q_meta,
-                        input_row, q_row, q_size, h, device.stream(),
+                        device,
+                        &gpu_layer.attn_q,
+                        &gpu_layer.attn_q_meta,
+                        input_row,
+                        q_row,
+                        q_size,
+                        h,
+                        device.stream(),
                     )?;
                     gpu_dispatch_gemv_on_stream(
-                        device, &gpu_layer.attn_k, &gpu_layer.attn_k_meta,
-                        input_row, k_row, kv_size, h, device.stream(),
+                        device,
+                        &gpu_layer.attn_k,
+                        &gpu_layer.attn_k_meta,
+                        input_row,
+                        k_row,
+                        kv_size,
+                        h,
+                        device.stream(),
                     )?;
 
                     // Copy K to V for alternative attention
