@@ -188,24 +188,56 @@ pub fn gpu_batched_prefill_forward(
             }
             crate::gpu::ffi::hip_device_synchronize()?;
         } else {
-            gpu_batched_qkv_projection(
-                device,
-                &gpu_layer.attn_q,
-                &gpu_layer.attn_q_meta,
-                &gpu_layer.attn_k,
-                &gpu_layer.attn_k_meta,
-                &gpu_layer.attn_v,
-                &gpu_layer.attn_v_meta,
-                scratch.normed.as_ptr() as *const f32,
-                scratch.q.as_ptr() as *mut f32,
-                scratch.k.as_ptr() as *mut f32,
-                scratch.v.as_ptr() as *mut f32,
-                h,
-                q_size,
-                kv_size,
-                seq_len,
-                device.stream(),
-            )?;
+            // Gemma4 alternative attention: layers 5,11,17,23,29,35,41,47 omit attn_v
+            let has_alt_attention = gpu_layer.attn_v.is_empty();
+
+            if has_alt_attention {
+                // Compute Q and K only, then copy K to V
+                for pos in 0..seq_len {
+                    let input_row = unsafe { (scratch.normed.as_ptr() as *const f32).add(pos * h) };
+                    let q_row = unsafe { (scratch.q.as_ptr() as *mut f32).add(pos * q_size) };
+                    let k_row = unsafe { (scratch.k.as_ptr() as *mut f32).add(pos * kv_size) };
+
+                    gpu_dispatch_gemv_on_stream(
+                        device, &gpu_layer.attn_q, &gpu_layer.attn_q_meta,
+                        input_row, q_row, q_size, h, device.stream(),
+                    )?;
+                    gpu_dispatch_gemv_on_stream(
+                        device, &gpu_layer.attn_k, &gpu_layer.attn_k_meta,
+                        input_row, k_row, kv_size, h, device.stream(),
+                    )?;
+
+                    // Copy K to V for alternative attention
+                    let v_row = unsafe { (scratch.v.as_ptr() as *mut f32).add(pos * kv_size) };
+                    unsafe {
+                        crate::gpu::ffi::hip_memcpy_d2d_async(
+                            v_row as *mut u8,
+                            k_row as *const u8,
+                            kv_size * std::mem::size_of::<f32>(),
+                            device.stream(),
+                        )?;
+                    }
+                }
+            } else {
+                gpu_batched_qkv_projection(
+                    device,
+                    &gpu_layer.attn_q,
+                    &gpu_layer.attn_q_meta,
+                    &gpu_layer.attn_k,
+                    &gpu_layer.attn_k_meta,
+                    &gpu_layer.attn_v,
+                    &gpu_layer.attn_v_meta,
+                    scratch.normed.as_ptr() as *const f32,
+                    scratch.q.as_ptr() as *mut f32,
+                    scratch.k.as_ptr() as *mut f32,
+                    scratch.v.as_ptr() as *mut f32,
+                    h,
+                    q_size,
+                    kv_size,
+                    seq_len,
+                    device.stream(),
+                )?;
+            }
             crate::gpu::ffi::hip_device_synchronize()?;
         }
 

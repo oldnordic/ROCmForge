@@ -642,40 +642,78 @@ pub fn gpu_layer_forward_hybrid(
     })?;
     dump_gpu_f32("attn_normed", &scratch.normed, 5);
 
+    // Gemma4 alternative attention: layers 5,11,17,23,29,35,41,47 omit attn_v
+    // and reuse K projection as V (attn_v.is_empty() == true)
+    let has_alt_attention = gpu_layer.attn_v.is_empty();
+
     if supports_gemv_type(gpu_layer.attn_q_meta.wtype)
         && supports_gemv_type(gpu_layer.attn_k_meta.wtype)
-        && supports_gemv_type(gpu_layer.attn_v_meta.wtype)
+        && (has_alt_attention || supports_gemv_type(gpu_layer.attn_v_meta.wtype))
     {
         profile_decode_stage(device, DecodeStage::Qkv, || {
-            gpu_dispatch_fused_qkv_on_stream(
-                device,
-                &gpu_layer.attn_q,
-                &gpu_layer.attn_q_meta,
-                gpu_layer.attn_q_svd.as_ref(),
-                gpu_layer.attn_q_bias.as_ref(),
-                &gpu_layer.attn_k,
-                &gpu_layer.attn_k_meta,
-                gpu_layer.attn_k_svd.as_ref(),
-                gpu_layer.attn_k_bias.as_ref(),
-                &gpu_layer.attn_v,
-                &gpu_layer.attn_v_meta,
-                gpu_layer.attn_v_svd.as_ref(),
-                gpu_layer.attn_v_bias.as_ref(),
-                scratch.normed.as_ptr() as *const f32,
-                scratch.q.as_ptr() as *mut f32,
-                scratch.k.as_ptr() as *mut f32,
-                scratch.v.as_ptr() as *mut f32,
-                q_size,
-                kv_size,
-                h,
-                scratch.svd_scratch.as_ptr() as *mut f32,
-                device.stream(),
-            )
+            if has_alt_attention {
+                // Alternative attention: compute Q and K separately, copy K to V
+                gpu_dispatch_gemv_on_stream(
+                    device,
+                    &gpu_layer.attn_q,
+                    &gpu_layer.attn_q_meta,
+                    scratch.normed.as_ptr() as *const f32,
+                    scratch.q.as_ptr() as *mut f32,
+                    q_size,
+                    h,
+                    device.stream(),
+                )?;
+                gpu_dispatch_gemv_on_stream(
+                    device,
+                    &gpu_layer.attn_k,
+                    &gpu_layer.attn_k_meta,
+                    scratch.normed.as_ptr() as *const f32,
+                    scratch.k.as_ptr() as *mut f32,
+                    kv_size,
+                    h,
+                    device.stream(),
+                )?;
+                // Copy K to V for alternative attention (use full buffer size)
+                unsafe {
+                    crate::gpu::ffi::hip_memcpy_d2d_async(
+                        scratch.v.as_ptr(),
+                        scratch.k.as_ptr() as *const u8,
+                        scratch.k.size(), // Use actual buffer size, not per-layer kv_size
+                        device.stream(),
+                    )
+                }
+            } else {
+                gpu_dispatch_fused_qkv_on_stream(
+                    device,
+                    &gpu_layer.attn_q,
+                    &gpu_layer.attn_q_meta,
+                    gpu_layer.attn_q_svd.as_ref(),
+                    gpu_layer.attn_q_bias.as_ref(),
+                    &gpu_layer.attn_k,
+                    &gpu_layer.attn_k_meta,
+                    gpu_layer.attn_k_svd.as_ref(),
+                    gpu_layer.attn_k_bias.as_ref(),
+                    &gpu_layer.attn_v,
+                    &gpu_layer.attn_v_meta,
+                    gpu_layer.attn_v_svd.as_ref(),
+                    gpu_layer.attn_v_bias.as_ref(),
+                    scratch.normed.as_ptr() as *const f32,
+                    scratch.q.as_ptr() as *mut f32,
+                    scratch.k.as_ptr() as *mut f32,
+                    scratch.v.as_ptr() as *mut f32,
+                    q_size,
+                    kv_size,
+                    h,
+                    scratch.svd_scratch.as_ptr() as *mut f32,
+                    device.stream(),
+                )
+            }
         })?;
     } else if let (Some(cpu_l), Some(cpu_s)) = (cpu_layer, cpu_scratch.as_mut()) {
         ensure_size(&mut cpu_s.q, q_size);
         ensure_size(&mut cpu_s.k, kv_size);
         ensure_size(&mut cpu_s.v, kv_size);
+
         cpu_fallback_gemv_and_upload(
             "attn_q",
             &cpu_l.attn_q,
@@ -688,6 +726,9 @@ pub fn gpu_layer_forward_hybrid(
             h,
             &mut cpu_s.q8_scratch,
         )?;
+
+        // Workaround: only upload first kv_size elements to GPU K buffer
+        // (GPU buffers are sized for global max, but per-layer computation produces less)
         cpu_fallback_gemv_and_upload(
             "attn_k",
             &cpu_l.attn_k,
@@ -700,18 +741,30 @@ pub fn gpu_layer_forward_hybrid(
             h,
             &mut cpu_s.q8_scratch,
         )?;
-        cpu_fallback_gemv_and_upload(
-            "attn_v",
-            &cpu_l.attn_v,
-            &cpu_l.attn_v_meta,
-            &scratch.normed,
-            &mut cpu_s.normed,
-            &mut cpu_s.v,
-            &mut scratch.v,
-            kv_size,
-            h,
-            &mut cpu_s.q8_scratch,
-        )?;
+
+        // Manually upload only the computed portion to avoid size mismatch
+        super::super::utils::upload_f32(&mut scratch.k, &cpu_s.k[..kv_size])?;
+
+        // Gemma4 alternative attention: copy K to V when attn_v is empty
+        if cpu_l.attn_v.is_empty() {
+            // Alternative attention: copy K to V on CPU
+            cpu_s.v.copy_from_slice(&cpu_s.k);
+            // Workaround: only upload first kv_size elements to GPU V buffer
+            super::super::utils::upload_f32(&mut scratch.v, &cpu_s.v[..kv_size])?;
+        } else {
+            cpu_fallback_gemv_and_upload(
+                "attn_v",
+                &cpu_l.attn_v,
+                &cpu_l.attn_v_meta,
+                &scratch.normed,
+                &mut cpu_s.normed,
+                &mut cpu_s.v,
+                &mut scratch.v,
+                kv_size,
+                h,
+                &mut cpu_s.q8_scratch,
+            )?;
+        }
     } else {
         return Err(GpuError::UnsupportedWeightType {
             tensor: "attn_qkv".to_string(),

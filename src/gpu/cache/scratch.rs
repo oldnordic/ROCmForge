@@ -191,9 +191,25 @@ impl GpuForwardScratch {
         let q = if config.architecture.contains("qwen35") {
             std::cmp::max(config.num_heads * config.head_dim, h * 2)
         } else {
-            config.num_heads * config.head_dim
+            // For Gemma4, use max per-layer q_size to handle hybrid attention
+            if config.architecture == "gemma4" {
+                (0..config.num_layers)
+                    .map(|layer| config.q_size(layer))
+                    .max()
+                    .unwrap_or(config.num_heads * config.head_dim)
+            } else {
+                config.num_heads * config.head_dim
+            }
         };
-        let kv = config.num_kv_heads * config.head_dim;
+        let kv = if config.architecture == "gemma4" {
+            // For Gemma4, use max per-layer kv_size to handle hybrid attention
+            (0..config.num_layers)
+                .map(|layer| config.kv_size(layer))
+                .max()
+                .unwrap_or(config.num_kv_heads * config.head_dim)
+        } else {
+            config.num_kv_heads * config.head_dim
+        };
         let ff = if config.architecture.contains("qwen35") {
             std::cmp::max(config.intermediate_size, 16384)
         } else {
