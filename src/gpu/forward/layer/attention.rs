@@ -46,6 +46,7 @@ pub(in crate::gpu::forward) fn gpu_attention_decode(
     let num_q_heads = config.num_heads;
     let num_kv_heads = config.num_kv_heads_for_layer(layer_idx);
     let head_dim = config.head_dim_for_layer(layer_idx);
+    let kv_size = config.kv_size(layer_idx);
     let scale = 1.0f32 / (head_dim as f32).sqrt();
 
     let k_cache = kv.k_ptr(layer_idx)? as *const f32;
@@ -112,6 +113,7 @@ pub(in crate::gpu::forward) fn gpu_attention_decode(
             num_q_heads,
             num_kv_heads,
             head_dim,
+            kv_size,                              // Pass per-layer cache stride
             scale,
             kv_lora_dim,
             kv.adastate_anchors_enabled,
@@ -224,6 +226,7 @@ pub(in crate::gpu::forward) fn gpu_attention_decode_from_state(
         } else {
             std::ptr::null_mut()
         };
+        let kv_size = config.kv_size(layer_idx);
         flash_attn_decode_strided_multi_head_from_state_on_stream(
             out_base,
             attn_weights_ptr,
@@ -234,6 +237,7 @@ pub(in crate::gpu::forward) fn gpu_attention_decode_from_state(
             num_q_heads,
             num_kv_heads,
             head_dim,
+            kv_size,                              // Pass per-layer cache stride
             scale,
             kv_lora_dim,
             kv.adastate_anchors_enabled,

@@ -109,6 +109,7 @@ unsafe extern "C" {
         num_heads: c_int,
         num_kv_heads: c_int,
         head_dim: c_int,
+        kv_size: c_int,                // Per-layer cache stride for hybrid attention
         scale: f32,
         kv_lora_dim: c_int,
         adastate_anchors_enabled: c_int,
@@ -127,6 +128,7 @@ unsafe extern "C" {
         num_heads: c_int,
         num_kv_heads: c_int,
         head_dim: c_int,
+        kv_size: c_int,                // Per-layer cache stride for hybrid attention
         scale: f32,
         kv_lora_dim: c_int,
         adastate_anchors_enabled: c_int,
