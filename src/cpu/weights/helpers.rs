@@ -64,6 +64,30 @@ pub(crate) fn copy_tensor_with_meta(
     ))
 }
 
+pub(crate) fn copy_f32_opt(file: &GgufFile, name: &str) -> Result<Option<Vec<f32>>, WeightError> {
+    match file.tensor(name).map_err(WeightError::Load)? {
+        Some(t) => Ok(Some(copy_f32_from_bytes(t.data))),
+        None => Ok(None),
+    }
+}
+
+pub(crate) fn copy_tensor_with_meta_opt(
+    file: &GgufFile,
+    name: &str,
+    needs_transpose: bool,
+) -> Result<Option<(Vec<u8>, WeightMeta)>, WeightError> {
+    match file.tensor(name).map_err(WeightError::Load)? {
+        Some(t) => {
+            let role = TensorRole::from_name(name, false, false);
+            Ok(Some((
+                t.data.to_vec(),
+                WeightMeta::from_view_with_role(&t, needs_transpose, role),
+            )))
+        }
+        None => Ok(None),
+    }
+}
+
 pub(crate) fn rfm_type_to_ggml(rfm: &RfmType) -> GgmlType {
     match rfm {
         RfmType::F32 => GgmlType::F32,

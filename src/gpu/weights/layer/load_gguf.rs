@@ -37,6 +37,21 @@ pub(super) fn load_for_device(
         Ok((buf, meta))
     };
 
+    let load_opt_weight = |name: &str| -> GpuResult<Option<(GpuBuffer, WeightMeta)>> {
+        match file.tensor(name) {
+            Ok(Some(t)) => {
+                let meta = build_matrix_meta(name, t.dims, t.ggml_type, config, false, false)?;
+                let buf = upload_tensor_bytes_for_device(t.data, device_id)?;
+                Ok(Some((buf, meta)))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(GpuError::HipApiError {
+                code: -1,
+                description: format!("tensor lookup failed: {}", e),
+            }),
+        }
+    };
+
     let load_weight_fallback = |names: &[&str]| -> GpuResult<(GpuBuffer, WeightMeta)> {
         for name in names {
             match file.tensor(name) {
@@ -58,6 +73,22 @@ pub(super) fn load_for_device(
             code: -1,
             description: format!("tensor not found: tried {:?}", names),
         })
+    };
+
+    let load_opt_f32 = |name: &str| -> GpuResult<Option<GpuBuffer>> {
+        match file.tensor(name) {
+            Ok(Some(t)) => {
+                let data = t.data;
+                let mut buf = GpuBuffer::alloc_for_device(data.len(), device_id)?;
+                buf.copy_from_host(data)?;
+                Ok(Some(buf))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(GpuError::HipApiError {
+                code: -1,
+                description: format!("tensor lookup failed: {}", e),
+            }),
+        }
     };
 
     let load_f32 = |name: &str| -> GpuResult<GpuBuffer> {
@@ -166,8 +197,10 @@ pub(super) fn load_for_device(
                 load_weight(&config.tensor_registry.resolve(TensorName::AttnQ, layer))?;
             let (attn_k, attn_k_meta) =
                 load_weight(&config.tensor_registry.resolve(TensorName::AttnK, layer))?;
+            // Gemma4: attn_v is optional for layers using alternative attention
             let (attn_v, attn_v_meta) =
-                load_weight(&config.tensor_registry.resolve(TensorName::AttnV, layer))?;
+                load_opt_weight(&config.tensor_registry.resolve(TensorName::AttnV, layer))?
+                    .unwrap_or((GpuBuffer::empty(), WeightMeta::default()));
             (
                 attn_q,
                 attn_q_meta,

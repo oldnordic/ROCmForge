@@ -130,7 +130,7 @@ impl GpuModelWeights {
             } else {
                 if !crate::gpu::ops::supports_gemv_type(layer.attn_q_meta.wtype)
                     || !crate::gpu::ops::supports_gemv_type(layer.attn_k_meta.wtype)
-                    || !crate::gpu::ops::supports_gemv_type(layer.attn_v_meta.wtype)
+                    || (!layer.attn_v.is_empty() && !crate::gpu::ops::supports_gemv_type(layer.attn_v_meta.wtype))
                 {
                     return true;
                 }
@@ -436,7 +436,7 @@ impl GpuModelWeights {
         for layer in &self.layers {
             if layer.attn_q_meta.wtype == GgmlType::Q6_K
                 || layer.attn_k_meta.wtype == GgmlType::Q6_K
-                || layer.attn_v_meta.wtype == GgmlType::Q6_K
+                || (!layer.attn_v.is_empty() && layer.attn_v_meta.wtype == GgmlType::Q6_K)
                 || layer.attn_o_meta.wtype == GgmlType::Q6_K
                 || layer
                     .attn_qkv_meta
@@ -475,7 +475,7 @@ impl GpuModelWeights {
             }
             if layer.attn_q_meta.wtype != GgmlType::Q4_0
                 || layer.attn_k_meta.wtype != GgmlType::Q4_0
-                || layer.attn_v_meta.wtype != GgmlType::Q4_0
+                || (!layer.attn_v.is_empty() && layer.attn_v_meta.wtype != GgmlType::Q4_0)
                 || layer.attn_o_meta.wtype != GgmlType::Q4_0
             {
                 return false;

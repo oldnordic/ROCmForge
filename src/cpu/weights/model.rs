@@ -1,5 +1,5 @@
 use super::helpers::{
-    copy_f32, copy_f32_from_bytes, copy_tensor_with_meta, rfm_type_to_ggml, rfm_weight_meta,
+    copy_f32, copy_f32_from_bytes, copy_f32_opt, copy_tensor_with_meta, copy_tensor_with_meta_opt, rfm_type_to_ggml, rfm_weight_meta,
 };
 use super::layer::CpuLayerWeights;
 use super::meta::{WeightError, WeightMeta};
@@ -56,30 +56,30 @@ impl CpuModelWeights {
             (token_emb.clone(), token_emb_meta.clone(), true)
         };
 
-        // Gemma4-specific model-level tensors
+        // Gemma4-specific model-level tensors (optional - not all Gemma4 models have PLE enabled)
         let (per_layer_token_emb, per_layer_proj_norm, per_layer_model_proj) =
             if config.architecture == "gemma4" {
-                let ple_tok = copy_tensor_with_meta(
+                let ple_tok = copy_tensor_with_meta_opt(
                     file,
                     &config
                         .tensor_registry
                         .resolve(TensorName::PerLayerTokenEmb, 0),
                     false,
                 )?;
-                let ple_norm = copy_f32(
+                let ple_norm = copy_f32_opt(
                     file,
                     &config
                         .tensor_registry
                         .resolve(TensorName::PerLayerProjNorm, 0),
                 )?;
-                let ple_proj = copy_tensor_with_meta(
+                let ple_proj = copy_tensor_with_meta_opt(
                     file,
                     &config
                         .tensor_registry
                         .resolve(TensorName::PerLayerModelProj, 0),
                     false,
                 )?;
-                (Some(ple_tok), Some(ple_norm), Some(ple_proj))
+                (ple_tok, ple_norm, ple_proj)
             } else {
                 (None, None, None)
             };

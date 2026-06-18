@@ -109,6 +109,73 @@ pub(super) fn load_for_device(
         Ok((base_buf, meta, svd_corr))
     };
 
+    let load_rfm_weight_opt = |name: &str,
+                                needs_transpose: bool|
+     -> GpuResult<Option<(GpuBuffer, WeightMeta, Option<SvdCorrection>)>> {
+        match file.tensor(name) {
+            Ok(Some(t)) => {
+                let wtype = rfm_type_to_ggml(&t.wtype);
+                let svd_k = match t.wtype {
+                    RfmType::Q4SvdQuant { k } | RfmType::SvdSparseCsr { k, .. } => Some(k),
+                    _ => None,
+                };
+                let meta = WeightMeta {
+                    wtype,
+                    dims: t.dims.to_vec(),
+                    needs_transpose,
+                    role: TensorRole::Generic,
+                    svd_k,
+                };
+
+                let base_buf = match t.wtype {
+                    RfmType::Q4Split | RfmType::Q4SvdQuant { .. } => {
+                        let raw_gpu_buf = upload_tensor_bytes_for_device(t.data, device_id)?;
+                        let num_blocks = t.element_count() / 32;
+                        let out_gpu_buf = GpuBuffer::alloc_for_device(num_blocks * 18, device_id)?;
+                        quant::gpu_unpack_q4_split(
+                            raw_gpu_buf.as_ptr() as *const u8,
+                            out_gpu_buf.as_ptr() as *mut u8,
+                            num_blocks,
+                            hipStream_t::null(),
+                        )?;
+                        out_gpu_buf
+                    }
+                    RfmType::SparseCsr { .. } | RfmType::SvdSparseCsr { .. } | RfmType::Mpo { .. } => {
+                        upload_tensor_bytes_for_device(t.data, device_id)?
+                    }
+                    _ => upload_tensor_bytes_for_device(t.data, device_id)?,
+                };
+
+                let svd_corr = match t.wtype {
+                    RfmType::Q4SvdQuant { k } | RfmType::SvdSparseCsr { k, .. } => {
+                        let u_name = format!("{}.svd_u", name);
+                        let v_name = format!("{}.svd_v", name);
+                        match (file.tensor(&u_name), file.tensor(&v_name)) {
+                            (Ok(Some(u_t)), Ok(Some(v_t))) => {
+                                let u_buf = upload_tensor_bytes_for_device(u_t.data, device_id)?;
+                                let v_buf = upload_tensor_bytes_for_device(v_t.data, device_id)?;
+                                Some(SvdCorrection {
+                                    u: u_buf,
+                                    v: v_buf,
+                                    k,
+                                })
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+
+                Ok(Some((base_buf, meta, svd_corr)))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(GpuError::HipApiError {
+                code: -1,
+                description: format!("tensor lookup failed: {}", e),
+            }),
+        }
+    };
+
     let load_rfm_norm = |name: &str| -> GpuResult<GpuBuffer> {
         let t = file
             .tensor(name)
@@ -227,7 +294,9 @@ pub(super) fn load_for_device(
         );
         let (attn_q, attn_q_meta, attn_q_svd) = load_rfm_weight(&q_name, q_tr)?;
         let (attn_k, attn_k_meta, attn_k_svd) = load_rfm_weight(&k_name, k_tr)?;
-        let (attn_v, attn_v_meta, attn_v_svd) = load_rfm_weight(&v_name, v_tr)?;
+        // Gemma4: attn_v is optional for layers using alternative attention
+        let (attn_v, attn_v_meta, attn_v_svd) = load_rfm_weight_opt(&v_name, v_tr)?
+            .unwrap_or((GpuBuffer::empty(), WeightMeta::default(), None));
         (
             attn_q,
             attn_q_meta,

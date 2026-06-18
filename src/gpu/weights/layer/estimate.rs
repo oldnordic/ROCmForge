@@ -254,7 +254,7 @@ impl GpuLayerWeights {
                             .resolve_optional(TensorName::AttnKBias, layer)
                             .unwrap_or_default(),
                     )?
-                    + tensor_bytes(&attn_v_name)?
+                    + tensor_bytes_optional(&attn_v_name)?
                     + tensor_bytes_optional(
                         &config
                             .tensor_registry
