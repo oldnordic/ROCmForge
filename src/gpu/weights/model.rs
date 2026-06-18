@@ -1100,6 +1100,14 @@ fn prepare_tied_lm_head_q8(
                     out_row[i] = half::f16::from_bits(bits).to_f32();
                 }
             }
+            GgmlType::BF16 => {
+                let start_idx = id * hidden_size;
+                for i in 0..hidden_size {
+                    let offset = (start_idx + i) * 2;
+                    let bits = u16::from_le_bytes([data_to_use[offset], data_to_use[offset + 1]]);
+                    out_row[i] = half::bf16::to_f32(half::bf16::from_bits(bits));
+                }
+            }
             other => {
                 return Err(GpuError::UnsupportedWeightType {
                     tensor: "tied_lm_head_dequant".to_string(),

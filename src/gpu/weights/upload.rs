@@ -10,6 +10,7 @@ pub(super) fn supports_gpu_matrix_type(wtype: GgmlType) -> bool {
         wtype,
         GgmlType::F32
             | GgmlType::F16
+            | GgmlType::BF16
             | GgmlType::Q4_0
             | GgmlType::Q4_1
             | GgmlType::Q4_K
@@ -433,9 +434,9 @@ mod matrix_meta_tests {
     }
 
     #[test]
-    fn unsupported_matrix_type_is_rejected() {
+    fn bf16_matrix_type_is_supported() {
         let config = make_test_config();
-        let err = build_matrix_meta(
+        let meta = build_matrix_meta(
             "blk.0.attn_q.weight",
             &[1024, 1024],
             GgmlType::BF16,
@@ -443,9 +444,9 @@ mod matrix_meta_tests {
             false,
             false,
         )
-        .unwrap_err();
+        .expect("BF16 should be supported");
 
-        assert!(matches!(err, GpuError::UnsupportedWeightType { .. }));
+        assert_eq!(meta.wtype, GgmlType::BF16);
     }
 
     #[test]
