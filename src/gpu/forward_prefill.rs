@@ -410,7 +410,7 @@ pub fn gpu_batched_prefill_forward(
 
         let num_heads = config.num_heads;
         let num_kv_heads = config.num_kv_heads;
-        let scale = 1.0f32 / (config.head_dim as f32).sqrt();
+        let scale = 1.0f32 / (config.head_dim_for_layer(layer_idx) as f32).sqrt();
 
         // Flash attention for prefill: one multi-head launch handles all
         // (query position, head) pairs, replacing the low-occupancy per-head loop.
@@ -430,7 +430,7 @@ pub fn gpu_batched_prefill_forward(
             seq_len,
             num_heads,
             num_kv_heads,
-            config.head_dim,
+            config.head_dim_for_layer(layer_idx),
             q_size,
             q_size,
             effective_kv_size,
