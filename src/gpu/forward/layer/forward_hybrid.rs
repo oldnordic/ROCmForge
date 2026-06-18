@@ -673,12 +673,12 @@ pub fn gpu_layer_forward_hybrid(
                     h,
                     device.stream(),
                 )?;
-                // Copy K to V for alternative attention (use full buffer size)
+                // Copy K to V for alternative attention (use per-layer data size, not buffer size)
                 unsafe {
                     crate::gpu::ffi::hip_memcpy_d2d_async(
                         scratch.v.as_ptr(),
                         scratch.k.as_ptr() as *const u8,
-                        scratch.k.size(), // Use actual buffer size, not per-layer kv_size
+                        kv_size * std::mem::size_of::<f32>(), // Copy only computed portion
                         device.stream(),
                     )
                 }
@@ -790,7 +790,7 @@ pub fn gpu_layer_forward_hybrid(
             scratch.k.as_ptr() as *const f32,
             k_norm_w.as_ptr() as *const f32,
             scratch.k.as_ptr() as *mut f32,
-            attn_head_dim,
+            kv_head_dim, // Use KV head dim, not attention head dim
             eps,
             num_kv_heads,
         )?;
@@ -816,7 +816,7 @@ pub fn gpu_layer_forward_hybrid(
             scratch.v.as_ptr() as *const f32,
             scratch.positions_ptr(),
             num_kv_heads,
-            attn_head_dim,
+            kv_head_dim, // Use KV head dim, not attention head dim
             config.rope_theta,
             config.rope_neox,
             device.stream(),

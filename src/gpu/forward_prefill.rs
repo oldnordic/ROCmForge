@@ -57,8 +57,17 @@ pub fn gpu_batched_prefill_forward(
 ) -> GpuResult<Option<u32>> {
     let seq_len = token_ids.len();
     let h = config.hidden_size;
-    let q_size = config.num_heads * config.head_dim;
-    let kv_size = config.num_kv_heads * config.head_dim;
+    // For Gemma4, use max per-layer dimensions to handle hybrid attention
+    let q_size = if config.architecture == "gemma4" {
+        (0..config.num_layers).map(|l| config.q_size(l)).max().unwrap_or(config.num_heads * config.head_dim)
+    } else {
+        config.num_heads * config.head_dim
+    };
+    let kv_size = if config.architecture == "gemma4" {
+        (0..config.num_layers).map(|l| config.kv_size(l)).max().unwrap_or(config.num_kv_heads * config.head_dim)
+    } else {
+        config.num_kv_heads * config.head_dim
+    };
     let ff_size = config.intermediate_size;
     let max_seq = kv.max_seq_len;
 
@@ -340,7 +349,7 @@ pub fn gpu_batched_prefill_forward(
             scratch.q.as_ptr() as *mut f32,
             start_pos,
             config.num_heads,
-            config.head_dim,
+            config.head_dim_for_layer(layer_idx), // Use per-layer head dim
             config.rope_theta,
             seq_len,
             config.rope_neox,
@@ -350,7 +359,7 @@ pub fn gpu_batched_prefill_forward(
             scratch.k.as_ptr() as *mut f32,
             start_pos,
             config.num_kv_heads,
-            config.head_dim,
+            config.kv_head_dim_for_layer(layer_idx), // Use per-layer KV head dim
             config.rope_theta,
             seq_len,
             config.rope_neox,
