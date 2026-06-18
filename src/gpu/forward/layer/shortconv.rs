@@ -183,6 +183,7 @@ pub(crate) fn gpu_shortconv_native_on_stream(
                 ff_size,
                 h,
                 stream,
+                Some(config),
             )?;
         }
     } else {

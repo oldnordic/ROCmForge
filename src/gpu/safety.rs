@@ -173,11 +173,27 @@ pub fn use_dp4a_enabled() -> bool {
     !gpu_safe_mode_enabled() && USE_DP4A_FLAG.enabled()
 }
 
+/// DP4A selection based on model size (automatic detection).
+///
+/// Returns true if model has > 3B parameters (large verified models).
+/// This replaces manual `ROCMFORGE_Q4_0_Q8_DP4A` env var for most use cases.
+pub fn use_dp4a_for_model(config: &crate::config::ModelConfig) -> bool {
+    !gpu_safe_mode_enabled() && config.should_use_dp4a()
+}
+
 /// Enable the DP4A Q4_0 × Q8_0 decode kernels (GEMV, gate-up, SwiGLU).
 ///
 /// Default: enabled. Set `ROCMFORGE_Q4_0_Q8_DP4A=0` to force the scalar fallback.
 pub fn q4_0_q8_dp4a_enabled() -> bool {
     !gpu_safe_mode_enabled() && Q4_0_Q8_DP4A_FLAG.enabled()
+}
+
+/// Q4_0 × Q8_0 DP4A selection based on model size (automatic detection).
+///
+/// Returns true if model has > 3B parameters (large verified models).
+/// This replaces manual `ROCMFORGE_Q4_0_Q8_DP4A` env var for most use cases.
+pub fn q4_0_q8_dp4a_for_model(config: &crate::config::ModelConfig) -> bool {
+    !gpu_safe_mode_enabled() && config.should_use_dp4a()
 }
 
 /// Force wave32 kernels on all architectures (may crash on wave64-only hardware).

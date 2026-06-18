@@ -520,6 +520,7 @@ fn test_gpu_dispatch_fused_gate_up_uses_q8_fastpath_when_enabled() {
         ff_dim,
         in_dim,
         device.stream(),
+        None, // config
     )
     .expect("Dispatch fused Q4_0 gate/up");
 

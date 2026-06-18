@@ -566,6 +566,7 @@ fn test_gpu_dispatch_fused_gate_up_real_layer0_matches_cpu_reference() {
         ff_size,
         h,
         device.stream(),
+        None, // config
     )
     .expect("dispatch fused gate/up");
     device.synchronize().expect("sync");

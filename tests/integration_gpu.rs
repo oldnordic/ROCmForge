@@ -1886,6 +1886,7 @@ fn test_fused_gate_up_q4_1_fallback_matches_cpu_oracle() {
         n_ff,
         n_rows,
         device.stream(),
+        None, // config
     )
     .expect("Q4_1 fused gate/up fallback should succeed");
 

@@ -394,6 +394,7 @@ pub fn gpu_prefill_ssm_layer_on_stream(
                         ff_size,
                         h,
                         stream,
+                        Some(config),
                     )?;
                 }
             }

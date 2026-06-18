@@ -254,6 +254,7 @@ pub(in crate::gpu::forward) fn gpu_layer_forward_from_state_on_stream(
                         ff_size,
                         h,
                         device.stream(),
+                        Some(config),
                     )
                 })?;
             } else {
@@ -337,11 +338,13 @@ pub(in crate::gpu::forward) fn gpu_layer_forward_from_state_on_stream(
     // launches only one block per KV head, leaving most of the GPU idle, so
     // fall through to the separate RMSNorm + fused QKV + RoPE + KV-write path
     // which has full GQA support and historically hits the documented baseline.
+    // Use automatic model-size detection for DP4A selection
+    let dp4a_enabled = crate::gpu::safety::use_dp4a_for_model(config);
     let use_fused = (gpu_layer.attn_q_meta.wtype == GgmlType::Q4_0)
         && (gpu_layer.attn_k_meta.wtype == GgmlType::Q4_0)
         && (gpu_layer.attn_v_meta.wtype == GgmlType::Q4_0)
         && (features.has_dp4a || features.has_wmma)
-        && crate::gpu::safety::use_dp4a_enabled()
+        && dp4a_enabled
         && (num_q_heads == num_kv_heads);
 
     if use_fused {
@@ -533,6 +536,7 @@ pub(in crate::gpu::forward) fn gpu_layer_forward_from_state_on_stream(
                     attn_head_dim,
                     scratch.decode_pos_ptr(),
                     device.stream(),
+                    Some(config),
                 )
             })?;
 
@@ -678,6 +682,7 @@ pub(in crate::gpu::forward) fn gpu_layer_forward_from_state_on_stream(
                     ff_size,
                     h,
                     device.stream(),
+                    Some(config),
                 )
             })?;
         }

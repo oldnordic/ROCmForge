@@ -241,6 +241,7 @@ pub fn gpu_dispatch_fused_qkv_gqa_on_stream(
     h: usize,
     pos_ptr: *const i32,
     stream: hipStream_t,
+    config: Option<&crate::config::ModelConfig>,
 ) -> GpuResult<()> {
     if !q_size.is_multiple_of(kv_size) {
         return Err(GpuError::HipApiError {
@@ -274,7 +275,11 @@ pub fn gpu_dispatch_fused_qkv_gqa_on_stream(
     let bias_k_ptr = k_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32);
     let bias_v_ptr = v_bias.map_or(std::ptr::null(), |b| b.as_ptr() as *const f32);
 
-    if features.has_dp4a && use_dp4a_enabled() {
+    // Use automatic model-size detection for DP4A selection
+    let dp4a_enabled = config
+        .map(|cfg| crate::gpu::safety::use_dp4a_for_model(cfg))
+        .unwrap_or_else(use_dp4a_enabled);
+    if features.has_dp4a && dp4a_enabled {
         // DP4A-optimized path available but not yet wired
     }
 

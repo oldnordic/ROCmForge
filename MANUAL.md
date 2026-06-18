@@ -85,8 +85,10 @@ ROCMFORGE_ENABLE_EXPERIMENTAL_Q8_ACTIVATION_FASTPATH=1 \
 ROCMFORGE_DISABLE_DECODE_GRAPH=1 \
 ./target/release/rocmforge --model /path/to/model.gguf --prompt "Hello" --gpu --top-p 1.0
 
-# Enable DP4A int8 dot-product for Q4_0/Q8_0 kernels (gfx1030/gfx1100+, opt-in)
-# On 7B-class Q4_0 models this gives a large decode speedup over the scalar fastpath.
+# Enable DP4A int8 dot-product for Q4_0/Q8_0 kernels (gfx1030/gfx1100+)
+# DP4A is now AUTOMATIC for models >3B parameters (e.g., 7B-class Q4_0 models)
+# This manual override is only needed to force DP4A on small models (not recommended)
+# or to disable DP4A on large models (for correctness testing).
 ROCMFORGE_Q4_0_Q8_DP4A=1 \
 ./target/release/rocmforge --model /path/to/model.gguf --prompt "Hello" --gpu
 
@@ -257,7 +259,7 @@ If performance is unexpectedly low:
 2. Confirm `--gpu` is used.
 3. Check whether `ROCMFORGE_GPU_SAFE_MODE` is set.
 4. Check whether decode graph is enabled when expected.
-5. Try enabling DP4A on RDNA2/RDNA3: `ROCMFORGE_Q4_0_Q8_DP4A=1`.
+5. DP4A is automatic for models >3B parameters on RDNA2/RDNA3 (no manual env var needed).
 6. Try the single-row high-occupancy launch: `ROCMFORGE_Q4_0_Q8_SINGLE_ROW=1`.
 7. Confirm your ROCm runtime environment is loaded so the binary can resolve `libamdhip64.so.7`.
 8. Re-run section 6.1 benchmark and compare against this manual.

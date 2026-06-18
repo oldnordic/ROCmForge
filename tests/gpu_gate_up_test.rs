@@ -80,6 +80,7 @@ fn test_gate_up_operation_correctness_synthetic() {
         ff,
         h,
         device.stream(),
+        None, // config
     )
     .expect("gpu dispatch gate_up");
     device.synchronize().expect("sync");

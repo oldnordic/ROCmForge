@@ -110,6 +110,7 @@ pub(crate) fn gpu_dispatch_fused_gate_up_with_scratch_on_stream(
     ff_size: usize,
     h: usize,
     stream: hipStream_t,
+    config: Option<&crate::config::ModelConfig>,
 ) -> GpuResult<()> {
     validate_gemv_layout(gate_meta, ff_size, h)?;
     validate_gemv_layout(up_meta, ff_size, h)?;
@@ -118,7 +119,11 @@ pub(crate) fn gpu_dispatch_fused_gate_up_with_scratch_on_stream(
         if experimental_q8_activation_fastpath_enabled() {
             // DP4A fused gate-up SwiGLU path. This is the highest-throughput
             // variant on RDNA2/RDNA3 when dequant dominates decode time.
-            if q4_0_q8_dp4a_enabled()
+            // Use automatic model-size detection when config available, otherwise fallback to env var
+            let dp4a_enabled = config
+                .map(|cfg| crate::gpu::safety::q4_0_q8_dp4a_for_model(cfg))
+                .unwrap_or_else(q4_0_q8_dp4a_enabled);
+            if dp4a_enabled
                 && q8_fastpath_ok(
                     "gemv_gate_up_swiglu_q4_0_q8_0",
                     try_q4_0_q8_0_fused_gate_up_fastpath_prequantized(
@@ -248,6 +253,7 @@ pub fn gpu_dispatch_fused_gate_up_on_stream(
     ff_size: usize,
     h: usize,
     stream: hipStream_t,
+    config: Option<&crate::config::ModelConfig>,
 ) -> GpuResult<()> {
     gpu_dispatch_fused_gate_up_with_scratch_on_stream(
         device,
@@ -263,6 +269,7 @@ pub fn gpu_dispatch_fused_gate_up_on_stream(
         ff_size,
         h,
         stream,
+        config,
     )
 }
 
@@ -294,5 +301,6 @@ pub fn gpu_dispatch_fused_gate_up(
         ff_size,
         h,
         hipStream_t::null(),
+        None,
     )
 }

@@ -216,6 +216,51 @@ impl ModelConfig {
             .unwrap_or(self.rope_freq.as_slice())
     }
 
+    /// Estimate total parameter count (in billions) for automatic DP4A selection.
+    ///
+    /// Uses a simplified transformer parameter count formula:
+    /// - Embedding: vocab_size * hidden_size
+    /// - Attention (per layer): hidden_size * 3 * hidden_size + hidden_size * hidden_size
+    /// - FFN (per layer): hidden_size * intermediate_size * 2 (for SwiGLU) + hidden_size * hidden_size
+    /// - Output: hidden_size * vocab_size
+    ///
+    /// Returns approximate parameter count in billions (B).
+    pub fn parameter_count_billion(&self) -> f32 {
+        let n = self.num_layers as f32;
+        let d = self.hidden_size as f32;
+        let i = self.intermediate_size as f32;
+        let v = self.vocab_size as f32;
+
+        // Embedding layer
+        let embedding = v * d;
+
+        // Per-layer parameters (attention + FFN)
+        // Attention: QKV projections (3*d*d) + output projection (d*d)
+        let attn_per_layer = 4.0 * d * d;
+        // FFN: gate/up projections (2*d*i) + down projection (d*i)
+        let ffn_per_layer = 2.0 * d * i + d * i;
+
+        // Output layer
+        let output = d * v;
+
+        let total = embedding + n * (attn_per_layer + ffn_per_layer) + output;
+        total / 1e9
+    }
+
+    /// Determine if DP4A kernels should be used based on model size.
+    ///
+    /// DP4A (int8 dot product) provides 1.5-2× speedup for large models (>3B params)
+    /// but introduces ~3× numerical error in Q4_0 dequantization.
+    ///
+    /// Selection logic:
+    /// - Models > 3B parameters: use DP4A for throughput (large verified models)
+    /// - Models ≤ 3B parameters: use scalar kernels for correctness (small models)
+    ///
+    /// This automatic detection replaces manual `ROCMFORGE_Q4_0_Q8_DP4A` env var.
+    pub fn should_use_dp4a(&self) -> bool {
+        self.parameter_count_billion() > 3.0
+    }
+
     /// Build `ModelConfig` from an open GGUF file.
     ///
     /// `vocab_size` is taken from `tokenizer_data.tokens.len()` because GGUF
