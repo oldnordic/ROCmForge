@@ -1129,9 +1129,8 @@ fn test_q4_0_gemv_parity_real_activations() {
                 .zip(&gpu_y)
                 .enumerate()
                 .map(|(i, (a, b))| (i, (a - b).abs()))
-                .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::ordering::Equal))
+                .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
                 .map(|(i, _)| i)
-                .next()
                 .expect("non-empty iterator");
             eprintln!(
                 "    cpu[{}]={:.6} gpu[{}]={:.6}",
