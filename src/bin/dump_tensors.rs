@@ -9,7 +9,7 @@ fn main() {
     let mut args = env::args().skip(1);
     let path = args
         .next()
-        .unwrap_or_else(|| "/home/feanor/Projects/rocmforge/qwen3.6.gguf".to_string());
+        .unwrap_or_else(|| "/home/feanor/Projects/models/qwen3.6.gguf".to_string());
     let check_cpu_layers = args.any(|arg| arg == "--check-cpu-layers");
 
     match Path::new(&path).extension().and_then(|ext| ext.to_str()) {
