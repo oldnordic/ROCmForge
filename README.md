@@ -17,6 +17,30 @@ rocmforge - LLM inference on AMD GPUs (HIP) with a CPU fallback path.
 *   **Pareto Synthesis**: Hardware-aware combined optimization path featuring GPU SVD, MPO kernel compression, and mixture of experts (MoE) VRAM paging.
 *   **Inference Path Router**: Dynamically matches model traits to targeted hardware-optimized HIP fastpaths.
 
+## Technical Architecture
+
+**GPU compute path**
+- HIP / ROCm kernels, AMD-only — RDNA2 DP4A and RDNA3 WMMA matrix instructions
+- GPU Decode Graph — the entire token-generation sequence (QKV projection, split, norms, attention, activations, output projection) captured into a single HIP graph to eliminate per-launch host→device overhead
+- F16 (half-precision) input embeddings
+- TurboQuant KV cache — low-latency paged KV management with automatic bounds and deadlock resolution
+
+**Pareto Synthesis** — hardware-aware combined optimization path
+- GPU SVD correction kernels for attention
+- MPO (Matrix Product Operator) kernel compression
+- Mixture-of-Experts (MoE) VRAM paging
+- VideoMLA / AdaState routing variants
+
+**Quantization kernels (GPU)** — Q4_0, Q4_K, Q6_K, Q8_0 (Q5_0 not implemented on GPU)
+
+**Inference Path Router** — model-profile-driven selection across `BatchedPrefill`, `DecodeStyle`, `SvdOptimized`, and `CpuFallback`
+
+**CPU fallback** — pure-Rust decode path when no GPU is available or the profile is unsafe
+
+**Model formats** — GGUF (Qwen2.5, Gemma4) plus custom `.rfm` architectures; speculative decoding via `--draft-model`
+
+**Keyword index:** AMD GPU inference · HIP · ROCm · LLM inference · GGUF · GPU decode graph · DP4A · WMMA · RDNA2 · RDNA3 · F16 embeddings · TurboQuant KV cache · Pareto Synthesis · GPU SVD · MPO compression · mixture of experts · MoE VRAM paging · Q4_0 · Q4_K · Q6_K · Q8_0 · inference path router · speculative decoding · CPU fallback · Rust
+
 ### Supported quantizations (GPU)
 
 | Quantization | Status | Notes |
