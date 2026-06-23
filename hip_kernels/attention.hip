@@ -233,6 +233,8 @@ __global__ void flash_attn_decode_strided_multi_head_kernel(
 
 // ── Optimized Multi-Head Attention (One Pass over V) ──────────────────────────────
 
+__attribute__((amdgpu_wave_size(32)))
+__launch_bounds__(256, 1)
 __global__ void flash_attn_decode_strided_multi_head_v2_kernel(
     float* __restrict__ out,
     float* __restrict__ attn_weights,    // [num_heads, seq_len] optional
@@ -287,8 +289,16 @@ __global__ void flash_attn_decode_strided_multi_head_v2_kernel(
             }
         } else {
             const size_t cache_base = (size_t)pos * kv_size + head_offset;
-            for (int i = 0; i < head_dim; ++i) {
-                score += head_q[i] * k_cache[cache_base + i];
+            if (head_dim % 4 == 0) {
+                for (int i = 0; i < head_dim; i += 4) {
+                    float4 q4 = reinterpret_cast<const float4*>(&head_q[i])[0];
+                    float4 k4 = reinterpret_cast<const float4*>(&k_cache[cache_base + i])[0];
+                    score += q4.x * k4.x + q4.y * k4.y + q4.z * k4.z + q4.w * k4.w;
+                }
+            } else {
+                for (int i = 0; i < head_dim; ++i) {
+                    score += head_q[i] * k_cache[cache_base + i];
+                }
             }
         }
         score *= adastate_scale;
@@ -315,15 +325,33 @@ __global__ void flash_attn_decode_strided_multi_head_v2_kernel(
     const float inv_sum = 1.0f / s_sum;
     float* head_out = out + head_idx * head_dim;
 
-    for (int i = tid; i < head_dim; i += blockDim.x) {
-        float val = 0.0f;
-        for (int pos = 0; pos < seq_len; ++pos) {
-            float v_val = (kv_lora_dim > 0)
-                ? get_reconstructed_v(pos, head_offset + i, v_cache, kv_lora_dim, w_up_v)
-                : v_cache[(size_t)pos * kv_size + head_offset + i];
-            val += s_scores[pos] * v_val;
+    if (head_dim % 4 == 0 && kv_lora_dim <= 0) {
+        int i = tid * 4;
+        for (; i + 3 < head_dim; i += blockDim.x * 4) {
+            float4 val4 = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+            for (int pos = 0; pos < seq_len; ++pos) {
+                float weight = s_scores[pos];
+                const size_t v_base = (size_t)pos * kv_size + head_offset + i;
+                float4 v4 = reinterpret_cast<const float4*>(&v_cache[v_base])[0];
+                val4.x += weight * v4.x;
+                val4.y += weight * v4.y;
+                val4.z += weight * v4.z;
+                val4.w += weight * v4.w;
+            }
+            float4 out4 = make_float4(val4.x * inv_sum, val4.y * inv_sum, val4.z * inv_sum, val4.w * inv_sum);
+            reinterpret_cast<float4*>(&head_out[i])[0] = out4;
         }
-        head_out[i] = val * inv_sum;
+    } else {
+        for (int i = tid; i < head_dim; i += blockDim.x) {
+            float val = 0.0f;
+            for (int pos = 0; pos < seq_len; ++pos) {
+                float v_val = (kv_lora_dim > 0)
+                    ? get_reconstructed_v(pos, head_offset + i, v_cache, kv_lora_dim, w_up_v)
+                    : v_cache[(size_t)pos * kv_size + head_offset + i];
+                val += s_scores[pos] * v_val;
+            }
+            head_out[i] = val * inv_sum;
+        }
     }
 
     // 5. Optionally write normalized attention weights for tracing.
@@ -335,6 +363,240 @@ __global__ void flash_attn_decode_strided_multi_head_v2_kernel(
     }
 }
 
+// ── Reference Decode Attention (CPU-matching online softmax) ───────────────────────
+//
+// One block per head, single thread per block.  This is intentionally slow but
+// numerically reproduces the CPU reference path: serial online softmax over
+// positions, accumulating the weighted V sum incrementally.  Use it as a
+// correctness baseline for models/routes where the optimized kernels introduce
+// too much quantization drift.
+
+__global__ void flash_attn_decode_reference_kernel(
+    float* __restrict__ out,
+    float* __restrict__ attn_weights,    // [num_heads, seq_len] optional
+    const float* __restrict__ q,
+    const float* __restrict__ k_cache,
+    const float* __restrict__ v_cache,
+    const int seq_len,
+    const int num_heads,
+    const int num_kv_heads,
+    const int head_dim,
+    const int cache_stride,      // Physical per-position stride in the KV cache
+    const int kv_head_dim,       // Logical per-head KV dimension for this layer
+    const float scale,
+    const int kv_lora_dim,
+    const float* __restrict__ w_up_k,
+    const float* __restrict__ w_up_v
+) {
+    const int head_idx = blockIdx.x;
+    if (head_idx >= num_heads) return;
+    if (threadIdx.x != 0) return;
+
+    const int ratio = num_heads / num_kv_heads;
+    const int kv_head_idx = (ratio > 0) ? (head_idx / ratio) : 0;
+    const int head_offset = kv_head_idx * kv_head_dim;
+    const int kv_dim = (kv_head_dim > 0) ? kv_head_dim : head_dim;
+
+    const float* head_q = q + head_idx * head_dim;
+    float* head_out = out + head_idx * head_dim;
+
+    extern __shared__ float s_acc[];
+    for (int i = 0; i < head_dim; ++i) {
+        s_acc[i] = 0.0f;
+    }
+
+    float m = kNegInf;
+    float l = 0.0f;
+
+    for (int pos = 0; pos < seq_len; ++pos) {
+        float score = 0.0f;
+        if (kv_lora_dim > 0) {
+            for (int i = 0; i < kv_dim; ++i) {
+                float k_val = get_reconstructed_k(pos, head_offset + i, k_cache, kv_lora_dim, w_up_k);
+                score += head_q[i] * k_val;
+            }
+        } else {
+            const size_t cache_base = (size_t)pos * cache_stride + head_offset;
+            for (int i = 0; i < kv_dim; ++i) {
+                score += head_q[i] * k_cache[cache_base + i];
+            }
+        }
+        score *= scale;
+
+        const float m_new = fmaxf(m, score);
+        const float exp_diff = expf(m - m_new);
+        const float exp_score = expf(score - m_new);
+
+        l = l * exp_diff + exp_score;
+
+        if (kv_lora_dim > 0) {
+            for (int i = 0; i < kv_dim; ++i) {
+                float v_val = get_reconstructed_v(pos, head_offset + i, v_cache, kv_lora_dim, w_up_v);
+                s_acc[i] = s_acc[i] * exp_diff + exp_score * v_val;
+            }
+        } else {
+            const size_t cache_base = (size_t)pos * cache_stride + head_offset;
+            for (int i = 0; i < kv_dim; ++i) {
+                float v_val = v_cache[cache_base + i];
+                s_acc[i] = s_acc[i] * exp_diff + exp_score * v_val;
+            }
+        }
+
+        m = m_new;
+    }
+
+    const float inv_l = 1.0f / l;
+    for (int i = 0; i < head_dim; ++i) {
+        head_out[i] = s_acc[i] * inv_l;
+    }
+
+    if (attn_weights != nullptr) {
+        for (int pos = 0; pos < seq_len; ++pos) {
+            attn_weights[head_idx * seq_len + pos] = 0.0f;
+        }
+    }
+}
+
+extern "C" hipError_t gpu_flash_attn_decode_reference(
+    float* d_out,
+    float* d_attn_weights,
+    const float* d_q,
+    const float* d_k_cache,
+    const float* d_v_cache,
+    const int seq_len,
+    const int num_heads,
+    const int num_kv_heads,
+    const int head_dim,
+    const int cache_stride,
+    const int kv_head_dim,
+    const float scale,
+    const int kv_lora_dim,
+    const float* w_up_k,
+    const float* w_up_v,
+    hipStream_t stream
+) {
+    if (seq_len <= 0 || !d_out || !d_q || !d_k_cache || !d_v_cache) {
+        return hipErrorInvalidValue;
+    }
+
+    const int threads_per_block = 1;
+    const size_t smem_size = head_dim * sizeof(float);
+
+    flash_attn_decode_reference_kernel<<<num_heads, threads_per_block, smem_size, stream>>>(
+        d_out, d_attn_weights, d_q, d_k_cache, d_v_cache, seq_len, num_heads, num_kv_heads, head_dim,
+        cache_stride, kv_head_dim, scale, kv_lora_dim, w_up_k, w_up_v
+    );
+
+    return hipGetLastError();
+}
+
+__attribute__((amdgpu_wave_size(32)))
+__launch_bounds__(256, 1)
+__global__ void flash_attn_decode_strided_multi_head_hybrid_kernel(
+    float* __restrict__ out,
+    float* __restrict__ attn_weights,
+    const float* __restrict__ q,
+    const float* __restrict__ k_cache,
+    const float* __restrict__ v_cache,
+    const int seq_len,
+    const int num_heads,
+    const int num_kv_heads,
+    const int head_dim,
+    const int cache_stride,      // Physical per-position stride in the uniform KV cache
+    const int kv_head_dim,       // Logical per-head KV dimension for this layer
+    const float scale,
+    const int kv_lora_dim,
+    const int adastate_anchors_enabled,
+    const float* __restrict__ w_up_k,
+    const float* __restrict__ w_up_v
+) {
+    const int head_idx = blockIdx.x;
+    const int tid = threadIdx.x;
+    const int ratio = num_heads / num_kv_heads;
+    const int kv_head_idx = (ratio > 0) ? (head_idx / ratio) : 0;
+    const int head_offset = kv_head_idx * kv_head_dim;
+
+    if (head_idx >= num_heads) return;
+
+    const float* head_q = q + head_idx * head_dim;
+    extern __shared__ float s_scores[];
+    float* s_reduce = s_scores + kDecodeScoreCapacity;
+
+    float adastate_scale = scale;
+    if (adastate_anchors_enabled && seq_len > 0) {
+        float q_norm = 0.0f;
+        for (int i = 0; i < head_dim; ++i) {
+            q_norm += head_q[i] * head_q[i];
+        }
+        q_norm = sqrtf(q_norm);
+        if (q_norm > 0.0f) {
+            adastate_scale *= (1.0f / (q_norm * 0.1f + 0.9f));
+        }
+    }
+
+    // Gemma4 E2B alternative layers may have kv_head_dim != head_dim, but within a
+    // layer Q and K/V share the same per-layer dimension, so the K/V loop uses
+    // kv_head_dim while the Q/output loops use head_dim.
+    const int kv_dim = (kv_head_dim > 0) ? kv_head_dim : head_dim;
+
+    for (int pos = tid; pos < seq_len; pos += blockDim.x) {
+        float score = 0.0f;
+        if (kv_lora_dim > 0) {
+            for (int i = 0; i < kv_dim; ++i) {
+                float k_val = get_reconstructed_k(pos, head_offset + i, k_cache, kv_lora_dim, w_up_k);
+                score += head_q[i] * k_val;
+            }
+        } else {
+            const size_t cache_base = (size_t)pos * cache_stride + head_offset;
+            for (int i = 0; i < kv_dim; ++i) {
+                score += head_q[i] * k_cache[cache_base + i];
+            }
+        }
+        score *= adastate_scale;
+        s_scores[pos] = score;
+    }
+    __syncthreads();
+
+    float local_max = kNegInf;
+    for (int pos = tid; pos < seq_len; pos += blockDim.x) {
+        local_max = fmaxf(local_max, s_scores[pos]);
+    }
+    const float m = block_reduce_max(local_max, s_reduce);
+
+    float local_sum = 0.0f;
+    for (int pos = tid; pos < seq_len; pos += blockDim.x) {
+        const float weight = expf(s_scores[pos] - m);
+        s_scores[pos] = weight;
+        local_sum += weight;
+    }
+    const float s_sum = block_reduce_sum(local_sum, s_reduce);
+
+    const float inv_sum = 1.0f / s_sum;
+    float* head_out = out + head_idx * head_dim;
+
+    for (int i = tid; i < head_dim; i += blockDim.x) {
+        float val = 0.0f;
+        if (i < kv_dim) {
+            for (int pos = 0; pos < seq_len; ++pos) {
+                float v_val = (kv_lora_dim > 0)
+                    ? get_reconstructed_v(pos, head_offset + i, v_cache, kv_lora_dim, w_up_v)
+                    : v_cache[(size_t)pos * cache_stride + head_offset + i];
+                val += s_scores[pos] * v_val;
+            }
+        }
+        head_out[i] = val * inv_sum;
+    }
+
+    if (attn_weights != nullptr) {
+        __syncthreads();
+        for (int pos = tid; pos < seq_len; pos += blockDim.x) {
+            attn_weights[head_idx * seq_len + pos] = s_scores[pos] * inv_sum;
+        }
+    }
+}
+
+__attribute__((amdgpu_wave_size(32)))
+__launch_bounds__(256, 1)
 __global__ void flash_attn_decode_strided_multi_head_state_kernel(
     float* __restrict__ out,
     float* __restrict__ attn_weights,    // [num_heads, seq_len] optional
@@ -465,9 +727,8 @@ extern "C" hipError_t gpu_flash_attn_decode_strided_multi_head(
 }
 
 // ── Hybrid Flash Attention Decode for Gemma4 (Per-layer cache stride) ─────────────────
-// This wrapper accepts kv_size parameter for API compatibility with per-layer cache stride.
-// The kernel internally calculates stride as num_kv_heads * head_dim, which works correctly
-// when the cache is laid out with the correct per-layer stride.
+// This wrapper exists because Gemma4 hybrid layers have per-layer KV cache strides
+// that are not expressible as num_kv_heads * head_dim for all layers.
 
 extern "C" hipError_t gpu_flash_attn_decode_hybrid(
     float* d_out,
@@ -479,7 +740,8 @@ extern "C" hipError_t gpu_flash_attn_decode_hybrid(
     const int num_heads,
     const int num_kv_heads,
     const int head_dim,
-    const int kv_size,                // Per-layer cache stride for hybrid attention
+    const int cache_stride,           // Physical per-position stride in the uniform KV cache
+    const int kv_head_dim,            // Logical per-head KV dimension for this layer
     const float scale,
     const int kv_lora_dim,
     const int adastate_anchors_enabled,
@@ -494,9 +756,9 @@ extern "C" hipError_t gpu_flash_attn_decode_hybrid(
     const int threads_per_block = 256;
     const size_t smem_size = (kDecodeScoreCapacity + kDecodeReductionScratch) * sizeof(float);
 
-    flash_attn_decode_strided_multi_head_v2_kernel<<<num_heads, threads_per_block, smem_size, stream>>>(
-        d_out, d_attn_weights, d_q, d_k_cache, d_v_cache, seq_len, num_heads, num_kv_heads, head_dim, scale,
-        kv_lora_dim, adastate_anchors_enabled, w_up_k, w_up_v
+    flash_attn_decode_strided_multi_head_hybrid_kernel<<<num_heads, threads_per_block, smem_size, stream>>>(
+        d_out, d_attn_weights, d_q, d_k_cache, d_v_cache, seq_len, num_heads, num_kv_heads, head_dim,
+        cache_stride, kv_head_dim, scale, kv_lora_dim, adastate_anchors_enabled, w_up_k, w_up_v
     );
 
     return hipGetLastError();
@@ -534,6 +796,384 @@ extern "C" hipError_t gpu_flash_attn_decode_strided_multi_head_state(
     return hipGetLastError();
 }
 
+// ── Tiled Wave32/Wave64 Flash Attention Decode for Plain f32 KV Cache ─────────────
+//
+// Two-kernel design adapted from hipfire:
+//  - Tile kernel: one block per (head, tile). Each thread computes the full Q·K
+//    dot product for a strided subset of positions (redundant per-thread dots) to
+//    keep ~1e-5 score error from being amplified by softmax.
+//  - Reduce kernel: one wave per head performs an exact two-pass online softmax
+//    reduction over tile partials.
+//
+// Partials layout at runtime: [num_heads, n_tiles, 2 + head_dim] row-major f32,
+// where n_tiles = ceil(seq_len / tile_size). The Rust scratch buffer is sized for
+// max_seq_len, so the allocated pool is [num_heads, max_tiles, 2 + head_dim].
+
+__global__ void flash_attn_decode_tile_wave32_kernel(
+    float* __restrict__ partials,
+    const float* __restrict__ q,
+    const float* __restrict__ k_cache,
+    const float* __restrict__ v_cache,
+    const int seq_len,
+    const int num_heads,
+    const int num_kv_heads,
+    const int head_dim,
+    const float scale
+) {
+    constexpr int threads = 32;
+    constexpr int tile_size = 128;
+
+    const int head_idx = blockIdx.x;
+    const int tile_idx = blockIdx.y;
+    const int tid = threadIdx.x;
+    if (head_idx >= num_heads) return;
+
+    const int ratio = num_heads / num_kv_heads;
+    const int kv_head_idx = (ratio > 0) ? (head_idx / ratio) : 0;
+    const int kv_size = num_kv_heads * head_dim;
+    const int head_offset = kv_head_idx * head_dim;
+
+    extern __shared__ float smem[];
+    float* s_q = smem;
+    float* s_scores = s_q + head_dim;
+
+    const float* head_q = q + (size_t)head_idx * head_dim;
+    for (int i = tid; i < head_dim; i += threads) {
+        s_q[i] = head_q[i];
+    }
+    __syncthreads();
+
+    const int start_pos = tile_idx * tile_size;
+    const int end_pos = min(start_pos + tile_size, seq_len);
+    if (start_pos >= seq_len) return;
+
+    for (int pos = start_pos + tid; pos < end_pos; pos += threads) {
+        float score = 0.0f;
+        const size_t cache_base = (size_t)pos * kv_size + head_offset;
+        for (int i = 0; i < head_dim; ++i) {
+            score += s_q[i] * k_cache[cache_base + i];
+        }
+        s_scores[pos - start_pos] = score * scale;
+    }
+    __syncthreads();
+
+    float local_max = kNegInf;
+    for (int pos = start_pos + tid; pos < end_pos; pos += threads) {
+        local_max = fmaxf(local_max, s_scores[pos - start_pos]);
+    }
+    #pragma unroll
+    for (int delta = threads / 2; delta > 0; delta >>= 1) {
+        local_max = fmaxf(local_max, __shfl_xor(local_max, delta, threads));
+    }
+
+    float local_sum = 0.0f;
+    for (int pos = start_pos + tid; pos < end_pos; pos += threads) {
+        float w = expf(s_scores[pos - start_pos] - local_max);
+        s_scores[pos - start_pos] = w;
+        local_sum += w;
+    }
+    #pragma unroll
+    for (int delta = threads / 2; delta > 0; delta >>= 1) {
+        local_sum += __shfl_xor(local_sum, delta, threads);
+    }
+
+    const int dims_per_thread = (head_dim + threads - 1) / threads;
+    // 32 slots is enough for head_dim <= 1024 on wave32 and <= 2048 on wave64.
+    float acc[32] = {0.0f};
+    for (int d = 0; d < dims_per_thread; ++d) {
+        int dim = tid + d * threads;
+        if (dim >= head_dim) break;
+        for (int pos = start_pos; pos < end_pos; ++pos) {
+            float v_val = v_cache[(size_t)pos * kv_size + head_offset + dim];
+            acc[d] += s_scores[pos - start_pos] * v_val;
+        }
+    }
+
+    const size_t partial_base = ((size_t)head_idx * gridDim.y + tile_idx) * (2 + head_dim);
+    if (tid == 0) {
+        partials[partial_base + 0] = local_max;
+        partials[partial_base + 1] = local_sum;
+    }
+    for (int d = 0; d < dims_per_thread; ++d) {
+        int dim = tid + d * threads;
+        if (dim < head_dim) {
+            partials[partial_base + 2 + dim] = acc[d];
+        }
+    }
+}
+
+__global__ void flash_attn_decode_reduce_wave32_kernel(
+    float* __restrict__ out,
+    const float* __restrict__ partials,
+    const int n_tiles,
+    const int num_heads,
+    const int head_dim
+) {
+    constexpr int threads = 32;
+
+    const int head_idx = blockIdx.x;
+    const int tid = threadIdx.x;
+    if (head_idx >= num_heads) return;
+
+    const int stride = 2 + head_dim;
+    const size_t row_base = (size_t)head_idx * n_tiles * stride;
+
+    float global_max = kNegInf;
+    for (int tile = tid; tile < n_tiles; tile += threads) {
+        float t_max = partials[row_base + (size_t)tile * stride + 0];
+        global_max = fmaxf(global_max, t_max);
+    }
+    #pragma unroll
+    for (int delta = threads / 2; delta > 0; delta >>= 1) {
+        global_max = fmaxf(global_max, __shfl_xor(global_max, delta, threads));
+    }
+
+    const int dims_per_thread = (head_dim + threads - 1) / threads;
+    // 32 slots is enough for head_dim <= 1024 on wave32 and <= 2048 on wave64.
+    float acc[32] = {0.0f};
+    float global_sum = 0.0f;
+    for (int tile = 0; tile < n_tiles; ++tile) {
+        const size_t base = row_base + (size_t)tile * stride;
+        float t_max = partials[base + 0];
+        float t_sum = partials[base + 1];
+        float corr = expf(t_max - global_max);
+        for (int d = 0; d < dims_per_thread; ++d) {
+            int dim = tid + d * threads;
+            if (dim < head_dim) {
+                acc[d] += partials[base + 2 + dim] * corr;
+            }
+        }
+        global_sum += t_sum * corr;
+    }
+    // global_sum is identical across threads (each thread summed all tiles),
+    // so no cross-lane reduction is needed here.
+
+    float inv_sum = 1.0f / global_sum;
+    float* head_out = out + (size_t)head_idx * head_dim;
+    for (int d = 0; d < dims_per_thread; ++d) {
+        int dim = tid + d * threads;
+        if (dim < head_dim) {
+            head_out[dim] = acc[d] * inv_sum;
+        }
+    }
+}
+
+extern "C" hipError_t gpu_flash_attn_decode_tiled_wave32(
+    float* d_out,
+    float* d_partials,
+    const float* d_q,
+    const float* d_k_cache,
+    const float* d_v_cache,
+    const int seq_len,
+    const int num_heads,
+    const int num_kv_heads,
+    const int head_dim,
+    const float scale,
+    hipStream_t stream
+) {
+    if (seq_len <= 0 || !d_out || !d_partials || !d_q || !d_k_cache || !d_v_cache) {
+        return hipErrorInvalidValue;
+    }
+    constexpr int tile_size = 128;
+    const int n_tiles = (seq_len + tile_size - 1) / tile_size;
+    const dim3 tile_grid(num_heads, n_tiles);
+    constexpr int threads = 32;
+    const size_t smem = (head_dim + tile_size) * sizeof(float);
+
+    flash_attn_decode_tile_wave32_kernel<<<tile_grid, threads, smem, stream>>>(
+        d_partials, d_q, d_k_cache, d_v_cache, seq_len, num_heads, num_kv_heads, head_dim, scale
+    );
+    hipError_t err = hipGetLastError();
+    if (err != hipSuccess) return err;
+
+    flash_attn_decode_reduce_wave32_kernel<<<num_heads, threads, 0, stream>>>(
+        d_out, d_partials, n_tiles, num_heads, head_dim
+    );
+    return hipGetLastError();
+}
+
+__global__ void flash_attn_decode_tile_wave64_kernel(
+    float* __restrict__ partials,
+    const float* __restrict__ q,
+    const float* __restrict__ k_cache,
+    const float* __restrict__ v_cache,
+    const int seq_len,
+    const int num_heads,
+    const int num_kv_heads,
+    const int head_dim,
+    const float scale
+) {
+    constexpr int threads = 64;
+    constexpr int tile_size = 256;
+
+    const int head_idx = blockIdx.x;
+    const int tile_idx = blockIdx.y;
+    const int tid = threadIdx.x;
+    if (head_idx >= num_heads) return;
+
+    const int ratio = num_heads / num_kv_heads;
+    const int kv_head_idx = (ratio > 0) ? (head_idx / ratio) : 0;
+    const int kv_size = num_kv_heads * head_dim;
+    const int head_offset = kv_head_idx * head_dim;
+
+    extern __shared__ float smem[];
+    float* s_q = smem;
+    float* s_scores = s_q + head_dim;
+
+    const float* head_q = q + (size_t)head_idx * head_dim;
+    for (int i = tid; i < head_dim; i += threads) {
+        s_q[i] = head_q[i];
+    }
+    __syncthreads();
+
+    const int start_pos = tile_idx * tile_size;
+    const int end_pos = min(start_pos + tile_size, seq_len);
+    if (start_pos >= seq_len) return;
+
+    for (int pos = start_pos + tid; pos < end_pos; pos += threads) {
+        float score = 0.0f;
+        const size_t cache_base = (size_t)pos * kv_size + head_offset;
+        for (int i = 0; i < head_dim; ++i) {
+            score += s_q[i] * k_cache[cache_base + i];
+        }
+        s_scores[pos - start_pos] = score * scale;
+    }
+    __syncthreads();
+
+    float local_max = kNegInf;
+    for (int pos = start_pos + tid; pos < end_pos; pos += threads) {
+        local_max = fmaxf(local_max, s_scores[pos - start_pos]);
+    }
+    #pragma unroll
+    for (int delta = threads / 2; delta > 0; delta >>= 1) {
+        local_max = fmaxf(local_max, __shfl_xor(local_max, delta, threads));
+    }
+
+    float local_sum = 0.0f;
+    for (int pos = start_pos + tid; pos < end_pos; pos += threads) {
+        float w = expf(s_scores[pos - start_pos] - local_max);
+        s_scores[pos - start_pos] = w;
+        local_sum += w;
+    }
+    #pragma unroll
+    for (int delta = threads / 2; delta > 0; delta >>= 1) {
+        local_sum += __shfl_xor(local_sum, delta, threads);
+    }
+
+    const int dims_per_thread = (head_dim + threads - 1) / threads;
+    // 32 slots is enough for head_dim <= 1024 on wave32 and <= 2048 on wave64.
+    float acc[32] = {0.0f};
+    for (int d = 0; d < dims_per_thread; ++d) {
+        int dim = tid + d * threads;
+        if (dim >= head_dim) break;
+        for (int pos = start_pos; pos < end_pos; ++pos) {
+            float v_val = v_cache[(size_t)pos * kv_size + head_offset + dim];
+            acc[d] += s_scores[pos - start_pos] * v_val;
+        }
+    }
+
+    const size_t partial_base = ((size_t)head_idx * gridDim.y + tile_idx) * (2 + head_dim);
+    if (tid == 0) {
+        partials[partial_base + 0] = local_max;
+        partials[partial_base + 1] = local_sum;
+    }
+    for (int d = 0; d < dims_per_thread; ++d) {
+        int dim = tid + d * threads;
+        if (dim < head_dim) {
+            partials[partial_base + 2 + dim] = acc[d];
+        }
+    }
+}
+
+__global__ void flash_attn_decode_reduce_wave64_kernel(
+    float* __restrict__ out,
+    const float* __restrict__ partials,
+    const int n_tiles,
+    const int num_heads,
+    const int head_dim
+) {
+    constexpr int threads = 64;
+
+    const int head_idx = blockIdx.x;
+    const int tid = threadIdx.x;
+    if (head_idx >= num_heads) return;
+
+    const int stride = 2 + head_dim;
+    const size_t row_base = (size_t)head_idx * n_tiles * stride;
+
+    float global_max = kNegInf;
+    for (int tile = tid; tile < n_tiles; tile += threads) {
+        float t_max = partials[row_base + (size_t)tile * stride + 0];
+        global_max = fmaxf(global_max, t_max);
+    }
+    #pragma unroll
+    for (int delta = threads / 2; delta > 0; delta >>= 1) {
+        global_max = fmaxf(global_max, __shfl_xor(global_max, delta, threads));
+    }
+
+    const int dims_per_thread = (head_dim + threads - 1) / threads;
+    // 32 slots is enough for head_dim <= 1024 on wave32 and <= 2048 on wave64.
+    float acc[32] = {0.0f};
+    float global_sum = 0.0f;
+    for (int tile = 0; tile < n_tiles; ++tile) {
+        const size_t base = row_base + (size_t)tile * stride;
+        float t_max = partials[base + 0];
+        float t_sum = partials[base + 1];
+        float corr = expf(t_max - global_max);
+        for (int d = 0; d < dims_per_thread; ++d) {
+            int dim = tid + d * threads;
+            if (dim < head_dim) {
+                acc[d] += partials[base + 2 + dim] * corr;
+            }
+        }
+        global_sum += t_sum * corr;
+    }
+    // global_sum is identical across threads (each thread summed all tiles).
+
+    float inv_sum = 1.0f / global_sum;
+    float* head_out = out + (size_t)head_idx * head_dim;
+    for (int d = 0; d < dims_per_thread; ++d) {
+        int dim = tid + d * threads;
+        if (dim < head_dim) {
+            head_out[dim] = acc[d] * inv_sum;
+        }
+    }
+}
+
+extern "C" hipError_t gpu_flash_attn_decode_tiled_wave64(
+    float* d_out,
+    float* d_partials,
+    const float* d_q,
+    const float* d_k_cache,
+    const float* d_v_cache,
+    const int seq_len,
+    const int num_heads,
+    const int num_kv_heads,
+    const int head_dim,
+    const float scale,
+    hipStream_t stream
+) {
+    if (seq_len <= 0 || !d_out || !d_partials || !d_q || !d_k_cache || !d_v_cache) {
+        return hipErrorInvalidValue;
+    }
+    constexpr int tile_size = 256;
+    const int n_tiles = (seq_len + tile_size - 1) / tile_size;
+    const dim3 tile_grid(num_heads, n_tiles);
+    constexpr int threads = 64;
+    const size_t smem = (head_dim + tile_size) * sizeof(float);
+
+    flash_attn_decode_tile_wave64_kernel<<<tile_grid, threads, smem, stream>>>(
+        d_partials, d_q, d_k_cache, d_v_cache, seq_len, num_heads, num_kv_heads, head_dim, scale
+    );
+    hipError_t err = hipGetLastError();
+    if (err != hipSuccess) return err;
+
+    flash_attn_decode_reduce_wave64_kernel<<<num_heads, threads, 0, stream>>>(
+        d_out, d_partials, n_tiles, num_heads, head_dim
+    );
+    return hipGetLastError();
+}
+
 // ── Multi-Head Flash Attention Prefill (High-Occupancy) ───────────────────────────
 //
 // Replaces the single-query, single-head prefill kernel that left only thread 0
@@ -541,6 +1181,8 @@ extern "C" hipError_t gpu_flash_attn_decode_strided_multi_head_state(
 // (query position, head).  Threads cooperate on the head dimension and on the
 // causal key positions 0..query_pos, giving all warps useful work on RDNA3.
 
+__attribute__((amdgpu_wave_size(32)))
+__launch_bounds__(256, 1)
 __global__ void flash_attn_prefill_strided_multi_head_kernel(
     float* __restrict__ out,
     const float* __restrict__ q,
@@ -881,6 +1523,8 @@ __global__ void kv_write_state_kernel(
     }
 }
 
+__attribute__((amdgpu_wave_size(32)))
+__launch_bounds__(256, 1)
 __global__ void kv_write_rope_state_kernel(
     float* __restrict__ k_cache,
     float* __restrict__ v_cache,
@@ -928,11 +1572,12 @@ __global__ void kv_write_rope_state_kernel(
         idx1 = idx0 + 1;
     }
 
-    const float exponent = (float)(2 * pair_idx) / (float)head_dim;
-    const float theta = 1.0f / pow(theta_base, exponent);
+    const float inv_head_dim = 1.0f / (float)head_dim;
+    const float exponent = (float)(2 * pair_idx) * inv_head_dim;
+    const float theta = 1.0f / powf(theta_base, exponent);
     const float angle = (float)pos * theta;
-    const float cos_val = cos(angle);
-    const float sin_val = sin(angle);
+    const float cos_val = cosf(angle);
+    const float sin_val = sinf(angle);
     const float x0 = k[idx0];
     const float x1 = k[idx1];
 
@@ -964,6 +1609,8 @@ __global__ void kv_write_batched_kernel(
 
 // ── Flash Attention (Batch Prefill) ───────────────────────────────────────────────
 
+__attribute__((amdgpu_wave_size(32)))
+__launch_bounds__(256, 1)
 __global__ void flash_attn_prefill_strided_kernel(
     float* __restrict__ out,
     const float* __restrict__ q,
@@ -1037,6 +1684,8 @@ __global__ void flash_attn_prefill_strided_kernel(
     }
 }
 
+__attribute__((amdgpu_wave_size(32)))
+__launch_bounds__(256, 1)
 __global__ void kv_write_rope_kernel(
     float* __restrict__ k_cache,
     float* __restrict__ v_cache,
@@ -1057,7 +1706,7 @@ __global__ void kv_write_rope_kernel(
     v_cache[cache_idx] = v[i];
 
     const int head = i / head_dim;
-    const int idx_in_head = i % head_dim;
+    const int idx_in_head = i - head * head_dim;
     const int head_base = head * head_dim;
     const int half = head_dim / 2;
 
@@ -1081,7 +1730,8 @@ __global__ void kv_write_rope_kernel(
         idx1 = idx0 + 1;
     }
 
-    const float exponent = (float)(2 * pair_idx) / (float)head_dim;
+    const float inv_head_dim = 1.0f / (float)head_dim;
+    const float exponent = (float)(2 * pair_idx) * inv_head_dim;
     const float theta = 1.0f / powf(theta_base, exponent);
     const float angle = (float)pos * theta;
     const float cos_val = cosf(angle);
@@ -1717,4 +2367,3 @@ hipError_t gpu_flash_attn_decode_turboquant(
 }
 
 } // extern "C"
-

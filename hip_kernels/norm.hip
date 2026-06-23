@@ -98,6 +98,8 @@ __global__ void rms_norm_kernel(
 /// * n - Hidden size
 /// * eps - Epsilon for numerical stability
 /// * seq_len - Number of sequences to process
+__attribute__((amdgpu_wave_size(32)))
+__launch_bounds__(256, 1)
 __global__ void rms_norm_batched_kernel(
     const float* __restrict__ x,
     const float* __restrict__ weight,
@@ -120,9 +122,17 @@ __global__ void rms_norm_batched_kernel(
 
     // Compute sum of squares for this row
     float sum_sq = 0.0f;
-    for (int i = tid; i < n; i += blockDim.x) {
-        float val = row_x[i];
-        sum_sq += val * val;
+    if (n % 4 == 0) {
+        int i = tid * 4;
+        for (; i + 3 < n; i += blockDim.x * 4) {
+            float4 val4 = reinterpret_cast<const float4*>(&row_x[i])[0];
+            sum_sq += val4.x * val4.x + val4.y * val4.y + val4.z * val4.z + val4.w * val4.w;
+        }
+    } else {
+        for (int i = tid; i < n; i += blockDim.x) {
+            float val = row_x[i];
+            sum_sq += val * val;
+        }
     }
     shared_sq[tid] = sum_sq;
     __syncthreads();
@@ -136,9 +146,20 @@ __global__ void rms_norm_batched_kernel(
     }
 
     // Compute and apply normalization
-    float inv_rms = rsqrt(shared_sq[0] / (float)n + eps);
-    for (int i = tid; i < n; i += blockDim.x) {
-        row_out[i] = row_x[i] * inv_rms * weight[i];
+    float inv_n = 1.0f / (float)n;
+    float inv_rms = rsqrt(shared_sq[0] * inv_n + eps);
+    if (n % 4 == 0) {
+        int i = tid * 4;
+        for (; i + 3 < n; i += blockDim.x * 4) {
+            float4 x4 = reinterpret_cast<const float4*>(&row_x[i])[0];
+            float4 w4 = reinterpret_cast<const float4*>(&weight[i])[0];
+            float4 out4 = make_float4(x4.x * inv_rms * w4.x, x4.y * inv_rms * w4.y, x4.z * inv_rms * w4.z, x4.w * inv_rms * w4.w);
+            reinterpret_cast<float4*>(&row_out[i])[0] = out4;
+        }
+    } else {
+        for (int i = tid; i < n; i += blockDim.x) {
+            row_out[i] = row_x[i] * inv_rms * weight[i];
+        }
     }
 }
 
@@ -161,6 +182,47 @@ hipError_t gpu_rms_norm(
         d_x, d_weight, d_out, n, eps
     );
 
+    return hipGetLastError();
+}
+
+/// Reference RMS normalization kernel.
+///
+/// Matches the CPU scalar path exactly: a single thread computes a serial sum
+/// of squares, then `rsqrtf(mean + eps)`, then scales elementwise.  This avoids
+/// any wave-reduction ordering differences between GPU implementations.
+__global__ void rms_norm_reference_kernel(
+    const float* __restrict__ x,
+    const float* __restrict__ weight,
+    float* __restrict__ out,
+    const int n,
+    const float eps
+) {
+    if (threadIdx.x != 0 || blockIdx.x != 0) return;
+
+    float sum_sq = 0.0f;
+    for (int i = 0; i < n; i++) {
+        const float v = x[i];
+        sum_sq += v * v;
+    }
+    const float inv_rms = rsqrtf(sum_sq / (float)n + eps);
+    for (int i = 0; i < n; i++) {
+        out[i] = x[i] * inv_rms * weight[i];
+    }
+}
+
+hipError_t gpu_rms_norm_reference(
+    const float* d_x,
+    const float* d_weight,
+    float* d_out,
+    const int n,
+    const float eps,
+    hipStream_t stream
+) {
+    hipLaunchKernelGGL(
+        rms_norm_reference_kernel,
+        1, 1, 0, stream,
+        d_x, d_weight, d_out, n, eps
+    );
     return hipGetLastError();
 }
 

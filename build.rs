@@ -71,6 +71,7 @@ mod gpu_build {
                 .arg("-c")
                 .arg("-fPIC")
                 .arg("-O3")
+                .arg("-ffast-math")
                 .arg(format!("--offload-arch={}", target_arch))
                 .arg(format!("-DWARP_SIZE={}", wave_size))
                 .arg(format!("-I{}", hip_include.display()))
@@ -165,8 +166,8 @@ mod gpu_build {
             .arg("-DCMAKE_BUILD_TYPE=Release")
             .arg(format!("-DCMAKE_PREFIX_PATH={}", rocm_path.display()))
             .arg(format!("-Dhip_DIR={}", hip_dir.display()))
-            .arg(format!("-DCMAKE_CXX_FLAGS=-DWARP_SIZE={}", wave_size))
-            .arg(format!("-DHIP_COMPILER_FLAGS=-DWARP_SIZE={}", wave_size))
+            .arg(format!("-DCMAKE_CXX_FLAGS=-ffast-math -DWARP_SIZE={}", wave_size))
+            .arg(format!("-DCMAKE_HIP_FLAGS=-ffast-math -DWARP_SIZE={}", wave_size))
             .status();
 
         match config_status {
@@ -196,15 +197,19 @@ mod gpu_build {
                             ("libq8_0_gemv.a", "q8_0_gemv"),
                             // Q4_K GEMV library
                             ("libq4_k_gemv.a", "q4_k_gemv"),
+                            ("libq4_k_reference_gemv.a", "q4_k_reference_gemv"),
                             // Q2_K GEMV library
                             ("libq2_k_gemv.a", "q2_k_gemv"),
+                            ("libq2_k_reference_gemv.a", "q2_k_reference_gemv"),
                             // Q3_K GEMV library
                             ("libq3_k_gemv.a", "q3_k_gemv"),
+                            ("libq3_k_reference_gemv.a", "q3_k_reference_gemv"),
                             // Q5_K libraries
                             ("libq5_k_quantize.a", "q5_k_quantize"),
                             ("libq5_k_dequantize.a", "q5_k_dequantize"),
                             ("libq5_k_verify.a", "q5_k_verify"),
                             ("libq5_k_gemv.a", "q5_k_gemv"),
+                            ("libq5_k_reference_gemv.a", "q5_k_reference_gemv"),
                             // Q5_0 libraries
                             ("libq5_0_gemv.a", "q5_0_gemv"),
                             // Q5_1 libraries
@@ -214,6 +219,7 @@ mod gpu_build {
                             ("libq6_k_dequantize.a", "q6_k_dequantize"),
                             ("libq6_k_verify.a", "q6_k_verify"),
                             ("libq6_k_gemv.a", "q6_k_gemv"),
+                            ("libq6_k_reference_gemv.a", "q6_k_reference_gemv"),
                             ("libq6_k_test.a", "q6_k_test"),
                             ("libq6_k_tile.a", "q6_k_tile"),
                             ("libq6_k_vectorized.a", "q6_k_vectorized"),
